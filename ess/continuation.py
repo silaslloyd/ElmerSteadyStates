@@ -130,6 +130,10 @@ def continuation(prob: FixedPointProblem, y0, p0, store: BranchStore, opt: Conti
     ya, pa, sa = store.load(len(store) - 2)
     yb, pb, sb = store.load(len(store) - 1)
     ds = float(store.rows[-1].get("ds") or opt.ds)
+    if len(store) == 2:
+        # first secant step: don't extrapolate much beyond the distance between the first two points
+        ds = min(ds, max(2.0 * (sb - sa), opt.ds_min))
+        log.info(f"continuation: first arclength step ds = {ds:.3g} (twice the first point spacing)")
     t_prev_p = None
 
     while len(store) < opt.max_points:
