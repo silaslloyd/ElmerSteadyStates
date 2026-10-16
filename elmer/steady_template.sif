@@ -285,11 +285,14 @@ End
 Body Force 5
   Name = "bodyforce freesurface"
   ! ablation fades out smoothly as the ice approaches Hmin, so the thin ice
-  ! beyond the margin settles at Hmin without the (non-smooth) Min Zs limiter
-  Zs Accumulation = Variable Coordinate 1, Zs, bedrock
-    Real Lua "AccumulationSmooth(tx[0], tx[1] - tx[2], aDIM, L)"
-  Output Accumulation = Variable Coordinate 1, Zs, bedrock
-    Real Lua "AccumulationSmooth(tx[0], tx[1] - tx[2], aDIM, L)"
+  ! beyond the margin settles at Hmin without the (non-smooth) Min Zs limiter.
+  ! The thickness is taken at the start of the step ("height", from
+  ! StructuredProjectToPlane: height above the bottom of the 10*zscale bedrock),
+  ! so the free-surface solve stays linear (no nonlinear iteration on Zs).
+  Zs Accumulation = Variable Coordinate 1, height
+    Real Lua "AccumulationSmooth(tx[0], tx[1] - 10*zscale, aDIM, L)"
+  Output Accumulation = Variable Coordinate 1, height
+    Real Lua "AccumulationSmooth(tx[0], tx[1] - 10*zscale, aDIM, L)"
 End
 
 !---------------------------------------------------
@@ -779,6 +782,6 @@ Boundary Condition 20
 
   FSSA Theta = Real 1.0
   FSSA Flag = String $fssaflag
-  FSSA Accumulation = Variable Coordinate 1, Zs, bedrock
-        Real Lua "AccumulationSmooth(tx[0], tx[1] - tx[2], aDIM, L)"
+  FSSA Accumulation = Variable Coordinate 1, height
+        Real Lua "AccumulationSmooth(tx[0], tx[1] - 10*zscale, aDIM, L)"
 End

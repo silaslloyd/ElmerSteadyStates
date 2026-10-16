@@ -68,7 +68,9 @@ end
 
 -- the same, with ablation fading out smoothly as the thickness H approaches Hmin,
 -- so the thin ice beyond the margin settles at Hmin without a hard limiter:
--- negative values are multiplied by 1 - exp(-(H - Hmin)/Hs) (0 at Hmin).
+-- negative values are multiplied by f = 1 - exp(-(H - Hmin)/Hs). f is smooth and
+-- changes sign at Hmin (below it ablation turns into a small gain), so the thin
+-- ice sits at a smooth, stable equilibrium H = Hmin rather than on a kink.
 ess_Hmin = 10.0
 ess_Hs = 5.0
 function AccumulationSmooth(x, H, a, L)
@@ -76,7 +78,6 @@ function AccumulationSmooth(x, H, a, L)
   if x > 0.9 * L then acc = -5 * a end
   if acc < 0 then
     local f = 1 - math.exp(-(H - ess_Hmin) / ess_Hs)
-    if f < 0 then f = 0 end
     acc = acc * f
   end
   return acc
