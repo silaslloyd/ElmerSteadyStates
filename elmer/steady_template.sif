@@ -15,7 +15,8 @@
 !!     is deterministic and accurate enough for finite-difference Jacobians;
 !!   * the state (Temperature on all bodies, Zs) is read/written exactly by
 !!     SteadyStateIO (no restart file, no VTU unless asked for);
-!!   * Elmer's built-in FreeSurfaceSolver (ElmerStreams used a copy of it).
+!!   * Elmer's built-in FreeSurfaceSolver (ElmerStreams used a copy of it);
+!!   * surface: same Robin condition, but a constant External Temperature = Tsurf.
 !!
 !! The double-underscore placeholders are filled in by the Python driver (ess/elmer.py).
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -756,8 +757,9 @@ Boundary Condition 20
 
   Heat Flux BC = Logical True
   Heat transfer coefficient = Real 1
-  External Temperature = Variable "height"
-   Real Lua "surfaceT(tx[0], zscale, Tsurf)"
+  ! constant external temperature (the continuation parameter) over the whole
+  ! surface; ElmerStreams ramped it to T0 where the ice is thinner than 100 m
+  External Temperature = Real #Tsurf
   ComputeNormal = Logical True
 
   Partial Vertical MeshUpdate 1 = Real 0.0

@@ -88,7 +88,8 @@ surface solvers, and the same sliding law and boundary conditions, except for th
 Things the driver does **not** change, worth knowing when comparing with the analytic S-curve:
 
 * The surface condition is a Robin (heat transfer coefficient 1 in MPa m yr⁻¹ K⁻¹, i.e. about a
-  66 m conductive skin), not a Dirichlet condition.
+  66 m conductive skin), not a Dirichlet condition. Its external temperature is the constant
+  `Tsurf` everywhere (ElmerStreams ramped it to T0 under ice thinner than 100 m).
 * The bed temperature is not capped at T0 on the cold part of the bed.
 * `frictionloads` halves the frictional heat at nodes with y < 1 (kept from ElmerStreams). On this
   one-element-wide flowline that makes the y = 0 side get half the heating of the y = W side. It is

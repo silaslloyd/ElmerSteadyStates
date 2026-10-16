@@ -80,9 +80,9 @@ def initial_geometry(P, n=4001):
     H = np.where(gm > 0, H_ice, 30.0)
     zs = bed + H
     Ts = P["Tsurf"]
-    Tb = np.where(gm > 0, np.minimum(Ts + P["gthf"] / P["heatconductivity"] * H, P["T0"]), P["T0"])
+    Tb = np.minimum(Ts + P["gthf"] / P["heatconductivity"] * H, P["T0"])
     ct = np.where((gm > 0) & (Tb >= P["T0"] - 0.01), 1.0, -1.0)     # temperate only under ice
-    return dict(x=x, bed=bed, zs=zs, H=H, gm=gm, ct=ct, Tb=Tb, Ts_surf=np.where(gm > 0, Ts, P["T0"]))
+    return dict(x=x, bed=bed, zs=zs, H=H, gm=gm, ct=ct, Tb=Tb, Ts_surf=np.full_like(x, Ts))
 
 
 def _lua_array(name, a):
