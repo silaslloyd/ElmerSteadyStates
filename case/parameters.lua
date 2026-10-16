@@ -65,5 +65,5 @@ L = 2.4*xscale        -- domain length (m); the ice margin of the initial state 
 W = 50*zscale         -- only used for the side-node weighting in frictionloads (y < 1)
 Wmesh = 1000          -- width of the footprint (m)
 BoundaryRes = 10000   -- element size away from the margin (m)
-MarginRes = 1000      -- element size around the margin (m)
+MarginRes = 500       -- element size around the margin (m); the finest band (0.75-0.8 L) gets half
 y_nodes = 15

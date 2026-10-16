@@ -19,8 +19,9 @@
 !!   * surface: same Robin condition, but a constant External Temperature = Tsurf;
 !!   * heat and free surface: SUPG instead of bubbles (bubble history is not part
 !!     of the saved state);
-!!   * ablation goes smoothly to zero as the ice thins to Hmin = 10 m, instead of
-!!     the Min Zs = bed + 10 limiter (a non-smooth active set at the margin).
+!!   * regularised margin: ablation goes smoothly to zero (and then to a small
+!!     gain) as the ice thins to Hmin = 30 m, instead of the Min Zs = bed + 10
+!!     limiter (a non-smooth active set at the margin); finer mesh at the margin.
 !!
 !! The double-underscore placeholders are filled in by the Python driver (ess/elmer.py).
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -342,9 +343,9 @@ Material 3
 
   Min Zb = Equals "bedrock"
   Max Zb = Real 0.0
-  ! backstop only: the smooth ablation cut-off keeps the ice above Hmin = 10 m
+  ! backstop only: the smooth ablation cut-off keeps the ice near Hmin = 30 m
   Min Zs = Variable "bedrock"
-    Real Lua "tx[0] + 2"
+    Real Lua "tx[0] + 5"
   Max Zs = Real 10000
 End
 
