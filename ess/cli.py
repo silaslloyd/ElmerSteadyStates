@@ -284,11 +284,15 @@ def cmd_stability(args):
         args.state = os.path.join(cfg["_work"], f"branch_{args.name}", "points", f"state_{args.point:04d}.npz")
     cfg, model, saved = _setup(args)
     prob = _problem(cfg, model)
-    spec = map_spec(cfg, "stability_map")
+    spec = map_spec(cfg, args.map)
     opt = stability_options(cfg)
     if args.m:
         opt.m = args.m
     label = os.path.splitext(os.path.basename(args.state or "state0"))[0]
+    if args.name is not None:
+        label = f"branch_{args.name}_{label}"
+    if args.map != "stability_map":
+        label += f"_{args.map}"
     sdir = os.path.join(cfg["_work"], "stability", label)
     os.makedirs(sdir, exist_ok=True)
     y = prob.scale(saved.x)
@@ -416,6 +420,9 @@ def main(argv=None):
     s.add_argument("--name", help="branch name, with --point")
     s.add_argument("--point", type=int, default=0)
     s.add_argument("--m", type=int, help="Krylov dimension (overrides [stability] m)")
+    s.add_argument("--map", default="stability_map", choices=["stability_map", "map"],
+                   help="map to linearise: [stability_map] (physical, default) or [map] (the one Newton "
+                        "and continuation use: |mu| near 1 there means an ill-conditioned Newton system)")
     s.set_defaults(fn=cmd_stability)
 
     s = sub.add_parser("toy-demo")
