@@ -219,6 +219,8 @@ def _corrector(prob, zb, t, ds, opt):
         u, info = gmres(mv, rhs, tol=opt.eta, restart=opt.gmres_restart, maxiter=opt.gmres_maxiter)
         gits += info.iterations
         dz = np.append(u[:-1] * sq, u[-1])
+        from .newton import describe_step
+        log.info(f"  corrector step: {describe_step(prob, dz[:-1])}; dp {dz[-1] * ps:+.3g}")
         dmax = np.max(np.abs(dz))
         if dmax > opt.max_step:
             dz *= opt.max_step / dmax

@@ -45,6 +45,21 @@ class NewtonResult:
     gmres_iters: list = field(default_factory=list)
 
 
+def describe_step(prob, d) -> str:
+    """Where is a (scaled) step large? Max |d| per state block, in physical units, with the node."""
+    out = []
+    lay = getattr(prob.model, "layout", None)
+    if lay is None:
+        return f"max |dy| {np.max(np.abs(d)):.3g}"
+    for b, sl in zip(lay.blocks, lay.slices().values()):
+        db = d[sl]
+        if len(db) == 0:
+            continue
+        i = int(np.argmax(np.abs(db)))
+        out.append(f"{b.name}: rms {rms(db) * b.scale:.3g}, max {db[i] * b.scale:+.3g} at node {int(b.gids[i])}")
+    return "; ".join(out)
+
+
 def newton_krylov(prob: FixedPointProblem, y0, p, opt: NewtonOptions = NewtonOptions(),
                   F0=None, checkpoint: str | None = None, label="newton") -> NewtonResult:
     y = np.asarray(y0, float).copy()
@@ -73,6 +88,7 @@ def newton_krylov(prob: FixedPointProblem, y0, p, opt: NewtonOptions = NewtonOpt
         log.info(f"{label}: it {it}  gmres {info.iterations} its, rel. res {info.residual:.2e} "
                  f"(eta {eta:.1e}){'' if info.converged else '  NOT CONVERGED'}")
         dmax = np.max(np.abs(d))
+        log.info(f"{label}: step {describe_step(prob, d)}")
         if dmax > opt.max_step:
             d *= opt.max_step / dmax
             log.info(f"{label}: step capped (max |dy| {dmax:.3g} -> {opt.max_step})")
