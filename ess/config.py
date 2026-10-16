@@ -75,7 +75,8 @@ def _opts(cls, d):
 
 def map_spec(cfg, section="map") -> MapSpec:
     m = cfg.get(section, cfg.get("map", {}))
-    return MapSpec(float(m.get("dt", 1.0)), int(m.get("n_steps", 1)), int(m.get("coupled_iters", 1)))
+    return MapSpec(float(m.get("dt", 1.0)), int(m.get("n_steps", 1)), int(m.get("coupled_iters", 1)),
+                   float(m.get("rock_heat_capacity", 1.0)))
 
 
 def newton_options(cfg) -> NewtonOptions:

@@ -203,8 +203,10 @@ def cmd_run(args):
         cfg.setdefault("map", {})["dt"] = args.dt
     if args.steps is not None:
         cfg.setdefault("map", {})["n_steps"] = args.steps
+    cfg.setdefault("map", {})["rock_heat_capacity"] = args.rock_cap
     prob = _problem(cfg, model)
-    log.info(f"run: dt = {prob.spec.dt:g}, {prob.spec.n_steps} steps per chunk")
+    log.info(f"run: dt = {prob.spec.dt:g}, {prob.spec.n_steps} steps per chunk, "
+             f"rock heat capacity x {prob.spec.rock_heat_capacity:g}")
     p = saved.p if args.p is None else args.p
     y = prob.scale(saved.x)
     for c in range(args.chunks):
@@ -382,6 +384,8 @@ def main(argv=None):
     s.add_argument("--chunks", type=int, default=1, help="number of map evaluations ([map] dt, n_steps each)")
     s.add_argument("--dt", type=float, help="time step (years), overrides [map] dt for this run")
     s.add_argument("--steps", type=int, help="steps per chunk, overrides [map] n_steps for this run")
+    s.add_argument("--rock-cap", type=float, default=1.0,
+                   help="factor on the bedrock heat capacity (default 1: physical transient)")
     s.add_argument("--out")
     s.set_defaults(fn=cmd_run)
 

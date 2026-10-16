@@ -292,7 +292,7 @@ End
 Material 1
   Name = "bedrock material"
   Density = real #rhorock
-  Heat Capacity = Real #heatcapacityrock
+  Heat Capacity = Real #heatcapacityrock*__ROCK_CAP__   ! factor < 1 only speeds up the bedrock (steady states unchanged)
   Heat Conductivity = Real #heatconductivityrock
   Mesh Elastic Modulus = Real 100.0
   Mesh Poisson Ratio = Real 0.0
@@ -301,7 +301,7 @@ End
 Material 2
   Name = "filler material"
   Density = real #rhorock
-  Heat Capacity = Real #heatcapacityrock
+  Heat Capacity = Real #heatcapacityrock*__ROCK_CAP__   ! factor < 1 only speeds up the bedrock (steady states unchanged)
   Heat Conductivity = Real #heatconductivityrock
   Mesh Elastic Modulus = Real 100.0
   Mesh Poisson Ratio = Real 0.0

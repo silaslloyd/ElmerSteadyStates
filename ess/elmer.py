@@ -116,6 +116,7 @@ class ElmerModel(Model):
             "__NSTEPS__": str(int(spec.n_steps)),
             "__DT__": repr(float(spec.dt)),
             "__COUPLED_ITERS__": str(int(spec.coupled_iters)),
+            "__ROCK_CAP__": repr(float(spec.rock_heat_capacity)),
             "__STATE_IN__": state_in,
             "__STATE_OUT__": state_out,
             "__STATE_OUT0__": state_out0,
@@ -174,7 +175,7 @@ class ElmerModel(Model):
     def _key(self, x, p, spec):
         h = hashlib.sha256()
         h.update(np.ascontiguousarray(x, "<f8").tobytes())
-        h.update(repr((float(p), spec.dt, spec.n_steps, spec.coupled_iters, self.n_procs)).encode())
+        h.update(repr((float(p), spec.dt, spec.n_steps, spec.coupled_iters, spec.rock_heat_capacity, self.n_procs)).encode())
         h.update(self.build_sif(spec).encode())
         h.update(self.params_lua(p).encode())
         for k in sorted(self.frozen):

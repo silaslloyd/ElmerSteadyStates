@@ -28,6 +28,7 @@ class MapSpec:
     dt: float
     n_steps: int
     coupled_iters: int = 1
+    rock_heat_capacity: float = 1.0   # factor on the bedrock/filler heat capacity (1 = physical)
 
     @property
     def horizon(self) -> float:

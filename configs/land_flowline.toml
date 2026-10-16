@@ -46,22 +46,27 @@ name = "Tsurf"          # any top-level assignment in parameters.lua
 value = 268.15
 scale = 1.0             # parameter change (K) counted like one scaled unit of state change
 
-# The map used by Newton and continuation: n_steps of size dt (years). Use the largest dt for which
-# the free surface stays stable (try `ess run`); T = n_steps*dt of a few hundred to a few thousand
-# years damps the fast modes so GMRES only sees the slow ones. Fixed points do not depend on dt.
+# The map used by Newton and continuation: n_steps of size dt (years). Its horizon T = n_steps*dt
+# must be comparable to the slow time scales, or GMRES stalls on all the modes that barely change
+# over T: ice-column diffusion H^2/kappa ~ 30 kyr, volume response H/a ~ 60 kyr. The 10.7 km bedrock
+# would take ~2 Myr; rock_heat_capacity < 1 speeds it up (no advection there, so steady states are
+# exactly the same). Use the largest dt the free surface tolerates (test with `ess run --dt`).
+# Fixed points do not depend on dt, n_steps or rock_heat_capacity.
 [map]
-dt = 10.0
-n_steps = 20
+dt = 200.0
+n_steps = 50
 coupled_iters = 1       # >1: iterate Stokes <-> heat within each step (same fixed points)
+rock_heat_capacity = 0.001
 
-# The map used for stability: needs |sigma| dt << 1 for the modes of interest (backward Euler
-# reports modes with sigma dt > 2 as stable).
+# The map used for stability: the physical transient (rock_heat_capacity = 1) with |sigma| dt << 1
+# for the modes of interest (backward Euler reports modes with sigma dt > 2 as stable).
 [stability_map]
-dt = 2.0
+dt = 20.0
 n_steps = 25
+rock_heat_capacity = 1.0
 
 [fd]
-eps = 1e-4              # rms size of FD perturbations in scaled units (5e-4 K, 5 mm); check with `ess check`
+eps = 1e-5              # rms size of FD perturbations in scaled units (5e-5 K, 0.5 mm); check with `ess check`
 scheme = "forward"      # or "central" (twice the runs, more accurate eigenvalues)
 
 [newton]
