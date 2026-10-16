@@ -74,7 +74,7 @@ end
 -- (f >= 1 - e^2) so a transient that thins the ice far below Hmin cannot
 -- produce an overflow; the cap is never reached near a steady state.
 ess_Hmin = 30.0     -- m, thickness of the ice layer beyond the margin (ElmerStreams: 30 m)
-ess_Hs = 10.0       -- m, width of the transition
+ess_Hs = 50.0       -- m, width of the transition (soft: a stiff edge stalls Newton)
 function AccumulationSmooth(x, H, a, L)
   local acc = (x - 0.4 * L) * 2 * a / (-0.4 * L)
   if x > 0.9 * L then acc = -5 * a end

@@ -20,8 +20,8 @@
 !!   * heat and free surface: SUPG instead of bubbles (bubble history is not part
 !!     of the saved state);
 !!   * regularised margin: ablation goes smoothly to zero (and then to a small
-!!     gain) as the ice thins to Hmin = 30 m, instead of the Min Zs = bed + 10
-!!     limiter (a non-smooth active set at the margin); finer mesh at the margin.
+!!     gain) as the ice thins to Hmin = 30 m (transition width 50 m), instead of
+!!     the Min Zs = bed + 10 limiter (a non-smooth active set at the margin).
 !!
 !! The double-underscore placeholders are filled in by the Python driver (ess/elmer.py).
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
