@@ -66,6 +66,22 @@ function Accumulation(y, x, a, W, L)
   return acc
 end
 
+-- the same, with ablation fading out smoothly as the thickness H approaches Hmin,
+-- so the thin ice beyond the margin settles at Hmin without a hard limiter:
+-- negative values are multiplied by 1 - exp(-(H - Hmin)/Hs) (0 at Hmin).
+ess_Hmin = 10.0
+ess_Hs = 5.0
+function AccumulationSmooth(x, H, a, L)
+  local acc = (x - 0.4 * L) * 2 * a / (-0.4 * L)
+  if x > 0.9 * L then acc = -5 * a end
+  if acc < 0 then
+    local f = 1 - math.exp(-(H - ess_Hmin) / ess_Hs)
+    if f < 0 then f = 0 end
+    acc = acc * f
+  end
+  return acc
+end
+
 -- surface temperature: Tsurf where the ice is thicker than 100 m, linear to
 -- T0 at zero thickness (height is measured from the bottom of the bedrock
 -- layer, which is 10*zscale thick)

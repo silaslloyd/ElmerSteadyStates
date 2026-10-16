@@ -18,7 +18,9 @@
 !!   * Elmer's built-in FreeSurfaceSolver (ElmerStreams used a copy of it);
 !!   * surface: same Robin condition, but a constant External Temperature = Tsurf;
 !!   * heat and free surface: SUPG instead of bubbles (bubble history is not part
-!!     of the saved state).
+!!     of the saved state);
+!!   * ablation goes smoothly to zero as the ice thins to Hmin = 10 m, instead of
+!!     the Min Zs = bed + 10 limiter (a non-smooth active set at the margin).
 !!
 !! The double-underscore placeholders are filled in by the Python driver (ess/elmer.py).
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -282,10 +284,12 @@ End
 
 Body Force 5
   Name = "bodyforce freesurface"
-  Zs Accumulation = Variable Coordinate 2, Coordinate 1
-    Real Lua "Accumulation(tx[0], tx[1], aDIM, W, L)"
-  Output Accumulation = Variable Coordinate 2, Coordinate 1
-    Real Lua "Accumulation(tx[0], tx[1], aDIM, W, L)"
+  ! ablation fades out smoothly as the ice approaches Hmin, so the thin ice
+  ! beyond the margin settles at Hmin without the (non-smooth) Min Zs limiter
+  Zs Accumulation = Variable Coordinate 1, Zs, bedrock
+    Real Lua "AccumulationSmooth(tx[0], tx[1] - tx[2], aDIM, L)"
+  Output Accumulation = Variable Coordinate 1, Zs, bedrock
+    Real Lua "AccumulationSmooth(tx[0], tx[1] - tx[2], aDIM, L)"
 End
 
 !---------------------------------------------------
@@ -335,8 +339,9 @@ Material 3
 
   Min Zb = Equals "bedrock"
   Max Zb = Real 0.0
+  ! backstop only: the smooth ablation cut-off keeps the ice above Hmin = 10 m
   Min Zs = Variable "bedrock"
-    Real Lua "tx[0] + 10"
+    Real Lua "tx[0] + 2"
   Max Zs = Real 10000
 End
 
@@ -774,6 +779,6 @@ Boundary Condition 20
 
   FSSA Theta = Real 1.0
   FSSA Flag = String $fssaflag
-  FSSA Accumulation =  Variable Coordinate 2, coordinate 1
-        Real Lua "Accumulation(tx[0], tx[1], aDIM, W, L)"
+  FSSA Accumulation = Variable Coordinate 1, Zs, bedrock
+        Real Lua "AccumulationSmooth(tx[0], tx[1] - tx[2], aDIM, L)"
 End
