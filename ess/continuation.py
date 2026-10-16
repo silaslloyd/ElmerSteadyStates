@@ -45,6 +45,9 @@ class ContinuationOptions:
     gmres_maxiter: int = 80
     max_step: float = 5.0          # cap on a corrector update (scaled units, max norm)
     contraction: float = 0.5       # give up a step when rms(F) falls by less than this factor per iteration
+    predictor: str = "secant"      # "secant": extrapolate the state along the secant; "parameter": keep the
+                                   # last state and step only p (for states with a moving steep front,
+                                   # which a linear extrapolation smears)
 
 
 def wdot(prob, a, b):
@@ -156,7 +159,15 @@ def continuation(prob: FixedPointProblem, y0, p0, store: BranchStore, opt: Conti
         if t_prev_p is None:
             t_prev_p = t[-1]
 
-        ok, z, F, its, gits = _corrector(prob, zb, t, ds, opt)
+        z0 = None
+        if opt.predictor == "parameter" and abs(t[-1]) >= 0.5:   # near a fold, the secant is needed
+            z0 = zb.copy()
+            z0[-1] += ds * t[-1]
+        ok, z, F, its, gits = _corrector(prob, zb, t, ds, opt, z0=z0)
+        if not ok and z0 is not None:
+            log.info("continuation: parameter predictor failed, retrying with the secant predictor")
+            ok, z, F, its2, gits2 = _corrector(prob, zb, t, ds, opt)
+            its, gits = its2, gits + gits2
         if not ok:
             ds *= 0.5
             log.info(f"continuation: corrector failed, ds -> {ds:.3g}")
@@ -198,11 +209,11 @@ def _fold_estimate(s, p):
         return float(np.nan)
 
 
-def _corrector(prob, zb, t, ds, opt):
+def _corrector(prob, zb, t, ds, opt, z0=None):
     n = prob.n
     ps = prob.p_scale
     sq = np.sqrt(n)
-    z = zb + ds * t
+    z = zb + ds * t if z0 is None else z0.copy()
     gits = 0
     try:
         F = prob.F(z[:-1], z[-1] * ps, tag="cont_F", want_diag=True)
