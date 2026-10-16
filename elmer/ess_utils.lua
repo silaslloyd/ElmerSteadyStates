@@ -39,13 +39,13 @@ function TDepSliding(C, Th, gamma, x)
   return slid
 end
 
--- > 0: Dirichlet T = T0 (temperate / unglaciated / frontal zone);
--- < 0: flux condition (cold bed). gm, ct are the frozen masks.
+-- > 0: Dirichlet T = T0 where the frozen cold/temperate mask says temperate;
+-- < 0: flux condition (geothermal + friction) everywhere else, including the
+-- unglaciated region beyond the margin. (ElmerStreams also forced T = T0 under
+-- unglaciated ice and in the last 10 km, for the hydrology; not needed here.)
 function tempbc(gm, ct, x)
   local cond = -1
-  if gm < 0 then cond = 1 end
   if ct > 0 then cond = 1 end
-  if frontdist(x) < 10000 then cond = 1 end
   return cond
 end
 

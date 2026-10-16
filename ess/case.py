@@ -10,8 +10,9 @@ Initial geometry: steady shallow-ice profile for linear (n = 1) viscous ice with
 accumulation in ess_utils.lua (margin at 0.8 L, where the flux returns to zero), on the linear bed
 b = -dbdx (zscale/xscale) x. Beyond the margin a 30 m 'unglaciated' layer (GroundedMask = 0), as in
 ElmerStreams. Initial temperature: conduction only, linear in the ice from Tsurf to the bed,
-Tb = min(Tsurf + gthf H / k, T0), geothermal gradient in the bedrock. Cold bed (ColdTempMask = -1)
-where Tb < T0 - 0.01 K under the ice, temperate (+1) elsewhere. This is only a first guess: spin it
+Tb = min(Tsurf + gthf H / k, T0), geothermal gradient in the bedrock. Temperate bed
+(ColdTempMask = +1) only under the ice where Tb reaches T0 - 0.01 K; cold (flux condition) everywhere
+else, including beyond the margin. This is only a first guess: spin it
 up with `ess run`, or go straight to `ess newton`.
 """
 from __future__ import annotations
@@ -80,7 +81,7 @@ def initial_geometry(P, n=4001):
     zs = bed + H
     Ts = P["Tsurf"]
     Tb = np.where(gm > 0, np.minimum(Ts + P["gthf"] / P["heatconductivity"] * H, P["T0"]), P["T0"])
-    ct = np.where((gm > 0) & (Tb < P["T0"] - 0.01), -1.0, 1.0)
+    ct = np.where((gm > 0) & (Tb >= P["T0"] - 0.01), 1.0, -1.0)     # temperate only under ice
     return dict(x=x, bed=bed, zs=zs, H=H, gm=gm, ct=ct, Tb=Tb, Ts_surf=np.where(gm > 0, Ts, P["T0"]))
 
 

@@ -124,13 +124,16 @@ def cmd_remask(args):
     gT = next(b.gids for b in s.layout.blocks if b.name == tname)
     Tb = s.layout.split(s.x)[tname][np.searchsorted(gT, g)]
     new = ct.copy()
-    warm = (ct < 0) & (gm > 0) & (Tb > 273.15)
+    if args.all_cold:
+        new[:] = -1.0
+        log.info(f"remask: all {len(new)} bed nodes set cold (flux condition), {int((ct > 0).sum())} were temperate")
+    warm = (new < 0) & (gm > 0) & (Tb > 273.15)
     new[warm] = 1.0
     nfreeze = 0
     try:
         gL, Lv = s.diag[find_name(s.diag, "Temperature Loads")]
         j = np.clip(np.searchsorted(gL, g), 0, len(gL) - 1)
-        freeze = (ct > 0) & (gm > 0) & (gL[j] == g) & (Lv[j] > 0)
+        freeze = (new > 0) & (gm > 0) & (gL[j] == g) & (Lv[j] > 0)
         new[freeze] = -1.0
         nfreeze = int(freeze.sum())
     except KeyError:
@@ -371,6 +374,7 @@ def main(argv=None):
     s = sub.add_parser("remask")
     common(s)
     s.add_argument("--out")
+    s.add_argument("--all-cold", action="store_true", help="start from an all-cold mask (then switch nodes above T0)")
     s.set_defaults(fn=cmd_remask)
 
     s = sub.add_parser("check")
