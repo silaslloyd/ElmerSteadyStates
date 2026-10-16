@@ -58,10 +58,12 @@ n_steps = 50
 coupled_iters = 1       # >1: iterate Stokes <-> heat within each step (same fixed points)
 rock_heat_capacity = 0.001
 
-# The map used for stability: the physical transient (rock_heat_capacity = 1) with |sigma| dt << 1
-# for the modes of interest (backward Euler reports modes with sigma dt > 2 as stable).
+# The map used for stability: the physical transient (rock_heat_capacity = 1). Use the same dt as
+# [map]: the discretisation's stabilisation depends slightly on dt, so a different dt has a slightly
+# different fixed point. Backward Euler with dt = 200 is accurate for modes slower than ~100 yr
+# (it reports modes with sigma dt > 2 as stable, so anything that fast would be missed).
 [stability_map]
-dt = 20.0
+dt = 200.0
 n_steps = 25
 rock_heat_capacity = 1.0
 
