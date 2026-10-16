@@ -16,7 +16,9 @@
 !!   * the state (Temperature on all bodies, Zs) is read/written exactly by
 !!     SteadyStateIO (no restart file, no VTU unless asked for);
 !!   * Elmer's built-in FreeSurfaceSolver (ElmerStreams used a copy of it);
-!!   * surface: same Robin condition, but a constant External Temperature = Tsurf.
+!!   * surface: same Robin condition, but a constant External Temperature = Tsurf;
+!!   * heat and free surface: SUPG instead of bubbles (bubble history is not part
+!!     of the saved state).
 !!
 !! The double-underscore placeholders are filled in by the Python driver (ess/elmer.py).
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -482,7 +484,10 @@ Solver 10
   Equation = String "Homologous Temperature Equation"
   Procedure =  File "HeatSolveVec" "HeatSolver"
   Variable = String "Temperature"
-  Element = "p:1 -tri b:1 -quad b:3 -wedge b:1 -brick b:4"
+  ! no bubbles: condensed bubbles carry their own time history, which is not
+  ! part of the state the driver saves and restores (it would restart from zero
+  ! in every run, so the map would not be a function of the state alone).
+  ! Stabilize = True then gives SUPG, whose steady state does not depend on dt.
 
   Number of Integration Points = Integer 64
   Optimize Bandwidth = Logical True
@@ -539,7 +544,8 @@ Solver 11
 
   Steady State Convergence Tolerance = 1.0e-8
 
-  Stabilization Method = Bubbles
+  ! SUPG rather than bubbles, for the same reason as the heat solver
+  Stabilization Method = Stabilized
   Apply Dirichlet = Logical True
 End
 
