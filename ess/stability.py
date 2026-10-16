@@ -66,7 +66,10 @@ def stability(prob: FixedPointProblem, y_star, p, spec: MapSpec, opt: StabilityO
         log.info(f"stability: step {st.k}: leading |mu| " +
                  ", ".join(f"{abs(m):.6f} (res {r:.1e})" for m, r in zip(mu[:k], res[:k])))
 
-    st = arnoldi(mv, v0, opt.m, checkpoint=checkpoint, callback=cb)
+    import hashlib
+    key = hashlib.sha1(np.ascontiguousarray(y_star, float).tobytes()
+                       + repr((float(p), spec, prob.fd_eps, prob.fd_scheme, opt.seed)).encode()).hexdigest()
+    st = arnoldi(mv, v0, opt.m, checkpoint=checkpoint, callback=cb, key=key)
     mu, X, res = ritz(st)
     k = min(opt.nev, len(mu))
     mu, X, res = mu[:k], X[:, :k], res[:k]

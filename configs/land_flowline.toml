@@ -100,6 +100,6 @@ stability_every = 0     # >0: a short Arnoldi (stability_m runs) at every k-th p
 stability_m = 10
 
 [stability]
-m = 30                  # Krylov dimension = model runs
+m = 50                  # Krylov dimension = model runs (slow modes cluster near |mu| = 1: needs a few dozen)
 nev = 10
-tol = 1e-3
+tol = 1e-2              # Ritz residual / |mu| for a mode to count as converged

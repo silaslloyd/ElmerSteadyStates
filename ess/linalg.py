@@ -116,13 +116,17 @@ class ArnoldiState:
     k: int             # number of completed steps
 
 
-def arnoldi(matvec, v0, m, checkpoint: str | None = None, callback=None) -> ArnoldiState:
-    """m steps of Arnoldi; resumes from (and saves to) an .npz checkpoint after every product."""
+def arnoldi(matvec, v0, m, checkpoint: str | None = None, callback=None, key: str = "") -> ArnoldiState:
+    """m steps of Arnoldi; resumes from (and saves to) an .npz checkpoint after every product.
+    `key` identifies the operator (state, map settings): a checkpoint with a different key is ignored."""
     n = len(v0)
     st = None
     if checkpoint and os.path.exists(checkpoint):
         with np.load(checkpoint) as z:
-            if z["V"].shape[1] == n:
+            same = z["V"].shape[1] == n and ("key" in z.files and str(z["key"]) == key)
+            if not same:
+                log.info(f"arnoldi: checkpoint {checkpoint} is for a different state or map, starting afresh")
+            if same:
                 V0, H0, k0 = z["V"], z["H"], int(z["k"])
                 V = np.zeros((m + 1, n))
                 H = np.zeros((m + 1, m))
@@ -147,11 +151,11 @@ def arnoldi(matvec, v0, m, checkpoint: str | None = None, callback=None) -> Arno
             log.info("arnoldi: invariant subspace found")
             st.V[j + 1] = 0
             if checkpoint:
-                np.savez(checkpoint, V=st.V, H=st.H, k=st.k)
+                np.savez(checkpoint, V=st.V, H=st.H, k=st.k, key=key)
             break
         st.V[j + 1] = w / hn
         if checkpoint:
-            np.savez(checkpoint + ".tmp.npz", V=st.V, H=st.H, k=st.k)
+            np.savez(checkpoint + ".tmp.npz", V=st.V, H=st.H, k=st.k, key=key)
             os.replace(checkpoint + ".tmp.npz", checkpoint)
         if callback:
             callback(st)
