@@ -265,8 +265,15 @@ def cmd_continue(args):
     store = BranchStore(bdir, prob, on_save=on_save)
     if len(store):
         log.info(f"continue: resuming {bdir} at point {len(store)}")
+    copt = continuation_options(cfg)
+    ds_override = getattr(args, "ds", None)
+    if ds_override is not None:
+        copt.ds = ds_override
+        if store.rows:
+            store.rows[-1]["ds"] = ds_override
+        log.info(f"continue: starting with ds = {ds_override:g}")
     continuation(prob, prob.scale(saved.x), saved.p if args.p is None else args.p, store,
-                 continuation_options(cfg), newton_options(cfg))
+                 copt, newton_options(cfg))
     log.info(f"continue: {len(store)} points in {bdir}/branch.csv; {prob.nfev} model runs "
              f"({prob.t_model / 3600:.2f} h)")
 
@@ -401,6 +408,7 @@ def main(argv=None):
     s = sub.add_parser("continue")
     common(s)
     s.add_argument("--name", help="branch name (directory <work>/branch_<name>)")
+    s.add_argument("--ds", type=float, help="arclength step to (re)start with, overriding the saved one")
     s.set_defaults(fn=cmd_continue)
 
     s = sub.add_parser("stability")
