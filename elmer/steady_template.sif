@@ -466,6 +466,7 @@ Solver 9
   Linear System Solver = Direct
   Linear System Direct Method = $directsolver
   Linear System Abort Not Converged = True
+  Linear System Convergence Tolerance = 1.0e-12   ! required by some solvers even with Direct
 
   Steady State Convergence Tolerance = Real 1.0e-8
   Number of Integration Points = Integer 44
@@ -488,6 +489,7 @@ Solver 10
   Linear System Solver = "Direct"
   Linear System Direct Method = $directsolver
   Linear System Abort Not Converged = True
+  Linear System Convergence Tolerance = 1.0e-12   ! required by some solvers even with Direct
 
   Nonlinear System Convergence Tolerance = 1.0e-10
   Nonlinear System Max Iterations = 1
@@ -528,6 +530,7 @@ Solver 11
   Linear System Solver = Direct
   Linear System Direct Method = $directsolver
   Linear System Abort Not Converged = True
+  Linear System Convergence Tolerance = 1.0e-12   ! required by some solvers even with Direct
 
   Nonlinear System Max Iterations = 100
   Nonlinear System Convergence Tolerance  = 1.0e-10
