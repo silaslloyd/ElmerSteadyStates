@@ -137,8 +137,20 @@ def continuation(prob: FixedPointProblem, y0, p0, store: BranchStore, opt: Conti
     t_prev_p = None
 
     while len(store) < opt.max_points:
-        za = np.append(ya, pa / ps)
         zb = np.append(yb, pb / ps)
+        # secant over a baseline of at least ~ds: the converged points carry errors along poorly
+        # determined directions, and a secant over a short baseline extrapolated far is mostly noise
+        za, base = np.append(ya, pa / ps), sb - sa
+        k = len(store) - 3
+        while base < ds and k >= 0:
+            yk, pk, sk = store.load(k)
+            zk = np.append(yk, pk / ps)
+            if np.sign((zb - zk)[-1]) != np.sign((zb - za)[-1]):
+                break                                   # do not reach back past a fold
+            za, base = zk, sb - sk
+            k -= 1
+        if base > sb - sa:
+            log.info(f"continuation: secant over a baseline of {base:.3g} (point {k + 1})")
         t = zb - za
         t /= wnorm(prob, t)
         if t_prev_p is None:
