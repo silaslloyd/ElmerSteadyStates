@@ -1,5 +1,6 @@
 work/
-slurms/
+slurms/*
+!slurms/.gitkeep
 *.so
 *.mod
 __pycache__/
