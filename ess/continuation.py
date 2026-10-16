@@ -227,7 +227,7 @@ def _corrector(prob, zb, t, ds, opt):
                         callback=lambda k, r: log.debug(f"  gmres {k}: {r:.3e}"))
         gits += info.iterations
         log.info(f"  corrector it {it + 1}: gmres {info.iterations} its, rel. res {info.residual:.2e} (eta {eta:.1e})"
-                 f"{'' if info.converged else '  NOT CONVERGED'}")
+                 f"{'' if info.converged else ('  STAGNATED' if info.stalled else '  NOT CONVERGED')}")
         dz = np.append(u[:-1] * sq, u[-1])
         from .newton import describe_step
         log.info(f"  corrector step: {describe_step(prob, dz[:-1])}; dp {dz[-1] * ps:+.3g}")

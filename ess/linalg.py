@@ -19,6 +19,7 @@ class GmresInfo:
     iterations: int
     residual: float            # relative residual estimate ||b - A x|| / ||b||
     history: list = field(default_factory=list)
+    stalled: bool = False
 
 
 def _orth(V, w, k):
@@ -32,8 +33,12 @@ def _orth(V, w, k):
     return w, h
 
 
-def gmres(matvec, b, x0=None, tol=1e-3, restart=40, maxiter=80, callback=None) -> tuple[np.ndarray, GmresInfo]:
-    """Solve A x = b to ||b - A x|| <= tol ||b||. matvec(v) returns A v."""
+def gmres(matvec, b, x0=None, tol=1e-3, restart=40, maxiter=80, callback=None,
+          stall_window=10, stall_factor=0.97) -> tuple[np.ndarray, GmresInfo]:
+    """Solve A x = b to ||b - A x|| <= tol ||b||. matvec(v) returns A v.
+    Stops early (not converged) when the residual has fallen by less than stall_factor over the last
+    stall_window iterations: with expensive products, a stagnating solve is better cut short and
+    its (best so far) step used."""
     b = np.asarray(b, float)
     n = b.size
     bnorm = np.linalg.norm(b)
@@ -85,7 +90,11 @@ def gmres(matvec, b, x0=None, tol=1e-3, restart=40, maxiter=80, callback=None) -
             if callback:
                 callback(total, res)
             breakdown = np.linalg.norm(w) <= 1e-14 * max(beta, 1e-300)
-            if res <= tol or breakdown or total >= maxiter:
+            h = info.history
+            stalled = stall_window and len(h) > stall_window and h[-1] > stall_factor * h[-1 - stall_window]
+            if stalled:
+                info.stalled = True
+            if res <= tol or breakdown or total >= maxiter or stalled:
                 break
             V.append(w / np.linalg.norm(w))
         yk = np.linalg.solve(np.triu(H[:k, :k]), g[:k])
@@ -94,7 +103,7 @@ def gmres(matvec, b, x0=None, tol=1e-3, restart=40, maxiter=80, callback=None) -
         if info.residual <= tol:
             info.converged = True
             break
-        if total >= maxiter:
+        if total >= maxiter or info.stalled:
             break
     info.iterations = total
     return x, info

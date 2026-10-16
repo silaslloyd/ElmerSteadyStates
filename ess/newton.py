@@ -51,12 +51,21 @@ def describe_step(prob, d) -> str:
     lay = getattr(prob.model, "layout", None)
     if lay is None:
         return f"max |dy| {np.max(np.abs(d)):.3g}"
+    diag = getattr(prob, "last_diag", {}) or {}
+    cx = next((v for k, v in diag.items() if k.lower() == "coordinate 1"), None)
+    cz = next((v for k, v in diag.items() if k.lower() == "coordinate 3"), None)
     for b, sl in zip(lay.blocks, lay.slices().values()):
         db = d[sl]
         if len(db) == 0:
             continue
         i = int(np.argmax(np.abs(db)))
-        out.append(f"{b.name}: rms {rms(db) * b.scale:.3g}, max {db[i] * b.scale:+.3g} at node {int(b.gids[i])}")
+        g = int(b.gids[i])
+        where = f"node {g}"
+        if cx is not None:
+            j = int(np.clip(np.searchsorted(cx[0], g), 0, len(cx[0]) - 1))
+            if cx[0][j] == g:
+                where += f" (x = {cx[1][j] / 1e3:.1f} km" + (f", z = {cz[1][j]:.0f} m)" if cz is not None else ")")
+        out.append(f"{b.name}: rms {rms(db) * b.scale:.3g}, max {db[i] * b.scale:+.3g} at {where}")
     return "; ".join(out)
 
 
@@ -86,7 +95,7 @@ def newton_krylov(prob: FixedPointProblem, y0, p, opt: NewtonOptions = NewtonOpt
                         callback=lambda k, r: log.debug(f"  gmres {k}: {r:.3e}"))
         giters.append(info.iterations)
         log.info(f"{label}: it {it}  gmres {info.iterations} its, rel. res {info.residual:.2e} "
-                 f"(eta {eta:.1e}){'' if info.converged else '  NOT CONVERGED'}")
+                 f"(eta {eta:.1e}){'' if info.converged else ('  STAGNATED' if info.stalled else '  NOT CONVERGED')}")
         dmax = np.max(np.abs(d))
         log.info(f"{label}: step {describe_step(prob, d)}")
         if dmax > opt.max_step:
