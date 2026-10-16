@@ -40,7 +40,7 @@ class ContinuationOptions:
     tol: float = 1e-7              # rms(F) target
     maxit: int = 8                 # corrector iterations
     target_its: int = 3            # step adaptation: ds x2 below, x1.25 at, x target/its (>= 0.5) above
-    eta: float = 1e-3              # GMRES relative tolerance in the corrector
+    eta: float = 1e-3              # smallest GMRES relative tolerance in the corrector (it starts at 0.1)
     gmres_restart: int = 40
     gmres_maxiter: int = 80
     max_step: float = 5.0          # cap on a corrector update (scaled units, max norm)
@@ -209,7 +209,6 @@ def _corrector(prob, zb, t, ds, opt):
         if it >= 2 and nf > opt.contraction * nf_prev:
             log.info(f"  corrector: not contracting (factor {nf / nf_prev:.2f}), giving up on this step")
             break
-        nf_prev = nf
         y, p = z[:-1], z[-1] * ps
 
         def mv(u, y=y, p=p, F=F):
@@ -220,8 +219,15 @@ def _corrector(prob, zb, t, ds, opt):
             return np.append(top, bot)
 
         rhs = -np.append(F / sq, N)
-        u, info = gmres(mv, rhs, tol=opt.eta, restart=opt.gmres_restart, maxiter=opt.gmres_maxiter)
+        # forcing term: loose while far from the branch, tighter as the residual falls (Eisenstat-Walker)
+        eta = 0.1 if not np.isfinite(nf_prev) else 0.9 * (nf / nf_prev) ** 2
+        eta = float(np.clip(eta, opt.eta, 0.1))
+        eta = max(eta, 0.5 * opt.tol / max(nf, 1e-300))
+        u, info = gmres(mv, rhs, tol=eta, restart=opt.gmres_restart, maxiter=opt.gmres_maxiter,
+                        callback=lambda k, r: log.debug(f"  gmres {k}: {r:.3e}"))
         gits += info.iterations
+        log.info(f"  corrector it {it + 1}: gmres {info.iterations} its, rel. res {info.residual:.2e} (eta {eta:.1e})"
+                 f"{'' if info.converged else '  NOT CONVERGED'}")
         dz = np.append(u[:-1] * sq, u[-1])
         from .newton import describe_step
         log.info(f"  corrector step: {describe_step(prob, dz[:-1])}; dp {dz[-1] * ps:+.3g}")
@@ -241,5 +247,6 @@ def _corrector(prob, zb, t, ds, opt):
             lam *= 0.5
         if Ft is None:
             return False, z, F, it, gits
+        nf_prev = nf
         z, F = zt, Ft
     return False, z, F, opt.maxit, gits
