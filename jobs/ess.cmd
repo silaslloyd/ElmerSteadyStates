@@ -20,6 +20,12 @@
 # continuation picks up from the last point, Arnoldi from its checkpoint).
 
 set -e
+# save the arguments first: `module` / profile scripts can shift the positional parameters
+ARGS=("$@")
+if [ ${#ARGS[@]} -lt 2 ]; then
+    echo "usage: sbatch jobs/ess.cmd <command> <config> [options]"; exit 1
+fi
+echo "ess ${ARGS[*]}"
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
 
@@ -30,4 +36,4 @@ if [ ! -f elmer/SteadyStateIO.so ]; then
     make -C elmer
 fi
 
-python3 -u -m ess "$@"
+python3 -u -m ess "${ARGS[@]}"
