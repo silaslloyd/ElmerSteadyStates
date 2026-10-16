@@ -214,6 +214,10 @@ def _corrector(prob, zb, t, ds, opt):
         N = wdot(prob, t, z - zb) - ds
         nf = rms(F)
         log.info(f"  corrector it {it}: rms(F) = {nf:.3e}  N = {N:.2e}")
+        from .newton import describe_step
+        if it == 0:
+            log.info(f"  predictor step: {describe_step(prob, (z - zb)[:-1])}; dp {(z - zb)[-1] * ps:+.3g}")
+        log.info(f"  residual: {describe_step(prob, F)}")
         if nf <= opt.tol and abs(N) <= max(opt.tol, 1e-10 * ds):
             return True, z, F, it, gits
         if it == opt.maxit:
