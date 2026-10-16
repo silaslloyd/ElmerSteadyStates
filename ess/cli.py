@@ -1,8 +1,11 @@
 """
 Command line driver. Run inside a batch job (it launches `mpirun ElmerSolver` itself):
 
-    python3 -m ess extract    CONFIG                 first state from a restart file -> <work>/state0.npz
+    python3 -m ess setup      CONFIG                 mesh (gmsh, ElmerGrid) and initial conditions -> <work>/case
+    python3 -m ess init       CONFIG                 first state from those initial conditions -> <work>/state0.npz
+    python3 -m ess extract    CONFIG --restart F     first state from an Elmer restart file instead
     python3 -m ess check      CONFIG [--state F]     round trip, repeatability, linearity, residual
+    python3 -m ess remask     CONFIG --state F       re-freeze the cold/temperate mask from a state
     python3 -m ess run        CONFIG [--state F] --chunks N      plain time integration
     python3 -m ess newton     CONFIG [--state F] [--p P]         steady state at fixed parameter
     python3 -m ess continue   CONFIG [--state F] [--name B]      pseudo-arclength branch (resumes)
@@ -78,14 +81,21 @@ def _mask_cols(cfg, model, saved, x, diag):
 
 # ---------------------------------------------------------------- commands
 
+def cmd_setup(args):
+    cfg = load_config(args.config)
+    setup_logging(cfg, args.verbose)
+    from .case import setup_case
+    setup_case(cfg, mesh=not args.ics_only)
+
+
 def cmd_extract(args):
     cfg = load_config(args.config)
     setup_logging(cfg, args.verbose)
     from .elmer import ElmerModel
     model = ElmerModel(cfg)
     ex = cfg.get("extract", {})
-    restart = args.restart or ex.get("restart_file")
-    if not restart:
+    restart = getattr(args, "restart", None) or (ex.get("restart_file") if args.cmd == "extract" else None)
+    if args.cmd == "extract" and not restart:
         raise SystemExit("give the restart file ([extract] restart_file or --restart)")
     rec, layout, frozen = model.extract(restart, bool(ex.get("restart_before_ics", False)))
     model.layout = layout
@@ -93,11 +103,43 @@ def cmd_extract(args):
     coords = {k: v for k, v in rec.items() if k.startswith("coordinate")}
     out = args.out or os.path.join(cfg["_work"], "state0.npz")
     p = float(cfg["parameter"]["value"])
-    save_state(out, layout, x, p, frozen, coords, source=restart)
+    save_state(out, layout, x, p, frozen, coords, source=restart or "initial conditions")
     log.info(f"wrote {out}")
     rep = _mask_cols(cfg, model, load_state(out), x, {})
     if rep:
         log.info(f"masks: {rep}")
+
+
+def cmd_remask(args):
+    """Re-freeze the cold/temperate mask from a converged state: cold -> temperate where the bed is
+    above T0, temperate -> cold where the bed refreezes (Temperature Loads > 0)."""
+    cfg = load_config(args.config)
+    setup_logging(cfg, args.verbose)
+    s = _saved(cfg, args.state)
+    from .statefile import find_name
+    k = find_name(s.frozen, "ColdTempMask")
+    g, ct = s.frozen[k]
+    gm = s.frozen[find_name(s.frozen, "GroundedMask")][1]
+    tname = next(b.name for b in s.layout.blocks if b.name.lower() == "temperature")
+    gT = next(b.gids for b in s.layout.blocks if b.name == tname)
+    Tb = s.layout.split(s.x)[tname][np.searchsorted(gT, g)]
+    new = ct.copy()
+    warm = (ct < 0) & (gm > 0) & (Tb > 273.15)
+    new[warm] = 1.0
+    nfreeze = 0
+    try:
+        gL, Lv = s.diag[find_name(s.diag, "Temperature Loads")]
+        j = np.clip(np.searchsorted(gL, g), 0, len(gL) - 1)
+        freeze = (ct > 0) & (gm > 0) & (gL[j] == g) & (Lv[j] > 0)
+        new[freeze] = -1.0
+        nfreeze = int(freeze.sum())
+    except KeyError:
+        log.warning("remask: no Temperature Loads in this state, only cold -> temperate switches")
+    frozen = dict(s.frozen)
+    frozen[k] = (g, new)
+    out = args.out or os.path.splitext(args.state or os.path.join(cfg["_work"], "state0.npz"))[0] + "_remask.npz"
+    save_state(out, s.layout, s.x, s.p, frozen, s.diag, **s.meta)
+    log.info(f"remask: {int(warm.sum())} nodes cold -> temperate, {nfreeze} temperate -> cold; wrote {out}")
 
 
 def cmd_check(args):
@@ -303,11 +345,26 @@ def main(argv=None):
             s.add_argument("--state", help="driver state file (.npz); default <work>/state0.npz")
             s.add_argument("--p", type=float, help="parameter value (default: the one stored with the state)")
 
+    s = sub.add_parser("setup")
+    common(s, state=False)
+    s.add_argument("--ics-only", action="store_true", help="only rewrite the initial-condition tables")
+    s.set_defaults(fn=cmd_setup)
+
+    s = sub.add_parser("init")
+    common(s, state=False)
+    s.add_argument("--out")
+    s.set_defaults(fn=cmd_extract)
+
     s = sub.add_parser("extract")
     common(s, state=False)
     s.add_argument("--restart", help="restart file name (relative to the mesh directory)")
     s.add_argument("--out")
     s.set_defaults(fn=cmd_extract)
+
+    s = sub.add_parser("remask")
+    common(s)
+    s.add_argument("--out")
+    s.set_defaults(fn=cmd_remask)
 
     s = sub.add_parser("check")
     common(s)

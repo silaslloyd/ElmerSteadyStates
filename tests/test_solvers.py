@@ -139,6 +139,8 @@ def test_elmer_driver_with_fake_elmer(tmp_path):
         [paths]
         work_dir = "{work}"
         case_dir = "{case}"
+        [case]
+        parameters = "{case}/parameters.lua"
         [elmer]
         n_procs = 3
         mpirun = "{sys.executable} {HERE}/fake_elmer.py {{n}}"
@@ -178,3 +180,15 @@ def test_elmer_driver_with_fake_elmer(tmp_path):
     n_runs = len(os.listdir(work / "cache"))
     assert main(["newton", str(cfg), "--state", str(work / "steady_p265.npz")]) == 0
     assert len(os.listdir(work / "cache")) <= n_runs + 1
+
+
+def test_case_setup_initial_conditions(tmp_path):
+    from ess.case import eval_lua_parameters, initial_geometry, write_ics
+    P = eval_lua_parameters(os.path.join(os.path.dirname(HERE), "case", "parameters.lua"))
+    assert abs(P["Tsurf"] - 268.15) < 1e-12 and P["p0"] == 0.0
+    g = initial_geometry(P)
+    xm = g["x"][g["gm"] > 0].max()
+    assert abs(xm - 0.8 * P["L"]) < 0.01 * P["L"]
+    assert 1000 < g["H"].max() < 4000 and np.all(g["Tb"] <= P["T0"])
+    write_ics(g, str(tmp_path))
+    assert (tmp_path / "ics.lua").read_text().count("function") == 3

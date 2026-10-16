@@ -1,11 +1,15 @@
-# ElmerSteadyStates: Land_Term thermo-coupled flowline (ElmerStreams/Land_Term), continuation in Tsurf.
-# Relative paths are relative to the repository root; {case_dir} and {repo} are expanded.
+# ElmerSteadyStates: thermo-coupled land-terminating flowline, continuation in Tsurf.
+# Relative paths are relative to the repository root; {work}, {case_dir} and {repo} are expanded.
 
 [paths]
 work_dir = "work/land_flowline"
-# the ElmerStreams Land_Term case directory: mesh (footprint/), Initialisation/Dimensional_ICs/*.xy,
-# parameters.lua and the restart file. It is only read, never written.
-case_dir = "/SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/Land_Term"
+case_dir = "{work}/case"                # mesh and initial conditions, written by `ess setup`
+
+[case]
+parameters = "case/parameters.lua"      # physical parameters (copied into the case directory)
+geo = "case/flowline.geo.in"            # footprint geometry template
+gmsh = "gmsh"
+elmergrid = "ElmerGrid"
 
 [model]
 type = "elmer"
@@ -13,11 +17,9 @@ type = "elmer"
 [elmer]
 template = "elmer/steady_template.sif"
 mesh_db = "footprint"
-src_dir = "{case_dir}/../SRC"          # compiled ElmerStreams solvers (FreeSurfaceSolver.so)
 ess_lib = "elmer/SteadyStateIO"         # build with: make -C elmer
 ess_utils = "elmer/ess_utils.lua"
-parameters = "{case_dir}/parameters.lua"
-n_procs = 0                             # 0: $SLURM_NTASKS. The mesh must be partitioned for this many.
+n_procs = 0                             # 0: $SLURM_NTASKS. `ess setup` partitions the mesh for this many.
 mpirun = "mpirun -np {n}"
 solver = "ElmerSolver"
 timeout = 21600                         # seconds per Elmer run
@@ -34,11 +36,9 @@ scales = { Temperature = 5.0, Zs = 50.0 }   # K and m per scaled unit (norms, to
 frozen = ["ColdTempMask", "GroundedMask", "Zb", "bedrock"]
 
 [extract]
-# Restart file (in the mesh directory, written with the same number of partitions). InitialT.result
-# from Initialisation, or the .result of a ThermoCoupled run.
-restart_file = "InitialT.result"
-# true: masks/bedrock/Zb from the Initialisation .xy files; false: from the restart where it has them
-# (use false when restarting from a ThermoCoupled run whose masks you want to keep).
+# Only for `ess extract --restart FILE` (start from an Elmer .result in the mesh directory, written
+# with the same partitioning). true: masks/bedrock/Zb from the `ess setup` tables; false: from the
+# restart where it has them.
 restart_before_ics = true
 
 [parameter]

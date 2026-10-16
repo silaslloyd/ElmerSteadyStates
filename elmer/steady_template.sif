@@ -2,7 +2,8 @@
 !! ElmerSteadyStates: one evaluation of the time-step map  x -> Phi(x)
 !!
 !! Derived from ElmerStreams/Land_Term/ThermoCoupled_template.sif
-!! (3-layer flowline: bedrock, filler, ice). The physics is unchanged except:
+!! (3-layer flowline: bedrock, filler, ice), but self-contained: mesh, tables
+!! and parameters come from `ess setup`. The physics is unchanged except:
 !!   * no strain heating (Solver 11 and the ice Heat Source removed);
 !!   * no hydrology (sheet solver, effective pressure, melt source removed);
 !!   * the cold/temperate mask, grounded mask, Zb and bedrock are frozen:
@@ -13,7 +14,8 @@
 !!   * direct (MUMPS) linear solvers, Abort Not Converged = True, so the map
 !!     is deterministic and accurate enough for finite-difference Jacobians;
 !!   * the state (Temperature on all bodies, Zs) is read/written exactly by
-!!     SteadyStateIO (no restart file, no VTU unless asked for).
+!!     SteadyStateIO (no restart file, no VTU unless asked for);
+!!   * Elmer's built-in FreeSurfaceSolver (ElmerStreams used a copy of it).
 !!
 !! The double-underscore placeholders are filled in by the Python driver (ess/elmer.py).
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -28,6 +30,10 @@ $fssaflag = "full"
 
 !---LUA BEGIN
 ! assert(loadfile('__PARAMS__'))()
+!---LUA END
+
+!---LUA BEGIN
+! assert(loadfile('__CASE_DIR__/ics/ics.lua'))()
 !---LUA END
 
 Header
@@ -174,40 +180,71 @@ End
 !---------------------------------------------------
 !---------------- INITIAL CONDITIONS ---------------
 !---------------------------------------------------
+! Used only for the very first state (`ess init`, no state file yet); afterwards
 ! Temperature, Zs and the frozen fields are set by Solver 1 (StateRead).
-! The values below are only used when extracting the first state (no state
-! file yet), and then only for variables missing from the restart file.
+! Tables and ics.lua are written by `ess setup`. Coordinates are the unmapped
+! extruded ones here (bedrock 0..0.5, ice 0.5..1).
 
 Initial Condition 1
+  Temperature = Variable Coordinate 1, Coordinate 3
+    Real Lua "Tinit_rock(tx[0], tx[1])"
+  Bedrock = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/bed.xy"
+    End
 End
 
 Initial Condition 2
+  Temperature = Variable Coordinate 1, Coordinate 3
+    Real Lua "Tinit_rock(tx[0], tx[1])"
+  Bedrock = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/bed.xy"
+    End
 End
 
 Initial Condition 3
   Velocity 2 = 0.0
+  Temperature = Variable Coordinate 1, Coordinate 3
+    Real Lua "Tinit_ice(tx[0], tx[1])"
+  Bedrock = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/bed.xy"
+    End
 End
 
 Initial Condition 4
+  Temperature = Variable Coordinate 1, Coordinate 3
+    Real Lua "Tinit_ice(tx[0], tx[1])"
   GroundedMask = Variable Coordinate 1
     Real
-      Include "__CASE_DIR__/Initialisation/Dimensional_ICs/GM_dim.xy"
+      Include "__CASE_DIR__/ics/gm.xy"
     End
   ColdTempMask = Variable Coordinate 1
     Real
-      Include "__CASE_DIR__/Initialisation/Dimensional_ICs/ctmask_dim.xy"
+      Include "__CASE_DIR__/ics/ctmask.xy"
     End
   Bedrock = Variable Coordinate 1
     Real
-      Include "__CASE_DIR__/Initialisation/Dimensional_ICs/bed_dim.xy"
+      Include "__CASE_DIR__/ics/bed.xy"
     End
   Zb = Variable Coordinate 1
     Real
-      Include "__CASE_DIR__/Initialisation/Dimensional_ICs/bed_dim.xy"
+      Include "__CASE_DIR__/ics/bed.xy"
     End
 End
 
 Initial Condition 5
+  Temperature = Variable Coordinate 1, Coordinate 3
+    Real Lua "Tinit_ice(tx[0], tx[1])"
+  Zs = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/zs.xy"
+    End
+  Bedrock = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/bed.xy"
+    End
 End
 
 !---------------------------------------------------
@@ -480,7 +517,7 @@ End
 Solver 11
   Equation = "Free Surface Top"
   Exec Solver = "after Timestep"
-  Procedure =  "__ES_SRC__/FreeSurfaceSolver.so" "FreeSurfaceSolver"
+  Procedure =  "FreeSurfaceSolver" "FreeSurfaceSolver"
   Variable = "Zs"
   Variable DOFS =  1
   Exported Variable 1 = -dofs 1 "Zs Residual"

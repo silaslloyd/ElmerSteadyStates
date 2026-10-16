@@ -51,10 +51,9 @@ class ElmerModel(Model):
         self.case_dir = cfg["paths"]["case_dir"]
         self.template = cfg["_path"](e.get("template", "elmer/steady_template.sif"))
         self.mesh_db = e.get("mesh_db", "footprint")
-        self.src_dir = cfg["_path"](e.get("src_dir", "{case_dir}/../SRC"))
         self.ess_lib = cfg["_path"](e.get("ess_lib", "elmer/SteadyStateIO"))
         self.ess_utils = cfg["_path"](e.get("ess_utils", "elmer/ess_utils.lua"))
-        self.params_file = cfg["_path"](e.get("parameters", "{case_dir}/parameters.lua"))
+        self.params_file = cfg["_path"](cfg.get("case", {}).get("parameters", "case/parameters.lua"))
         self.n_procs = int(e.get("n_procs", 0)) or int(os.environ.get("SLURM_NTASKS", "1"))
         self.mpirun = e.get("mpirun", "mpirun -np {n}")
         self.solver = e.get("solver", "ElmerSolver")
@@ -82,7 +81,7 @@ class ElmerModel(Model):
     def _check_inputs(self):
         mesh = os.path.join(self.case_dir, self.mesh_db)
         if not os.path.isdir(mesh):
-            log.warning(f"mesh directory not found: {mesh}")
+            log.warning(f"mesh directory not found: {mesh} (run `ess setup` first)")
         elif self.n_procs > 1 and not os.path.isdir(os.path.join(mesh, f"partitioning.{self.n_procs}")):
             log.warning(f"no {mesh}/partitioning.{self.n_procs}: partition the mesh for {self.n_procs} "
                         f"processes (ElmerGrid ... -metiskway {self.n_procs})")
@@ -113,7 +112,6 @@ class ElmerModel(Model):
             "__MESH_DIR__": self.case_dir,
             "__MESH_NAME__": self.mesh_db,
             "__CASE_DIR__": self.case_dir,
-            "__ES_SRC__": self.src_dir,
             "__ESS_LIB__": self.ess_lib,
             "__NSTEPS__": str(int(spec.n_steps)),
             "__DT__": repr(float(spec.dt)),
@@ -226,8 +224,9 @@ class ElmerModel(Model):
         return xo, (diag if want_diag else {})
 
     # ---------------------------------------------------------------- first state
-    def extract(self, restart_file: str, restart_before_ics: bool = False, p=None):
-        """Run the template once from a restart file and write the state as it is at the start.
+    def extract(self, restart_file: str | None = None, restart_before_ics: bool = False, p=None):
+        """Run the template once (from the initial conditions of `ess setup`, or from a restart file)
+        and write the state as it is at the start.
         Returns (records, layout, frozen)."""
         p = self.cfg["parameter"]["value"] if p is None else p
         run_dir = self._new_run_dir("extract")

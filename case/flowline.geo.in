@@ -1,0 +1,25 @@
+// Flowline footprint, one element wide, refined around the initial ice margin (0.8 L).
+// Generated values are filled in by `ess setup` from parameters.lua. The physical-group order
+// (inflow, front, side1, side2) gives Elmer boundaries 1-4, which the extruded mesh and
+// steady_template.sif rely on.
+L = {L};
+W = {Wmesh};
+resb = {BoundaryRes};
+resm = {MarginRes};
+Point(1) = {0, 0, 0, resb};
+Point(2) = {L*0.8*(1-1/16), 0, 0, resm/2};
+Point(3) = {L*0.8, 0, 0, resm/2};
+Point(4) = {L*0.8*(1+1/16), 0, 0, resm};
+Point(5) = {L, 0, 0, resb};
+Line(1) = {1, 2};
+Line(2) = {2, 3};
+Line(3) = {3, 4};
+Line(4) = {4, 5};
+Extrude {0, W, 0} {
+  Curve{1}; Curve{2}; Curve{3}; Curve{4}; Recombine; Layers{1};
+}
+Physical Surface(21) = {8, 12, 16, 20};
+Physical Curve(22) = {6};
+Physical Curve(23) = {19};
+Physical Curve(24) = {1, 2, 3, 4};
+Physical Curve(25) = {5, 9, 13, 17};

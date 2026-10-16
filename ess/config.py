@@ -35,18 +35,16 @@ def load_config(path: str) -> dict:
     cfg["_repo"] = REPO
     cfg["_config"] = os.path.abspath(path)
     work = cfg["paths"].get("work_dir", "work/" + os.path.splitext(os.path.basename(path))[0])
-    case = cfg["paths"].get("case_dir", "")
-    fmt = dict(repo=REPO, case_dir=case)
+    fmt = dict(repo=REPO, case_dir="", work="")
 
     def p(s):
-        s = str(s).format(**fmt, work=cfg.get("_work", ""))
+        s = str(s).format(**fmt)
         s = os.path.expanduser(os.path.expandvars(s))
         return s if os.path.isabs(s) else os.path.normpath(os.path.join(REPO, s))
 
     cfg["_path"] = p
-    cfg["paths"]["case_dir"] = p(case) if case else ""
-    fmt["case_dir"] = cfg["paths"]["case_dir"]
-    cfg["_work"] = p(work)
+    cfg["_work"] = fmt["work"] = p(work)
+    cfg["paths"]["case_dir"] = fmt["case_dir"] = p(cfg["paths"].get("case_dir", "{work}/case"))
     os.makedirs(cfg["_work"], exist_ok=True)
     return cfg
 
