@@ -1,0 +1,195 @@
+# ElmerSteadyStates
+
+Steady states (stable *and* unstable), pseudo-arclength continuation and linear stability for Elmer/Ice
+models. It drives an unmodified Elmer time stepper from Python.
+
+The first case is the thermo-coupled Land_Term flowline from
+[ElmerStreams](https://github.com/silaslloyd/ElmerStreams). That model has subtemperate sliding, a free
+surface, and a bedrock and filler layer, and the parameter followed here is the surface temperature
+`Tsurf`. ElmerStreams is only read: its case directory supplies the mesh, the initial-condition
+tables, `parameters.lua` and the compiled custom solvers.
+
+## Idea
+
+Elmer only time-steps, and a time stepper can never converge to an unstable steady state. So instead
+of the time-stepper's own iteration, the driver solves for the steady state directly:
+
+* **State.** `x = (Temperature on all nodes of bedrock, filler and ice, Zs on the surface nodes)`.
+  The velocity is slaved to `x` and recomputed by Stokes at every step, so it is not part of the
+  state.
+* **Map.** `Phi(x)` = one Elmer run of `n_steps` of size `dt` starting from `x`. The state is read
+  and written exactly by `elmer/SteadyStateIO.F90`: binary doubles keyed by global node number, so
+  there is no restart file and no ASCII rounding.
+* **Steady states.** These are fixed points, `F(x) = Phi(x) - x = 0`. They are solved by
+  **Newton–Krylov** (Tuckerman's method):
+  * GMRES on `J = DPhi - I`, with each `J v` computed as a finite difference, i.e. one Elmer run.
+  * The time stepper itself is the preconditioner. Modes that decay fast within the horizon
+    `T = n_steps dt` have `DPhi ≈ 0`, so `J ≈ -I` on them. GMRES therefore only has to resolve the
+    slow modes and the unstable ones.
+  * Newton converges to unstable states as readily as to stable ones.
+* **Continuation.** Pseudo-arclength continuation in one parameter `p` (any top-level assignment in
+  `parameters.lua`):
+  * The bordered Newton system is also solved matrix-free.
+  * One Elmer run gives `J dy + F_p dp` at once.
+  * Folds are passed and located: the parameter turns, and a quadratic estimate of `p_fold` is
+    printed.
+* **Stability.** Arnoldi on `DPhi` at a steady state, at one Elmer run per Krylov vector.
+  * Eigenvalues `mu = exp(sigma T)` give `sigma = log(mu)/T`.
+  * Because the steps are backward Euler, `sigma_be = (1 - mu^(-1/n))/dt` is also reported.
+  * `|mu| > 1` means unstable.
+
+Steady states of the staggered scheme (Stokes then heat then free surface in each step) are exactly
+the steady states of the coupled equations. They do not depend on `dt` or on the coupling
+iterations; only the transient path does.
+
+## Changes relative to `Land_Term/ThermoCoupled_template.sif`
+
+`elmer/steady_template.sif` keeps the same mesh, extrusion, bodies, materials, Stokes, heat and free
+surface solvers, and the same sliding law and boundary conditions, except for these changes:
+
+* **No strain heating.** The deformational-heat solver and the ice `Heat Source` are removed.
+  Frictional heating at the bed (`Temperature Load` from Stokes loads × velocity) is kept.
+* **No hydrology.** The sheet solver, effective pressure and melt source are removed; sliding never
+  used them.
+* **Frozen masks.** `ColdTempMask`, `GroundedMask`, `Zb` and `bedrock` are taken once from the first
+  state and then read from the state file in every run; they are never recomputed. Mask switching is
+  non-smooth, and Newton needs a smooth map. The driver reports, at every converged state, where the
+  frozen mask is inconsistent:
+  * `cold_above_Tm`: cold-bed nodes above the melting point.
+  * `temp_freezing`: temperate nodes where the bed refreezes.
+* **Autonomous.** Neither accumulation nor surface temperature depends on time.
+* **No noise field and no GL-distance solver.** The 10 km frontal zone uses `L - x` instead.
+* **Diagnostics removed:** the stress, Fw, distance and grounded/cold mask solvers. The limiter is
+  off.
+* **Direct solvers.** MUMPS is used for Stokes, heat and free surface, with
+  `Abort Not Converged = True`. This makes the map deterministic and accurate enough for
+  finite-difference Jacobians.
+
+Things the driver does **not** change, worth knowing when comparing with the analytic S-curve:
+
+* The surface condition is a Robin (heat transfer coefficient 1 in MPa m yr⁻¹ K⁻¹, i.e. about a
+  66 m conductive skin), not a Dirichlet condition.
+* The bed temperature is not capped at T0 on the cold part of the bed.
+
+## Setup (cluster)
+
+```bash
+git clone https://github.com/silaslloyd/ElmerSteadyStates.git
+cd ElmerSteadyStates
+module load elmerfem
+make -C elmer                      # builds elmer/SteadyStateIO.so with elmerf90
+```
+
+Then edit `configs/land_flowline.toml`:
+
+* `case_dir`: the Land_Term directory. It needs its `footprint` mesh partitioned for the number of
+  MPI tasks you will use, the `Initialisation/Dimensional_ICs` tables, and `../SRC/FreeSurfaceSolver.so`.
+* `[extract] restart_file`: a `.result` file in the mesh directory, written with the same number of
+  partitions.
+
+The driver is plain Python 3 with numpy only (Python ≥ 3.11 for `tomllib`, or `pip install tomli`).
+It runs serially inside the batch job and launches `mpirun -np $SLURM_NTASKS ElmerSolver` for every
+map evaluation.
+
+## Workflow
+
+Run each command with `sbatch jobs/ess.cmd <command> configs/land_flowline.toml [options]`. Every
+command writes under `work/land_flowline/`, and logs go to `work/land_flowline/ess.log`.
+
+1. **`extract`**: one Elmer run from the restart file. Writes `state0.npz`, containing the state,
+   the frozen fields and the node coordinates.
+2. **`check`**: verifies the map is fit for Newton.
+   * `roundtrip` must say *exact*.
+   * `repeat` (two identical runs) should be far below `[fd] eps`.
+   * `linearity` prints `J v` for decreasing perturbation sizes. Pick `[fd] eps` inside the plateau.
+   * `residual` shows how far `state0` is from steady.
+3. **`run --chunks N`** (optional): plain time integration. Use it to spin up, or to find the
+   largest `dt` for which the free surface stays stable.
+4. **`newton [--p P]`**: steady state at fixed `p` → `steady_p<P>.npz`.
+5. **`continue`**: the branch, written to `branch_<name>/`:
+   * `branch.csv` holds one row per point: parameter, arclength, residual, iteration counts, fold
+     flag and mask diagnostics.
+   * `points/state_XXXX.npz` holds each full state.
+   * Set `stability_every = k` in `[continuation]` for a short Arnoldi at every k-th point, which
+     marks the points as stable or unstable.
+6. **`stability --name <branch> --point K`** (or `--state file.npz`): leading eigenvalues and
+   eigenvectors → `stability/<label>/stability.npz`.
+
+A job that times out can simply be resubmitted with the same command:
+
+* Every finished Elmer run is cached by a hash of its inputs, so no run is repeated.
+* Continuation resumes from its last two points.
+* Arnoldi resumes from its checkpoint.
+
+**Plots**: rsync `work/` back to your machine, then run in the IDE (plotly, linear axes):
+
+* `plots/plot_branch.py`: bifurcation diagram, with folds and stability marked.
+* `plots/plot_state.py`: basal temperature, surface and temperature field of a state, or of an
+  eigenmode from a `stability.npz`.
+
+## Choosing the maps
+
+* **`[map]`, for Newton and continuation.** Use the largest `dt` the free surface tolerates, with a
+  horizon `T` long enough to damp the fast modes.
+
+  `T` must not be *too* long on unstable branches. A mode growing at rate `sigma` is amplified by
+  `exp(sigma T)` per evaluation, and once `sigma T` is more than a few the finite-difference
+  products leave the linear range. Continuation then has to take tiny steps, or Elmer fails (the toy
+  model shows this). If that happens, shorten `T`.
+* **`[stability_map]`.** Needs `|sigma| dt << 1` for the modes you care about. Backward Euler damps
+  a mode with `sigma dt > 2` to `|mu| < 1`, so such an unstable mode would be reported as stable.
+
+  The staggered coupling also has an O(dt) error in growth rates (2–5 % at `sigma dt ≈ 0.03` in the
+  toy). Its sign is robust; check its magnitude by halving `dt`.
+* **`[parameter] scale`.** The parameter change that counts as much as one scaled unit of state
+  change in the arclength.
+  * Too small, and the steps crawl.
+  * Too large, and the branch looks sharply curved at the fold, so steps there become tiny.
+
+## Non-smooth parts (where Newton can struggle)
+
+* **The frozen masks.** Their consistency is checked at every converged state. If a branch runs into
+  `cold_above_Tm > 0`, the state is no longer physical with that mask. Re-freeze the mask from the
+  new state (re-extract) and continue piecewise.
+* **The free-surface `Min Zs` limiter**, at the margin.
+* **The `max(·, 0)` in the friction loads.**
+* **The `T > Tm` cap inside the sliding law.**
+
+A Jacobian across any of these kinks is poor. `check` (the linearity plateau) shows whether that is
+happening at the current state.
+
+## Testing without Elmer
+
+`ess/toy.py` is a stand-in model: an ice column with subtemperate frictional heating plus a
+thickness variable. Its S-curve and fold are known exactly. `python3 -m ess toy-demo` runs the whole
+pipeline on it, from Newton through continuation round the fold to stability.
+
+The tests in `tests/test_solvers.py` check:
+
+* the unstable middle branch and its growth rate;
+* Arnoldi against the exact map Jacobian;
+* the fold location to 1e-5;
+* resuming;
+* the Elmer plumbing, end to end, with `tests/fake_elmer.py` in place of `mpirun ElmerSolver`:
+  partitioned files, shared nodes, extract, check, newton and cache.
+
+```bash
+python3 -m pytest tests
+```
+
+`SteadyStateIO.F90` and the sif template have not been run through Elmer yet (no Elmer where this
+was written). Expect the first `make` / `extract` / `check` to need small fixes; `check` is designed
+to catch them.
+
+## Layout
+
+```
+ess/            driver: statefile (binary state files, layout), model (map, scaled problem),
+                elmer (Elmer runs, cache, mask report), linalg (GMRES, Arnoldi), newton,
+                continuation, stability, toy, config, cli
+elmer/          steady_template.sif, ess_utils.lua, SteadyStateIO.F90, Makefile
+configs/        land_flowline.toml
+jobs/           ess.cmd (SLURM, mpirun)
+plots/          plot_branch.py, plot_state.py
+tests/          test_solvers.py, fake_elmer.py
+```

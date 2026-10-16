@@ -1,0 +1,7 @@
+work/
+slurms/
+*.so
+*.mod
+__pycache__/
+*.pyc
+.pytest_cache/

@@ -1,0 +1,100 @@
+# ElmerSteadyStates: Land_Term thermo-coupled flowline (ElmerStreams/Land_Term), continuation in Tsurf.
+# Relative paths are relative to the repository root; {case_dir} and {repo} are expanded.
+
+[paths]
+work_dir = "work/land_flowline"
+# the ElmerStreams Land_Term case directory: mesh (footprint/), Initialisation/Dimensional_ICs/*.xy,
+# parameters.lua and the restart file. It is only read, never written.
+case_dir = "/SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/Land_Term"
+
+[model]
+type = "elmer"
+
+[elmer]
+template = "elmer/steady_template.sif"
+mesh_db = "footprint"
+src_dir = "{case_dir}/../SRC"          # compiled ElmerStreams solvers (FreeSurfaceSolver.so)
+ess_lib = "elmer/SteadyStateIO"         # build with: make -C elmer
+ess_utils = "elmer/ess_utils.lua"
+parameters = "{case_dir}/parameters.lua"
+n_procs = 0                             # 0: $SLURM_NTASKS. The mesh must be partitioned for this many.
+mpirun = "mpirun -np {n}"
+solver = "ElmerSolver"
+timeout = 21600                         # seconds per Elmer run
+keep_runs = false                       # true: keep every run directory (sif, log, state files)
+cache = true                            # reuse finished runs (a restarted job repeats no runs)
+vtu = false                             # true: every run also writes a VTU at its end
+# written with every run besides the state, used for the mask checks and plots
+diagnostics = ["Temperature Loads", "Temperature Boundary Weights", "Friction Loads",
+               "Velocity 1", "Velocity 3", "Zb", "ColdTempMask", "GroundedMask"]
+
+[state]
+variables = ["Temperature", "Zs"]       # the state vector (velocity is slaved to it)
+scales = { Temperature = 5.0, Zs = 50.0 }   # K and m per scaled unit (norms, tolerances, FD steps)
+frozen = ["ColdTempMask", "GroundedMask", "Zb", "bedrock"]
+
+[extract]
+# Restart file (in the mesh directory, written with the same number of partitions). InitialT.result
+# from Initialisation, or the .result of a ThermoCoupled run.
+restart_file = "InitialT.result"
+# true: masks/bedrock/Zb from the Initialisation .xy files; false: from the restart where it has them
+# (use false when restarting from a ThermoCoupled run whose masks you want to keep).
+restart_before_ics = true
+
+[parameter]
+name = "Tsurf"          # any top-level assignment in parameters.lua
+value = 268.15
+scale = 1.0             # parameter change (K) counted like one scaled unit of state change
+
+# The map used by Newton and continuation: n_steps of size dt (years). Use the largest dt for which
+# the free surface stays stable (try `ess run`); T = n_steps*dt of a few hundred to a few thousand
+# years damps the fast modes so GMRES only sees the slow ones. Fixed points do not depend on dt.
+[map]
+dt = 10.0
+n_steps = 20
+coupled_iters = 1       # >1: iterate Stokes <-> heat within each step (same fixed points)
+
+# The map used for stability: needs |sigma| dt << 1 for the modes of interest (backward Euler
+# reports modes with sigma dt > 2 as stable).
+[stability_map]
+dt = 2.0
+n_steps = 25
+
+[fd]
+eps = 1e-4              # rms size of FD perturbations in scaled units (5e-4 K, 5 mm); check with `ess check`
+scheme = "forward"      # or "central" (twice the runs, more accurate eigenvalues)
+
+[newton]
+tol = 1e-6              # rms(Phi(x) - x) in scaled units over one map horizon
+maxit = 15
+eta_max = 0.1
+eta_min = 1e-5
+gmres_restart = 60
+gmres_maxiter = 150
+max_step = 2.0          # max change per Newton step, scaled units (10 K, 100 m)
+linesearch = 6
+
+[continuation]
+name = "Tsurf"
+ds = 0.5
+ds_min = 1e-3
+ds_max = 2.0
+dp0 = 0.25              # first step in Tsurf (K); its sign sets the direction
+p_min = 255.0
+p_max = 273.0
+max_points = 60
+max_folds = 4
+tol = 1e-6
+maxit = 8
+target_its = 3
+eta = 1e-3
+gmres_restart = 60
+gmres_maxiter = 150
+max_step = 2.0
+stability_every = 0     # >0: a short Arnoldi (stability_m runs) at every k-th point
+stability_m = 10
+
+[stability]
+m = 30                  # Krylov dimension = model runs
+nev = 10
+tol = 1e-3
