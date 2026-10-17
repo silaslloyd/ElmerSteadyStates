@@ -47,14 +47,16 @@ def eval_lua_parameters(path: str) -> dict:
     return v
 
 
-def initial_geometry(P, n=4001):
+def initial_geometry(P, n=4001, x_end=1.0, edge=30.0):
+    """x_end < 1: fixed-margin mode, the domain ends at x_end * L (the margin, 0.8 L), ice everywhere,
+    thickness `edge` at the margin."""
     L = P["L"]
     a = P["aDIM"]
     rg = P["rhoi"] * P["gravity"]
     eta = P["viscosity"]
     slope = P["dbdx"] * P["zscale"] / P["xscale"]
     xm = 0.8 * L
-    x = np.linspace(0, L, n)
+    x = np.linspace(0, min(x_end, 1.0) * L, n)
     bed = -slope * x
     # flux of the accumulation (x - 0.4 L) 2a / (-0.4 L): q = 2a (x - x^2 / (0.8 L)), zero at 0 and 0.8 L
     q = lambda s: 2 * a * (s - s * s / (0.8 * L))
@@ -63,7 +65,7 @@ def initial_geometry(P, n=4001):
     xs = np.linspace(xm, 0, 40001)
     h = xs[1] - xs[0]
     u = np.zeros(len(xs))
-    u[0] = 30.0 ** 4
+    u[0] = (edge if x_end < 1.0 else 30.0) ** 4
 
     def f(s, uu):
         return -12 * eta * q(s) / rg - 4 * max(uu, 0.0) ** 0.75 * bx
@@ -76,8 +78,12 @@ def initial_geometry(P, n=4001):
         k4 = f(s + h, uu + h * k3)
         u[i + 1] = uu + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
     H_ice = np.interp(x, xs[::-1], np.maximum(u[::-1], 0) ** 0.25, right=0.0)
-    gm = (H_ice > 150).astype(float)
-    H = np.where(gm > 0, H_ice, 30.0)
+    if x_end < 1.0:
+        H = np.maximum(H_ice, edge)              # ice everywhere; the end is the margin
+        gm = np.ones_like(x)
+    else:
+        gm = (H_ice > 150).astype(float)
+        H = np.where(gm > 0, H_ice, 30.0)
     zs = bed + H
     Ts = P["Tsurf"]
     Tb = np.minimum(Ts + P["gthf"] / P["heatconductivity"] * H, P["T0"])
@@ -153,7 +159,9 @@ def setup_case(cfg, mesh=True):
     pname = cfg["parameter"]["name"]
     if pname in P and "value" in cfg["parameter"]:
         P[pname] = float(cfg["parameter"]["value"])
-    g = initial_geometry(P)
+    c = cfg.get("case", {})
+    x_end = float(c.get("x_end", 1.0))
+    g = initial_geometry(P, x_end=x_end, edge=float(c.get("edge_thickness", 30.0)))
     write_ics(g, os.path.join(case, "ics"))
     xm = g["x"][g["gm"] > 0].max()
     log.info(f"setup: L = {P['L'] / 1e3:.1f} km, margin at {xm / 1e3:.1f} km, max thickness {g['H'].max():.0f} m, "
@@ -162,11 +170,11 @@ def setup_case(cfg, mesh=True):
     if not mesh:
         return g
     geo = open(cfg["_path"](cfg.get("case", {}).get("geo", "case/flowline.geo.in"))).read()
-    for k in ("L", "Wmesh", "BoundaryRes", "MarginRes"):
+    P["Lend"] = min(x_end, 1.0) * P["L"]
+    for k in ("L", "Lend", "Wmesh", "BoundaryRes", "MarginRes"):
         geo = geo.replace("{" + k + "}", repr(float(P[k])))
     with open(os.path.join(case, "footprint.geo"), "w") as f:
         f.write(geo)
-    c = cfg.get("case", {})
     _run([c.get("gmsh", "gmsh"), "footprint.geo", "-1", "-2", "-format", "msh2", "-o", "footprint.msh"], case)
     n = int(cfg["elmer"].get("n_procs", 0)) or int(os.environ.get("SLURM_NTASKS", "1"))
     eg = c.get("elmergrid", "ElmerGrid")

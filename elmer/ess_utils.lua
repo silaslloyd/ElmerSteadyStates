@@ -24,9 +24,33 @@ function min(a, b)
   if a > b then return b else return a end
 end
 
--- distance to the front (boundary x = L) along the flowline
+-- Fixed-margin mode (configs with [case] x_end < 1): the domain ends at the
+-- steady margin, x = ess_xend, where the ice thickness is held at ess_Hedge.
+-- ess_xend / ess_Hedge are set by the driver (appended to parameters.lua);
+-- unset, the domain ends at L and there is no clamp.
+ess_xend = nil
+ess_Hedge = nil
+
+-- distance to the "front" used by the frontal sliding zone (C/2 within 10 km):
+-- x = L by default, which is beyond the ice in both the regularised and the
+-- fixed-margin set-ups, so the zone is inactive; set ess_front ([lua] in the
+-- config, in m, e.g. the margin 0.8 L) to put it under the ice
+ess_front = nil
 function frontdist(x)
-  return L - x
+  return (ess_front or L) - x
+end
+
+-- bounds on Zs (applied by the free-surface solver with Apply Dirichlet):
+-- at the end of a fixed-margin domain both equal bed + ess_Hedge (a fixed,
+-- always-active clamp); elsewhere only the backstop bed + 5 m
+function ZsMin(bed, x)
+  if ess_xend and x >= ess_xend - 1.0 then return bed + ess_Hedge end
+  return bed + 5.0
+end
+
+function ZsMax(bed, x)
+  if ess_xend and x >= ess_xend - 1.0 then return bed + ess_Hedge end
+  return 1.0e4
 end
 
 -- temperature-dependent (subtemperate) Weertman coefficient, as
@@ -75,10 +99,11 @@ end
 -- produce an overflow; the cap is never reached near a steady state.
 ess_Hmin = 30.0     -- m, thickness of the ice layer beyond the margin (ElmerStreams: 30 m)
 ess_Hs = 50.0       -- m, width of the transition (soft: a stiff edge stalls Newton)
+                    -- ess_Hs <= 0: no thickness factor (plain mass balance; fixed-margin mode)
 function AccumulationSmooth(x, H, a, L)
   local acc = (x - 0.4 * L) * 2 * a / (-0.4 * L)
   if x > 0.9 * L then acc = -5 * a end
-  if acc < 0 then
+  if acc < 0 and ess_Hs > 0 then
     local e = -(H - ess_Hmin) / ess_Hs
     if e > 2 then e = 2 end
     acc = acc * (1 - math.exp(e))

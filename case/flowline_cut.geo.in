@@ -1,0 +1,24 @@
+// Flowline footprint ending at the steady ice margin (fixed-margin mode: [case] x_end < 1),
+// one element wide, refined towards the end. Values are filled in by `ess setup`; Lend = x_end * L.
+// The physical-group order (inflow, front, side1, side2) gives Elmer boundaries 1-4, which the
+// extruded mesh and steady_template.sif rely on. Gmsh numbering: extruding curve k gives its copy
+// 4k+1, the lateral curves 4k+2 (start) and 4k+3 (end), and the surface 4k+4.
+Lend = {Lend};
+W = {Wmesh};
+resb = {BoundaryRes};
+resm = {MarginRes};
+Point(1) = {0, 0, 0, resb};
+Point(2) = {Lend*(1-1/8), 0, 0, resm};
+Point(3) = {Lend*(1-1/32), 0, 0, resm/2};
+Point(4) = {Lend, 0, 0, resm/2};
+Line(1) = {1, 2};
+Line(2) = {2, 3};
+Line(3) = {3, 4};
+Extrude {0, W, 0} {
+  Curve{1}; Curve{2}; Curve{3}; Recombine; Layers{1};
+}
+Physical Surface(21) = {8, 12, 16};
+Physical Curve(22) = {6};
+Physical Curve(23) = {15};
+Physical Curve(24) = {1, 2, 3};
+Physical Curve(25) = {5, 9, 13};

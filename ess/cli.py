@@ -8,6 +8,7 @@ Command line driver. Run inside a batch job (it launches `mpirun ElmerSolver` it
     python3 -m ess remask     CONFIG --state F       re-freeze the cold/temperate mask from a state
     python3 -m ess run        CONFIG [--state F] --chunks N      plain time integration
     python3 -m ess newton     CONFIG [--state F] [--p P]         steady state at fixed parameter
+    python3 -m ess transfer   CONFIG --from F [--out G]          carry a state onto this config's mesh
     python3 -m ess continue   CONFIG [--state F] [--name B]      pseudo-arclength branch (resumes)
     python3 -m ess stability  CONFIG (--state F | --name B --point K)
     python3 -m ess toy-demo   [WORKDIR]               whole pipeline on the stand-in model, no Elmer
@@ -278,6 +279,26 @@ def cmd_continue(args):
              f"({prob.t_model / 3600:.2f} h)")
 
 
+def cmd_transfer(args):
+    """Carry a converged state (any config, e.g. the regularised full domain) onto this config's mesh."""
+    cfg = load_config(args.config)
+    setup_logging(cfg, args.verbose)
+    from .transfer import transfer
+    src = load_state(args.source)
+    dst = _saved(cfg, args.state)
+    c = cfg.get("case", {})
+    x_end = float(c.get("x_end", 1.0))
+    x_end_m = None
+    if x_end < 1.0:
+        from .case import eval_lua_parameters
+        P = eval_lua_parameters(cfg["_path"](c.get("parameters", "case/parameters.lua")))
+        x_end_m = x_end * P["L"]
+    x, frozen = transfer(src, dst, x_end_m, float(c.get("edge_thickness", 30.0)))
+    out = args.out or os.path.join(cfg["_work"], f"start_p{src.p:g}.npz")
+    save_state(out, dst.layout, x, src.p, frozen, dst.diag, source=args.source)
+    log.info(f"wrote {out} (p = {src.p:g}); next: ess newton {args.config} --state {out}")
+
+
 def cmd_stability(args):
     cfg = load_config(args.config)
     if args.name is not None:
@@ -414,6 +435,13 @@ def main(argv=None):
     s.add_argument("--name", help="branch name (directory <work>/branch_<name>)")
     s.add_argument("--ds", type=float, help="arclength step to (re)start with, overriding the saved one")
     s.set_defaults(fn=cmd_continue)
+
+    s = sub.add_parser("transfer")
+    common(s)
+    s.add_argument("--from", dest="source", required=True,
+                   help="converged state to carry over (.npz, may come from another config)")
+    s.add_argument("--out")
+    s.set_defaults(fn=cmd_transfer)
 
     s = sub.add_parser("stability")
     common(s)

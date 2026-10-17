@@ -65,7 +65,15 @@ class ElmerModel(Model):
         self.vtu = bool(e.get("vtu", False))
         # [lua]: extra global assignments, appended to parameters.lua (they override ess_utils.lua
         # defaults such as ess_Hs / ess_Hmin, which is loaded first)
-        self.lua_overrides = dict(cfg.get("lua", {}))
+        self.lua_overrides = {k: repr(float(v)) for k, v in cfg.get("lua", {}).items()}
+        # fixed-margin mode: the domain ends at x_end * L (the steady margin, 0.8 L), Zs clamped
+        # to bed + edge_thickness there, plain mass balance (no thickness factor)
+        c = cfg.get("case", {})
+        self.x_end = float(c.get("x_end", 1.0))
+        if self.x_end < 1.0:
+            self.lua_overrides = {"ess_xend": f"{self.x_end!r} * L",
+                                  "ess_Hedge": repr(float(c.get("edge_thickness", 30.0))),
+                                  "ess_Hs": "0.0", **self.lua_overrides}
         self.state_vars = list(cfg["state"]["variables"])
         self.frozen_vars = list(cfg["state"].get("frozen", []))
         self.param_name = cfg["parameter"]["name"]
@@ -97,7 +105,7 @@ class ElmerModel(Model):
         txt = override_lua_assignment(self._params_text, self.param_name, p)
         if self.lua_overrides:
             txt += "\n-- [lua] overrides from the ess config\n" + "".join(
-                f"{k} = {float(v)!r}\n" for k, v in self.lua_overrides.items())
+                f"{k} = {v}\n" for k, v in self.lua_overrides.items())
         return txt
 
     def _write_vars(self, names) -> str:

@@ -21,7 +21,10 @@
 !!     of the saved state);
 !!   * regularised margin: ablation goes smoothly to zero (and then to a small
 !!     gain) as the ice thins to Hmin = 30 m (transition width 50 m), instead of
-!!     the Min Zs = bed + 10 limiter (a non-smooth active set at the margin).
+!!     the Min Zs = bed + 10 limiter (a non-smooth active set at the margin);
+!!   * or (fixed-margin mode, [case] x_end < 1) the domain ends at the steady
+!!     margin 0.8 L, where the mass balance integrates to zero: plain mass
+!!     balance, Zs clamped to bed + Hedge at the end, no flow through it.
 !!
 !! The double-underscore placeholders are filled in by the Python driver (ess/elmer.py).
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -343,10 +346,12 @@ Material 3
 
   Min Zb = Equals "bedrock"
   Max Zb = Real 0.0
-  ! backstop only: the smooth ablation cut-off keeps the ice near Hmin = 30 m
-  Min Zs = Variable "bedrock"
-    Real Lua "tx[0] + 5"
-  Max Zs = Real 10000
+  ! backstop bed + 5 m (the smooth ablation cut-off keeps the ice near Hmin);
+  ! in fixed-margin mode also the clamp Zs = bed + Hedge at the end of the domain
+  Min Zs = Variable "bedrock", Coordinate 1
+    Real Lua "ZsMin(tx[0], tx[1])"
+  Max Zs = Variable "bedrock", Coordinate 1
+    Real Lua "ZsMax(tx[0], tx[1])"
 End
 
 !---------------------------------------------------
@@ -669,6 +674,8 @@ End
 Boundary Condition 14
   Name = "front ice"
   Target Boundaries(1) = 14
+  ! no flow through the end of the domain. Fixed-margin mode: the steady flux
+  ! at the margin is exactly zero (the mass balance integrates to zero there)
   Velocity 1 = 0.0
   Velocity 2 = 0.0
   Partial Vertical MeshUpdate 1 = Real 0.0

@@ -62,6 +62,39 @@ iterations; only the transient path does.
 This is just a first guess for Newton. Elmer's built-in `FreeSurfaceSolver` is used; ElmerStreams
 used a copy of it.
 
+### Two margin set-ups
+
+* **`configs/land_flowline.toml`: full domain with a regularised, free margin.** The domain runs to
+  L. Beyond the margin, ablation fades out smoothly as the ice thins towards 30 m (`ess_Hs`,
+  `ess_Hmin` in `elmer/ess_utils.lua`, or overridden from a `[lua]` config section). The edge is a
+  steep front within about one element. Its shape is poorly determined, which makes Newton and
+  continuation struggle there.
+* **`configs/land_margin.toml`: fixed margin (recommended).** The mass balance is fixed in x, so the
+  steady flux is the mass balance integrated from the divide. The margin therefore sits where that
+  integral vanishes, at x = 0.8 L, whatever Tsurf, sliding or temperature. The domain ends there
+  (`[case] x_end = 0.8`, geometry `case/flowline_cut.geo.in`), with:
+  * no flow through the end;
+  * Zs clamped to bed + `edge_thickness` (30 m) at the end node, by equal `Min Zs`/`Max Zs` bounds
+    that are always active;
+  * the plain mass balance, with no thickness factor.
+
+  To start it from a converged regularised state, carry that state onto the new mesh with
+  `ess transfer`:
+
+  ```bash
+  sbatch jobs/ess.cmd setup configs/land_margin.toml
+  sbatch jobs/ess.cmd init  configs/land_margin.toml
+  python3 -m ess transfer configs/land_margin.toml --from work/land_flowline/steady_p268.15_soft.npz
+  sbatch jobs/ess.cmd newton configs/land_margin.toml --state work/land_margin/start_p268.15.npz
+  sbatch jobs/ess.cmd continue configs/land_margin.toml --state work/land_margin/steady_p268.15.npz
+  ```
+
+  `transfer` interpolates column by column: temperature on the normalised height in the ice and on
+  the depth in the rock, and Zs in x. It takes the cold/temperate mask from the source.
+
+The frontal sliding zone (C/2 within 10 km of x = L) lies beyond the ice in both set-ups. Set
+`[lua] ess_front` (in m) to move it under the ice.
+
 ## Changes relative to `Land_Term/ThermoCoupled_template.sif`
 
 `elmer/steady_template.sif` keeps the same mesh, extrusion, bodies, materials, Stokes, heat and free
@@ -175,7 +208,8 @@ A job that times out can simply be resubmitted with the same command:
 * **The frozen masks.** Their consistency is checked at every converged state. If a branch runs into
   `cold_above_Tm > 0`, the state is no longer physical with that mask. Re-freeze the mask from the
   new state (re-extract) and continue piecewise.
-* **The free-surface `Min Zs` limiter**, at the margin.
+* **The margin** (regularised set-up only). The free-surface `Min Zs` limiter and the steep, poorly
+  determined edge. The fixed-margin set-up avoids both.
 * **The `max(·, 0)` in the friction loads.**
 * **The `T > Tm` cap inside the sliding law.**
 
