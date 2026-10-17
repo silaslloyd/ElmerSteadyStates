@@ -201,7 +201,20 @@ class ElmerModel(Model):
         for k in sorted(self.frozen):
             h.update(k.encode())
             h.update(np.ascontiguousarray(self.frozen[k][1], "<f8").tobytes())
+        h.update(self._mesh_stamp().encode())
         return h.hexdigest()[:40]
+
+    def _mesh_stamp(self) -> str:
+        """size and mtime of the mesh files: a re-meshed case (`ess setup`) never reuses cached runs"""
+        if getattr(self, "_mesh_stamp_v", None) is None:
+            mdir = os.path.join(self.case_dir, self.mesh_db)
+            items = []
+            for root, _, files in os.walk(mdir):
+                for f in sorted(files):
+                    st = os.stat(os.path.join(root, f))
+                    items.append(f"{os.path.relpath(os.path.join(root, f), mdir)}:{st.st_size}:{int(st.st_mtime)}")
+            self._mesh_stamp_v = ";".join(sorted(items))
+        return self._mesh_stamp_v
 
     def _new_run_dir(self, tag):
         self.nrun += 1

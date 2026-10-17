@@ -1,8 +1,8 @@
 // Flowline footprint ending at the steady ice margin (fixed-margin mode: [case] x_end < 1),
 // one element wide, refined towards the end. Values are filled in by `ess setup`; Lend = x_end * L.
 // The physical-group order (inflow, front, side1, side2) gives Elmer boundaries 1-4, which the
-// extruded mesh and steady_template.sif rely on. The entities are taken from what Extrude returns
-// (top curve, surface, lateral curves at the start and end point), not from gmsh's numbering.
+// extruded mesh and steady_template.sif rely on. All groups are selected by position (bounding
+// boxes), so nothing depends on gmsh's entity numbering or on the order Extrude returns entities.
 Lend = {Lend};
 W = {Wmesh};
 resb = {BoundaryRes};
@@ -14,12 +14,11 @@ Point(4) = {Lend, 0, 0, resm/2};
 Line(1) = {1, 2};
 Line(2) = {2, 3};
 Line(3) = {3, 4};
-e1[] = Extrude {0, W, 0} { Curve{1}; Layers{1}; Recombine; };
-e2[] = Extrude {0, W, 0} { Curve{2}; Layers{1}; Recombine; };
-e3[] = Extrude {0, W, 0} { Curve{3}; Layers{1}; Recombine; };
+Extrude {0, W, 0} { Curve{1}; Curve{2}; Curve{3}; Layers{1}; Recombine; }
 Coherence;
-Physical Surface(21) = {e1[1], e2[1], e3[1]};
-Physical Curve(22) = {e1[2]};
-Physical Curve(23) = {e3[3]};
-Physical Curve(24) = {1, 2, 3};
-Physical Curve(25) = {e1[0], e2[0], e3[0]};
+e = 1.0;   // m, bounding-box tolerance
+Physical Surface(21) = Surface{:};
+Physical Curve(22) = Curve In BoundingBox{-e, -e, -e, e, W + e, e};                // inflow, x = 0
+Physical Curve(23) = Curve In BoundingBox{Lend - e, -e, -e, Lend + e, W + e, e};   // front, x = Lend
+Physical Curve(24) = Curve In BoundingBox{-e, -e, -e, Lend + e, e, e};             // side1, y = 0
+Physical Curve(25) = Curve In BoundingBox{-e, W - e, -e, Lend + e, W + e, e};      // side2, y = W
