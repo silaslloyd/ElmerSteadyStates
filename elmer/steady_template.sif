@@ -22,6 +22,9 @@
 !!   * regularised margin: ablation goes smoothly to zero (and then to a small
 !!     gain) as the ice thins to Hmin = 30 m (transition width 50 m), instead of
 !!     the Min Zs = bed + 10 limiter (a non-smooth active set at the margin);
+!!   * frictional heating ([elmer] friction_heat): "loads" = ElmerStreams' nodal
+!!     Stokes reaction loads times velocity; "flux" = a heat flux C(T) |u_b|^2
+!!     from the same sliding law (smooth from node to node);
 !!   * or (fixed-margin mode, [case] x_end < 1) the domain ends at the steady
 !!     margin 0.8 L, where the mass balance integrates to zero: plain mass
 !!     balance, Zs = bed + Hedge (Dirichlet) at the end, no flow through it.
@@ -762,9 +765,7 @@ Boundary Condition  19
 
   Friction Loads = Variable Flow Solution Loads 1, Flow Solution Loads 2, Flow Solution Loads 3, Velocity 1, Velocity 2, Velocity 3, Coordinate 2
     Real Lua "frictionloads(tx[0],tx[1],tx[2],tx[3],tx[4],tx[5], W, W)"
-  Temperature Load = Variable Flow Solution Loads 1, Flow Solution Loads 2, Flow Solution Loads 3, Velocity 1, Velocity 2, Velocity 3, Coordinate 2
-    Real Lua "frictionloads(tx[0],tx[1],tx[2],tx[3],tx[4],tx[5], W, W)"
-  Temperature Load Condition = Equals "GroundedMask"
+__FRICTION_HEAT__
 
   Calculate Temperature Boundary Weights = Logical True
 

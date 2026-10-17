@@ -63,6 +63,7 @@ class ElmerModel(Model):
         self.diagnostics = list(e.get("diagnostics", []))
         self.extra_subs = dict(e.get("substitutions", {}))
         self.vtu = bool(e.get("vtu", False))
+        self.friction_heat = str(e.get("friction_heat", "loads"))
         # [lua]: extra global assignments, appended to parameters.lua (they override ess_utils.lua
         # defaults such as ess_Hs / ess_Hmin, which is loaded first)
         self.lua_overrides = {k: repr(float(v)) for k, v in cfg.get("lua", {}).items()}
@@ -108,6 +109,25 @@ class ElmerModel(Model):
                 f"{k} = {v}\n" for k, v in self.lua_overrides.items())
         return txt
 
+    def _friction_heat_block(self) -> str:
+        """Frictional heating at the bed (boundary condition 19).
+        loads: the Stokes reaction loads times the velocity, as nodal heat loads (ElmerStreams). Nodal
+               loads are integrated quantities shared out by the elements; on this mesh they come out
+               uneven from node to node, which with the sharp temperature-dependent sliding law seeds
+               a node-to-node oscillation of the basal temperature.
+        flux:  a heat flux tau_b . u_b = C(T) |u_b|^2 from the same linear Weertman law (per unit area,
+               smooth from node to node); the geothermal flux comes through the bedrock as before."""
+        if self.friction_heat == "loads":
+            return ('  Temperature Load = Variable Flow Solution Loads 1, Flow Solution Loads 2, '
+                    'Flow Solution Loads 3, Velocity 1, Velocity 2, Velocity 3, Coordinate 2\n'
+                    '    Real Lua "frictionloads(tx[0],tx[1],tx[2],tx[3],tx[4],tx[5], W, W)"\n'
+                    '  Temperature Load Condition = Equals "GroundedMask"')
+        if self.friction_heat == "flux":
+            return ('  Heat Flux BC = Logical True\n'
+                    '  Heat Flux = Variable Temperature, Velocity 1, Velocity 2, Velocity 3, Coordinate 1\n'
+                    '    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * (tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
+        raise ValueError(f"[elmer] friction_heat must be 'loads' or 'flux', not {self.friction_heat!r}")
+
     def _write_vars(self, names) -> str:
         return "\n".join(f'  State Variable {i + 1} = String "{n}"' for i, n in enumerate(names))
 
@@ -139,6 +159,7 @@ class ElmerModel(Model):
             "__WRITE_VARS0__": self._write_vars(list(write0) or self.state_vars),
             "__RESTART_BLOCK__": rb,
             "__POST_BLOCK__": pb,
+            "__FRICTION_HEAT__": self._friction_heat_block(),
             # fixed-margin mode: Zs = bed + edge thickness on the end of the domain (Dirichlet)
             "__FRONT_ZS__": ('  Zs = Variable "bedrock"\n    Real Lua "tx[0] + ess_Hedge"'
                              if self.x_end < 1.0 else ""),
