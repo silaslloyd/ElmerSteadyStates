@@ -63,6 +63,9 @@ class ElmerModel(Model):
         self.diagnostics = list(e.get("diagnostics", []))
         self.extra_subs = dict(e.get("substitutions", {}))
         self.vtu = bool(e.get("vtu", False))
+        # [lua]: extra global assignments, appended to parameters.lua (they override ess_utils.lua
+        # defaults such as ess_Hs / ess_Hmin, which is loaded first)
+        self.lua_overrides = dict(cfg.get("lua", {}))
         self.state_vars = list(cfg["state"]["variables"])
         self.frozen_vars = list(cfg["state"].get("frozen", []))
         self.param_name = cfg["parameter"]["name"]
@@ -91,7 +94,11 @@ class ElmerModel(Model):
 
     # ---------------------------------------------------------------- inputs of a run
     def params_lua(self, p) -> str:
-        return override_lua_assignment(self._params_text, self.param_name, p)
+        txt = override_lua_assignment(self._params_text, self.param_name, p)
+        if self.lua_overrides:
+            txt += "\n-- [lua] overrides from the ess config\n" + "".join(
+                f"{k} = {float(v)!r}\n" for k, v in self.lua_overrides.items())
+        return txt
 
     def _write_vars(self, names) -> str:
         return "\n".join(f'  State Variable {i + 1} = String "{n}"' for i, n in enumerate(names))
@@ -178,6 +185,8 @@ class ElmerModel(Model):
         h.update(repr((float(p), spec.dt, spec.n_steps, spec.coupled_iters, spec.rock_heat_capacity, self.n_procs)).encode())
         h.update(self.build_sif(spec).encode())
         h.update(self.params_lua(p).encode())
+        with open(self.ess_utils, "rb") as f:     # its functions (SMB, sliding, ...) shape the map
+            h.update(f.read())
         for k in sorted(self.frozen):
             h.update(k.encode())
             h.update(np.ascontiguousarray(self.frozen[k][1], "<f8").tobytes())
