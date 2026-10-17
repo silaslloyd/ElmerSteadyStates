@@ -76,6 +76,7 @@ def newton_krylov(prob: FixedPointProblem, y0, p, opt: NewtonOptions = NewtonOpt
     nf = rms(F)
     hist, giters = [nf], []
     log.info(f"{label}: it 0  rms(F) = {nf:.3e}  (rate {nf / prob.spec.horizon:.3e} per unit time)  p = {p:.6g}")
+    log.info(f"{label}: residual {describe_step(prob, F)}")
     nf_prev, eta = None, opt.eta_max
     for it in range(1, opt.maxit + 1):
         if nf <= opt.tol:
