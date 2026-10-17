@@ -139,6 +139,9 @@ class ElmerModel(Model):
             "__WRITE_VARS0__": self._write_vars(list(write0) or self.state_vars),
             "__RESTART_BLOCK__": rb,
             "__POST_BLOCK__": pb,
+            # fixed-margin mode: Zs = bed + edge thickness on the end of the domain (Dirichlet)
+            "__FRONT_ZS__": ('  Zs = Variable "bedrock"\n    Real Lua "tx[0] + ess_Hedge"'
+                             if self.x_end < 1.0 else ""),
         }
         subs.update({k if k.startswith("__") else f"__{k}__": str(v) for k, v in self.extra_subs.items()})
         text = self._template_text

@@ -24,7 +24,7 @@
 !!     the Min Zs = bed + 10 limiter (a non-smooth active set at the margin);
 !!   * or (fixed-margin mode, [case] x_end < 1) the domain ends at the steady
 !!     margin 0.8 L, where the mass balance integrates to zero: plain mass
-!!     balance, Zs clamped to bed + Hedge at the end, no flow through it.
+!!     balance, Zs = bed + Hedge (Dirichlet) at the end, no flow through it.
 !!
 !! The double-underscore placeholders are filled in by the Python driver (ess/elmer.py).
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -346,12 +346,12 @@ Material 3
 
   Min Zb = Equals "bedrock"
   Max Zb = Real 0.0
-  ! backstop bed + 5 m (the smooth ablation cut-off keeps the ice near Hmin);
-  ! in fixed-margin mode also the clamp Zs = bed + Hedge at the end of the domain
-  Min Zs = Variable "bedrock", Coordinate 1
-    Real Lua "ZsMin(tx[0], tx[1])"
-  Max Zs = Variable "bedrock", Coordinate 1
-    Real Lua "ZsMax(tx[0], tx[1])"
+  ! backstop only (the smooth ablation cut-off keeps the ice near Hmin; in
+  ! fixed-margin mode the end of the domain is a Dirichlet condition on Zs in
+  ! the "front ice" boundary condition)
+  Min Zs = Variable "bedrock"
+    Real Lua "tx[0] + 5"
+  Max Zs = Real 10000
 End
 
 !---------------------------------------------------
@@ -681,6 +681,7 @@ Boundary Condition 14
   Partial Vertical MeshUpdate 1 = Real 0.0
   Partial Vertical MeshUpdate 2 = Real 0.0
   ComputeNormal = Logical False
+__FRONT_ZS__
 End
 
 Boundary Condition 15

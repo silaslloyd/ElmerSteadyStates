@@ -25,7 +25,8 @@ function min(a, b)
 end
 
 -- Fixed-margin mode (configs with [case] x_end < 1): the domain ends at the
--- steady margin, x = ess_xend, where the ice thickness is held at ess_Hedge.
+-- steady margin, x = ess_xend, where the ice thickness is held at ess_Hedge
+-- (Dirichlet condition on Zs in the "front ice" boundary condition).
 -- ess_xend / ess_Hedge are set by the driver (appended to parameters.lua);
 -- unset, the domain ends at L and there is no clamp.
 ess_xend = nil
@@ -38,19 +39,6 @@ ess_Hedge = nil
 ess_front = nil
 function frontdist(x)
   return (ess_front or L) - x
-end
-
--- bounds on Zs (applied by the free-surface solver with Apply Dirichlet):
--- at the end of a fixed-margin domain both equal bed + ess_Hedge (a fixed,
--- always-active clamp); elsewhere only the backstop bed + 5 m
-function ZsMin(bed, x)
-  if ess_xend and x >= ess_xend - 1.0 then return bed + ess_Hedge end
-  return bed + 5.0
-end
-
-function ZsMax(bed, x)
-  if ess_xend and x >= ess_xend - 1.0 then return bed + ess_Hedge end
-  return 1.0e4
 end
 
 -- temperature-dependent (subtemperate) Weertman coefficient, as
