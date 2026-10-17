@@ -16,7 +16,7 @@ from __future__ import annotations
 import csv
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -45,9 +45,9 @@ class ContinuationOptions:
     gmres_maxiter: int = 80
     max_step: float = 5.0          # cap on a corrector update (scaled units, max norm)
     contraction: float = 0.5       # give up a step when rms(F) falls by less than this factor per iteration
-    predictor: str = "secant"      # "secant": extrapolate the state along the secant; "parameter": keep the
-                                   # last state and step only p (for states with a moving steep front,
-                                   # which a linear extrapolation smears)
+    predictor: str = "secant"      # "secant": arclength corrector from the secant prediction; "parameter":
+                                   # Newton at p + ds t_p from the last state (natural parameter), with the
+                                   # arclength corrector near folds (|t_p| < 0.5) and when Newton fails
 
 
 def wdot(prob, a, b):
@@ -159,15 +159,25 @@ def continuation(prob: FixedPointProblem, y0, p0, store: BranchStore, opt: Conti
         if t_prev_p is None:
             t_prev_p = t[-1]
 
-        z0 = None
-        if opt.predictor == "parameter" and abs(t[-1]) >= 0.5:   # near a fold, the secant is needed
-            z0 = zb.copy()
-            z0[-1] += ds * t[-1]
-        ok, z, F, its, gits = _corrector(prob, zb, t, ds, opt, z0=z0)
-        if not ok and z0 is not None:
-            log.info("continuation: parameter predictor failed, retrying with the secant predictor")
-            ok, z, F, its2, gits2 = _corrector(prob, zb, t, ds, opt)
-            its, gits = its2, gits + gits2
+        natural = opt.predictor == "parameter" and abs(t[-1]) >= 0.5   # near a fold, arclength is needed
+        ok = False
+        if natural:
+            # natural-parameter step: Newton at p + ds t_p from the last state (no arclength condition;
+            # away from folds it adds nothing, and Newton copes better with a steep, slowly damped state)
+            pn_try = pb + ds * t[-1] * ps
+            nopt = replace(newton_opt, tol=opt.tol, maxit=opt.maxit, gmres_restart=opt.gmres_restart,
+                           gmres_maxiter=opt.gmres_maxiter)
+            try:
+                r = newton_krylov(prob, yb, pn_try, nopt, label=f"natural p={pn_try:.6g}")
+                ok = r.converged
+                if ok:
+                    z, F, its, gits = np.append(r.y, pn_try / ps), r.F, r.iterations, sum(r.gmres_iters)
+            except ModelFailure as e:
+                log.info(f"continuation: model failed in the natural-parameter step: {e}")
+            if not ok:
+                log.info("continuation: natural-parameter step failed, retrying with the arclength corrector")
+        if not ok:
+            ok, z, F, its, gits = _corrector(prob, zb, t, ds, opt)
         if not ok:
             ds *= 0.5
             log.info(f"continuation: corrector failed, ds -> {ds:.3g}")
