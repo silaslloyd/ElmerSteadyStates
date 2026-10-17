@@ -169,6 +169,8 @@ def test_elmer_driver_with_fake_elmer(tmp_path):
     s0 = load_state(str(work / "state0.npz"))
     assert s0.layout.names == ["Temperature", "Zs"] and len(s0.frozen) == 4
     assert main(["check", str(cfg), "--eps", "1e-3", "1e-5"]) == 0
+    for vec in ("residual", "bed"):
+        assert main(["check", str(cfg), "--eps", "1e-3", "--skip-roundtrip", "--vector", vec]) == 0
     assert main(["newton", str(cfg)]) == 0
     s = load_state(str(work / "steady_p265.npz"))
     from tests.fake_elmer import GID, TOP, tstar  # noqa: E402

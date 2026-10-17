@@ -185,9 +185,24 @@ def cmd_check(args):
     for name, sl in saved.layout.slices().items():
         log.info(f"    block {name}: rms {rms(F[sl]):.3e}, max {np.max(np.abs(F[sl])):.3e} (scaled)")
     rng = np.random.default_rng(1)
-    v = rng.standard_normal(prob.n)
+    if args.vector == "residual":
+        v = F.copy()       # the direction Newton/GMRES work in: a kink there shows up here, not in a random v
+    elif args.vector == "bed":
+        # temperature perturbation at the basal nodes only (where sliding and friction heating switch)
+        v = np.zeros(prob.n)
+        sl = next(s_ for n_, s_ in saved.layout.slices().items() if n_.lower() == "temperature")
+        gT = next(b_.gids for b_ in saved.layout.blocks if b_.name.lower() == "temperature")
+        ct = saved.frozen[next(k for k in saved.frozen if k.lower() == "coldtempmask")][0]
+        idx = np.searchsorted(gT, ct)
+        ok = idx < len(gT)
+        idx = idx[ok][gT[idx[ok]] == ct[ok]]
+        v[sl][idx] = rng.standard_normal(len(idx))
+        log.info(f"check: perturbing the basal temperature at {len(idx)} bed nodes")
+    else:
+        v = rng.standard_normal(prob.n)
     prev = None
-    log.info("check linearity: J v for decreasing perturbation size (look for a plateau)")
+    log.info(f"check linearity ({args.vector} direction): J v for decreasing perturbation size "
+             f"(look for a plateau)")
     for e in args.eps:
         prob.fd_eps = e
         jv = prob.dF(y, p, F, v, tag="check_jv")
@@ -413,6 +428,9 @@ def main(argv=None):
     common(s)
     s.add_argument("--eps", type=float, nargs="+", default=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7])
     s.add_argument("--skip-roundtrip", action="store_true")
+    s.add_argument("--vector", choices=["random", "residual", "bed"], default="random",
+                   help="direction of the linearity test: random over all nodes, the residual "
+                        "Phi(x)-x (what Newton works with), or random basal temperatures only")
     s.set_defaults(fn=cmd_check)
 
     s = sub.add_parser("run")
