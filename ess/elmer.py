@@ -70,6 +70,7 @@ class ElmerModel(Model):
         self.linear_heat = str(e.get("linear_heat", "direct"))
         self.iterative_tol = float(e.get("iterative_tol", 1e-10))
         self.stokes_precond = str(e.get("stokes_preconditioner", "ILU2"))
+        self.ilut_tol = float(e.get("ilut_tolerance", 1e-4))     # drop tolerance for ILUT
         # "P2/P1" (default) or "Stabilized" (P1/P1 with stabilisation: far easier for ILU-preconditioned
         # Krylov solvers, but a different discretisation, so slightly different steady states)
         self.stokes_element = str(e.get("stokes_element", "P2/P1"))
@@ -156,6 +157,8 @@ class ElmerModel(Model):
                     '  Linear System GCR Restart = Integer 250\n'
                     '  Linear System Max Iterations = 5000\n'
                     f'  Linear System Preconditioning = {self.stokes_precond}\n'
+                    + (f'  Linear System ILUT Tolerance = Real {self.ilut_tol:.1e}\n'
+                       if self.stokes_precond.upper() == "ILUT" else '') +
                     f'  Linear System Convergence Tolerance = {tol}\n'
                     '  Linear System Abort Not Converged = True\n'
                     '  Linear System Residual Output = 200')

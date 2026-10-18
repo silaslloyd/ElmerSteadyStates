@@ -52,7 +52,9 @@ strain_heat = false                     # true: strain heating 2 eta e:e in the 
 linear_stokes = "iterative"             # GCR(250) + stokes_preconditioner
 linear_heat = "iterative"               # BiCGStabL(4) + ILU1 (heat and strain heating)
 iterative_tol = 1e-10                   # relative residual
-stokes_preconditioner = "ILU2"          # ILU0..ILU3 (stronger = fewer iterations, more memory)
+stokes_preconditioner = "ILU4"          # ILU0..ILU9 (fill level: stronger = fewer iterations, more memory)
+                                        # or "ILUT" (drop tolerance ilut_tolerance; often best for Stokes)
+ilut_tolerance = 1e-4                   # ILUT only: smaller = stronger, more memory
 stokes_element = "P2/P1"                # or "Stabilized" (P1/P1: much easier for ILU, but a different
                                         # discretisation: new steady states, not comparable with 2D P2/P1)
 # written with every run besides the state, used for the mask checks and plots
