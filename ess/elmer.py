@@ -64,6 +64,7 @@ class ElmerModel(Model):
         self.extra_subs = dict(e.get("substitutions", {}))
         self.vtu = bool(e.get("vtu", False))
         self.friction_heat = str(e.get("friction_heat", "loads"))
+        self.strain_heat = bool(e.get("strain_heat", False))
         # [lua]: extra global assignments, appended to parameters.lua (they override ess_utils.lua
         # defaults such as ess_Hs / ess_Hmin, which is loaded first)
         self.lua_overrides = {k: repr(float(v)) for k, v in cfg.get("lua", {}).items()}
@@ -160,6 +161,10 @@ class ElmerModel(Model):
             "__RESTART_BLOCK__": rb,
             "__POST_BLOCK__": pb,
             "__FRICTION_HEAT__": self._friction_heat_block(),
+            # strain heating (ElmerStreams: on): DeformationalHeatSolver + volumetric heat source
+            "__STRAIN_EXEC__": '"Always"' if self.strain_heat else '"Never"',
+            "__HEAT_SOURCE__": ('  Heat Source = Variable Strain Heating\n    Real Lua "tx[0]/rhoi"'
+                                if self.strain_heat else "  ! no Heat Source: strain heating off ([elmer] strain_heat)"),
             # fixed-margin mode: Zs = bed + edge thickness on the end of the domain (Dirichlet)
             "__FRONT_ZS__": ('  Zs = Variable "bedrock"\n    Real Lua "tx[0] + ess_Hedge"'
                              if self.x_end < 1.0 else ""),

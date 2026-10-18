@@ -4,7 +4,8 @@
 !! Derived from ElmerStreams/Land_Term/ThermoCoupled_template.sif
 !! (3-layer flowline: bedrock, filler, ice), but self-contained: mesh, tables
 !! and parameters come from `ess setup`. The physics is unchanged except:
-!!   * no strain heating (Solver 11 and the ice Heat Source removed);
+!!   * strain heating optional ([elmer] strain_heat; ElmerStreams had it on):
+!!     Solver 10 (DeformationalHeatSolver, direct) and the ice Heat Source;
 !!   * no hydrology (sheet solver, effective pressure, melt source removed);
 !!   * the cold/temperate mask, grounded mask, Zb and bedrock are frozen:
 !!     they are read from the state file and never recomputed;
@@ -158,19 +159,19 @@ End
 
 Equation 1
   Name = "bedrock equation"
-  Active Solvers(4) = 2 4 5 10
+  Active Solvers(4) = 2 4 5 11
   Convection = "Computed"
 End
 
 Equation 2
   Name = "filler equation"
-  Active Solvers(4) = 2 4 5 10
+  Active Solvers(4) = 2 4 5 11
   Convection = "Computed"
 End
 
 Equation 3
   Name = "ice equations"
-  Active Solvers(10) = 1 2 3 4 5 6 7 9 10 12
+  Active Solvers(11) = 1 2 3 4 5 6 7 9 10 11 13
   Convection = "Computed"
   Flow Solution Name = String "Flow Solution"
 End
@@ -184,7 +185,7 @@ End
 
 Equation 5
   Name = "freesurface equations"
-  Active Solvers(1) = 11
+  Active Solvers(1) = 12
   Convection = "Computed"
   Flow Solution Name = String "Flow Solution"
 End
@@ -280,7 +281,7 @@ Body Force 3
   Flow BodyForce 1 = Real 0
   Flow BodyForce 2 = Real 0
   Flow BodyForce 3 = Real #-gravity
-  ! no Heat Source: strain heating switched off
+__HEAT_SOURCE__
 End
 
 Body Force 4
@@ -497,7 +498,24 @@ Solver 9
   Exported Variable 2 = -dofs 1 External Pressure
 End
 
+! Strain heating 2 eta e:e from the current Stokes solution, before the heat solver in the same
+! step (computed after it, the first step of every run would lack it, and the map's fixed points
+! would not be steady states). Exec Solver = Never unless [elmer] strain_heat = true.
 Solver 10
+  Exec Solver = __STRAIN_EXEC__
+  Equation = DeformationalHeat
+  Variable = Strain Heating
+  Variable DOFs = 1
+  Procedure = "ElmerIceSolvers" "DeformationalHeatSolver"
+  Linear System Solver = Direct
+  Linear System Direct Method = $directsolver
+  Linear System Abort Not Converged = True
+  Linear System Convergence Tolerance = 1.0e-12   ! required by some solvers even with Direct
+  Nonlinear System Max Iterations = 1
+  Bubbles in global system = False
+End
+
+Solver 11
   Equation = String "Homologous Temperature Equation"
   Procedure =  File "HeatSolveVec" "HeatSolver"
   Variable = String "Temperature"
@@ -539,7 +557,7 @@ End
 
 !!---- After timestep ----!!
 
-Solver 11
+Solver 12
   Equation = "Free Surface Top"
   Exec Solver = "after Timestep"
   Procedure =  "FreeSurfaceSolver" "FreeSurfaceSolver"
@@ -568,7 +586,7 @@ End
 
 !!---- After all ----!!
 
-Solver 12
+Solver 13
   Exec Solver = "After All"
   Equation = "StateWrite"
   Procedure = "__ESS_LIB__" "StateIO"
