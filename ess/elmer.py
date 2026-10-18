@@ -153,7 +153,7 @@ class ElmerModel(Model):
             # saddle-point system: GCR with a long restart and a strong ILU
             return ('  Linear System Solver = Iterative\n'
                     '  Linear System Iterative Method = GCR\n'
-                    '  Linear System GCR Restart = 250\n'
+                    '  Linear System GCR Restart = Integer 250\n'
                     '  Linear System Max Iterations = 5000\n'
                     f'  Linear System Preconditioning = {self.stokes_precond}\n'
                     f'  Linear System Convergence Tolerance = {tol}\n'
@@ -162,7 +162,7 @@ class ElmerModel(Model):
         # heat (advection-diffusion, non-symmetric) and strain heating (mass matrix)
         return ('  Linear System Solver = Iterative\n'
                 '  Linear System Iterative Method = BiCGStabL\n'
-                '  Linear System BiCGStabL Polynomial Degree = 4\n'
+                '  Linear System BiCGStabL Polynomial Degree = Integer 4\n'
                 '  Linear System Max Iterations = 2000\n'
                 '  Linear System Preconditioning = ILU1\n'
                 f'  Linear System Convergence Tolerance = {tol}\n'
