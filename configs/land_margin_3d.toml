@@ -25,7 +25,7 @@ geo = "case/flowline_cut.geo.in"        # footprint ending at x_end * L
 x_end = 0.8                             # domain end (fraction of L): the steady margin
 edge_thickness = 150.0                  # m, ice thickness held at the end
 width = 20000.0                         # m, strip width across the flow (wavelengths 2*width/n)
-y_elements = 8                          # elements across the flow (n = 1..8 resolved, best n <= 4)
+y_elements = 40                         # elements across the flow: 500 m spacing (wavelengths down to ~2 km resolved)
 gmsh = "gmsh"
 elmergrid = "ElmerGrid"
 
