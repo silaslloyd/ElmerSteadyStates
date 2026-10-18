@@ -113,10 +113,20 @@ class ElmerModel(Model):
 
     # ---------------------------------------------------------------- inputs of a run
     def params_lua(self, p) -> str:
-        txt = override_lua_assignment(self._params_text, self.param_name, p)
-        if self.lua_overrides:
-            txt += "\n-- [lua] overrides from the ess config\n" + "".join(
-                f"{k} = {v}\n" for k, v in self.lua_overrides.items())
+        txt = self._params_text
+        # [lua] overrides of parameters.lua assignments replace them in place, so derived quantities
+        # (e.g. dT = delta*Tscale) follow; other names (ess_utils.lua globals) are appended
+        extra = {}
+        for k, v in self.lua_overrides.items():
+            pat = re.compile(rf"^(\s*){re.escape(k)}(\s*)=(?!=)[^\n]*$", re.M)
+            m = pat.search(txt)
+            if m and k != self.param_name:
+                txt = txt[:m.start()] + f"{m.group(1)}{k} = {v}   -- [lua] in the ess config" + txt[m.end():]
+            else:
+                extra[k] = v
+        txt = override_lua_assignment(txt, self.param_name, p)
+        if extra:
+            txt += "\n-- [lua] overrides from the ess config\n" + "".join(f"{k} = {v}\n" for k, v in extra.items())
         return txt
 
     def _friction_heat_block(self) -> str:
