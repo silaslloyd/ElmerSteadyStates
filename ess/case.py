@@ -171,8 +171,14 @@ def setup_case(cfg, mesh=True):
         return g
     geo = open(cfg["_path"](cfg.get("case", {}).get("geo", "case/flowline.geo.in"))).read()
     P["Lend"] = min(x_end, 1.0) * P["L"]
+    if "width" in c:                          # m, width of the strip across the flow
+        P["Wmesh"] = float(c["width"])
+    ny = int(c.get("y_elements", 1))          # elements across the flow
+    geo = geo.replace("{YElements}", str(ny))
     for k in ("L", "Lend", "Wmesh", "BoundaryRes", "MarginRes"):
         geo = geo.replace("{" + k + "}", repr(float(P[k])))
+    if ny > 1:
+        log.info(f"setup: {ny} elements across a width of {P['Wmesh'] / 1e3:g} km")
     with open(os.path.join(case, "footprint.geo"), "w") as f:
         f.write(geo)
     _run([c.get("gmsh", "gmsh"), "footprint.geo", "-1", "-2", "-format", "msh2", "-o", "footprint.msh"], case)

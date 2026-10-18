@@ -203,6 +203,37 @@ A job that times out can simply be resubmitted with the same command:
   * Too small, and the steps crawl.
   * Too large, and the branch looks sharply curved at the fold, so steps there become tiny.
 
+## Stability to perturbations across the flow (3D strip)
+
+The steady states are uniform across the flow (y), so their linear modes are
+cos(n pi y / W) x (shape in x and z): each spanwise wavenumber k_y = n pi / W has its own modes. Along
+the flow (x) the steady state varies, so there are no k_x modes; each k_y has a set of global modes in
+x. (A local (k_x, k_y) dispersion relation needs a local slab analysis at a fixed x.)
+
+`configs/land_margin_3d.toml` runs the same model on a strip `width` wide with `y_elements` elements
+across and free-slip side walls (`[case] width`, `y_elements`; `case/flowline_cut.geo.in`):
+
+```bash
+sbatch jobs/ess.cmd setup configs/land_margin_3d.toml
+sbatch jobs/ess.cmd init  configs/land_margin_3d.toml
+python3 -m ess transfer configs/land_margin_3d.toml --from work/land_margin/steady_p268.228_flux.npz
+sbatch jobs/ess.cmd newton configs/land_margin_3d.toml --state work/land_margin_3d/start_p268.228.npz
+sbatch jobs/ess.cmd stability configs/land_margin_3d.toml --state work/land_margin_3d/steady_p268.228.npz --spanwise
+```
+
+* `transfer` copies a 2D steady state onto the strip, uniform in y. Newton then removes the small
+  differences in discretisation; by symmetry the state stays uniform in y.
+* `stability --spanwise` (ess/spanwise.py) removes the across-flow mean from every Arnoldi vector, so
+  the 2D modes (n = 0) drop out and Arnoldi finds the least stable modes with n >= 1. Each mode is
+  labelled by its dominant n (a discrete cosine transform across the flow), with k_y and the
+  wavelength 2 W / n, in the log and in `stability.npz` (`spanwise_n`, `spanwise_wavelength`,
+  `spanwise_spectrum`).
+* `plots/plot_mode_3d.py`: x-y maps of a mode's basal temperature and surface perturbations, the
+  spectrum of every mode, and growth rate against wavelength.
+* A strip of width W resolves wavelengths 2W, W, 2W/3, ... down to about 2W/(y_elements/2). For a
+  dispersion curve, run several widths (copy the config, change `width` and `work_dir`).
+* Cost: each run is about y_elements times a flowline run.
+
 ## Non-smooth parts (where Newton can struggle)
 
 * **The frozen masks.** Their consistency is checked at every converged state. If a branch runs into

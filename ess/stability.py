@@ -46,7 +46,10 @@ class StabilityResult:
 
 
 def stability(prob: FixedPointProblem, y_star, p, spec: MapSpec, opt: StabilityOptions = StabilityOptions(),
-              checkpoint: str | None = None) -> StabilityResult:
+              checkpoint: str | None = None, project=None) -> StabilityResult:
+    """project: optional linear projection P (e.g. removing the across-flow mean on a 3D strip, see
+    spanwise.py); Arnoldi then works on P M P, which is M restricted to the range of P when M commutes
+    with P (a symmetry of the steady state)."""
     phi0 = prob.phi(y_star, p, tag="stab_base", spec=spec, want_diag=True)
     drift = rms(phi0 - y_star)
     log.info(f"stability: rms(Phi(x*) - x*) = {drift:.2e} over T = {spec.horizon:g} "
@@ -54,11 +57,13 @@ def stability(prob: FixedPointProblem, y_star, p, spec: MapSpec, opt: StabilityO
     if drift > prob.fd_eps:
         log.warning("stability: the state is not a fixed point to within the finite-difference perturbation")
 
+    P = project or (lambda v: v)
+
     def mv(v):
-        return prob.dphi(y_star, p, phi0, v, spec=spec, tag="stab_jv")
+        return P(prob.dphi(y_star, p, phi0, P(v), spec=spec, tag="stab_jv"))
 
     rng = np.random.default_rng(opt.seed)
-    v0 = rng.standard_normal(prob.n)
+    v0 = P(rng.standard_normal(prob.n))
 
     def cb(st):
         mu, _, res = ritz(st)
@@ -68,7 +73,8 @@ def stability(prob: FixedPointProblem, y_star, p, spec: MapSpec, opt: StabilityO
 
     import hashlib
     key = hashlib.sha1(np.ascontiguousarray(y_star, float).tobytes()
-                       + repr((float(p), spec, prob.fd_eps, prob.fd_scheme, opt.seed)).encode()).hexdigest()
+                       + repr((float(p), spec, prob.fd_eps, prob.fd_scheme, opt.seed,
+                               project is not None)).encode()).hexdigest()
     st = arnoldi(mv, v0, opt.m, checkpoint=checkpoint, callback=cb, key=key)
     mu, X, res = ritz(st)
     k = min(opt.nev, len(mu))

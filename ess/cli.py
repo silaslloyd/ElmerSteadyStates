@@ -332,12 +332,41 @@ def cmd_stability(args):
     sdir = os.path.join(cfg["_work"], "stability", label)
     os.makedirs(sdir, exist_ok=True)
     y = prob.scale(saved.x)
-    st = stability(prob, y, saved.p, spec, opt, checkpoint=os.path.join(sdir, "arnoldi.npz"))
+    span = None
+    if args.spanwise:
+        from .spanwise import Spanwise
+        span = Spanwise(saved.layout, saved.diag)
+        sdir += "_spanwise"
+        os.makedirs(sdir, exist_ok=True)
+        log.info(f"stability: spanwise modes on a strip of width {span.W / 1e3:g} km, {span.ny} nodes across "
+                 f"(n = 1..{span.ny - 1}, wavelengths {2 * span.W / 1e3:g}..{2 * span.W / (span.ny - 1) / 1e3:.3g} km); "
+                 f"the across-flow mean (n = 0, the 2D modes) is projected out")
+    st = stability(prob, y, saved.p, spec, opt, checkpoint=os.path.join(sdir, "arnoldi.npz"),
+                   project=span.project if span else None)
     vec = st.vectors * prob.s[:, None]
+    extra = {}
+    if span:
+        spec_n = np.array([span.spectrum(st.vectors[:, i]) for i in range(st.vectors.shape[1])])
+        n_dom = spec_n[:, 1:].argmax(axis=1) + 1
+        k = n_dom * np.pi / span.W
+        lam = 2 * span.W / n_dom
+        for i in range(len(st.mu)):
+            log.info(f"  mode {i}: |mu| {abs(st.mu[i]):.6f}  sigma {st.sigma[i].real:+.4e}/yr  dominant n = {n_dom[i]} "
+                     f"(k_y {k[i] * 1e3:.4g}/km, wavelength {lam[i] / 1e3:.4g} km, {spec_n[i, n_dom[i]]:.0%} of the energy)"
+                     f"{'' if st.converged[i] else '  (not converged)'}")
+        extra = dict(spanwise_spectrum=spec_n, spanwise_n=n_dom, spanwise_k=k, spanwise_wavelength=lam,
+                     spanwise_width=span.W)
     out = os.path.join(sdir, "stability.npz")
     d = saved.layout.to_npz_dict()
     d.update(mu=st.mu, sigma=st.sigma, sigma_be=st.sigma_be, residual=st.residual, converged=st.converged,
-             vectors=vec, x=saved.x, p=saved.p, dt=spec.dt, n_steps=spec.n_steps, drift=st.drift)
+             vectors=vec, x=saved.x, p=saved.p, dt=spec.dt, n_steps=spec.n_steps, drift=st.drift, **extra)
+    for k_, (g, v) in saved.frozen.items():          # bed nodes etc. for the plots
+        d[f"frozen_gids::{k_}"] = g
+        d[f"frozen_vals::{k_}"] = v
+    for k_, (g, v) in saved.diag.items():
+        if k_.lower().startswith("coordinate") and f"diag_gids::{k_}" not in d:
+            d[f"diag_gids::{k_}"] = g
+            d[f"diag_vals::{k_}"] = v
     for k, (g, v) in prob.last_diag.items():
         d[f"diag_gids::{k}"] = g
         d[f"diag_vals::{k}"] = v
@@ -466,6 +495,9 @@ def main(argv=None):
     s.add_argument("--name", help="branch name, with --point")
     s.add_argument("--point", type=int, default=0)
     s.add_argument("--m", type=int, help="Krylov dimension (overrides [stability] m)")
+    s.add_argument("--spanwise", action="store_true",
+                   help="3D strip (y_elements > 1): project out the across-flow mean and classify the modes "
+                        "by spanwise wavenumber")
     s.add_argument("--map", default="stability_map", choices=["stability_map", "map"],
                    help="map to linearise: [stability_map] (physical, default) or [map] (the one Newton "
                         "and continuation use: |mu| near 1 there means an ill-conditioned Newton system)")

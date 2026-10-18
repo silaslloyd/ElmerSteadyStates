@@ -1,0 +1,129 @@
+# ElmerSteadyStates: thermo-coupled land-terminating ice sheet on a 3D STRIP, for the stability of
+# the (y-uniform) flowline steady state to perturbations across the flow.
+#
+# Same physics and solver settings as the 2D branch that worked (fixed margin at 0.8 L, 150 m edge,
+# frictional heating as a basal flux, 2 kyr map, central differences), but the footprint is `width`
+# wide with `y_elements` elements across, with free-slip side walls. The linearised map then has modes
+# cos(n pi y / width) x (shape in x and z), n = 0 (2D modes), 1, 2, ...: wavenumber k_y = n pi / width,
+# wavelength 2 width / n. `stability --spanwise` projects out n = 0 and labels the modes by n.
+#
+#   sbatch jobs/ess.cmd setup configs/land_margin_3d.toml
+#   sbatch jobs/ess.cmd init  configs/land_margin_3d.toml
+#   python3 -m ess transfer configs/land_margin_3d.toml --from work/land_margin/steady_p268.228_flux.npz
+#   sbatch jobs/ess.cmd newton configs/land_margin_3d.toml --state work/land_margin_3d/start_p268.228.npz
+#   sbatch jobs/ess.cmd stability configs/land_margin_3d.toml --state work/land_margin_3d/steady_p268.228.npz --spanwise
+#
+# Several widths: copy this file, change `width` and `work_dir` (each width needs its own mesh).
+
+[paths]
+work_dir = "work/land_margin_3d"
+case_dir = "{work}/case"                # mesh and initial conditions, written by `ess setup`
+
+[case]
+parameters = "case/parameters.lua"      # physical parameters (copied into the case directory)
+geo = "case/flowline_cut.geo.in"        # footprint ending at x_end * L
+x_end = 0.8                             # domain end (fraction of L): the steady margin
+edge_thickness = 150.0                  # m, ice thickness held at the end
+width = 20000.0                         # m, strip width across the flow (wavelengths 2*width/n)
+y_elements = 8                          # elements across the flow (n = 1..8 resolved, best n <= 4)
+gmsh = "gmsh"
+elmergrid = "ElmerGrid"
+
+[model]
+type = "elmer"
+
+[elmer]
+template = "elmer/steady_template.sif"
+mesh_db = "footprint"
+ess_lib = "elmer/SteadyStateIO"         # build with: make -C elmer
+ess_utils = "elmer/ess_utils.lua"
+n_procs = 0                             # 0: $SLURM_NTASKS. `ess setup` partitions the mesh for this many.
+mpirun = "mpirun -np {n}"
+solver = "ElmerSolver"
+timeout = 21600                         # seconds per Elmer run
+keep_runs = false                       # true: keep every run directory (sif, log, state files)
+cache = true                            # reuse finished runs (a restarted job repeats no runs)
+vtu = false                             # true: every run also writes a VTU at its end
+friction_heat = "flux"                  # basal heat flux C(T) |u_b|^2 (smooth node to node)
+strain_heat = false                     # true: strain heating 2 eta e:e in the ice (ElmerStreams: on)
+# written with every run besides the state, used for the mask checks and plots
+diagnostics = ["Temperature Loads", "Temperature Boundary Weights", "Friction Loads",
+               "Velocity 1", "Velocity 3", "Zb", "ColdTempMask", "GroundedMask"]
+
+[state]
+variables = ["Temperature", "Zs"]       # the state vector (velocity is slaved to it)
+scales = { Temperature = 5.0, Zs = 50.0 }   # K and m per scaled unit (norms, tolerances, FD steps)
+frozen = ["ColdTempMask", "GroundedMask", "Zb", "bedrock"]
+
+[extract]
+# Only for `ess extract --restart FILE` (start from an Elmer .result in the mesh directory, written
+# with the same partitioning). true: masks/bedrock/Zb from the `ess setup` tables; false: from the
+# restart where it has them.
+restart_before_ics = true
+
+[parameter]
+name = "Tsurf"          # any top-level assignment in parameters.lua
+value = 268.15
+scale = 1.0             # parameter change (K) counted like one scaled unit of state change
+
+# The map used by Newton and continuation: n_steps of size dt (years). Its horizon T = n_steps*dt
+# must be comparable to the slow time scales, or GMRES stalls on all the modes that barely change
+# over T: ice-column diffusion H^2/kappa ~ 30 kyr, volume response H/a ~ 60 kyr. The 10.7 km bedrock
+# would take ~2 Myr; rock_heat_capacity < 1 speeds it up (no advection there, so steady states are
+# exactly the same). Use the largest dt the free surface tolerates (test with `ess run --dt`).
+# Fixed points do not depend on dt, n_steps or rock_heat_capacity.
+[map]
+dt = 200.0
+n_steps = 10            # 2 kyr: the 10 kyr map compounds the sliding-heating feedback (Newton fails)
+coupled_iters = 1       # >1: iterate Stokes <-> heat within each step (same fixed points)
+rock_heat_capacity = 0.001
+
+# The map used for stability: the physical transient (rock_heat_capacity = 1). Use the same dt as
+# [map]: the discretisation's stabilisation depends slightly on dt, so a different dt has a slightly
+# different fixed point. Backward Euler with dt = 200 is accurate for modes slower than ~100 yr
+# (it reports modes with sigma dt > 2 as stable, so anything that fast would be missed).
+[stability_map]
+dt = 200.0
+n_steps = 25
+rock_heat_capacity = 1.0
+
+[fd]
+eps = 1e-6              # check --vector residual: plateau at 1e-6
+scheme = "central"      # 2 runs per product, error ~ eps^2
+
+[newton]
+tol = 1e-5              # rms(Phi(x) - x) over the 2 kyr map
+maxit = 15
+eta_max = 0.1
+eta_min = 1e-5
+gmres_restart = 60
+gmres_maxiter = 150
+max_step = 2.0          # max change per Newton step, scaled units (10 K, 100 m)
+linesearch = 6
+
+[continuation]
+name = "Tsurf"
+ds = 0.5
+ds_min = 1e-3
+ds_max = 2.0
+dp0 = 0.05              # first step in Tsurf (K); its sign sets the direction
+p_min = 255.0
+p_max = 273.0
+max_points = 60
+max_folds = 4
+tol = 1e-5              # rms(F) over the 2 kyr map
+contraction = 0.8       # give up a corrector step when rms(F) falls by less than this per iteration
+predictor = "parameter" # Newton at the next Tsurf away from folds, arclength corrector near them
+maxit = 8
+target_its = 3
+eta = 1e-3
+gmres_restart = 60
+gmres_maxiter = 150
+max_step = 2.0
+stability_every = 0     # >0: a short Arnoldi (stability_m runs) at every k-th point
+stability_m = 10
+
+[stability]
+m = 50                  # Krylov dimension = model runs (slow modes cluster near |mu| = 1: needs a few dozen)
+nev = 10
+tol = 1e-2              # Ritz residual / |mu| for a mode to count as converged

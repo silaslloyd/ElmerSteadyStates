@@ -1,10 +1,12 @@
 // Flowline footprint ending at the steady ice margin (fixed-margin mode: [case] x_end < 1),
-// one element wide, refined towards the end. Values are filled in by `ess setup`; Lend = x_end * L.
+// Ny elements across (1: a flowline; more: a 3D strip for the spanwise stability analysis),
+// refined towards the end. Values are filled in by `ess setup`; Lend = x_end * L.
 // The physical-group order (inflow, front, side1, side2) gives Elmer boundaries 1-4, which the
 // extruded mesh and steady_template.sif rely on. All groups are selected by position (bounding
 // boxes), so nothing depends on gmsh's entity numbering or on the order Extrude returns entities.
 Lend = {Lend};
 W = {Wmesh};
+Ny = {YElements};
 resb = {BoundaryRes};
 resm = {MarginRes};
 Point(1) = {0, 0, 0, resb};
@@ -14,7 +16,7 @@ Point(4) = {Lend, 0, 0, resm/2};
 Line(1) = {1, 2};
 Line(2) = {2, 3};
 Line(3) = {3, 4};
-Extrude {0, W, 0} { Curve{1}; Curve{2}; Curve{3}; Layers{1}; Recombine; }
+Extrude {0, W, 0} { Curve{1}; Curve{2}; Curve{3}; Layers{Ny}; Recombine; }
 Coherence;
 e = 1.0;   // m, bounding-box tolerance
 Physical Surface(21) = Surface{:};
