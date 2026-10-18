@@ -232,7 +232,12 @@ sbatch jobs/ess.cmd stability configs/land_margin_3d.toml --state work/land_marg
   spectrum of every mode, and growth rate against wavelength.
 * A strip of width W resolves wavelengths 2W, W, 2W/3, ... down to about 2W/(y_elements/2). For a
   dispersion curve, run several widths (copy the config, change `width` and `work_dir`).
-* Cost: each run is about y_elements times a flowline run.
+* Cost: each run is about y_elements times a flowline run. MUMPS (the default) slows down sharply in
+  3D; `[elmer] linear_stokes = "iterative"`, `linear_heat = "iterative"` switch to GCR / BiCGStabL with
+  ILU (`stokes_preconditioner`, `iterative_tol`). Their error is noise in the Jacobian products, so
+  check with `ess check --vector residual` (the repeat difference should stay far below `[fd] eps`).
+  If GCR + ILU does not converge on the P2/P1 Stokes system, `stokes_element = "Stabilized"` (P1/P1)
+  is much easier for ILU, but changes the discretisation.
 
 ## Non-smooth parts (where Newton can struggle)
 

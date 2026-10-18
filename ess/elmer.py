@@ -65,6 +65,14 @@ class ElmerModel(Model):
         self.vtu = bool(e.get("vtu", False))
         self.friction_heat = str(e.get("friction_heat", "loads"))
         self.strain_heat = bool(e.get("strain_heat", False))
+        # linear solvers: "direct" (MUMPS) or "iterative" (Krylov + ILU, tolerance iterative_tol)
+        self.linear_stokes = str(e.get("linear_stokes", "direct"))
+        self.linear_heat = str(e.get("linear_heat", "direct"))
+        self.iterative_tol = float(e.get("iterative_tol", 1e-10))
+        self.stokes_precond = str(e.get("stokes_preconditioner", "ILU2"))
+        # "P2/P1" (default) or "Stabilized" (P1/P1 with stabilisation: far easier for ILU-preconditioned
+        # Krylov solvers, but a different discretisation, so slightly different steady states)
+        self.stokes_element = str(e.get("stokes_element", "P2/P1"))
         # [lua]: extra global assignments, appended to parameters.lua (they override ess_utils.lua
         # defaults such as ess_Hs / ess_Hmin, which is loaded first)
         self.lua_overrides = {k: repr(float(v)) for k, v in cfg.get("lua", {}).items()}
@@ -129,6 +137,38 @@ class ElmerModel(Model):
                     '    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * (tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
         raise ValueError(f"[elmer] friction_heat must be 'loads' or 'flux', not {self.friction_heat!r}")
 
+    def _linear_block(self, kind, which) -> str:
+        """Linear-solver keywords for one solver. Iterative solves must converge far below the finite-
+        difference perturbation (fd eps): their error is noise in the Jacobian products (check with
+        `ess check`: the repeat difference rms(Phi_a - Phi_b) and the linearity plateau)."""
+        if kind == "direct":
+            return ('  Linear System Solver = Direct\n'
+                    '  Linear System Direct Method = $directsolver\n'
+                    '  Linear System Abort Not Converged = True\n'
+                    '  Linear System Convergence Tolerance = 1.0e-12')
+        if kind != "iterative":
+            raise ValueError(f"[elmer] linear solver must be 'direct' or 'iterative', not {kind!r}")
+        tol = f"{self.iterative_tol:.1e}"
+        if which == "stokes":
+            # saddle-point system: GCR with a long restart and a strong ILU
+            return ('  Linear System Solver = Iterative\n'
+                    '  Linear System Iterative Method = GCR\n'
+                    '  Linear System GCR Restart = 250\n'
+                    '  Linear System Max Iterations = 5000\n'
+                    f'  Linear System Preconditioning = {self.stokes_precond}\n'
+                    f'  Linear System Convergence Tolerance = {tol}\n'
+                    '  Linear System Abort Not Converged = True\n'
+                    '  Linear System Residual Output = 200')
+        # heat (advection-diffusion, non-symmetric) and strain heating (mass matrix)
+        return ('  Linear System Solver = Iterative\n'
+                '  Linear System Iterative Method = BiCGStabL\n'
+                '  Linear System BiCGStabL Polynomial Degree = 4\n'
+                '  Linear System Max Iterations = 2000\n'
+                '  Linear System Preconditioning = ILU1\n'
+                f'  Linear System Convergence Tolerance = {tol}\n'
+                '  Linear System Abort Not Converged = True\n'
+                '  Linear System Residual Output = 200')
+
     def _write_vars(self, names) -> str:
         return "\n".join(f'  State Variable {i + 1} = String "{n}"' for i, n in enumerate(names))
 
@@ -161,6 +201,10 @@ class ElmerModel(Model):
             "__RESTART_BLOCK__": rb,
             "__POST_BLOCK__": pb,
             "__FRICTION_HEAT__": self._friction_heat_block(),
+            "__LS_STOKES__": self._linear_block(self.linear_stokes, "stokes"),
+            "__LS_HEAT__": self._linear_block(self.linear_heat, "heat"),
+            "__LS_STRAIN__": self._linear_block(self.linear_heat, "strain"),
+            "__STOKES_STAB__": f'"{self.stokes_element}"',
             # strain heating (ElmerStreams: on): DeformationalHeatSolver + volumetric heat source
             "__STRAIN_EXEC__": '"Always"' if self.strain_heat else '"Never"',
             "__HEAT_SOURCE__": ('  Heat Source = Variable Strain Heating\n    Real Lua "tx[0]/rhoi"'

@@ -12,8 +12,9 @@
 !!   * autonomous: accumulation and surface temperature do not depend on time;
 !!   * no noise field, no GL Distance solver (front zone uses L - x);
 !!   * diagnostics (stress, Fw, grounded/cold-mask solvers) removed;
-!!   * direct (MUMPS) linear solvers, Abort Not Converged = True, so the map
-!!     is deterministic and accurate enough for finite-difference Jacobians;
+!!   * linear solvers: direct (MUMPS) by default, or iterative with a tight
+!!     tolerance for Stokes / heat / strain heating ([elmer] linear_stokes,
+!!     linear_heat; 3D strips), Abort Not Converged = True either way;
 !!   * the state (Temperature on all bodies, Zs) is read/written exactly by
 !!     SteadyStateIO (no restart file, no VTU unless asked for);
 !!   * Elmer's built-in FreeSurfaceSolver (ElmerStreams used a copy of it);
@@ -477,17 +478,14 @@ Solver 9
   Stokes flow  = Logical true
   Optimize Bandwidth = Logical True
   Flow Model = Stokes
-  Stabilization Method = String "P2/P1"
+  Stabilization Method = String __STOKES_STAB__
 
   ! linear problem (constant viscosity, Weertman exponent 1)
   Nonlinear System Min Iterations = 1
   Nonlinear System Max Iterations = 1
   Nonlinear System Convergence Tolerance  = 1.0e-8
 
-  Linear System Solver = Direct
-  Linear System Direct Method = $directsolver
-  Linear System Abort Not Converged = True
-  Linear System Convergence Tolerance = 1.0e-12   ! required by some solvers even with Direct
+__LS_STOKES__
 
   Steady State Convergence Tolerance = Real 1.0e-8
   Number of Integration Points = Integer 44
@@ -507,10 +505,7 @@ Solver 10
   Variable = Strain Heating
   Variable DOFs = 1
   Procedure = "ElmerIceSolvers" "DeformationalHeatSolver"
-  Linear System Solver = Direct
-  Linear System Direct Method = $directsolver
-  Linear System Abort Not Converged = True
-  Linear System Convergence Tolerance = 1.0e-12   ! required by some solvers even with Direct
+__LS_STRAIN__
   Nonlinear System Max Iterations = 1
   Bubbles in global system = False
 End
@@ -527,10 +522,7 @@ Solver 11
   Number of Integration Points = Integer 64
   Optimize Bandwidth = Logical True
 
-  Linear System Solver = "Direct"
-  Linear System Direct Method = $directsolver
-  Linear System Abort Not Converged = True
-  Linear System Convergence Tolerance = 1.0e-12   ! required by some solvers even with Direct
+__LS_HEAT__
 
   Nonlinear System Convergence Tolerance = 1.0e-10
   Nonlinear System Max Iterations = 1
