@@ -23,7 +23,7 @@ Every case is compared with the serial run of the same physics, which uses direc
 | group | changes | tests |
 |---|---|---|
 | R | serial, direct | the boundary conditions and heating alone: are periodic + loads y-uniform at all? (`*_halve`: the `y < 1` halving in `frictionloads`) |
-| A | partitionings, flux heating, direct | periodic BCs + partitioning alone. `x8` never splits a periodic pair; `y4x2` splits them; `_per` adds ElmerGrid `-periodic 0 1 0` (as `stream.cmd`) |
+| A | partitionings, flux heating, direct | periodic BCs + partitioning alone. `xcut` (N x 1) never splits a periodic pair; `ycut` (N/4 x 4, as `stream.cmd`) splits them; `_per` adds ElmerGrid `-periodic 0 1 0` (as `stream.cmd`) |
 | B | nodal friction loads in parallel, direct | loads at shared nodes / periodic nodes (`Flow Solution Loads` x velocity as `Temperature Load`) |
 | C | heat solver GCR+ILU2 (ElmerStreams), BiCGStabL+ILU1, GCR without preconditioner | the preconditioner with periodic constraints across partitions |
 | D | Stokes GCR+ILU8 with `Abort Not Converged = False` (ElmerStreams `linsys/gcr.sif`) | an unconverged Stokes solve feeding bad loads/velocities to the heat solve |
@@ -41,13 +41,16 @@ sbatch periodic_test/run.cmd --only R_ A_    # some groups (their serial referen
 python3 periodic_test/run_tests.py --analyse # the table again, after the runs
 ```
 
-- **Where the runs go:** `periodic_test/out/<case>/`, with `case.sif`, `params.lua`, `elmer.log` and
+- **Where the runs go:** `periodic_test/out/np<N>/<case>/`, with `case.sif`, `params.lua`, `elmer.log` and
   the per-partition outputs `out.bin.<pe>`.
-- **Partitioned meshes:** `periodic_test/out/meshes/<partitioning>/`.
+- **Partitioned meshes:** `periodic_test/out/np<N>/meshes/<partitioning>/`.
 - **Requirements:** `elmer/SteadyStateIO.so`, which `run.cmd` builds if it is missing, and ElmerGrid
   on the PATH.
-- **Partitioning keywords:** `stream.cmd` uses `-metiskway`; `y4x2*` is `-partition 2 4 1`, its
-  `$((N/4)) 4 1` with N = 8.
+- **Number of partitions:** N = the job's task count (`--ntasks`, default 8; a multiple of 4).
+  `ycut*` is `-partition N/4 4 1` as in `stream.cmd`, `metis*` is `-metiskway N`, `xcut` is
+  `-partition N 1 1` (skipped above N = 60, the footprint's columns). Results go to `out/np<N>/`, so
+  runs with different N are kept side by side:
+  `sbatch --ntasks=32 periodic_test/run.cmd`.
 
 ## Reading the table
 
@@ -65,7 +68,7 @@ Units are K, and relative velocity for `du_rel`.
 - **`status`:** whether Elmer finished, whether any linear solves did not converge, and whether the
   extruded bed/surface conditions (5, 6) were applied.
 
-If plotly is installed, `out/<case>/bed.html` maps the basal temperature minus its across-flow mean,
+If plotly is installed, `out/np<N>/<case>/bed.html` maps the basal temperature minus its across-flow mean,
 with the partition-interface nodes ringed.
 
 ## Things not covered yet

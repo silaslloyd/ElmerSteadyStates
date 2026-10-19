@@ -8,8 +8,9 @@ Run inside a batch job with enough MPI tasks (jobs: periodic_test/run.cmd):
     python3 periodic_test/run_tests.py --list                 # print the cases
     python3 periodic_test/run_tests.py --analyse              # analysis only (finished cases)
 
-Each case runs in periodic_test/out/<case>/ (sif, params.lua, elmer.log, out.bin.<pe>);
-the summary goes to periodic_test/out/summary.csv and is printed.
+Partitioned cases use N = --np partitions (default $SLURM_NTASKS, else 8; a multiple of 4).
+Each case runs in periodic_test/out/np<N>/<case>/ (sif, params.lua, elmer.log, out.bin.<pe>);
+the summary goes to periodic_test/out/np<N>/summary.csv and is printed.
 """
 import argparse
 import os
@@ -57,15 +58,22 @@ end
 """
 
 # ---------------------------------------------------------------- partitionings of the footprint
-# name -> (number of partitions, ElmerGrid options)
-PARTS = {
-    "serial":     (1, []),
-    "x8":         (8, ["-partition", "8", "1", "1"]),                          # cuts across x only
-    "y4x2":       (8, ["-partition", "2", "4", "1"]),                          # as stream.cmd, no -periodic
-    "y4x2_per":   (8, ["-partition", "2", "4", "1", "-periodic", "0", "1", "0"]),   # as stream.cmd
-    "metis8":     (8, ["-metiskway", "8"]),
-    "metis8_per": (8, ["-metiskway", "8", "-periodic", "0", "1", "0"]),
-}
+# N partitions (--np, default $SLURM_NTASKS or 8); name -> (number of partitions, ElmerGrid options)
+def parts_table(N):
+    if N % 4:
+        raise SystemExit(f"--np {N}: needs a multiple of 4 (the y-cuts are N/4 x 4 x 1, as stream.cmd)")
+    return {
+        "serial":    (1, []),
+        "xcut":      (N, ["-partition", str(N), "1", "1"]),                     # cuts across x only
+        "ycut":      (N, ["-partition", str(N // 4), "4", "1"]),                # as stream.cmd, no -periodic
+        "ycut_per":  (N, ["-partition", str(N // 4), "4", "1", "-periodic", "0", "1", "0"]),   # as stream.cmd
+        "metis":     (N, ["-metiskway", str(N)]),
+        "metis_per": (N, ["-metiskway", str(N), "-periodic", "0", "1", "0"]),
+    }
+
+
+PARTS = parts_table(8)
+
 
 # ---------------------------------------------------------------- linear solvers
 LS = {
@@ -148,32 +156,32 @@ CASES = [
     case("R_wall_loads_halve", bc="wall", heat="loads", halve=True),
     case("R_per_flux_stab", element="Stabilized"), case("R_per_loads_stab", heat="loads", element="Stabilized"),
     # A: periodic BCs and the partitioning, direct solvers, flux heating (no loads involved)
-    *[case(f"A_per_flux_{p}", parts=p) for p in ("x8", "y4x2", "y4x2_per", "metis8", "metis8_per")],
-    case("A_per_geo_y4x2_per", parts="y4x2_per", heat="geo"),
+    *[case(f"A_per_flux_{p}", parts=p) for p in ("xcut", "ycut", "ycut_per", "metis", "metis_per")],
+    case("A_per_geo_ycut_per", parts="ycut_per", heat="geo"),
     # B: nodal friction loads in parallel, direct solvers
-    *[case(f"B_per_loads_{p}", parts=p, heat="loads") for p in ("x8", "y4x2_per", "metis8_per")],
-    case("B_per_loads_halve_y4x2_per", parts="y4x2_per", heat="loads", halve=True),
-    case("B_wall_loads_y4x2", parts="y4x2", bc="wall", heat="loads"),
-    case("B_wall_loads_metis8", parts="metis8", bc="wall", heat="loads"),
+    *[case(f"B_per_loads_{p}", parts=p, heat="loads") for p in ("xcut", "ycut_per", "metis_per")],
+    case("B_per_loads_halve_ycut_per", parts="ycut_per", heat="loads", halve=True),
+    case("B_wall_loads_ycut", parts="ycut", bc="wall", heat="loads"),
+    case("B_wall_loads_metis", parts="metis", bc="wall", heat="loads"),
     # C: the heat solver's iterative method / preconditioner (flux heating, periodic, y-cuts)
-    *[case(f"C_per_flux_y4x2_per_{ls}", parts="y4x2_per", ls_heat=ls) for ls in ("gcr_ilu2", "bicgstabl_ilu1", "gcr_none")],
-    case("C_wall_flux_y4x2_gcr_ilu2", parts="y4x2", bc="wall", ls_heat="gcr_ilu2"),
-    case("C_per_flux_x8_gcr_ilu2", parts="x8", ls_heat="gcr_ilu2"),
+    *[case(f"C_per_flux_ycut_per_{ls}", parts="ycut_per", ls_heat=ls) for ls in ("gcr_ilu2", "bicgstabl_ilu1", "gcr_none")],
+    case("C_wall_flux_ycut_gcr_ilu2", parts="ycut", bc="wall", ls_heat="gcr_ilu2"),
+    case("C_per_flux_xcut_gcr_ilu2", parts="xcut", ls_heat="gcr_ilu2"),
     # D: the Stokes solver of ElmerStreams (GCR + ILU8, not aborting when not converged)
-    case("D_per_flux_y4x2_per_stokesgcr", parts="y4x2_per", ls_stokes="gcr_ilu8"),
-    case("D_per_loads_y4x2_per_stokesgcr", parts="y4x2_per", heat="loads", ls_stokes="gcr_ilu8"),
+    case("D_per_flux_ycut_per_stokesgcr", parts="ycut_per", ls_stokes="gcr_ilu8"),
+    case("D_per_loads_ycut_per_stokesgcr", parts="ycut_per", heat="loads", ls_stokes="gcr_ilu8"),
     # E: Stokes element: P1/P1 stabilised instead of P2/P1 under periodic BCs
-    case("E_per_flux_y4x2_per_stab", parts="y4x2_per", element="Stabilized"),
-    case("E_per_loads_y4x2_per_stab", parts="y4x2_per", heat="loads", element="Stabilized"),
+    case("E_per_flux_ycut_per_stab", parts="ycut_per", element="Stabilized"),
+    case("E_per_loads_ycut_per_stab", parts="ycut_per", heat="loads", element="Stabilized"),
     # F: the ElmerStreams combination: periodic, y-cuts with -periodic, loads with the y < 1 halving,
     #    GCR + ILU2 heat, GCR + ILU8 Stokes
-    case("F_streams", parts="y4x2_per", heat="loads", halve=True, ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
-    case("F_streams_flux", parts="y4x2_per", heat="flux", ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
+    case("F_streams", parts="ycut_per", heat="loads", halve=True, ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
+    case("F_streams_flux", parts="ycut_per", heat="flux", ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
 ]
 
 
 def mesh_dir(parts):
-    return os.path.join(OUT, "meshes", parts)
+    return os.path.join(OUT, "meshes", parts)       # OUT is out/np<N>
 
 
 def prepare_mesh(parts, elmergrid="ElmerGrid"):
@@ -249,7 +257,13 @@ def main():
     ap.add_argument("--elmergrid", default="ElmerGrid")
     ap.add_argument("--timeout", type=float, default=3600)
     a = ap.parse_args()
-    cases = [c for c in CASES if not a.only or any(s in c["name"] for s in a.only)]
+    global PARTS, OUT
+    PARTS = parts_table(a.np)
+    OUT = os.path.join(OUT, f"np{a.np}")                 # runs with different N do not overwrite each other
+    if a.np > GEOM["nx"]:
+        print(f"note: xcut cases need --np <= {GEOM['nx']} (footprint columns); they are skipped")
+    cases = [c for c in CASES if (not a.only or any(s in c["name"] for s in a.only))
+             and not (c["parts"] == "xcut" and a.np > GEOM["nx"])]
     if a.list:
         for c in CASES:
             print(f"{c['name']:38s} parts {c['parts']:10s} bc {c['bc']:8s} heat {c['heat']:5s} halve {c['halve']!s:5s} "
