@@ -208,6 +208,16 @@ CASES = [
                                   ("ycut_per", 1, True, True, ""), ("metis_per", 1, True, True, ""),
                                   ("serial", None, True, False, "_shnoper"), ("ycut_per", 1, True, False, "_shnoper"),
                                   ("serial", None, False, True, "_nostrain"), ("ycut_per", 1, False, True, "_nostrain"))],
+    # W: as S (loads heating), but warm: 259.15 K surface, 272.5 K initial bed, so the bed warms through
+    #    the sharp sliding band (dT = 0.15 K) during the run and the sliding / frictional-heating feedback
+    #    switches on (in S the bed stayed ~1.5 K below melting: mean sliding 0.003 m/a)
+    *[case(f"W_loads_{p}" + ("" if it is None else "_iter") + sfx, parts=p, heat="loads", halve=True,
+           steps=100, dt=100.0, out_every=5, sliding_dT=0.15, Ts=259.15, Tb0=272.5, element="Stabilized",
+           strain=st, ls_heat="direct" if it is None else "gcr_ilu2",
+           ls_stokes="direct" if it is None else "gcr_ilu8", ls_strain="direct" if it is None else "gcr_ilu1")
+      for p, it, st, sfx in (("serial", None, True, ""), ("ycut_per", None, True, ""), ("ycut_per", 1, True, ""),
+                             ("metis_per", 1, True, ""), ("serial", None, False, "_nostrain"),
+                             ("ycut_per", 1, False, "_nostrain"))],
     # G: the ElmerStreams combination on partitionings made WITHOUT ElmerGrid's -periodic
     case("G_streams_ycut_noper", parts="ycut", heat="loads", halve=True, ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
     case("G_streams_metis_noper", parts="metis", heat="loads", halve=True, ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
