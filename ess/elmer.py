@@ -68,6 +68,8 @@ class ElmerModel(Model):
         # surface temperature: "constant" (Tsurf everywhere) or "snout" (Tsurf where the ice is thicker
         # than snout_thickness, linear to T0 at zero thickness: ElmerStreams' warm snout)
         self.surface_temp = str(e.get("surface_temp", "constant"))
+        # surface Robin condition k dT/dn = h (T_ext - T): h ("Heat transfer coefficient", ElmerStreams: 1)
+        self.surface_transfer = float(e.get("surface_transfer", 1.0))
         if self.surface_temp not in ("constant", "snout"):
             raise ValueError(f"[elmer] surface_temp must be 'constant' or 'snout', not {self.surface_temp!r}")
         # linear solvers: "direct" (MUMPS) or "iterative" (Krylov + ILU, tolerance iterative_tol)
@@ -231,6 +233,7 @@ class ElmerModel(Model):
             "__STRAIN_EXEC__": '"Always"' if self.strain_heat else '"Never"',
             "__HEAT_SOURCE__": ('  Heat Source = Variable Strain Heating\n    Real Lua "tx[0]/rhoi"'
                                 if self.strain_heat else "  ! no Heat Source: strain heating off ([elmer] strain_heat)"),
+            "__HTC__": f"{self.surface_transfer:g}",
             "__SURFACE_T__": ('  External Temperature = Variable height\n'
                               '    Real Lua "surfaceT(tx[0] - 10*zscale, Tsurf)"'
                               if self.surface_temp == "snout" else '  External Temperature = Real #Tsurf'),

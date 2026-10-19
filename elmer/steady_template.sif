@@ -790,7 +790,7 @@ Boundary Condition 20
   Body ID = 5
 
   Heat Flux BC = Logical True
-  Heat transfer coefficient = Real 1
+  Heat transfer coefficient = Real __HTC__
   ! constant Tsurf (the continuation parameter), or a warm snout: ramped to T0
   ! where the ice is thin ([elmer] surface_temp, as ElmerStreams)
 __SURFACE_T__
