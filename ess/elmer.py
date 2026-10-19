@@ -65,6 +65,11 @@ class ElmerModel(Model):
         self.vtu = bool(e.get("vtu", False))
         self.friction_heat = str(e.get("friction_heat", "loads"))
         self.strain_heat = bool(e.get("strain_heat", False))
+        # surface temperature: "constant" (Tsurf everywhere) or "snout" (Tsurf where the ice is thicker
+        # than snout_thickness, linear to T0 at zero thickness: ElmerStreams' warm snout)
+        self.surface_temp = str(e.get("surface_temp", "constant"))
+        if self.surface_temp not in ("constant", "snout"):
+            raise ValueError(f"[elmer] surface_temp must be 'constant' or 'snout', not {self.surface_temp!r}")
         # linear solvers: "direct" (MUMPS) or "iterative" (Krylov + ILU, tolerance iterative_tol)
         self.linear_stokes = str(e.get("linear_stokes", "direct"))
         self.linear_heat = str(e.get("linear_heat", "direct"))
@@ -85,6 +90,10 @@ class ElmerModel(Model):
             self.lua_overrides = {"ess_xend": f"{self.x_end!r} * L",
                                   "ess_Hedge": repr(float(c.get("edge_thickness", 30.0))),
                                   "ess_Hs": "0.0", **self.lua_overrides}
+        if self.surface_temp == "snout":
+            self.lua_overrides = {"ess_snoutH": repr(float(e.get("snout_thickness", 100.0))),
+                                  "ess_snoutW": repr(float(e.get("snout_smooth", 0.0))),
+                                  **self.lua_overrides}
         self.state_vars = list(cfg["state"]["variables"])
         self.frozen_vars = list(cfg["state"].get("frozen", []))
         self.param_name = cfg["parameter"]["name"]
@@ -222,6 +231,9 @@ class ElmerModel(Model):
             "__STRAIN_EXEC__": '"Always"' if self.strain_heat else '"Never"',
             "__HEAT_SOURCE__": ('  Heat Source = Variable Strain Heating\n    Real Lua "tx[0]/rhoi"'
                                 if self.strain_heat else "  ! no Heat Source: strain heating off ([elmer] strain_heat)"),
+            "__SURFACE_T__": ('  External Temperature = Variable height\n'
+                              '    Real Lua "surfaceT(tx[0] - 10*zscale, Tsurf)"'
+                              if self.surface_temp == "snout" else '  External Temperature = Real #Tsurf'),
             # fixed-margin mode: Zs = bed + edge thickness on the end of the domain (Dirichlet)
             "__FRONT_ZS__": ('  Zs = Variable "bedrock"\n    Real Lua "tx[0] + ess_Hedge"'
                              if self.x_end < 1.0 else ""),

@@ -791,9 +791,9 @@ Boundary Condition 20
 
   Heat Flux BC = Logical True
   Heat transfer coefficient = Real 1
-  ! constant external temperature (the continuation parameter) over the whole
-  ! surface; ElmerStreams ramped it to T0 where the ice is thinner than 100 m
-  External Temperature = Real #Tsurf
+  ! constant Tsurf (the continuation parameter), or a warm snout: ramped to T0
+  ! where the ice is thin ([elmer] surface_temp, as ElmerStreams)
+__SURFACE_T__
   ComputeNormal = Logical True
 
   Partial Vertical MeshUpdate 1 = Real 0.0

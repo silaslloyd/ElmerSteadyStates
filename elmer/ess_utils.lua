@@ -99,18 +99,25 @@ function AccumulationSmooth(x, H, a, L)
   return acc
 end
 
--- surface temperature: Tsurf where the ice is thicker than 100 m, linear to
--- T0 at zero thickness (height is measured from the bottom of the bedrock
--- layer, which is 10*zscale thick)
-function surfaceT(height, zscale, Tsurf)
-  local h = height - 10 * zscale
-  h = max(h, 0)
-  local T
-  if h > 100 then
-    T = Tsurf
+-- surface temperature with a warm snout ([elmer] surface_temp = "snout"): Tsurf where the ice is
+-- thicker than ess_snoutH, falling linearly to T0 at zero thickness (ElmerStreams: 100 m, sharp
+-- corner). ess_snoutW > 0 rounds the corner at H = ess_snoutH over about that many metres
+-- (softplus), so the map stays smooth when a surface node crosses it. H is the ice thickness.
+ess_snoutH = 100.0  -- m
+ess_snoutW = 0.0    -- m, 0: sharp corner as in ElmerStreams
+function surfaceT(H, Tsurf)
+  local r = max(H, 0) / ess_snoutH          -- 0 at zero thickness, 1 at the snout thickness
+  local ramp
+  if ess_snoutW > 0 then
+    local w = ess_snoutW / ess_snoutH
+    local e = (1 - r) / w
+    if e > 30 then ramp = r else ramp = 1 - w * math.log(1 + math.exp(e)) end
   else
-    T = -(273.15 - Tsurf) / 100 * h + 273.15
+    ramp = min(r, 1)
   end
-  if T > 273.15 then T = 273.15 end
+  local T = T0 - (T0 - Tsurf) * ramp
+  if T > T0 then T = T0 end
+  return T
+end
   return T
 end
