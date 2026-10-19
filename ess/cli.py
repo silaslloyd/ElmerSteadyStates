@@ -11,6 +11,7 @@ Command line driver. Run inside a batch job (it launches `mpirun ElmerSolver` it
     python3 -m ess transfer   CONFIG --from F [--out G]          carry a state onto this config's mesh
     python3 -m ess continue   CONFIG [--state F] [--name B]      pseudo-arclength branch (resumes)
     python3 -m ess stability  CONFIG (--state F | --name B --point K)
+    python3 -m ess velocity   CONFIG (--state F [F ...] | --name B [--points K ...])   Stokes velocities
     python3 -m ess toy-demo   [WORKDIR]               whole pipeline on the stand-in model, no Elmer
 """
 from __future__ import annotations
@@ -28,7 +29,7 @@ from .continuation import BranchStore, continuation
 from .model import FixedPointProblem, rms
 from .newton import newton_krylov
 from .stability import stability
-from .statefile import SavedState, load_state, save_state
+from .statefile import SavedState, find_name, load_state, save_state
 
 log = logging.getLogger("ess")
 
@@ -374,6 +375,42 @@ def cmd_stability(args):
     log.info(f"stability: {st.n_unstable} unstable converged mode(s); wrote {out}")
 
 
+def cmd_velocity(args):
+    """Solve Stokes on saved states and write <state>_vel.npz: the state with Velocity 1-3 (and the
+    usual diagnostics) evaluated on exactly that state, for plotting. One time step of 1e-12 yr: the
+    velocity comes from the Stokes solve at the start of the step, so T and Zs are those of the file."""
+    import glob
+    from .model import MapSpec
+    cfg = load_config(args.config)
+    if args.name is not None:
+        pts = os.path.join(cfg["_work"], f"branch_{args.name}", "points")
+        files = ([os.path.join(pts, f"state_{k:04d}.npz") for k in args.points] if args.points
+                 else sorted(f for f in glob.glob(os.path.join(pts, "state_*.npz")) if not f.endswith("_vel.npz")))
+    else:
+        files = list(args.state or [])
+    if not files:
+        raise SystemExit("no states: give --state F [F ...] or --name B [--points K ...]")
+    args.state = files[0]
+    cfg, model, saved = _setup(args)
+    model.diagnostics = list(dict.fromkeys(model.diagnostics + ["Velocity 1", "Velocity 2", "Velocity 3"]))
+    spec = MapSpec(1e-12, 1, 1, 1.0)
+    for f in files:
+        out = os.path.splitext(f)[0] + "_vel.npz"
+        if os.path.exists(out) and not args.force:
+            log.info(f"velocity: {out} exists (--force to redo)")
+            continue
+        s = load_state(f)
+        if s.layout.size != model.layout.size:
+            log.warning(f"velocity: {f} has a different layout, skipped")
+            continue
+        model.frozen = s.frozen or model.frozen
+        _, diag = model.run(s.x, s.p, spec, tag="velocity", want_diag=True)
+        keep = {k: v for k, v in s.diag.items() if k not in diag}     # e.g. coordinates from older files
+        save_state(out, s.layout, s.x, s.p, s.frozen, {**keep, **diag}, **s.meta)
+        u = diag[find_name(diag, "velocity 1")][1]
+        log.info(f"velocity: p = {s.p:g}, max |u| = {np.abs(u).max():.4g} m/yr; wrote {out}")
+
+
 def cmd_toy_demo(args):
     """End-to-end run on the stand-in model (S-curve with an exact fold); no Elmer needed."""
     import tempfile
@@ -502,6 +539,15 @@ def main(argv=None):
                    help="map to linearise: [stability_map] (physical, default) or [map] (the one Newton "
                         "and continuation use: |mu| near 1 there means an ill-conditioned Newton system)")
     s.set_defaults(fn=cmd_stability)
+
+    s = sub.add_parser("velocity")
+    s.add_argument("config")
+    s.add_argument("-v", "--verbose", action="store_true")
+    s.add_argument("--state", nargs="+", help="state files (.npz)")
+    s.add_argument("--name", help="branch name: its points (all, or --points)")
+    s.add_argument("--points", type=int, nargs="+", help="branch point indices (default: all)")
+    s.add_argument("--force", action="store_true", help="redo states that already have a _vel.npz")
+    s.set_defaults(fn=cmd_velocity)
 
     s = sub.add_parser("toy-demo")
     s.add_argument("work", nargs="?")

@@ -2,7 +2,9 @@
 """
 Look at a steady state or an eigenmode of the Elmer flowline:
   * basal temperature and surface elevation along x,
-  * the temperature field (or the mode's temperature component) on the (x, z) mesh nodes.
+  * the temperature field (or the mode's temperature component) on the (x, z) mesh nodes,
+  * the along-flow and vertical velocities u, w on the mesh nodes, if the file has them (states from
+    `ess velocity`, <state>_vel.npz; for a plain state the _vel file next to it is used when present).
 
 FILE is a driver state (.npz from newton / continue / extract) or a stability.npz (then MODE picks
 the eigenvector; its real part is shown, normalised to max |T'| = 1).
@@ -69,6 +71,15 @@ def main():
     from plotly.subplots import make_subplots
 
     layout, fields, diag, frozen, title, is_mode = load(path, MODE)
+    vel = {}
+    vpath = os.path.splitext(path)[0] + "_vel.npz"
+    vdiag = load(vpath, 0)[2] if not is_mode and not path.endswith("_vel.npz") and os.path.exists(vpath) else diag
+    for c in (1, 3):
+        try:
+            vel[c] = vdiag[find_name(vdiag, f"velocity {c}")]
+        except KeyError:
+            pass
+    vrows = not is_mode and len(vel) == 2
     coords = {f"coordinate {c}": diag[find_name(diag, f"coordinate {c}")] for c in (1, 2, 3)}
     gx, X = coords["coordinate 1"]
     gz, Z = coords["coordinate 3"]
@@ -79,10 +90,14 @@ def main():
     def xy(gids):
         return X[np.searchsorted(gx, gids)], Z[np.searchsorted(gz, gids)]
 
-    fig = make_subplots(rows=3, cols=1, vertical_spacing=0.08, row_heights=[0.25, 0.25, 0.5],
-                        subplot_titles=("basal temperature" + (" (mode)" if is_mode else ", K"),
-                                        "surface elevation" + (" (mode)" if is_mode else ", m"),
-                                        "temperature on the mesh nodes"))
+    titles = ["basal temperature" + (" (mode)" if is_mode else ", K"),
+              "surface elevation" + (" (mode)" if is_mode else ", m"), "temperature on the mesh nodes"]
+    heights = [0.25, 0.25, 0.5]
+    if vrows:
+        titles += ["along-flow velocity u (m/yr)", "vertical velocity w (m/yr)"]
+        heights = [0.15, 0.15, 0.24, 0.23, 0.23]
+    rows = len(titles)
+    fig = make_subplots(rows=rows, cols=1, vertical_spacing=0.05, row_heights=heights, subplot_titles=titles)
     # basal nodes = the nodes carrying the frozen masks (or Zb)
     src = frozen or diag
     bkey = next((k for k in src if k.lower() in ("coldtempmask", "zb")), None)
@@ -105,12 +120,26 @@ def main():
     xt, zt = xy(gT[sel])
     fig.add_trace(go.Scattergl(x=xt, y=zt, mode="markers",
                                marker=dict(color=fields[tname][sel], size=4, colorscale="RdBu_r" if is_mode else "Viridis",
-                                           colorbar=dict(title="T", y=0.25, len=0.5),
+                                           colorbar=dict(title="T", y=0.58 if vrows else 0.25, len=0.22 if vrows else 0.5),
                                            cmid=0 if is_mode else None),
                                hovertemplate="x %{x:.4g}<br>z %{y:.4g}<br>T %{marker.color:.5g}<extra></extra>",
                                name="T"), 3, 1)
-    fig.update_xaxes(title_text="x (m)", row=3, col=1)
-    fig.update_layout(title=f"{os.path.basename(path)}: {title}", height=1000, template="plotly_white",
+    if vrows:
+        bar_y = [None, None, None, 0.35, 0.11]
+        for r, c, nm, cs in ((4, 1, "u", "Viridis"), (5, 3, "w", "RdBu_r")):
+            gv, vv = vel[c]
+            sv = on_side(gv, coords)
+            xv, zv = xy(gv[sv])
+            val = vv[sv]
+            lim = np.abs(val).max() or 1.0
+            fig.add_trace(go.Scattergl(
+                x=xv, y=zv, mode="markers", name=nm,
+                marker=dict(color=val, size=4, colorscale=cs, cmin=-lim if nm == "w" else None,
+                            cmax=lim if nm == "w" else None,
+                            colorbar=dict(title=f"{nm} (m/yr)", y=bar_y[r - 1], len=0.2)),
+                hovertemplate=f"x %{{x:.4g}}<br>z %{{y:.4g}}<br>{nm} %{{marker.color:.4g}} m/yr<extra></extra>"), r, 1)
+    fig.update_xaxes(title_text="x (m)", row=rows, col=1)
+    fig.update_layout(title=f"{os.path.basename(path)}: {title}", height=1000 if rows == 3 else 1600, template="plotly_white",
                       showlegend=False)
     out = os.path.splitext(path)[0] + (f"_mode{MODE}" if is_mode else "") + ".html"
     fig.write_html(out, include_plotlyjs="cdn")
