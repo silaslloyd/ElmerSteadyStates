@@ -27,8 +27,8 @@ from plot_state import column_grid  # noqa: E402
 from plot_branch import read_stability  # noqa: E402
 
 # ---- settings for pressing Run (paths relative to the repository)
-BRANCH = "work/land_flowline/branch_cold"              # branch directory
-START = "work/land_flowline/steady_p268.15_cold.npz"   # starting state (None: only the branch points)
+BRANCH = "work/land_margin/branch_flux"                # branch directory
+START = "work/land_margin/steady_p268.15_flux.npz"     # starting state (None: only the branch points)
 Y_SIDE = "min"        # the flowline mesh is one element wide: nodes at y = min (or "max")
 SHOW = True
 
