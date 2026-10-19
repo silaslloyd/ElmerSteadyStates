@@ -32,7 +32,7 @@ mkdir -p slurms
 module load elmerfem
 export DIM=2
 
-if [ ! -f elmer/SteadyStateIO.so ]; then
+if [ ! -f elmer/SteadyStateIO.so ] || [ elmer/SteadyStateIO.F90 -nt elmer/SteadyStateIO.so ]; then
     make -C elmer
 fi
 

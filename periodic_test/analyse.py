@@ -5,6 +5,7 @@ disagreement between partitions at shared nodes. Writes out/summary.csv and, if 
 out/<case>/bed.html (basal temperature minus its across-flow mean, partition interfaces marked).
 """
 import csv
+import glob
 import os
 import re
 import sys
@@ -17,10 +18,10 @@ from ess.statefile import partition_files, read_state_file  # noqa: E402
 KEY_DIGITS = 2       # coordinates rounded to 1 cm to identify nodes across runs and partitions
 
 
-def load_case(d):
+def load_case(d, base="out.bin"):
     """Nodes keyed by rounded coordinates: dict of arrays + 'nparts' (how many partition files hold
     each node) + max disagreement between partitions at shared nodes, per variable."""
-    files = partition_files(os.path.join(d, "out.bin"))
+    files = partition_files(os.path.join(d, base))
     if not files:
         return None
     acc, cnt, spread = {}, {}, {}
@@ -108,7 +109,8 @@ def analyse_all(CASES, PARTS, physics_key, OUT, GEOM):
         D = load_case(d) if os.path.isdir(d) else None
         if D is not None:
             data[c["name"]] = D
-    refs = {physics_key(c): c["name"] for c in CASES if c["name"].startswith("R_") and c["name"] in data}
+    is_ref = lambda c: c["parts"] == "serial" and c["ls_heat"] == "direct" and c["ls_stokes"] == "direct"
+    refs = {physics_key(c): c["name"] for c in CASES if is_ref(c) and c["name"] in data}
     rows = []
     for c in CASES:
         if c["name"] not in data:
@@ -158,6 +160,9 @@ def analyse_all(CASES, PARTS, physics_key, OUT, GEOM):
         rows.append(row)
         plot_bed(os.path.join(OUT, c["name"]), D, T, bed, iface, c["name"], row)
         save_bed(os.path.join(OUT, c["name"]), D, T, bed, c, row, data.get(ref) if ref and ref != c["name"] else None)
+        if c.get("steps"):
+            save_bed_time(os.path.join(OUT, c["name"]), c, row,
+                          os.path.join(OUT, ref) if ref and ref != c["name"] else None)
     cols = ["case", "parts", "nparts", "T_y_spread", "Tbed_y_spread", "u_y_spread", "dT_max", "dT_interface",
             "dT_interior", "dT_periodic_side", "du_rel", "T_partition_mismatch", "worst_at", "ref", "status"]
     if not rows:
@@ -206,6 +211,58 @@ def save_bed(d, D, T, bed, c, row, R):
         out["dT_ref"] = dT
         out["ref"] = row.get("ref", "")
     np.savez(os.path.join(d, "bed.npz"), **out)
+
+
+def snapshot_steps(d):
+    steps = set()
+    for f in glob.glob(os.path.join(d, "snap_t*.bin.*")):
+        m = re.match(r"snap_t(\d+)\.bin\.\d+$", os.path.basename(f))
+        if m:
+            steps.add(int(m.group(1)))
+    return sorted(steps)
+
+
+def bed_series(d):
+    """basal temperature at every snapshot: keys of the bed nodes, steps, T[step, node], node info"""
+    steps = snapshot_steps(d)
+    keys, Ts, info = None, [], None
+    for k in steps:
+        D = load_case(d, f"snap_t{k}.bin")
+        if D is None:
+            continue
+        bed = np.abs(D["z"] - D["z"].min()) < 1e-3
+        kb = [key for key, b in zip(D["keys"], bed) if b]
+        if keys is None:
+            keys = kb
+            info = dict(x=D["x"][bed], y=D["y"][bed], nparts=D["nparts"][bed], owner=D["owner"][bed],
+                        nfiles=D["nfiles"])
+        pos = {key: i for i, key in enumerate(kb)}
+        T = find(D, "temperature")[bed]
+        Ts.append(np.array([T[pos[key]] if key in pos else np.nan for key in keys]))
+    return keys, [k for k in steps], (np.array(Ts) if Ts else None), info
+
+
+def save_bed_time(d, c, row, refdir):
+    """bed_time.npz: basal temperature at every snapshot (and minus the reference's), for plot_bed_time.py"""
+    keys, steps, T, info = bed_series(d)
+    if T is None:
+        return
+    out = dict(steps=np.array(steps), time=np.array(steps) * c["dt"], T=T, **info, case=c["name"],
+               status=str(row.get("status", "")), parts=c["parts"], heat=c["heat"], halve=c["halve"],
+               ls_heat=c["ls_heat"], ls_stokes=c["ls_stokes"])
+    if refdir:
+        rkeys, rsteps, RT, _ = bed_series(refdir)
+        if RT is not None:
+            rp = {key: i for i, key in enumerate(rkeys)}
+            j = np.array([rp.get(key, -1) for key in keys])
+            dT = np.full(T.shape, np.nan)
+            for a, k in enumerate(steps):
+                if k in rsteps:
+                    b = rsteps.index(k)
+                    dT[a, j >= 0] = T[a, j >= 0] - RT[b, j[j >= 0]]
+            out["dT_ref"] = dT
+            out["ref"] = os.path.basename(refdir)
+    np.savez(os.path.join(d, "bed_time.npz"), **out)
 
 
 def plot_bed(d, D, T, bed, iface, name, row):

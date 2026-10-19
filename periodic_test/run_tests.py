@@ -174,8 +174,8 @@ CASES = [
     # A: periodic BCs and the partitioning, direct solvers, flux heating (no loads involved)
     *[case(f"A_per_flux_{p}", parts=p) for p in ("xcut", "xcut_per", "ycut", "ycut_per", "metis", "metis_per")],
     # T: transient, temperature-dependent sliding (Stokes and heat coupled each step), 200 x 50 yr from a
-    #    linear profile 270 K (bed) - 255.15 K (surface), the bed warming towards melting and sliding:
-    #    artefacts that need time to grow. VTUs every 10 steps in <case>/vtu/ (ParaView).
+    #    linear profile 270 K (bed) - 255.15 K (surface), the bed warming towards melting and sliding.
+    #    Snapshots every 10 steps (snap_t<step>.bin.<pe>): plot_bed_time.py shows them with a time slider.
     *[case(f"T_{h}_{p}" + ("" if lh == "direct" else "_iter"), parts=p, heat=h, halve=(h == "loads"),
            steps=200, dt=50.0, sliding_dT=1.0, Ts=255.15, Tb0=270.0, ls_heat=lh, ls_stokes=ls)
       for h in ("flux", "loads")
@@ -255,6 +255,22 @@ def write_case(c):
                          f'  Simulation Type = "Transient"\n  Timestepping Method = "bdf"\n  BDF Order = 1\n'
                          f'  Timestep Intervals = {c["steps"]}\n  Timestep Sizes = {c["dt"]!r}'),
         "__OUT_EVERY__": str(c["out_every"] if c["steps"] else 1),
+        "__NACTIVE__": "4" if c["steps"] else "3",
+        "__ACTIVE__": "1 2 3 4" if c["steps"] else "1 2 3",
+        # transient: snapshots of the state every out_every steps, snap_t<step>.bin.<pe> (plot_bed_time.py)
+        "__SNAP_SOLVER__": "" if not c["steps"] else f"""Solver 4
+  Exec Solver = "After Timestep"
+  Exec Intervals = Integer {c["out_every"]}
+  Equation = "Snapshot"
+  Procedure = "{os.path.join(REPO, "elmer", "SteadyStateIO")}" "StateIO"
+  State Mode = String "write"
+  State File = File "snap"
+  Timestep Suffix = Logical True
+  Write Coordinates = Logical True
+  State Variable 1 = String "Temperature"
+  State Variable 2 = String "Velocity 1"
+End
+""",
     }
     subs["__SIDE2__"] = subs["__SIDE2__"].replace("__W__", repr(float(GEOM["W"])))
     for k, v in subs.items():
@@ -306,7 +322,8 @@ def main():
         if not os.path.exists(lib):
             raise SystemExit(f"{lib} missing: build it with `make -C elmer` (module load elmerfem first)")
         refs = {physics_key(c) for c in cases}             # make sure every case has its reference
-        cases = [c for c in CASES if c["name"].startswith("R_") and physics_key(c) in refs
+        is_ref = lambda c: c["parts"] == "serial" and c["ls_heat"] == "direct" and c["ls_stokes"] == "direct"
+        cases = [c for c in CASES if is_ref(c) and physics_key(c) in refs
                  and c not in cases] + cases
         for c in cases:
             if PARTS[c["parts"]][0] > a.np:

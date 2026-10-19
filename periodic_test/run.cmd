@@ -12,7 +12,7 @@ ARGS=("$@")
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
 module load elmerfem
-if [ ! -f elmer/SteadyStateIO.so ]; then
+if [ ! -f elmer/SteadyStateIO.so ] || [ elmer/SteadyStateIO.F90 -nt elmer/SteadyStateIO.so ]; then
     make -C elmer
 fi
 python3 -u periodic_test/run_tests.py --np "${SLURM_NTASKS:-8}" "${ARGS[@]}"

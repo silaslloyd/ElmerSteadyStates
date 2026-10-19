@@ -26,8 +26,6 @@ __SIM_TYPE__
   Extruded Mesh Levels = Integer __NZ1__
   Extruded Max Coordinate = Real __H__
   Output Intervals = __OUT_EVERY__
-  Results Directory = "vtu"
-  Post File = "case.vtu"
   max output level = 3
 End
 
@@ -66,7 +64,7 @@ End
 
 Equation 1
   Name = "ice"
-  Active Solvers(3) = 1 2 3
+  Active Solvers(__NACTIVE__) = __ACTIVE__
   Convection = "Computed"
   Flow Solution Name = String "Flow Solution"
 End
@@ -117,6 +115,7 @@ Solver 3
   State Variable 8 = String "Flow Solution Loads 3"
 End
 
+__SNAP_SOLVER__
 !---------------- boundary conditions ----------------
 
 Boundary Condition 1

@@ -15,6 +15,8 @@
 !   State File = File "name"          ("none" or absent: do nothing)
 !   State Variable 1 = String "Temperature"   (write mode; 2, 3, ... as needed)
 !   Write Coordinates = Logical True  (write mode: also write coordinate 1..3)
+!   Timestep Suffix = Logical True    (write mode: "<State File>_t<timestep>.<partition>",
+!                                      for snapshots with Exec Solver = "After Timestep")
 !   Strict = Logical True             (read mode: every node of a variable
 !                                      that is in the file must be found)
 !
@@ -45,6 +47,7 @@ SUBROUTINE StateIO( Model, Solver, dt, TransientSimulation )
   CHARACTER(:), ALLOCATABLE :: fname, mode
   CHARACTER(*), PARAMETER :: Caller = 'StateIO'
   LOGICAL :: Found
+  TYPE(Variable_t), POINTER :: TsVar
 
   Params => GetSolverParams()
   Mesh => Solver % Mesh
@@ -60,6 +63,10 @@ SUBROUTINE StateIO( Model, Solver, dt, TransientSimulation )
   CASE ( 'read' )
     CALL ReadState( TRIM(fname) )
   CASE ( 'write' )
+    IF ( ListGetLogical( Params, 'Timestep Suffix', Found ) ) THEN
+      TsVar => VariableGet( Mesh % Variables, 'Timestep' )
+      IF ( ASSOCIATED( TsVar ) ) fname = TRIM(fname)//'_t'//I2S(NINT(TsVar % Values(1)))
+    END IF
     CALL WriteState( TRIM(fname) )
   CASE DEFAULT
     CALL Fatal( Caller, 'Unknown State Mode: '//TRIM(mode) )

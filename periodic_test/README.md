@@ -71,7 +71,7 @@ Units are K, and relative velocity for `du_rel`.
 If plotly is installed, `out/np<N>/<case>/bed.html` maps the basal temperature minus its across-flow mean,
 with the partition-interface nodes ringed.
 
-## Transient cases (T) and ParaView
+## Transient cases (T)
 
 Some artefacts only appear after many time steps, so the T cases run 200 steps of 50 yr with
 temperature-dependent sliding: C·exp(−min(T − T0, 0)/1 K). Each step solves Stokes, then heat, so
@@ -80,10 +80,24 @@ linear profile, 270 K at the bed and 255.15 K at the surface, so the bed warms t
 the run.
 - **Variants:** flux or nodal-load heating (loads halved at y = 0, as in ElmerStreams), each in serial,
   y-cut with `-periodic`, and with your iterative solvers on the y-cut and METIS partitionings.
-- **Output:** every case writes VTUs every 10 steps (`out_every`) to `out/np<N>/<case>/vtu/`. Open
-  `case_t*.pvtu` in ParaView, as one time series, to watch an artefact develop. Apply the
-  *Process Id Scalars* filter to colour the partitions.
-- **Run them:** `sbatch periodic_test/run.cmd --only T_`
+- **Snapshots:** every 10 steps each case writes one (`snap_t<step>.bin.<pe>`). The analysis turns
+  them into `<case>/bed_time.npz`.
+- **Run them:** `sbatch periodic_test/run.cmd --only T_`. Rebuild `elmer/SteadyStateIO.so` first if
+  needed; `run.cmd` does it when the source is newer.
+
+To look at them on your laptop, copy the `bed*.npz` files and run:
+```bash
+python periodic_test/plot_bed_time.py periodic_test/out/np8        # or set DIR and press Run
+```
+This writes one page per case, `bed_time_<case>.html`, with a time slider. Its rows:
+1. the growth of the across-flow variation of basal T against time for every case (serial dotted, this
+   case thick);
+2. basal T;
+3. basal T minus its across-flow mean;
+4. basal T minus the serial reference at the same time;
+5. the partitions.
+
+Black dots mark the partition-interface nodes.
 
 ## Looking at the basal temperature on the footprint
 
@@ -92,7 +106,7 @@ reference, the nodal friction load, partition ownership and the interface nodes,
 These files are small. Copy them to your laptop and plot them there:
 
 ```bash
-rsync -av --include='*/' --include='bed.npz' --include='summary.csv' --exclude='*' \
+rsync -av --include='*/' --include='bed*.npz' --include='summary.csv' --exclude='*' \
     <tethys>:<repo>/periodic_test/out/ periodic_test/out/
 python periodic_test/plot_bed.py periodic_test/out/np8      # or set DIR and press Run
 ```
