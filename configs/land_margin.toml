@@ -41,7 +41,7 @@ timeout = 21600                         # seconds per Elmer run
 keep_runs = false                       # true: keep every run directory (sif, log, state files)
 cache = true                            # reuse finished runs (a restarted job repeats no runs)
 vtu = false                             # true: every run also writes a VTU at its end
-friction_heat = "loads"                 # "loads" (ElmerStreams: Stokes reaction loads x velocity, uneven
+friction_heat = "flux"                  # "loads" (ElmerStreams: Stokes reaction loads x velocity, uneven
                                         # node to node) or "flux" (C(T) |u_b|^2 per unit area, smooth)
 strain_heat = false                     # true: strain heating 2 eta e:e in the ice (ElmerStreams: on)
 # written with every run besides the state, used for the mask checks and plots

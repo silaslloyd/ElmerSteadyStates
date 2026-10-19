@@ -63,7 +63,7 @@ class ElmerModel(Model):
         self.diagnostics = list(e.get("diagnostics", []))
         self.extra_subs = dict(e.get("substitutions", {}))
         self.vtu = bool(e.get("vtu", False))
-        self.friction_heat = str(e.get("friction_heat", "loads"))
+        self.friction_heat = str(e.get("friction_heat", "flux"))
         self.strain_heat = bool(e.get("strain_heat", False))
         # surface temperature: "constant" (Tsurf everywhere) or "snout" (Tsurf where the ice is thicker
         # than snout_thickness, linear to T0 at zero thickness: ElmerStreams' warm snout)
