@@ -24,8 +24,8 @@ def load_case(d):
     if not files:
         return None
     acc, cnt, spread = {}, {}, {}
-    xyz = {}
-    for f in files:
+    xyz, owner = {}, {}
+    for pe, f in enumerate(files):
         r = read_state_file(f)
         g1, x = r["coordinate 1"]
         _, y = r["coordinate 2"]
@@ -35,6 +35,7 @@ def load_case(d):
         for k in keys:
             cnt[k] = cnt.get(k, 0) + 1
             xyz[k] = k
+            owner.setdefault(k, pe)                # lowest partition holding the node
         for name, (g, v) in r.items():
             if name.startswith("coordinate"):
                 continue
@@ -49,10 +50,12 @@ def load_case(d):
     keys = sorted(xyz)
     out = {"x": np.array([k[0] for k in keys]), "y": np.array([k[1] for k in keys]),
            "z": np.array([k[2] for k in keys]), "nparts": np.array([cnt[k] for k in keys]),
+           "owner": np.array([owner[k] for k in keys]),
            "keys": keys, "nfiles": len(files)}
     for name, a in acc.items():
         out[name] = np.array([a.get(k, np.nan) for k in keys])
         out[f"{name} mismatch"] = max(spread[name].values()) if spread[name] else 0.0
+        out[f"{name} node mismatch"] = np.array([spread[name].get(k, 0.0) for k in keys])
     return out
 
 
@@ -153,6 +156,7 @@ def analyse_all(CASES, PARTS, physics_key, OUT, GEOM):
                        du_rel=np.nanmax(np.abs(du)) / umax)
         rows.append(row)
         plot_bed(os.path.join(OUT, c["name"]), D, T, bed, iface, c["name"], row)
+        save_bed(os.path.join(OUT, c["name"]), D, T, bed, c, row, data.get(ref) if ref and ref != c["name"] else None)
     cols = ["case", "parts", "nparts", "T_y_spread", "Tbed_y_spread", "u_y_spread", "dT_max", "dT_interface",
             "dT_interior", "dT_periodic_side", "du_rel", "T_partition_mismatch", "worst_at", "ref", "status"]
     if not rows:
@@ -174,6 +178,33 @@ def analyse_all(CASES, PARTS, physics_key, OUT, GEOM):
               ("T_y_spread", "Tbed_y_spread", "u_y_spread", "dT_max", "dT_interface", "dT_interior",
                "dT_periodic_side", "du_rel", "T_partition_mismatch")) + f"  {r.get('status', '')}")
     print(f"\nwrote {os.path.join(OUT, 'summary.csv')}")
+
+
+def save_bed(d, D, T, bed, c, row, R):
+    """bed.npz: basal fields on the footprint nodes, for plot_bed.py (copy it to a laptop and look)."""
+    x, y = D["x"][bed], D["y"][bed]
+    out = dict(x=x, y=y, T=T[bed], nparts=D["nparts"][bed], owner=D["owner"][bed], nfiles=D["nfiles"],
+               case=c["name"], status=str(row.get("status", "")), parts=c["parts"], bc=c["bc"], heat=c["heat"],
+               halve=c["halve"], ls_heat=c["ls_heat"], ls_stokes=c["ls_stokes"], element=c["element"])
+    mis = find(D, "temperature node mismatch")
+    if mis is not None:
+        out["T_mismatch"] = mis[bed]
+    u = [find(D, f"velocity {i}") for i in (1, 2, 3)]
+    l = [find(D, f"flow solution loads {i}") for i in (1, 2, 3)]
+    if all(v is not None for v in u):
+        out["ub"] = np.sqrt(sum(v[bed] ** 2 for v in u))
+    if all(v is not None for v in u + l):         # the nodal friction load (frictionloads, no halving)
+        out["fric_load"] = sum(np.maximum(-li[bed] * ui[bed], 0) for li, ui in zip(l, u))
+    if R is not None:
+        pos = {k: i for i, k in enumerate(R["keys"])}
+        kb = [k for k, b in zip(D["keys"], bed) if b]
+        j = np.array([pos.get(k, -1) for k in kb])
+        Tr = find(R, "temperature")
+        dT = np.full(len(kb), np.nan)
+        dT[j >= 0] = T[bed][j >= 0] - Tr[j[j >= 0]]
+        out["dT_ref"] = dT
+        out["ref"] = row.get("ref", "")
+    np.savez(os.path.join(d, "bed.npz"), **out)
 
 
 def plot_bed(d, D, T, bed, iface, name, row):

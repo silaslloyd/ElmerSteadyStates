@@ -71,6 +71,28 @@ Units are K, and relative velocity for `du_rel`.
 If plotly is installed, `out/np<N>/<case>/bed.html` maps the basal temperature minus its across-flow mean,
 with the partition-interface nodes ringed.
 
+## Looking at the basal temperature on the footprint
+
+The analysis also writes `out/np<N>/<case>/bed.npz`: basal temperature, its difference from the
+reference, the nodal friction load, partition ownership and the interface nodes, for every bed node.
+These files are small. Copy them to your laptop and plot them there:
+
+```bash
+rsync -av --include='*/' --include='bed.npz' --include='summary.csv' --exclude='*' \
+    <tethys>:<repo>/periodic_test/out/ periodic_test/out/
+python periodic_test/plot_bed.py periodic_test/out/np8      # or set DIR and press Run
+```
+
+`bed_maps.html` has a menu to pick the case. Its rows (x along the flow, y across):
+1. basal temperature;
+2. basal temperature minus its across-flow mean, where any artefact shows (exactly 0 without one);
+3. basal temperature minus the serial reference;
+4. the friction load minus its across-flow mean (loads cases);
+5. the partitions.
+
+Black dots mark the partition-interface nodes, so you can see whether an artefact follows them.
+To make the files again from finished runs: `python3 periodic_test/run_tests.py --analyse --np N`.
+
 ## Things not covered yet
 
 - **Mortar periodic BCs** (`Mortar BC`, `Apply Mortar BCs`), Elmer's parallel-aware alternative to
