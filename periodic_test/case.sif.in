@@ -1,0 +1,156 @@
+!! Periodic-BC / partitioning test for the thermo-mechanical ice slab (see README.md).
+!! A slab on a flat bed, driven along x by a tilted gravity, sliding on a linear law,
+!! steady Stokes then steady heat. Everything is uniform in y, so the exact discrete
+!! solution is uniform in y: any y-structure (at partition boundaries or elsewhere)
+!! is an error of the set-up, the partitioning or the linear solver.
+!! Filled in by run_tests.py: __NAME__ placeholders.
+
+!---LUA BEGIN
+! assert(loadfile('params.lua'))()
+!---LUA END
+
+Header
+  Mesh DB "__MESH_DIR__" "footprint"
+End
+
+Constants
+  Gravity(4) = 0 0 -1 9.81
+  Stefan Boltzmann = Real 6.78E-08
+End
+
+Simulation
+  Coordinate System = "Cartesian 3D"
+  Simulation Type = "Steady State"
+  Steady State Max Iterations = 1
+  Steady State Min Iterations = 1
+  Extruded Mesh Levels = Integer __NZ1__
+  Extruded Max Coordinate = Real __H__
+  Output Intervals = 1
+  max output level = 3
+End
+
+Body 1
+  Name = "ice"
+  Equation = 1
+  Material = 1
+  Body Force = 1
+  Initial Condition = 1
+End
+
+Initial Condition 1
+  Temperature = Real #Ts
+  Velocity 1 = Real 0.0
+  Velocity 2 = Real 0.0
+  Velocity 3 = Real 0.0
+  Pressure = Real 0.0
+End
+
+Body Force 1
+  ! acceleration (multiplied by the density): gravity tilted by the surface slope alpha
+  Flow BodyForce 1 = Real #gravity*sina
+  Flow BodyForce 2 = Real 0.0
+  Flow BodyForce 3 = Real #-gravity*cosa
+End
+
+Material 1
+  Name = "ice"
+  Density = Real #rhoi
+  Viscosity = Real #eta
+  Heat Capacity = Real #heatcapacity
+  Heat Conductivity = Real #heatconductivity
+End
+
+Equation 1
+  Name = "ice"
+  Active Solvers(3) = 1 2 3
+  Convection = "Computed"
+  Flow Solution Name = String "Flow Solution"
+End
+
+Solver 1
+  Equation = "Stokes-Vec"
+  Procedure = "IncompressibleNSVec" "IncompressibleNSSolver"
+  Div-Curl Discretization = Logical False
+  Stokes Flow = Logical True
+  Flow Model = Stokes
+  Stabilization Method = String "__STOKES_ELEMENT__"
+  Optimize Bandwidth = Logical True
+  ! Newtonian viscosity and a linear sliding law: one iteration solves it
+  Nonlinear System Max Iterations = 1
+  Nonlinear System Min Iterations = 1
+  Nonlinear System Convergence Tolerance = 1.0e-8
+  Calculate Loads = Logical True
+  Exported Variable 1 = -dofs 4 Flow Solution Loads
+__LS_STOKES__
+End
+
+Solver 2
+  Equation = String "Heat Equation"
+  Procedure = File "HeatSolveVec" "HeatSolver"
+  Variable = String "Temperature"
+  Stabilize = Logical True
+  Optimize Bandwidth = Logical True
+  Nonlinear System Max Iterations = 1
+  Nonlinear System Min Iterations = 1
+  Nonlinear System Convergence Tolerance = 1.0e-8
+__LS_HEAT__
+End
+
+Solver 3
+  Exec Solver = "After All"
+  Equation = "StateWrite"
+  Procedure = "__ESS_LIB__" "StateIO"
+  State Mode = String "write"
+  State File = File "out.bin"
+  Write Coordinates = Logical True
+  State Variable 1 = String "Temperature"
+  State Variable 2 = String "Velocity 1"
+  State Variable 3 = String "Velocity 2"
+  State Variable 4 = String "Velocity 3"
+  State Variable 5 = String "Pressure"
+  State Variable 6 = String "Flow Solution Loads 1"
+  State Variable 7 = String "Flow Solution Loads 2"
+  State Variable 8 = String "Flow Solution Loads 3"
+End
+
+!---------------- boundary conditions ----------------
+
+Boundary Condition 1
+  Name = "x0 wall"
+  Target Boundaries(1) = 1
+  Velocity 1 = Real 0.0
+End
+
+Boundary Condition 2
+  Name = "xL wall"
+  Target Boundaries(1) = 2
+  Velocity 1 = Real 0.0
+End
+
+Boundary Condition 3
+  Name = "side1 (y = 0)"
+  Target Boundaries(1) = 3
+__SIDE1__
+End
+
+Boundary Condition 4
+  Name = "side2 (y = W)"
+  Target Boundaries(1) = 4
+__SIDE2__
+End
+
+Boundary Condition 5
+  Name = "bed"
+  Target Boundaries(1) = 5
+  Normal-Tangential Velocity = Logical True
+  Velocity 1 = Real 0.0
+  Slip Coefficient 2 = Real #Cslip
+  Slip Coefficient 3 = Real #Cslip
+__BED_HEAT__
+End
+
+Boundary Condition 6
+  Name = "surface"
+  Target Boundaries(1) = 6
+  Temperature = Real #Ts
+End

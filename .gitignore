@@ -6,3 +6,4 @@ slurms/*
 __pycache__/
 *.pyc
 .pytest_cache/
+periodic_test/out/
