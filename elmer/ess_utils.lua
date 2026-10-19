@@ -119,5 +119,3 @@ function surfaceT(H, Tsurf)
   if T > T0 then T = T0 end
   return T
 end
-  return T
-end
