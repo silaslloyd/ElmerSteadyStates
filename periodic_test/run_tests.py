@@ -65,6 +65,7 @@ def parts_table(N):
     return {
         "serial":    (1, []),
         "xcut":      (N, ["-partition", str(N), "1", "1"]),                     # cuts across x only
+        "xcut_per":  (N, ["-partition", str(N), "1", "1", "-periodic", "0", "1", "0"]),
         "ycut":      (N, ["-partition", str(N // 4), "4", "1"]),                # as stream.cmd, no -periodic
         "ycut_per":  (N, ["-partition", str(N // 4), "4", "1", "-periodic", "0", "1", "0"]),   # as stream.cmd
         "metis":     (N, ["-metiskway", str(N)]),
@@ -156,7 +157,10 @@ CASES = [
     case("R_wall_loads_halve", bc="wall", heat="loads", halve=True),
     case("R_per_flux_stab", element="Stabilized"), case("R_per_loads_stab", heat="loads", element="Stabilized"),
     # A: periodic BCs and the partitioning, direct solvers, flux heating (no loads involved)
-    *[case(f"A_per_flux_{p}", parts=p) for p in ("xcut", "ycut", "ycut_per", "metis", "metis_per")],
+    *[case(f"A_per_flux_{p}", parts=p) for p in ("xcut", "xcut_per", "ycut", "ycut_per", "metis", "metis_per")],
+    # G: the ElmerStreams combination on partitionings made WITHOUT ElmerGrid's -periodic
+    case("G_streams_ycut_noper", parts="ycut", heat="loads", halve=True, ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
+    case("G_streams_metis_noper", parts="metis", heat="loads", halve=True, ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
     case("A_per_geo_ycut_per", parts="ycut_per", heat="geo"),
     # B: nodal friction loads in parallel, direct solvers
     *[case(f"B_per_loads_{p}", parts=p, heat="loads") for p in ("xcut", "ycut_per", "metis_per")],
@@ -263,7 +267,7 @@ def main():
     if a.np > GEOM["nx"]:
         print(f"note: xcut cases need --np <= {GEOM['nx']} (footprint columns); they are skipped")
     cases = [c for c in CASES if (not a.only or any(s in c["name"] for s in a.only))
-             and not (c["parts"] == "xcut" and a.np > GEOM["nx"])]
+             and not (c["parts"].startswith("xcut") and a.np > GEOM["nx"])]
     if a.list:
         for c in CASES:
             print(f"{c['name']:38s} parts {c['parts']:10s} bc {c['bc']:8s} heat {c['heat']:5s} halve {c['halve']!s:5s} "
