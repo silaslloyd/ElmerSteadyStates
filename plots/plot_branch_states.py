@@ -23,6 +23,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, REPO)
 from ess.statefile import find_name, load_state  # noqa: E402
+from plot_state import column_grid  # noqa: E402
 
 # ---- settings for pressing Run (paths relative to the repository)
 BRANCH = "work/land_flowline/branch_cold"              # branch directory
@@ -33,6 +34,8 @@ SHOW = True
 VIEW = "slider"       # "slider": one state at a time; "overlay": all states, coloured along the branch
 MODE = "absolute"     # overlay only: "absolute", or "difference" (change from the first state)
 COLORSCALE = "Viridis"
+VEL_PLOT = "contour"  # slider only: "contour" (filled u, w sections in x-z) or "lines" (surface and bed)
+VEL_NZ = 60           # vertical points of the contour grid (more: finer, but a bigger html)
 
 
 def repo_path(p):
@@ -91,6 +94,16 @@ def extract(path):
             out["ws"] = at(gs_s, *vel[3])
             if 2 in vel:
                 out["vs"] = at(gs_s, *vel[2])
+        if VEL_PLOT == "contour":
+            # x-z sections of u and w on the ice nodes of one side, gridded column by column
+            xbb, zbb = xb[o_b], at(gb[o_b], gz, Z)
+            for c, k in ((1, "U"), (3, "W")):
+                gv, vv = vel[c]
+                sv = on_side(gv)
+                xv, zv, val = at(gv[sv], gx, X), at(gv[sv], gz, Z), vv[sv]
+                ice = zv >= np.interp(xv, xbb, zbb) - 1e-6
+                xg, zg, G = column_grid(xv[ice], zv[ice], val[ice], VEL_NZ)
+                out[k] = (xg / 1e3, zg, np.round(G, 3))
     if "Tb_cold_max" in s.meta:
         out["Tb_cold_max"] = float(s.meta["Tb_cold_max"])
     return out
@@ -116,7 +129,15 @@ def main():
     xmax = max(s["xb"].max() for s in S) / 1e3
 
     vrows = any("ub" in s for s in S)
+    contour = VEL_PLOT == "contour" and any("U" in s for s in S)
     E = go.Scatter(x=[], y=[])
+    crange = {}
+    if contour:                               # one colour range for all states
+        umax = max(np.nanmax(s["U"][2]) for s in S if "U" in s)
+        umin = min(np.nanmin(s["U"][2]) for s in S if "U" in s)
+        wlim = max(np.nanmax(np.abs(s["W"][2])) for s in S if "W" in s) or 1.0
+        crange = {"U": dict(colorscale="Viridis", zmin=umin, zmax=umax, colorbar=dict(title="u (m/yr)", y=0.37, len=0.22)),
+                  "W": dict(colorscale="RdBu_r", zmin=-wlim, zmax=wlim, colorbar=dict(title="w (m/yr)", y=0.11, len=0.22))}
 
     def line(x, y, colour, name, unit, dash=None):
         return go.Scatter(x=x / 1e3, y=y, mode="lines", line=dict(color=colour, dash=dash), name=name,
@@ -128,7 +149,18 @@ def main():
         tr.append(go.Scatter(x=s["xs"] / 1e3, y=np.round(s["zs"], 2), mode="lines", line=dict(color="#2c3e50"),
                              name="Zs", hovertemplate="x %{x:.1f} km<br>Zs %{y:.1f} m<extra></extra>")
                   if "xs" in s else go.Scatter(x=[], y=[]))
-        if vrows:
+        if vrows and contour:
+            for k, nm in (("U", "u"), ("W", "w")):
+                if k in s:
+                    xg, zg, G = s[k]
+                    tr.append(go.Contour(x=xg, y=zg, z=G, name=nm, connectgaps=False, ncontours=30,
+                                         contours=dict(coloring="fill", showlines=False), line=dict(width=0),
+                                         **crange[k],
+                                         hovertemplate=f"x %{{x:.1f}} km<br>z %{{y:.0f}} m<br>{nm} %{{z:.4g}} m/yr"
+                                                       "<extra></extra>"))
+                else:
+                    tr.append(E)
+        elif vrows:
             tr.append(line(s["xs"], s["us"], "#1f77b4", "u surface", "m/yr") if "us" in s else E)
             tr.append(line(s["xb"], s["ub"], "#ff7f0e", "u bed", "m/yr") if "ub" in s else E)
             tr.append(line(s["xs"], s["ws"], "#2ca02c", "w surface", "m/yr") if "ws" in s else E)
@@ -141,10 +173,12 @@ def main():
 
     rows = 4 if vrows else 2
     titles = ["basal temperature (K)", "surface elevation (m)"]
-    if vrows:
+    if contour:
+        titles += ["along-flow velocity u (m/yr)", "vertical velocity w (m/yr)"]
+    elif vrows:
         titles += ["along-flow velocity u (m/yr): surface, bed", "vertical velocity w (m/yr): surface, bed"]
     fig = make_subplots(rows=rows, cols=1, vertical_spacing=0.06, subplot_titles=titles)
-    where = [1, 2, 3, 3, 4, 4][:len(traces(S[0]))]
+    where = ([1, 2, 3, 4] if contour else [1, 2, 3, 3, 4, 4])[:len(traces(S[0]))]
     for i, t in enumerate(traces(S[0])):
         fig.add_trace(t, where[i], 1)
     fig.add_hline(y=273.15, line=dict(dash="dot", color="grey"), row=1, col=1)
@@ -159,7 +193,12 @@ def main():
     for r in range(1, rows + 1):
         fig.update_xaxes(range=[0, xmax], row=r, col=1)
     fig.update_xaxes(title_text="x (km)", row=rows, col=1)
-    if vrows:
+    if contour:
+        zlo = min(s["U"][1][0] for s in S if "U" in s)
+        zhi = max(s["U"][1][-1] for s in S if "U" in s)
+        for r in (3, 4):
+            fig.update_yaxes(range=[zlo, zhi], title_text="z (m)", row=r, col=1)
+    elif vrows:
         def rng(keys):
             v = np.concatenate([s[k] for s in S for k in keys if k in s])
             pad = 0.05 * (v.max() - v.min() or 1.0)
