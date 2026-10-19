@@ -99,6 +99,22 @@ This writes one page per case, `bed_time_<case>.html`, with a time slider. Its r
 
 Black dots mark the partition-interface nodes.
 
+## Strain heating and the ElmerStreams sliding law (S)
+
+The S cases are like T, with two changes:
+- **The ElmerStreams sliding law,** `TDepSlidingExp`: C·exp(−min(T − T0, 0)/dT) with dT = 0.15 K.
+- **Strain heating:** the ElmerStreams DeformationalHeatSolver, plus `Heat Source = Strain Heating/rhoi`.
+
+They start at 271 K at the bed and 257.15 K at the surface, so the bed reaches the sliding band near
+melting during the run.
+- **`_iter`:** the ElmerStreams solvers (heat GCR+ILU2, Stokes GCR+ILU8, strain heating GCR+ILU1).
+- **`_shnoper`:** without `Periodic BC Strain Heating`, which the ElmerStreams template does not list.
+- **`_nostrain`:** the sharp sliding law alone.
+
+Each has a serial direct reference. `sh_y_spread_rel` in `summary.csv` is the across-flow spread of the
+strain heating, relative to its maximum. Run them with `sbatch periodic_test/run.cmd --only S_`
+(16 cases, a few hours).
+
 ## Looking at the basal temperature on the footprint
 
 The analysis also writes `out/np<N>/<case>/bed.npz`: basal temperature, its difference from the

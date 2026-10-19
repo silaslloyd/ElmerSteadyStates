@@ -52,6 +52,7 @@ Body Force 1
   Flow BodyForce 1 = Real #gravity*sina
   Flow BodyForce 2 = Real 0.0
   Flow BodyForce 3 = Real #-gravity*cosa
+__HEAT_SOURCE__
 End
 
 Material 1
@@ -60,6 +61,7 @@ Material 1
   Viscosity = Real #eta
   Heat Capacity = Real #heatcapacity
   Heat Conductivity = Real #heatconductivity
+  Cauchy = Logical True
 End
 
 Equation 1
@@ -87,6 +89,20 @@ __LS_STOKES__
 End
 
 Solver 2
+  ! strain heating 2 eta e:e (ElmerStreams Solver 11); Exec Never when off
+  Exec Solver = __STRAIN_EXEC__
+  Equation = DeformationalHeat
+  Variable = Strain Heating
+  Variable DOFs = 1
+  Procedure = "ElmerIceSolvers" "DeformationalHeatSolver"
+  Nonlinear System Convergence Tolerance = 1.0e-6
+  Bubbles in global system = False
+  Calculate Boundary Weights = Logical True
+  Exported Variable 1 = -dofs 1 "Strain Heating Boundary Weights"
+__LS_STRAIN__
+End
+
+Solver 3
   Equation = String "Heat Equation"
   Procedure = File "HeatSolveVec" "HeatSolver"
   Variable = String "Temperature"
@@ -98,7 +114,7 @@ Solver 2
 __LS_HEAT__
 End
 
-Solver 3
+Solver 4
   Exec Solver = "After All"
   Equation = "StateWrite"
   Procedure = "__ESS_LIB__" "StateIO"
@@ -113,6 +129,7 @@ Solver 3
   State Variable 6 = String "Flow Solution Loads 1"
   State Variable 7 = String "Flow Solution Loads 2"
   State Variable 8 = String "Flow Solution Loads 3"
+  State Variable 9 = String "Strain Heating"
 End
 
 __SNAP_SOLVER__

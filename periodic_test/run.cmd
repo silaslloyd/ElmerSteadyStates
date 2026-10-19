@@ -2,7 +2,7 @@
 #SBATCH --output=./slurms/periodic_%j.out
 #SBATCH --job-name="ptest"
 #SBATCH --ntasks=8
-#SBATCH --time=04:00:00
+#SBATCH --time=12:00:00
 #
 # Periodic-BC / partitioning test (periodic_test/README.md). From the repository root:
 #   sbatch periodic_test/run.cmd                  # every case

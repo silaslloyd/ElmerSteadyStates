@@ -116,6 +116,13 @@ LS = {
   Linear System Abort Not Converged = True
   Linear System Preconditioning = "None"
   Linear System Residual Output = 10""",
+    # ElmerStreams DeformationalHeat (strain heating) solver
+    "gcr_ilu1": """  Linear System Solver = "Iterative"
+  Linear System Iterative Method = "GCR"
+  Linear System Max Iterations = 5000
+  Linear System Convergence Tolerance = 1.0E-08
+  Linear System Preconditioning = "ILU1"
+  Linear System Residual Output = 100""",
     # ElmerStreams Stokes solver (linsys/gcr.sif): note Abort Not Converged = False
     "gcr_ilu8": """  Linear System Solver = Iterative
   Linear System Iterative Method = "gcr"
@@ -133,7 +140,8 @@ PERIODIC = """  Periodic BC = 3
   Periodic BC Velocity 2 = Logical True
   Periodic BC Velocity 3 = Logical True
   Periodic BC Pressure = Logical True
-  Periodic BC Temperature = Logical True"""
+  Periodic BC Temperature = Logical True
+__SH_PERIODIC__"""
 WALL = "  Velocity 2 = Real 0.0        ! free slip; zero heat flux"
 
 HEAT = {
@@ -150,18 +158,20 @@ HEAT = {
 
 
 def case(name, parts="serial", bc="periodic", heat="flux", halve=False, ls_heat="direct", ls_stokes="direct",
-         element="P2/P1", steps=0, dt=100.0, sliding_dT=0.0, out_every=10, Ts=243.15, Tb0=None):
+         element="P2/P1", steps=0, dt=100.0, sliding_dT=0.0, out_every=10, Ts=243.15, Tb0=None,
+         strain=False, sh_periodic=True, ls_strain="direct"):
     """steps = 0: steady Stokes + steady heat; steps > 0: transient, one Stokes and one heat solve per step
     (sliding_dT > 0: temperature-dependent sliding, so the two are coupled and errors can grow in time)"""
     return dict(name=name, parts=parts, bc=bc, heat=heat, halve=halve, ls_heat=ls_heat, ls_stokes=ls_stokes,
                 steps=steps, dt=dt, sliding_dT=sliding_dT, out_every=out_every, Ts=Ts,
-                Tb0=Ts + 20.0 if Tb0 is None else Tb0,
+                Tb0=Ts + 20.0 if Tb0 is None else Tb0, strain=strain, sh_periodic=sh_periodic, ls_strain=ls_strain,
                 element=element)
 
 
 def physics_key(c):
     """cases with the same physics share a reference (serial, direct solvers)"""
-    return (c["bc"], c["heat"], c["halve"], c["element"], c["steps"], c["dt"], c["sliding_dT"], c["Ts"], c["Tb0"])
+    return (c["bc"], c["heat"], c["halve"], c["element"], c["steps"], c["dt"], c["sliding_dT"], c["Ts"], c["Tb0"],
+            c["strain"], c["sh_periodic"] if c["strain"] else None)
 
 
 CASES = [
@@ -183,6 +193,21 @@ CASES = [
       for h in ("flux", "loads")
       for p, lh, ls in (("serial", "direct", "direct"), ("ycut_per", "direct", "direct"),
                         ("ycut_per", "gcr_ilu2", "gcr_ilu8"), ("metis_per", "gcr_ilu2", "gcr_ilu8"))],
+    # S: as T, but with the ElmerStreams sliding law (dT = delta Tscale = 0.15 K) and strain heating
+    #    (DeformationalHeatSolver + Heat Source), from 271 K at the bed, 257.15 K at the surface (the bed
+    #    reaches the sliding band near melting during the run). "_iter": the ElmerStreams solvers
+    #    (heat GCR+ILU2, Stokes GCR+ILU8, strain heating GCR+ILU1). "_shnoper": strain heating without
+    #    Periodic BC Strain Heating. "_nostrain": the sharp sliding law alone.
+    *[case(f"S_{h}_{p}" + ("" if it is None else "_iter") + sfx, parts=p, heat=h, halve=(h == "loads"),
+           steps=100, dt=100.0, out_every=5, sliding_dT=0.15, Ts=257.15, Tb0=271.0, element="Stabilized",
+           strain=st, sh_periodic=shp,
+           ls_heat="direct" if it is None else "gcr_ilu2", ls_stokes="direct" if it is None else "gcr_ilu8",
+           ls_strain="direct" if it is None else "gcr_ilu1")
+      for h in ("loads", "flux")
+      for p, it, st, shp, sfx in (("serial", None, True, True, ""), ("ycut_per", None, True, True, ""),
+                                  ("ycut_per", 1, True, True, ""), ("metis_per", 1, True, True, ""),
+                                  ("serial", None, True, False, "_shnoper"), ("ycut_per", 1, True, False, "_shnoper"),
+                                  ("serial", None, False, True, "_nostrain"), ("ycut_per", 1, False, True, "_nostrain"))],
     # G: the ElmerStreams combination on partitionings made WITHOUT ElmerGrid's -periodic
     case("G_streams_ycut_noper", parts="ycut", heat="loads", halve=True, ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
     case("G_streams_metis_noper", parts="metis", heat="loads", halve=True, ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
@@ -257,10 +282,14 @@ def write_case(c):
                          f'  Simulation Type = "Transient"\n  Timestepping Method = "bdf"\n  BDF Order = 1\n'
                          f'  Timestep Intervals = {c["steps"]}\n  Timestep Sizes = {c["dt"]!r}'),
         "__OUT_EVERY__": str(c["out_every"] if c["steps"] else 1),
-        "__NACTIVE__": "4" if c["steps"] else "3",
-        "__ACTIVE__": "1 2 3 4" if c["steps"] else "1 2 3",
+        "__NACTIVE__": "5" if c["steps"] else "4",
+        "__ACTIVE__": "1 2 3 4 5" if c["steps"] else "1 2 3 4",
+        "__STRAIN_EXEC__": '"Always"' if c["strain"] else '"Never"',
+        "__LS_STRAIN__": LS[c["ls_strain"]],
+        "__HEAT_SOURCE__": ('  ! strain heating (ElmerStreams body force)\n  Heat Source = Variable Strain Heating\n'
+                            '    Real Lua "tx[0] / rhoi"' if c["strain"] else "  ! no strain heating"),
         # transient: snapshots of the state every out_every steps, snap_t<step>.bin.<pe> (plot_bed_time.py)
-        "__SNAP_SOLVER__": "" if not c["steps"] else f"""Solver 4
+        "__SNAP_SOLVER__": "" if not c["steps"] else f"""Solver 5
   Exec Solver = "After Timestep"
   Exec Intervals = Integer {c["out_every"]}
   Equation = "Snapshot"
@@ -271,10 +300,14 @@ def write_case(c):
   Write Coordinates = Logical True
   State Variable 1 = String "Temperature"
   State Variable 2 = String "Velocity 1"
+  State Variable 3 = String "Strain Heating"
 End
 """,
     }
     subs["__SIDE2__"] = subs["__SIDE2__"].replace("__W__", repr(float(GEOM["W"])))
+    subs["__SIDE2__"] = subs["__SIDE2__"].replace(
+        "__SH_PERIODIC__", "  Periodic BC Strain Heating = Logical True" if c["strain"] and c["sh_periodic"]
+        else "  ! strain heating not periodic" if c["strain"] else "")
     for k, v in subs.items():
         sif = sif.replace(k, v)
     with open(os.path.join(d, "case.sif"), "w") as f:

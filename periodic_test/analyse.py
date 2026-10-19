@@ -137,6 +137,10 @@ def analyse_all(CASES, PARTS, physics_key, OUT, GEOM):
                    status="; ".join([log_flags(os.path.join(OUT, c["name"]))] + checks),
                    T_y_spread=sp, Tbed_y_spread=column_spread({**D, "x": D["x"][bed], "z": D["z"][bed]}, T[bed])[0],
                    u_y_spread=column_spread(D, u)[0],
+                   sh_y_spread_rel=(column_spread(D, find(D, "strain heating"))[0]
+                                    / (np.nanmax(np.abs(find(D, "strain heating"))) or 1.0))
+                   if find(D, "strain heating") is not None and np.nanmax(np.abs(find(D, "strain heating"))) > 0
+                   else np.nan,
                    worst_at=(f"x {D['x'][wi] / 1e3:.2f} km y {D['y'][wi] / 1e3:.2f} km z {D['z'][wi]:.0f} m"
                              + (" [interface]" if iface[wi] else "") + (" [periodic side]" if side[wi] else ""))
                    if wi is not None else "",
@@ -163,7 +167,7 @@ def analyse_all(CASES, PARTS, physics_key, OUT, GEOM):
         if c.get("steps"):
             save_bed_time(os.path.join(OUT, c["name"]), c, row,
                           os.path.join(OUT, ref) if ref and ref != c["name"] else None)
-    cols = ["case", "parts", "nparts", "T_y_spread", "Tbed_y_spread", "u_y_spread", "dT_max", "dT_interface",
+    cols = ["case", "parts", "nparts", "T_y_spread", "Tbed_y_spread", "u_y_spread", "sh_y_spread_rel", "dT_max", "dT_interface",
             "dT_interior", "dT_periodic_side", "du_rel", "T_partition_mismatch", "worst_at", "ref", "status"]
     if not rows:
         print(f"no finished cases under {OUT}")
