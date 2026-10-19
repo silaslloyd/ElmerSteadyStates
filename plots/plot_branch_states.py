@@ -24,6 +24,7 @@ REPO = os.path.dirname(HERE)
 sys.path.insert(0, REPO)
 from ess.statefile import find_name, load_state  # noqa: E402
 from plot_state import column_grid  # noqa: E402
+from plot_branch import read_stability  # noqa: E402
 
 # ---- settings for pressing Run (paths relative to the repository)
 BRANCH = "work/land_flowline/branch_cold"              # branch directory
@@ -36,6 +37,11 @@ MODE = "absolute"     # overlay only: "absolute", or "difference" (change from t
 COLORSCALE = "Viridis"
 VEL_PLOT = "contour"  # slider only: "contour" (filled u, w sections in x-z) or "lines" (surface and bed)
 VEL_NZ = 60           # vertical points of the contour grid (more: finer, but a bigger html)
+BRANCH_Y = "Tb_mean"  # slider only, top panel (the branch, with the current state marked): y-axis quantity,
+                      # "Tb_mean" (mean basal temperature), "Tb_max" (warmest bed node) or "Zs_mean"
+# stability type of the leading mode (from `ess stability --name B --point K`, or n_unstable in branch.csv)
+STAB_COLOURS = {"stable": "#1f77b4", "stable, oscillatory": "#17becf",
+                "unstable": "#d62728", "unstable, oscillatory": "#ff7f0e"}
 
 
 def repo_path(p):
@@ -66,6 +72,8 @@ def extract(path):
         return np.isclose(at(g, gy, Y), side)
 
     out = {"p": s.p, "name": os.path.basename(path)}
+    base = os.path.basename(path)
+    out["k"] = int(base[6:10]) if base.startswith("state_") and base[6:10].isdigit() else None
     # bed nodes = nodes carrying the frozen masks
     src = s.frozen or diag
     bkey = next(k for k in src if k.lower() in ("coldtempmask", "zb"))
@@ -171,45 +179,94 @@ def main():
         extra = f", warmest cold-bed node {s['Tb_cold_max']:.3f} K" if "Tb_cold_max" in s else ""
         return f"{s['name']}: Tsurf = {s['p']:.4f} K{extra}"
 
-    rows = 4 if vrows else 2
-    titles = ["basal temperature (K)", "surface elevation (m)"]
+    # ---- top panel: the branch, coloured by stability type, with the current state marked
+    stab_cat = branch_stability(bdir, S)
+
+    def yval(s):
+        return {"Tb_mean": np.mean(s["Tb"]), "Tb_max": np.max(s["Tb"]),
+                "Zs_mean": np.mean(s["zs"]) if "zs" in s else np.nan}[BRANCH_Y]
+    ylab = {"Tb_mean": "mean basal T (K)", "Tb_max": "warmest bed node (K)", "Zs_mean": "mean Zs (m)"}[BRANCH_Y]
+    pts = sorted((s["k"], s["p"], yval(s)) for s in S if s["k"] is not None)
+
+    o = 1                                          # the state panels start in row 2
+    rows = (4 if vrows else 2) + o
+    titles = ["branch: " + ", ".join(f"<span style='color:{c}'>{n}</span>" for n, c in STAB_COLOURS.items())
+              + ", grey not computed (between two computed points of the same type the type is assumed)",
+              "basal temperature (K)", "surface elevation (m)"]
     if contour:
         titles += ["along-flow velocity u (m/yr)", "vertical velocity w (m/yr)"]
+        for k_, r_ in (("U", 4), ("W", 5)):        # colour bars beside their rows
+            crange[k_]["colorbar"].update(y=1 - (r_ - 0.5) / rows, len=0.8 / rows)
     elif vrows:
         titles += ["along-flow velocity u (m/yr): surface, bed", "vertical velocity w (m/yr): surface, bed"]
-    fig = make_subplots(rows=rows, cols=1, vertical_spacing=0.06, subplot_titles=titles)
-    where = ([1, 2, 3, 4] if contour else [1, 2, 3, 3, 4, 4])[:len(traces(S[0]))]
-    for i, t in enumerate(traces(S[0])):
+    fig = make_subplots(rows=rows, cols=1, vertical_spacing=0.05, subplot_titles=titles)
+    where = [r + o for r in ([1, 2, 3, 4] if contour else [1, 2, 3, 3, 4, 4])[:len(traces(S[0]))]]
+
+    def marker(s):
+        return go.Scatter(x=[s["p"]], y=[yval(s)], mode="markers", name="current state",
+                          marker=dict(size=16, color="rgba(0,0,0,0)", line=dict(color="black", width=3)),
+                          hovertemplate=f"{s['name']}<br>Tsurf %{{x:.4f}}<br>%{{y:.4g}}<extra></extra>")
+
+    for i, t in enumerate(traces(S[0])):           # traces 0..n-1: the state panels, then the marker
         fig.add_trace(t, where[i], 1)
-    fig.add_hline(y=273.15, line=dict(dash="dot", color="grey"), row=1, col=1)
+    fig.add_trace(marker(S[0]), 1, 1)
+    nanim = len(where) + 1
+    if pts:                                        # static: the branch and its stability colouring
+        kk, pp, yy = map(np.array, zip(*pts))
+        fig.add_trace(go.Scatter(x=pp, y=yy, mode="lines+markers", line=dict(color="#bbbbbb", width=2),
+                                 marker=dict(size=4, color="#bbbbbb"), text=[f"point {k}" for k in kk],
+                                 hovertemplate="%{text}<br>Tsurf %{x:.4f}<br>%{y:.4g}<extra></extra>"), 1, 1)
+        seg = segment_colours(kk, stab_cat)
+        i = 0
+        while i < len(kk) - 1:                     # runs of equally coloured segments
+            if seg[i] is None:
+                i += 1
+                continue
+            j = i
+            while j < len(kk) - 1 and seg[j] == seg[i]:
+                j += 1
+            fig.add_trace(go.Scatter(x=pp[i:j + 1], y=yy[i:j + 1], mode="lines", hoverinfo="skip",
+                                     line=dict(color=STAB_COLOURS[seg[i]], width=5)), 1, 1)
+            i = j
+        ck = [i for i, k in enumerate(kk) if k in stab_cat]
+        if ck:
+            fig.add_trace(go.Scatter(
+                x=pp[ck], y=yy[ck], mode="markers",
+                marker=dict(size=11, color=[STAB_COLOURS[stab_cat[kk[i]][0]] for i in ck],
+                            line=dict(color="black", width=1)),
+                text=[f"point {kk[i]}: {stab_cat[kk[i]][0]}<br>{stab_cat[kk[i]][1]}" for i in ck],
+                hovertemplate="%{text}<br>Tsurf %{x:.4f}<extra></extra>"), 1, 1)
+    fig.update_xaxes(title_text="Tsurf (K)", row=1, col=1)
+    fig.update_yaxes(title_text=ylab, row=1, col=1)
+    fig.add_hline(y=273.15, line=dict(dash="dot", color="grey"), row=1 + o, col=1)
     frames, steps = [], []
     for k, s in enumerate(S):
-        frames.append(go.Frame(name=str(k), data=traces(s), traces=list(range(len(where))),
+        frames.append(go.Frame(name=str(k), data=traces(s) + [marker(s)], traces=list(range(nanim)),
                                layout=dict(title_text=title(s))))
         steps.append(dict(method="animate", label=f"{s['p']:.3f}",
                           args=[[str(k)], dict(mode="immediate", frame=dict(duration=0, redraw=True),
                                                transition=dict(duration=0))]))
     fig.frames = frames
-    for r in range(1, rows + 1):
+    for r in range(1 + o, rows + 1):
         fig.update_xaxes(range=[0, xmax], row=r, col=1)
     fig.update_xaxes(title_text="x (km)", row=rows, col=1)
     if contour:
         zlo = min(s["U"][1][0] for s in S if "U" in s)
         zhi = max(s["U"][1][-1] for s in S if "U" in s)
-        for r in (3, 4):
+        for r in (3 + o, 4 + o):
             fig.update_yaxes(range=[zlo, zhi], title_text="z (m)", row=r, col=1)
     elif vrows:
         def rng(keys):
             v = np.concatenate([s[k] for s in S for k in keys if k in s])
             pad = 0.05 * (v.max() - v.min() or 1.0)
             return [v.min() - pad, v.max() + pad]
-        fig.update_yaxes(range=rng(["us", "ub"]), row=3, col=1)
-        fig.update_yaxes(range=rng(["ws", "wb"]), row=4, col=1)
-    fig.update_yaxes(range=tb_rng, row=1, col=1)
+        fig.update_yaxes(range=rng(["us", "ub"]), row=3 + o, col=1)
+        fig.update_yaxes(range=rng(["ws", "wb"]), row=4 + o, col=1)
+    fig.update_yaxes(range=tb_rng, row=1 + o, col=1)
     zs_all = np.concatenate([s["zs"] for s in S if "zs" in s])
-    fig.update_yaxes(range=[zs_all.min() - 50, zs_all.max() + 50], row=2, col=1)
+    fig.update_yaxes(range=[zs_all.min() - 50, zs_all.max() + 50], row=2 + o, col=1)
     fig.update_layout(
-        title=title(S[0]), height=400 * rows, template="plotly_white", showlegend=False, margin=dict(t=90, b=130),
+        title=title(S[0]), height=380 * rows, template="plotly_white", showlegend=False, margin=dict(t=90, b=130),
         sliders=[dict(active=0, steps=steps, currentvalue=dict(prefix="Tsurf = ", xanchor="right"),
                       x=0.12, len=0.88, y=0, yanchor="top", pad=dict(t=50))],
         updatemenus=[dict(type="buttons", direction="left", x=0, y=0, xanchor="left", yanchor="top",
@@ -224,6 +281,41 @@ def main():
     print(f"wrote {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
     if SHOW:
         webbrowser.open("file://" + os.path.abspath(out))
+
+
+def branch_stability(bdir, S):
+    """{branch point: (type, details)} from the `ess stability` runs on the branch's points, else from
+    n_unstable in branch.csv (stability_every; real/complex unknown there)."""
+    cat = {}
+    for k, st in read_stability(bdir).items():
+        if not st["conv"]:
+            continue
+        kind = ("unstable" if st["sigma"] > 0 else "stable") + (", oscillatory" if st["complex"] else "")
+        det = f"|mu| {st['absmu']:.5f}, sigma {st['sigma']:+.3e}/yr" + \
+            (f", period {st['period'] / 1e3:.3g} kyr" if st["complex"] else "")
+        cat[k] = (kind, det)
+    f = os.path.join(bdir, "branch.csv")
+    if os.path.exists(f):
+        import csv
+        with open(f) as fh:
+            for k, r in enumerate(csv.DictReader(fh)):
+                v = r.get("n_unstable")
+                if k not in cat and v not in (None, ""):
+                    cat[k] = ("unstable" if float(v) > 0 else "stable", f"stability_every: {int(float(v))} unstable")
+    return cat
+
+
+def segment_colours(kk, cat):
+    """Colour of the segment from branch point kk[i] to kk[i+1]: the type of the computed points on either
+    side when they agree (assumed constant between them), else None (grey)."""
+    seg = [None] * (len(kk) - 1)
+    ck = [k for k in kk if k in cat]
+    for a, b in zip(ck[:-1], ck[1:]):
+        if cat[a][0] == cat[b][0]:
+            for i in range(len(kk) - 1):
+                if a <= kk[i] and kk[i + 1] <= b:
+                    seg[i] = cat[a][0]
+    return seg
 
 
 def overlay(S, bdir):
