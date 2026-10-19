@@ -334,6 +334,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--np", type=int, default=int(os.environ.get("SLURM_NTASKS", "8")))
     ap.add_argument("--only", nargs="+", help="run cases whose name contains one of these")
+    ap.add_argument("--exact", nargs="+", help="run exactly these cases (full names)")
+    ap.add_argument("--no-refs", action="store_true",
+                    help="do not add the serial references (they ran already, e.g. in another job)")
+    ap.add_argument("--no-analyse", action="store_true", help="skip the analysis at the end")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--analyse", action="store_true", help="only analyse finished cases")
     ap.add_argument("--mpirun", default="mpirun -np {n}")
@@ -346,6 +350,7 @@ def main():
     if a.np > GEOM["nx"]:
         print(f"note: xcut cases need --np <= {GEOM['nx']} (footprint columns); they are skipped")
     cases = [c for c in CASES if (not a.only or any(s in c["name"] for s in a.only))
+             and (not a.exact or c["name"] in a.exact)
              and not (c["parts"].startswith("xcut") and a.np > GEOM["nx"])]
     if a.list:
         for c in CASES:
@@ -356,7 +361,7 @@ def main():
         lib = os.path.join(REPO, "elmer", "SteadyStateIO.so")
         if not os.path.exists(lib):
             raise SystemExit(f"{lib} missing: build it with `make -C elmer` (module load elmerfem first)")
-        refs = {physics_key(c) for c in cases}             # make sure every case has its reference
+        refs = set() if a.no_refs else {physics_key(c) for c in cases}   # every case gets its reference
         is_ref = lambda c: c["parts"] == "serial" and c["ls_heat"] == "direct" and c["ls_stokes"] == "direct"
         cases = [c for c in CASES if is_ref(c) and physics_key(c) in refs
                  and c not in cases] + cases
@@ -369,6 +374,8 @@ def main():
         print("running", flush=True)
         for c in cases:
             run_case(c, a.mpirun, a.timeout)
+    if a.no_analyse:
+        return
     from analyse import analyse_all
     analyse_all(CASES, PARTS, physics_key, OUT, GEOM)
 
