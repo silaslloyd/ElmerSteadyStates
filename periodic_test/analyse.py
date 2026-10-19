@@ -155,6 +155,9 @@ def analyse_all(CASES, PARTS, physics_key, OUT, GEOM):
         plot_bed(os.path.join(OUT, c["name"]), D, T, bed, iface, c["name"], row)
     cols = ["case", "parts", "nparts", "T_y_spread", "Tbed_y_spread", "u_y_spread", "dT_max", "dT_interface",
             "dT_interior", "dT_periodic_side", "du_rel", "T_partition_mismatch", "worst_at", "ref", "status"]
+    if not rows:
+        print(f"no finished cases under {OUT}")
+        return
     with open(os.path.join(OUT, "summary.csv"), "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
