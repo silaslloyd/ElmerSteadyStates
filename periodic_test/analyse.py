@@ -125,8 +125,9 @@ def analyse_all(CASES, PARTS, physics_key, OUT, GEOM):
         checks = []                                       # did the extruded bed/surface BCs (5, 6) apply?
         if abs((D["z"].max() - D["z"].min()) / GEOM["H"] - 1) > 0.01:
             checks.append(f"slab {D['z'].max() - D['z'].min():.3g} m thick, not {GEOM['H']:g} (Extruded Max Coordinate?)")
-        if np.nanmax(np.abs(T[top] - 243.15)) > 1e-6:
-            checks.append("surface T not 243.15: check the extruded BC numbers (top = 6)")
+        Ts = c.get("Ts", 243.15)
+        if np.nanmax(np.abs(T[top] - Ts)) > 1e-6:
+            checks.append(f"surface T not {Ts}: check the extruded BC numbers (top = 6)")
         w = find(D, "velocity 3")
         if w is not None and np.nanmax(np.abs(w[bed])) > 1e-6 * np.nanmax(np.abs(u)):
             checks.append("w at the bed not 0: check the extruded BC numbers (bed = 5)")

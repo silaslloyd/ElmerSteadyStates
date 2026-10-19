@@ -38,9 +38,12 @@ Cslip = 1.5e-3                             -- MPa a m-1: tau_b = Cslip u_b (~30 
 heatconductivity = 2.1 * yearinsec * 1.0e-6
 heatcapacity = 2009.0 * yearinsec^2
 G = 0.05 * yearinsec * 1.0e-6              -- geothermal flux (0.05 W m-2)
-Ts = 243.15                                -- surface temperature (K)
+Ts = {Ts}                                  -- surface temperature (K)
+Tb0 = {Tb0}                                -- initial basal temperature (K), linear profile to Ts
 W = {W}
+H = {H}
 halve_y0 = {halve}                         -- ElmerStreams frictionloads: halve the load at y < 1 m
+sliding_dT = {sdT}                         -- 0: linear sliding; > 0: Cslip exp(-min(T - T0, 0) / sliding_dT)
 
 function max(a, b) if a > b then return a else return b end end
 
@@ -52,8 +55,16 @@ function frictionloads(lx, ly, lz, vx, vy, vz, y)
 end
 
 -- frictional heating as a flux: tau_b . u_b = Cslip |u_b|^2 (+ geothermal)
-function frictionflux(vx, vy, vz)
-  return G + Cslip * (vx * vx + vy * vy + vz * vz)
+-- basal drag coefficient: constant, or temperature dependent as ElmerStreams (capped at melting)
+function slip(T)
+  if sliding_dT <= 0 then return Cslip end
+  local d = T - 273.15
+  if d > 0 then d = 0 end
+  return Cslip * math.exp(-d / sliding_dT)
+end
+
+function frictionflux(vx, vy, vz, T)
+  return G + slip(T) * (vx * vx + vy * vy + vz * vz)
 end
 """
 
@@ -127,8 +138,8 @@ WALL = "  Velocity 2 = Real 0.0        ! free slip; zero heat flux"
 
 HEAT = {
     "flux": """  Heat Flux BC = Logical True
-  Heat Flux = Variable Velocity 1, Velocity 2, Velocity 3
-    Real Lua "frictionflux(tx[0], tx[1], tx[2])\"""",
+  Heat Flux = Variable Velocity 1, Velocity 2, Velocity 3, Temperature
+    Real Lua "frictionflux(tx[0], tx[1], tx[2], tx[3])\"""",
     "loads": """  Heat Flux BC = Logical True
   Heat Flux = Real #G
   Temperature Load = Variable Flow Solution Loads 1, Flow Solution Loads 2, Flow Solution Loads 3, Velocity 1, Velocity 2, Velocity 3, Coordinate 2
@@ -139,14 +150,18 @@ HEAT = {
 
 
 def case(name, parts="serial", bc="periodic", heat="flux", halve=False, ls_heat="direct", ls_stokes="direct",
-         element="P2/P1"):
+         element="P2/P1", steps=0, dt=100.0, sliding_dT=0.0, out_every=10, Ts=243.15, Tb0=None):
+    """steps = 0: steady Stokes + steady heat; steps > 0: transient, one Stokes and one heat solve per step
+    (sliding_dT > 0: temperature-dependent sliding, so the two are coupled and errors can grow in time)"""
     return dict(name=name, parts=parts, bc=bc, heat=heat, halve=halve, ls_heat=ls_heat, ls_stokes=ls_stokes,
+                steps=steps, dt=dt, sliding_dT=sliding_dT, out_every=out_every, Ts=Ts,
+                Tb0=Ts + 20.0 if Tb0 is None else Tb0,
                 element=element)
 
 
 def physics_key(c):
     """cases with the same physics share a reference (serial, direct solvers)"""
-    return (c["bc"], c["heat"], c["halve"], c["element"])
+    return (c["bc"], c["heat"], c["halve"], c["element"], c["steps"], c["dt"], c["sliding_dT"], c["Ts"], c["Tb0"])
 
 
 CASES = [
@@ -158,6 +173,14 @@ CASES = [
     case("R_per_flux_stab", element="Stabilized"), case("R_per_loads_stab", heat="loads", element="Stabilized"),
     # A: periodic BCs and the partitioning, direct solvers, flux heating (no loads involved)
     *[case(f"A_per_flux_{p}", parts=p) for p in ("xcut", "xcut_per", "ycut", "ycut_per", "metis", "metis_per")],
+    # T: transient, temperature-dependent sliding (Stokes and heat coupled each step), 200 x 50 yr from a
+    #    linear profile 270 K (bed) - 255.15 K (surface), the bed warming towards melting and sliding:
+    #    artefacts that need time to grow. VTUs every 10 steps in <case>/vtu/ (ParaView).
+    *[case(f"T_{h}_{p}" + ("" if lh == "direct" else "_iter"), parts=p, heat=h, halve=(h == "loads"),
+           steps=200, dt=50.0, sliding_dT=1.0, Ts=255.15, Tb0=270.0, ls_heat=lh, ls_stokes=ls)
+      for h in ("flux", "loads")
+      for p, lh, ls in (("serial", "direct", "direct"), ("ycut_per", "direct", "direct"),
+                        ("ycut_per", "gcr_ilu2", "gcr_ilu8"), ("metis_per", "gcr_ilu2", "gcr_ilu8"))],
     # G: the ElmerStreams combination on partitionings made WITHOUT ElmerGrid's -periodic
     case("G_streams_ycut_noper", parts="ycut", heat="loads", halve=True, ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
     case("G_streams_metis_noper", parts="metis", heat="loads", halve=True, ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
@@ -212,7 +235,8 @@ def write_case(c):
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
     with open(os.path.join(d, "params.lua"), "w") as f:
-        f.write(PARAMS.format(W=GEOM["W"], halve="true" if c["halve"] else "false"))
+        f.write(PARAMS.format(W=GEOM["W"], H=GEOM["H"], halve="true" if c["halve"] else "false",
+                              sdT=c["sliding_dT"], Ts=repr(c["Ts"]), Tb0=repr(c["Tb0"])))
     with open(os.path.join(HERE, "case.sif.in")) as f:
         sif = f.read()
     per = c["bc"] == "periodic"
@@ -227,6 +251,10 @@ def write_case(c):
         "__SIDE1__": "  ! master side of the periodic pair" if per else WALL,
         "__SIDE2__": PERIODIC if per else WALL,
         "__BED_HEAT__": HEAT[c["heat"]],
+        "__SIM_TYPE__": ('  Simulation Type = "Steady State"' if not c["steps"] else
+                         f'  Simulation Type = "Transient"\n  Timestepping Method = "bdf"\n  BDF Order = 1\n'
+                         f'  Timestep Intervals = {c["steps"]}\n  Timestep Sizes = {c["dt"]!r}'),
+        "__OUT_EVERY__": str(c["out_every"] if c["steps"] else 1),
     }
     subs["__SIDE2__"] = subs["__SIDE2__"].replace("__W__", repr(float(GEOM["W"])))
     for k, v in subs.items():

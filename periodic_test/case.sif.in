@@ -20,12 +20,14 @@ End
 
 Simulation
   Coordinate System = "Cartesian 3D"
-  Simulation Type = "Steady State"
+__SIM_TYPE__
   Steady State Max Iterations = 1
   Steady State Min Iterations = 1
   Extruded Mesh Levels = Integer __NZ1__
   Extruded Max Coordinate = Real __H__
-  Output Intervals = 1
+  Output Intervals = __OUT_EVERY__
+  Results Directory = "vtu"
+  Post File = "case.vtu"
   max output level = 3
 End
 
@@ -38,7 +40,9 @@ Body 1
 End
 
 Initial Condition 1
-  Temperature = Real #Ts
+  ! linear from Tb0 at the bed to Ts at the surface (matters for transient cases only)
+  Temperature = Variable Coordinate 3
+    Real Lua "Ts + (Tb0 - Ts) * (1 - tx[0] / H)"
   Velocity 1 = Real 0.0
   Velocity 2 = Real 0.0
   Velocity 3 = Real 0.0
@@ -144,8 +148,10 @@ Boundary Condition 5
   Target Boundaries(1) = 5
   Normal-Tangential Velocity = Logical True
   Velocity 1 = Real 0.0
-  Slip Coefficient 2 = Real #Cslip
-  Slip Coefficient 3 = Real #Cslip
+  Slip Coefficient 2 = Variable Temperature
+    Real Lua "slip(tx[0])"
+  Slip Coefficient 3 = Variable Temperature
+    Real Lua "slip(tx[0])"
 __BED_HEAT__
 End
 

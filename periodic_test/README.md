@@ -71,6 +71,20 @@ Units are K, and relative velocity for `du_rel`.
 If plotly is installed, `out/np<N>/<case>/bed.html` maps the basal temperature minus its across-flow mean,
 with the partition-interface nodes ringed.
 
+## Transient cases (T) and ParaView
+
+Some artefacts only appear after many time steps, so the T cases run 200 steps of 50 yr with
+temperature-dependent sliding: C·exp(−min(T − T0, 0)/1 K). Each step solves Stokes, then heat, so
+sliding and temperature feed back on each other and a small partition error can grow. They start from a
+linear profile, 270 K at the bed and 255.15 K at the surface, so the bed warms towards melting during
+the run.
+- **Variants:** flux or nodal-load heating (loads halved at y = 0, as in ElmerStreams), each in serial,
+  y-cut with `-periodic`, and with your iterative solvers on the y-cut and METIS partitionings.
+- **Output:** every case writes VTUs every 10 steps (`out_every`) to `out/np<N>/<case>/vtu/`. Open
+  `case_t*.pvtu` in ParaView, as one time series, to watch an artefact develop. Apply the
+  *Process Id Scalars* filter to colour the partitions.
+- **Run them:** `sbatch periodic_test/run.cmd --only T_`
+
 ## Looking at the basal temperature on the footprint
 
 The analysis also writes `out/np<N>/<case>/bed.npz`: basal temperature, its difference from the
