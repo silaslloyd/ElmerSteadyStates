@@ -68,6 +68,9 @@ def partition_files(base: str) -> list[str]:
     return sorted(files, key=lambda p: int(p.rsplit(".", 1)[1]))
 
 
+_NONFINITE_SEEN: set = set()
+
+
 def merge_partitions(paths: list[str], rtol: float = 1e-9) -> tuple[Records, dict]:
     """Merge per-partition files by global id. Returns records and the max mismatch between duplicate
     (shared-node) values of each variable, relative to the variable's max magnitude."""
@@ -87,9 +90,16 @@ def merge_partitions(paths: list[str], rtol: float = 1e-9) -> tuple[Records, dic
         first[1:] = g[1:] != g[:-1]
         idx = np.cumsum(first) - 1
         gu, vu = g[first], v[first]
-        d = np.abs(v - vu[idx])
-        scale = max(np.max(np.abs(vu)) if len(vu) else 0.0, 1e-300)
-        mism[k] = float(d.max() / scale) if len(d) else 0.0
+        with np.errstate(invalid="ignore"):          # diagnostics may hold NaN (e.g. never-set variables)
+            d = np.abs(v - vu[idx])
+        fin = np.isfinite(vu)
+        if not fin.all() and k not in _NONFINITE_SEEN:
+            _NONFINITE_SEEN.add(k)
+            import logging
+            logging.getLogger("ess").info(f"variable '{k}': {int((~fin).sum())} non-finite values in Elmer's "
+                                          f"output (reported once)")
+        scale = max(float(np.max(np.abs(vu[fin]))) if fin.any() else 0.0, 1e-300)
+        mism[k] = float(np.nanmax(d) / scale) if len(d) and np.isfinite(d).any() else 0.0
         out[k] = (gu, vu)
     return out, mism
 
