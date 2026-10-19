@@ -35,8 +35,9 @@ SHOW = True
 VIEW = "slider"       # "slider": one state at a time; "overlay": all states, coloured along the branch
 MODE = "absolute"     # overlay only: "absolute", or "difference" (change from the first state)
 COLORSCALE = "Viridis"
-VEL_PLOT = "contour"  # slider only: "contour" (filled u, w sections in x-z) or "lines" (surface and bed)
-VEL_NZ = 60           # vertical points of the contour grid (more: finer, but a bigger html)
+VEL_PLOT = "contour"  # slider only: "contour" (filled x-z sections of T, u, w in the ice, surface drawn on
+                      # them) or "lines" (surface elevation panel; u, w at the surface and bed)
+VEL_NZ = 60           # vertical points of the contour grids (more: finer, but a bigger html)
 BRANCH_Y = "Tb_mean"  # slider only, top panel (the branch, with the current state marked): y-axis quantity,
                       # "Tb_mean" (mean basal temperature), "Tb_max" (warmest bed node) or "Zs_mean"
 # stability type of the leading mode (from `ess stability --name B --point K`, or n_unstable in branch.csv)
@@ -87,6 +88,7 @@ def extract(path):
         xs = at(gs, gx, X)
         o = o_s = np.argsort(xs)
         out["xs"], out["zs"] = xs[o], split[zname][np.searchsorted(gids[zname], gs)][o]
+    xbb, zbb = xb[o_b], at(gb[o_b], gz, Z)          # the bed, for keeping sections in the ice
     vel = {}
     for c in (1, 2, 3):
         try:
@@ -104,7 +106,6 @@ def extract(path):
                 out["vs"] = at(gs_s, *vel[2])
         if VEL_PLOT == "contour":
             # x-z sections of u and w on the ice nodes of one side, gridded column by column
-            xbb, zbb = xb[o_b], at(gb[o_b], gz, Z)
             for c, k in ((1, "U"), (3, "W")):
                 gv, vv = vel[c]
                 sv = on_side(gv)
@@ -112,6 +113,14 @@ def extract(path):
                 ice = zv >= np.interp(xv, xbb, zbb) - 1e-6
                 xg, zg, G = column_grid(xv[ice], zv[ice], val[ice], VEL_NZ)
                 out[k] = (xg / 1e3, zg, np.round(G, 3))
+    if VEL_PLOT == "contour":
+        # temperature section in the ice (the bedrock below the bed nodes is left out)
+        gt = gids[tname][on_side(gids[tname])]
+        xt, zt = at(gt, gx, X), at(gt, gz, Z)
+        tv = split[tname][np.searchsorted(gids[tname], gt)]
+        ice = zt >= np.interp(xt, xbb, zbb) - 1e-6
+        xg, zg, G = column_grid(xt[ice], zt[ice], tv[ice], VEL_NZ)
+        out["TS"] = (xg / 1e3, zg, np.round(G, 3))
     if "Tb_cold_max" in s.meta:
         out["Tb_cold_max"] = float(s.meta["Tb_cold_max"])
     return out
@@ -137,38 +146,49 @@ def main():
     xmax = max(s["xb"].max() for s in S) / 1e3
 
     vrows = any("ub" in s for s in S)
-    contour = VEL_PLOT == "contour" and any("U" in s for s in S)
+    sections = VEL_PLOT == "contour"
+    contour = sections and any("U" in s for s in S)     # velocity sections
     E = go.Scatter(x=[], y=[])
     crange = {}
-    if contour:                               # one colour range for all states
+    if sections:                              # one colour range for all states
+        crange["TS"] = dict(colorscale="RdYlBu_r", zmin=min(np.nanmin(s["TS"][2]) for s in S),
+                            zmax=max(np.nanmax(s["TS"][2]) for s in S), colorbar=dict(title="T (K)"))
+    if contour:
         umax = max(np.nanmax(s["U"][2]) for s in S if "U" in s)
         umin = min(np.nanmin(s["U"][2]) for s in S if "U" in s)
         wlim = max(np.nanmax(np.abs(s["W"][2])) for s in S if "W" in s) or 1.0
-        crange = {"U": dict(colorscale="Viridis", zmin=umin, zmax=umax, colorbar=dict(title="u (m/yr)", y=0.37, len=0.22)),
-                  "W": dict(colorscale="RdBu_r", zmin=-wlim, zmax=wlim, colorbar=dict(title="w (m/yr)", y=0.11, len=0.22))}
+        crange["U"] = dict(colorscale="Viridis", zmin=umin, zmax=umax, colorbar=dict(title="u (m/yr)"))
+        crange["W"] = dict(colorscale="RdBu_r", zmin=-wlim, zmax=wlim, colorbar=dict(title="w (m/yr)"))
 
     def line(x, y, colour, name, unit, dash=None):
         return go.Scatter(x=x / 1e3, y=y, mode="lines", line=dict(color=colour, dash=dash), name=name,
                           hovertemplate=f"x %{{x:.1f}} km<br>{name} %{{y:.4g}} {unit}<extra></extra>")
 
+    def section(s, k, nm, unit):
+        if k not in s:
+            return E
+        xg, zg, G = s[k]
+        return go.Contour(x=xg, y=zg, z=G, name=nm, connectgaps=False, ncontours=30,
+                          contours=dict(coloring="fill", showlines=False), line=dict(width=0), **crange[k],
+                          hovertemplate=f"x %{{x:.1f}} km<br>z %{{y:.0f}} m<br>{nm} %{{z:.4g}} {unit}<extra></extra>")
+
+    def surface(s):
+        return (go.Scatter(x=s["xs"] / 1e3, y=s["zs"], mode="lines", line=dict(color="black", width=1.5),
+                           name="Zs", hovertemplate="x %{x:.1f} km<br>Zs %{y:.1f} m<extra></extra>")
+                if "xs" in s else E)
+
     def traces(s):
         tr = [go.Scatter(x=s["xb"] / 1e3, y=np.round(s["Tb"], 4), mode="lines", line=dict(color="#c0392b"),
                          name="T bed", hovertemplate="x %{x:.1f} km<br>T %{y:.3f} K<extra></extra>")]
+        if sections:                               # T section, then u and w, each with the surface on it
+            tr += [section(s, "TS", "T", "K"), surface(s)]
+            if contour:
+                tr += [section(s, "U", "u", "m/yr"), surface(s), section(s, "W", "w", "m/yr"), surface(s)]
+            return tr
         tr.append(go.Scatter(x=s["xs"] / 1e3, y=np.round(s["zs"], 2), mode="lines", line=dict(color="#2c3e50"),
                              name="Zs", hovertemplate="x %{x:.1f} km<br>Zs %{y:.1f} m<extra></extra>")
                   if "xs" in s else go.Scatter(x=[], y=[]))
-        if vrows and contour:
-            for k, nm in (("U", "u"), ("W", "w")):
-                if k in s:
-                    xg, zg, G = s[k]
-                    tr.append(go.Contour(x=xg, y=zg, z=G, name=nm, connectgaps=False, ncontours=30,
-                                         contours=dict(coloring="fill", showlines=False), line=dict(width=0),
-                                         **crange[k],
-                                         hovertemplate=f"x %{{x:.1f}} km<br>z %{{y:.0f}} m<br>{nm} %{{z:.4g}} m/yr"
-                                                       "<extra></extra>"))
-                else:
-                    tr.append(E)
-        elif vrows:
+        if vrows:
             tr.append(line(s["xs"], s["us"], "#1f77b4", "u surface", "m/yr") if "us" in s else E)
             tr.append(line(s["xb"], s["ub"], "#ff7f0e", "u bed", "m/yr") if "ub" in s else E)
             tr.append(line(s["xs"], s["ws"], "#2ca02c", "w surface", "m/yr") if "ws" in s else E)
@@ -189,18 +209,26 @@ def main():
     pts = sorted((s["k"], s["p"], yval(s)) for s in S if s["k"] is not None)
 
     o = 1                                          # the state panels start in row 2
-    rows = (4 if vrows else 2) + o
     titles = ["branch: " + ", ".join(f"<span style='color:{c}'>{n}</span>" for n, c in STAB_COLOURS.items())
               + ", grey not computed (between two computed points of the same type the type is assumed)",
-              "basal temperature (K)", "surface elevation (m)"]
-    if contour:
-        titles += ["along-flow velocity u (m/yr)", "vertical velocity w (m/yr)"]
-        for k_, r_ in (("U", 4), ("W", 5)):        # colour bars beside their rows
+              "basal temperature (K)"]
+    if sections:
+        titles += ["temperature (K)"] + (["along-flow velocity u (m/yr)", "vertical velocity w (m/yr)"]
+                                         if contour else [])
+        where = [1, 2, 2] + ([3, 3, 4, 4] if contour else [])
+        sec_rows = {"TS": 2 + o, "U": 3 + o, "W": 4 + o}
+    else:
+        titles += ["surface elevation (m)"]
+        if vrows:
+            titles += ["along-flow velocity u (m/yr): surface, bed", "vertical velocity w (m/yr): surface, bed"]
+        where = [1, 2, 3, 3, 4, 4]
+        sec_rows = {}
+    rows = len(titles)
+    for k_, r_ in sec_rows.items():                # colour bars beside their rows
+        if k_ in crange:
             crange[k_]["colorbar"].update(y=1 - (r_ - 0.5) / rows, len=0.8 / rows)
-    elif vrows:
-        titles += ["along-flow velocity u (m/yr): surface, bed", "vertical velocity w (m/yr): surface, bed"]
     fig = make_subplots(rows=rows, cols=1, vertical_spacing=0.05, subplot_titles=titles)
-    where = [r + o for r in ([1, 2, 3, 4] if contour else [1, 2, 3, 3, 4, 4])[:len(traces(S[0]))]]
+    where = [r + o for r in where[:len(traces(S[0]))]]
 
     def marker(s):
         return go.Scatter(x=[s["p"]], y=[yval(s)], mode="markers", name="current state",
@@ -250,11 +278,12 @@ def main():
     for r in range(1 + o, rows + 1):
         fig.update_xaxes(range=[0, xmax], row=r, col=1)
     fig.update_xaxes(title_text="x (km)", row=rows, col=1)
-    if contour:
-        zlo = min(s["U"][1][0] for s in S if "U" in s)
-        zhi = max(s["U"][1][-1] for s in S if "U" in s)
-        for r in (3 + o, 4 + o):
-            fig.update_yaxes(range=[zlo, zhi], title_text="z (m)", row=r, col=1)
+    if sections:
+        zlo = min(s["TS"][1][0] for s in S)
+        zhi = max(max(s["TS"][1][-1], np.max(s.get("zs", [-np.inf]))) for s in S)
+        for r in sec_rows.values():
+            if r <= rows:
+                fig.update_yaxes(range=[zlo, zhi + 0.02 * (zhi - zlo)], title_text="z (m)", row=r, col=1)
     elif vrows:
         def rng(keys):
             v = np.concatenate([s[k] for s in S for k in keys if k in s])
@@ -263,8 +292,9 @@ def main():
         fig.update_yaxes(range=rng(["us", "ub"]), row=3 + o, col=1)
         fig.update_yaxes(range=rng(["ws", "wb"]), row=4 + o, col=1)
     fig.update_yaxes(range=tb_rng, row=1 + o, col=1)
-    zs_all = np.concatenate([s["zs"] for s in S if "zs" in s])
-    fig.update_yaxes(range=[zs_all.min() - 50, zs_all.max() + 50], row=2 + o, col=1)
+    if not sections:
+        zs_all = np.concatenate([s["zs"] for s in S if "zs" in s])
+        fig.update_yaxes(range=[zs_all.min() - 50, zs_all.max() + 50], row=2 + o, col=1)
     fig.update_layout(
         title=title(S[0]), height=380 * rows, template="plotly_white", showlegend=False, margin=dict(t=90, b=130),
         sliders=[dict(active=0, steps=steps, currentvalue=dict(prefix="Tsurf = ", xanchor="right"),
