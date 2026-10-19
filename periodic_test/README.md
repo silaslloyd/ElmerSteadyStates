@@ -73,14 +73,14 @@ with the partition-interface nodes ringed.
 
 ## Transient cases (T)
 
-Some artefacts only appear after many time steps, so the T cases run 200 steps of 50 yr with
+Some artefacts only appear after many time steps, so the T cases run 100 steps of 100 yr (with P1/P1 stabilised Stokes, to keep them fast) with
 temperature-dependent sliding: C·exp(−min(T − T0, 0)/1 K). Each step solves Stokes, then heat, so
 sliding and temperature feed back on each other and a small partition error can grow. They start from a
 linear profile, 270 K at the bed and 255.15 K at the surface, so the bed warms towards melting during
 the run.
 - **Variants:** flux or nodal-load heating (loads halved at y = 0, as in ElmerStreams), each in serial,
   y-cut with `-periodic`, and with your iterative solvers on the y-cut and METIS partitionings.
-- **Snapshots:** every 10 steps each case writes one (`snap_t<step>.bin.<pe>`). The analysis turns
+- **Snapshots:** every 5 steps each case writes one (`snap_t<step>.bin.<pe>`). The analysis turns
   them into `<case>/bed_time.npz`.
 - **Run them:** `sbatch periodic_test/run.cmd --only T_`. Rebuild `elmer/SteadyStateIO.so` first if
   needed; `run.cmd` does it when the source is newer.

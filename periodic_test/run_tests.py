@@ -173,11 +173,13 @@ CASES = [
     case("R_per_flux_stab", element="Stabilized"), case("R_per_loads_stab", heat="loads", element="Stabilized"),
     # A: periodic BCs and the partitioning, direct solvers, flux heating (no loads involved)
     *[case(f"A_per_flux_{p}", parts=p) for p in ("xcut", "xcut_per", "ycut", "ycut_per", "metis", "metis_per")],
-    # T: transient, temperature-dependent sliding (Stokes and heat coupled each step), 200 x 50 yr from a
+    # T: transient, temperature-dependent sliding (Stokes and heat coupled each step), 100 x 100 yr from a
     #    linear profile 270 K (bed) - 255.15 K (surface), the bed warming towards melting and sliding.
-    #    Snapshots every 10 steps (snap_t<step>.bin.<pe>): plot_bed_time.py shows them with a time slider.
+    #    Snapshots every 5 steps (snap_t<step>.bin.<pe>): plot_bed_time.py shows them with a time slider.
+    #    P1/P1 stabilised Stokes: P2/P1 took over an hour per serial run.
     *[case(f"T_{h}_{p}" + ("" if lh == "direct" else "_iter"), parts=p, heat=h, halve=(h == "loads"),
-           steps=200, dt=50.0, sliding_dT=1.0, Ts=255.15, Tb0=270.0, ls_heat=lh, ls_stokes=ls)
+           steps=100, dt=100.0, out_every=5, sliding_dT=1.0, Ts=255.15, Tb0=270.0, element="Stabilized",
+           ls_heat=lh, ls_stokes=ls)
       for h in ("flux", "loads")
       for p, lh, ls in (("serial", "direct", "direct"), ("ycut_per", "direct", "direct"),
                         ("ycut_per", "gcr_ilu2", "gcr_ilu8"), ("metis_per", "gcr_ilu2", "gcr_ilu8"))],
