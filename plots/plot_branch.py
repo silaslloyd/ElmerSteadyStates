@@ -2,7 +2,10 @@
 """
 Bifurcation diagram of one or several continuation branches: block means of the state (and the mask
 diagnostics, if present) against the parameter, one colour per branch, folds marked (◆), points with
-unstable modes marked (✕) when stability was computed along the branch (`stability_every`).
+unstable modes marked (✕) when stability was computed along the branch (`stability_every`) or by
+separate `ess stability --name B --point K` runs (<work>/stability/branch_B_state_K/stability.npz).
+Those runs also give a panel of the leading growth rate against the parameter (○ real mode, ◇ complex
+pair, with its period in the hover text; grey: not converged).
 
 Press Run in an IDE (settings below), or:
     python plots/plot_branch.py                                  # every branch under work/
@@ -67,7 +70,36 @@ def read_branch(bdir):
             if os.path.exists(pt):
                 with np.load(pt) as z:
                     put("mean (scaled)", i, float(np.mean(z["y"])))
-    return dict(p=p, fold=fold, nun=nun, means=means)
+    stab = read_stability(bdir)
+    for k, st in stab.items():                       # unstable converged leading mode -> mark the point
+        if k < len(rows) and st["conv"] and st["sigma"] > 0:
+            nun[k] = max(np.nan_to_num(nun[k]), 1)
+    return dict(p=p, fold=fold, nun=nun, means=means, stab=stab)
+
+
+def read_stability(bdir):
+    """Leading mode (largest Re sigma among converged modes) of each `ess stability --name B --point K`."""
+    b = os.path.normpath(bdir)
+    name = os.path.basename(b).replace("branch_", "", 1)
+    pat = os.path.join(os.path.dirname(b), "stability", f"branch_{name}_state_[0-9][0-9][0-9][0-9]", "stability.npz")
+    out = {}
+    for f in sorted(glob.glob(pat)):
+        k = int(os.path.basename(os.path.dirname(f))[-4:])
+        try:
+            with np.load(f, allow_pickle=False) as z:
+                mu, sig, conv = z["mu"], z["sigma"], z["converged"].astype(bool)
+                T = float(z["dt"]) * float(z["n_steps"])
+                pk = float(z["p"])
+        except Exception as e:
+            print(f"skipping {f}: {e}")
+            continue
+        cand = np.where(conv)[0] if conv.any() else np.arange(len(mu))
+        i = cand[np.argmax(sig.real[cand])]
+        arg = float(np.angle(mu[i]))
+        out[k] = dict(p=pk, sigma=float(sig[i].real), absmu=float(abs(mu[i])), arg=arg, conv=bool(conv.any()),
+                      complex=abs(arg) > 1e-6, period=(2 * np.pi * T / abs(arg)) if abs(arg) > 1e-6 else np.inf,
+                      nconv=int(conv.sum()), nunst=int(np.sum(conv & (sig.real > 0))))
+    return out
 
 
 def main():
@@ -93,12 +125,35 @@ def main():
     for _, b in B:                               # panels: every quantity that some branch has
         names += [k for k in b["means"] if k not in names]
     print(f"{len(B)} branches: " + ", ".join(label(d) for d, _ in B))
+    SIG = "leading growth rate sigma (1/yr), from `ess stability`"
+    if any(b["stab"] for _, b in B):
+        names.append(SIG)
+        for d, b in B:
+            for k, st in sorted(b["stab"].items()):
+                per = f", period {st['period'] / 1e3:.3g} kyr" if st["complex"] else ""
+                print(f"  {label(d)} point {k:3d}  p {st['p']:.4f}  |mu| {st['absmu']:.5f}  sigma {st['sigma']:+.3e}/yr"
+                      f"{per}  converged {st['nconv']}  unstable {st['nunst']}")
 
     fig = make_subplots(rows=len(names), cols=1, shared_xaxes=True, vertical_spacing=0.05, subplot_titles=names)
     for ib, (d, b) in enumerate(B):
         c = COLOURS[ib % len(COLOURS)]
         lab = label(d)
         for j, k in enumerate(names, 1):
+            if k == SIG:
+                if b["stab"]:
+                    st = [b["stab"][i] for i in sorted(b["stab"])]
+                    fig.add_trace(go.Scatter(
+                        x=[t["p"] for t in st], y=[t["sigma"] for t in st], mode="lines+markers",
+                        line=dict(color=c, width=1, dash="dot"), legendgroup=lab, showlegend=False,
+                        marker=dict(size=10, color=[c if t["conv"] else "#bbbbbb" for t in st],
+                                    symbol=["diamond-open" if t["complex"] else "circle-open" for t in st],
+                                    line=dict(width=2)),
+                        text=[f"{lab}, point {i}<br>|mu| {t['absmu']:.5f}, arg {t['arg']:+.3f}"
+                              + (f"<br>period {t['period'] / 1e3:.3g} kyr" if t["complex"] else "<br>real mode")
+                              + f"<br>{t['nconv']} converged, {t['nunst']} unstable"
+                              for i, t in zip(sorted(b["stab"]), st)],
+                        hovertemplate="%{text}<br>p %{x:.5g}<br>sigma %{y:.3e} /yr<extra></extra>"), j, 1)
+                continue
             if k not in b["means"]:
                 continue
             y = b["means"][k]
@@ -116,6 +171,8 @@ def main():
                 fig.add_trace(go.Scatter(x=b["p"][un], y=y[un], mode="markers",
                                          marker=dict(symbol="x", size=9, color="black"),
                                          legendgroup=lab, showlegend=False, hoverinfo="skip"), j, 1)
+    if SIG in names:
+        fig.add_hline(y=0, line=dict(dash="dot", color="grey"), row=len(names), col=1)
     fig.update_xaxes(title_text="parameter", row=len(names), col=1)
     fig.update_layout(title="branches  (◆ fold, ✕ unstable point where stability was computed)",
                       height=300 * len(names) + 120, template="plotly_white",
