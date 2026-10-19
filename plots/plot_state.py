@@ -28,6 +28,8 @@ FILE = None          # None -> the newest .npz under work/ (state or stability)
 MODE = 0             # eigenvector index for stability files
 Y_SIDE = "min"       # the flowline mesh is one element wide: show the nodes at y = min (or "max")
 SHOW = True
+NZ_GRID = 200        # vertical resolution of the regular grid the velocities are contoured on
+N_CONTOURS = 30
 
 
 def load(path, mode):
@@ -47,6 +49,24 @@ def load(path, mode):
         title = f"mode {mode}: mu = {mu:.6f}, sigma = {sig.real:+.4e} {sig.imag:+.3e}i (real part)"
         return layout, x, diag, frozen, title, True
     return layout, layout.split(z["x"]), diag, frozen, f"state at p = {float(z['p']):.6g}", False
+
+
+def column_grid(x, z, v, nz):
+    """Values on the extruded mesh's node columns (one per x) interpolated, column by column, onto a
+    regular z grid; NaN above and below each column, so the contours follow the ice geometry."""
+    xk = np.round(x, 3)
+    ux = np.unique(xk)
+    zg = np.linspace(z.min(), z.max(), nz)
+    G = np.full((nz, len(ux)), np.nan)
+    for j, xc in enumerate(ux):
+        m = xk == xc
+        o = np.argsort(z[m])
+        zc, vc = z[m][o], v[m][o]
+        if len(zc) < 2:
+            continue
+        inside = (zg >= zc[0]) & (zg <= zc[-1])
+        G[inside, j] = np.interp(zg[inside], zc, vc)
+    return ux, zg, G
 
 
 def on_side(gids, coords):
@@ -126,18 +146,31 @@ def main():
                                name="T"), 3, 1)
     if vrows:
         bar_y = [None, None, None, 0.35, 0.11]
+        # bed elevation along x (the nodes carrying the frozen mask), to keep the contours in the ice
+        bsrc = frozen or diag
+        bk = next((k for k in bsrc if k.lower() in ("coldtempmask", "zb")), None)
+        if bk is not None:
+            gbb = bsrc[bk][0]
+            gbb = gbb[on_side(gbb, coords)]
+            xbb, zbb = xy(gbb)
+            ob = np.argsort(xbb)
+            xbb, zbb = xbb[ob], zbb[ob]
         for r, c, nm, cs in ((4, 1, "u", "Viridis"), (5, 3, "w", "RdBu_r")):
             gv, vv = vel[c]
             sv = on_side(gv, coords)
             xv, zv = xy(gv[sv])
             val = vv[sv]
-            lim = np.abs(val).max() or 1.0
-            fig.add_trace(go.Scattergl(
-                x=xv, y=zv, mode="markers", name=nm,
-                marker=dict(color=val, size=4, colorscale=cs, cmin=-lim if nm == "w" else None,
-                            cmax=lim if nm == "w" else None,
-                            colorbar=dict(title=f"{nm} (m/yr)", y=bar_y[r - 1], len=0.2)),
-                hovertemplate=f"x %{{x:.4g}}<br>z %{{y:.4g}}<br>{nm} %{{marker.color:.4g}} m/yr<extra></extra>"), r, 1)
+            if bk is not None:                          # ice only
+                ice = zv >= np.interp(xv, xbb, zbb) - 1e-6
+                xv, zv, val = xv[ice], zv[ice], val[ice]
+            xg, zg, G = column_grid(xv, zv, val, NZ_GRID)
+            lim = np.nanmax(np.abs(G)) or 1.0
+            fig.add_trace(go.Contour(
+                x=xg, y=zg, z=G, name=nm, ncontours=N_CONTOURS, connectgaps=False,
+                colorscale=cs, zmin=-lim if nm == "w" else None, zmax=lim if nm == "w" else None,
+                contours=dict(coloring="fill", showlines=False), line=dict(width=0),
+                colorbar=dict(title=f"{nm} (m/yr)", y=bar_y[r - 1], len=0.2),
+                hovertemplate=f"x %{{x:.4g}}<br>z %{{y:.4g}}<br>{nm} %{{z:.4g}} m/yr<extra></extra>"), r, 1)
     fig.update_xaxes(title_text="x (m)", row=rows, col=1)
     fig.update_layout(title=f"{os.path.basename(path)}: {title}", height=1000 if rows == 3 else 1600, template="plotly_white",
                       showlegend=False)
