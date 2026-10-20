@@ -58,6 +58,9 @@ frozen = ["ColdTempMask", "GroundedMask", "bedrock"]
 # remask grounds it (NaN in the heat solve). 50 m: room for that; thermally the same rock under grounded ice.
 [lua]
 minh = 50.0
+# cap of the sliding factor exp(-(T - T0)/dT) (elmer/ess_utils.lua TDepSliding): 1e6 is reached ~2 K below
+# melting; uncapped, nodes switched temperate -> cold beside the fast ice near the grounding line overflowed
+ess_slide_maxfactor = 1.0e6
 
 [masks]
 auto = true

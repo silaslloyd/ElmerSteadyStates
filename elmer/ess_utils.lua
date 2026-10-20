@@ -43,10 +43,16 @@ end
 
 -- temperature-dependent (subtemperate) Weertman coefficient, as
 -- TDepSlidingExp in utils.lua (noise term was multiplied by zero there)
+-- ess_slide_maxfactor > 0 caps the factor exp(-Tr/gamma) (marine: 1e6, i.e. ~2 K below melting for
+-- gamma = 0.15 K; the bed is frozen for practical purposes there). Uncapped, a cold node beside fast ice
+-- reaches factors of 1e14 .. 1e40 and overflows the Stokes and heat solves. 0: no cap (ElmerStreams).
+ess_slide_maxfactor = 0
 function TDepSliding(C, Th, gamma, x)
   local Tr = Th - 273.15
   if Tr > 0.0 then Tr = 0.0 end
-  local slid = C / math.exp(Tr / gamma)
+  local e = -Tr / gamma
+  if ess_slide_maxfactor > 0 and e > math.log(ess_slide_maxfactor) then e = math.log(ess_slide_maxfactor) end
+  local slid = C * math.exp(e)
   if frontdist(x) < 10000 then slid = C / 2 end
   return slid
 end
