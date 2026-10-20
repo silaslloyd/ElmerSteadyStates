@@ -1,9 +1,9 @@
-!! Periodic-BC / partitioning test for the thermo-mechanical ice slab (see README.md).
-!! A slab on a flat bed, driven along x by a tilted gravity, sliding on a linear law,
-!! steady Stokes then steady heat. Everything is uniform in y, so the exact discrete
-!! solution is uniform in y: any y-structure (at partition boundaries or elsewhere)
-!! is an error of the set-up, the partitioning or the linear solver.
-!! Filled in by run_tests.py: __NAME__ placeholders.
+!! Periodic-BC / partitioning test: a parallel-sided slab on a flat bed, square footprint, periodic on
+!! all four sides (x = 0 <-> x = L, y = 0 <-> y = W), driven along x by gravity tilted by the slope
+!! (z normal to the bed). Stokes (Newtonian, temperature-dependent linear sliding) and heat, optionally a
+!! free surface. Nothing depends on x or y, so the exact discrete solution is horizontally uniform: any
+!! horizontal structure is an error of the partitioning, the periodic BCs or the linear solvers.
+!! Filled in by run_tests.py (__NAME__ placeholders; the solver blocks are assembled there).
 
 !---LUA BEGIN
 ! assert(loadfile('params.lua'))()
@@ -38,7 +38,7 @@ Body 1
 End
 
 Initial Condition 1
-  ! linear from Tb0 at the bed to Ts at the surface (matters for transient cases only)
+  ! linear from Tb0 at the bed to Ts at the surface
   Temperature = Variable Coordinate 3
     Real Lua "Ts + (Tb0 - Ts) * (1 - tx[0] / H)"
   Velocity 1 = Real 0.0
@@ -48,11 +48,10 @@ Initial Condition 1
 End
 
 Body Force 1
-  ! acceleration (multiplied by the density): gravity tilted by the surface slope alpha
+  ! acceleration (multiplied by the density): gravity tilted by the slope, z normal to the bed
   Flow BodyForce 1 = Real #gravity*sina
   Flow BodyForce 2 = Real 0.0
   Flow BodyForce 3 = Real #-gravity*cosa
-__HEAT_SOURCE__
 End
 
 Material 1
@@ -62,6 +61,7 @@ Material 1
   Heat Capacity = Real #heatcapacity
   Heat Conductivity = Real #heatconductivity
   Cauchy = Logical True
+__FS_MATERIAL__
 End
 
 Equation 1
@@ -70,95 +70,35 @@ Equation 1
   Convection = "Computed"
   Flow Solution Name = String "Flow Solution"
 End
-
-Solver 1
-  Equation = "Stokes-Vec"
-  Procedure = "IncompressibleNSVec" "IncompressibleNSSolver"
-  Div-Curl Discretization = Logical False
-  Stokes Flow = Logical True
-  Flow Model = Stokes
-  Stabilization Method = String "__STOKES_ELEMENT__"
-  Optimize Bandwidth = Logical True
-  ! Newtonian viscosity and a linear sliding law: one iteration solves it
-  Nonlinear System Max Iterations = 1
-  Nonlinear System Min Iterations = 1
-  Nonlinear System Convergence Tolerance = 1.0e-8
-  Calculate Loads = Logical True
-  Exported Variable 1 = -dofs 4 Flow Solution Loads
-  Steady State Convergence Tolerance = 1.0e-9
-__LS_STOKES__
-End
-
-Solver 2
-  ! strain heating 2 eta e:e (ElmerStreams Solver 11); Exec Never when off
-  Exec Solver = __STRAIN_EXEC__
-  Equation = DeformationalHeat
-  Variable = Strain Heating
-  Variable DOFs = 1
-  Procedure = "ElmerIceSolvers" "DeformationalHeatSolver"
-  Nonlinear System Convergence Tolerance = 1.0e-6
-  Bubbles in global system = False
-  Calculate Boundary Weights = Logical True
-  Exported Variable 1 = -dofs 1 "Strain Heating Boundary Weights"
-__LS_STRAIN__
-End
-
-Solver 3
-  Equation = String "Heat Equation"
-  Procedure = File "HeatSolveVec" "HeatSolver"
-  Variable = String "Temperature"
-  Stabilize = Logical True
-  Optimize Bandwidth = Logical True
-  Nonlinear System Max Iterations = 1
-  Nonlinear System Min Iterations = 1
-  Nonlinear System Convergence Tolerance = 1.0e-8
-  Steady State Convergence Tolerance = 1.0e-9
-__LS_HEAT__
-End
-
-Solver 4
-  Exec Solver = "After All"
-  Equation = "StateWrite"
-  Procedure = "__ESS_LIB__" "StateIO"
-  State Mode = String "write"
-  State File = File "out.bin"
-  Write Coordinates = Logical True
-  State Variable 1 = String "Temperature"
-  State Variable 2 = String "Velocity 1"
-  State Variable 3 = String "Velocity 2"
-  State Variable 4 = String "Velocity 3"
-  State Variable 5 = String "Pressure"
-  State Variable 6 = String "Flow Solution Loads 1"
-  State Variable 7 = String "Flow Solution Loads 2"
-  State Variable 8 = String "Flow Solution Loads 3"
-  State Variable 9 = String "Strain Heating"
-End
-
-__SNAP_SOLVER__
+__FS_BODIES__
+__SOLVERS__
 !---------------- boundary conditions ----------------
+! periodic pairs: x = L is the image of x = 0 (BC 2 -> 1), y = W the image of y = 0 (BC 4 -> 3)
 
 Boundary Condition 1
-  Name = "x0 wall"
+  Name = "x = 0 (master)"
   Target Boundaries(1) = 1
-  Velocity 1 = Real 0.0
 End
 
 Boundary Condition 2
-  Name = "xL wall"
+  Name = "x = L (periodic image of x = 0)"
   Target Boundaries(1) = 2
-  Velocity 1 = Real 0.0
+  Periodic BC = 1
+  Periodic BC Translate(3) = Real __L__ 0.0 0.0
+__PERIODIC_VARS__
 End
 
 Boundary Condition 3
-  Name = "side1 (y = 0)"
+  Name = "y = 0 (master)"
   Target Boundaries(1) = 3
-__SIDE1__
 End
 
 Boundary Condition 4
-  Name = "side2 (y = W)"
+  Name = "y = W (periodic image of y = 0)"
   Target Boundaries(1) = 4
-__SIDE2__
+  Periodic BC = 3
+  Periodic BC Translate(3) = Real 0.0 __W__ 0.0
+__PERIODIC_VARS__
 End
 
 Boundary Condition 5
@@ -171,10 +111,12 @@ Boundary Condition 5
   Slip Coefficient 3 = Variable Temperature
     Real Lua "slip(tx[0])"
 __BED_HEAT__
+__FS_BED__
 End
 
 Boundary Condition 6
   Name = "surface"
   Target Boundaries(1) = 6
   Temperature = Real #Ts
+__FS_TOP__
 End

@@ -1,156 +1,98 @@
 # Periodic-BC / partitioning test
 
-The ElmerStreams 3D stream runs show unconverged-looking temperatures along partition boundaries when
-they run with periodic side boundaries on several partitions. This is a small case that separates the
-possible causes.
+The ElmerStreams 3D stream runs show unconverged-looking temperatures along partition boundaries when they
+run with periodic boundaries on several partitions. This test looks for the cause in the simplest setting
+where the exact answer is known.
 
 ## The case
 
-A slab 30 km x 8 km x 600 m on a flat bed:
-- **Mesh:** a 60 x 16 footprint, extruded by ElmerSolver into 10 layers, like the ElmerStreams meshes.
-- **Flow:** driven along x by gravity tilted by a 0.005 slope; walls at x = 0 and x = L.
-- **Physics:** steady Stokes (Newtonian, linear sliding), then steady heat with advection.
-- **Thermal boundaries:** geothermal flux plus frictional heating at the bed, 243.15 K at the surface.
+A parallel-sided slab on a flat bed:
+- **Footprint:** square, 10 km × 10 km, 500 m cells by default (`--res` for finer), extruded by
+  ElmerSolver into 10 layers, as the ElmerStreams meshes are. The slab is 600 m thick.
+- **Boundaries:** periodic on all four sides, x = 0 ↔ x = L and y = 0 ↔ y = W, and ElmerGrid
+  partitions with `-periodic 1 1 0`.
+- **Flow:** z is normal to the bed, and gravity is tilted by a slope of 0.005, so a component of
+  gravity drives the flow along x.
+- **Physics:** Newtonian Stokes (P1/P1 stabilised) with linear sliding. The drag coefficient is
+  either constant or temperature dependent, Cslip·exp(−min(T − T0, 0)/dT) as in ElmerStreams. Heat
+  is solved with advection. There is no strain heating.
+- **Thermal boundaries:** geothermal plus frictional heating at the bed, given either as a flux
+  τ_b·u_b or as ElmerStreams' nodal loads; a fixed temperature at the surface.
+- **Free surface (FS cases):** Zs is periodic too. StructuredMeshMapper moves the mesh before each
+  step, and the ElmerStreams FreeSurfaceSolver, with its limiter, updates Zs after it. Accumulation
+  is zero.
 
-**Nothing depends on y**, so the exact discrete solution is uniform across the flow. Any structure in
-y is an error, at partition interfaces or anywhere else. The sides y = 0 and y = W are either periodic
-or free-slip walls, and the exact solution is the same for both.
+**Nothing depends on x or y, so the exact discrete solution is horizontally uniform.** That holds for
+the temperature, the velocity and the surface. Any horizontal structure is an error, from the
+partitioning, the periodic BCs or the linear solvers, at partition interfaces or anywhere else.
 
-Every case is compared with the serial run of the same physics, which uses direct solvers.
+Nodal friction loads need halving on the master sides (x < 1 m, y < 1 m; both at the corner). The
+master nodes carry the loads of their periodic images too. `R_loads` (no halving) against
+`R_loads_halve` checks this.
 
-## Hypotheses and the cases that test them
+## Cases
 
-| group | changes | tests |
+| group | what | tests |
 |---|---|---|
-| R | serial, direct | the boundary conditions and heating alone: are periodic + loads y-uniform at all? (`*_halve`: the `y < 1` halving in `frictionloads`) |
-| A | partitionings, flux heating, direct | periodic BCs + partitioning alone. `xcut` (N x 1) never splits a periodic pair; `ycut` (N/4 x 4, as `stream.cmd`) splits them; `_per` adds ElmerGrid `-periodic 0 1 0` (as `stream.cmd`) |
-| B | nodal friction loads in parallel, direct | loads at shared nodes / periodic nodes (`Flow Solution Loads` x velocity as `Temperature Load`) |
-| C | heat solver GCR+ILU2 (ElmerStreams), BiCGStabL+ILU1, GCR without preconditioner | the preconditioner with periodic constraints across partitions |
-| D | Stokes GCR+ILU8 with `Abort Not Converged = False` (ElmerStreams `linsys/gcr.sif`) | an unconverged Stokes solve feeding bad loads/velocities to the heat solve |
-| E | Stokes P1/P1 stabilised instead of P2/P1 | periodic projectors with the P2 edge dofs |
-| F | the full ElmerStreams combination, and the same with flux heating | does the test reproduce the problem, and does flux heating cure it? |
+| R | serial, direct, steady | the periodic BCs (including the doubly periodic corner) and the heating alone |
+| A | partitionings, direct, steady, flux heating | partitioning with periodic BCs: boxes, strips across x, strips across y, METIS; `box_noper` = boxes without `-periodic` |
+| B | nodal loads in parallel, direct | loads at shared and periodic nodes |
+| C | ElmerStreams iterative solvers, steady | heat GCR+ILU2, Stokes GCR+ILU8 (Abort Not Converged = False): where the tolerance-level errors sit |
+| T | transient, warm, sharp sliding (dT = 0.15 K), fixed surface | 100 × 100 yr from 272.5 K at the bed (surface 259.15 K): the sliding/heating feedback switches on and can amplify a seed |
+| SS | steady, warm, coupled (up to 60 Picard iterations) | the same feedback without time stepping |
+| FS | as T with a free surface | the free surface across partition and periodic boundaries |
 
 `python3 periodic_test/run_tests.py --list` prints every case.
 
-## Running it (tethys, from the repository root)
+**Free-surface time step.** Without stabilisation the free surface is unstable above about 1 yr. That
+is the relaxation time of the fastest surface mode for this slab (600 m, 10¹⁴ Pa s, sliding at
+melting), about 0.6 yr. The FS cases therefore default to 0.5 yr × 2000 steps (1 kyr), with a snapshot
+every 100 steps. The relevant options:
+- `--fs-dt`, `--fs-steps`, `--fs-every` change these.
+- `--nsvec <ElmerStreams>/SRC/IncompressibleNSVec.so` uses the FSSA-capable Stokes solver and turns
+  FSSA on (θ = 1, "full"), which allows a larger `--fs-dt`.
+- `--fs-lib <ElmerStreams>/SRC/FreeSurfaceSolver.so` uses your free-surface build; it is the module
+  version with older allocation code.
+
+## Running (tethys, repository root)
 
 ```bash
 git pull
-sbatch periodic_test/run.cmd                 # all cases: ~30 small runs on 8 tasks
-sbatch periodic_test/run.cmd --only R_ A_    # some groups (their serial references are added)
-python3 periodic_test/run_tests.py --analyse # the table again, after the runs
+sbatch periodic_test/run.cmd                              # every case, 16 tasks, 500 m
+sbatch periodic_test/run.cmd --only R_ A_                 # some groups (serial references added)
+sbatch periodic_test/run.cmd --res 100 --box 4 4 --only FS_ --no-refs   # high resolution
+python3 periodic_test/run_tests.py --np 16 --analyse      # the table again (same options as the run)
 ```
 
-- **Where the runs go:** `periodic_test/out/np<N>/<case>/`, with `case.sif`, `params.lua`, `elmer.log` and
-  the per-partition outputs `out.bin.<pe>`.
-- **Partitioned meshes:** `periodic_test/out/np<N>/meshes/<partitioning>/`.
-- **Requirements:** `elmer/SteadyStateIO.so`, which `run.cmd` builds if it is missing, and ElmerGrid
-  on the PATH.
-- **Number of partitions:** N = the job's task count (`--ntasks`, default 8; a multiple of 4).
-  `ycut*` is `-partition N/4 4 1` as in `stream.cmd`, `metis*` is `-metiskway N`, `xcut` is
-  `-partition N 1 1` (skipped above N = 60, the footprint's columns). Results go to `out/np<N>/`, so
-  runs with different N are kept side by side:
-  `sbatch --ntasks=32 periodic_test/run.cmd`.
+- **Where the results go:** `periodic_test/out_sq/np<N>[_dx<res>][_fsdt<dt>][_fssa]/<case>/`, with the
+  meshes under `meshes/`.
+- **References:** each case is compared with the serial direct run of the same physics. Without one
+  (`--no-refs`, as at high resolution, where serial is too slow), it is compared with a partitioned
+  direct run instead (`*_box_per`). Those agree with serial to about 1e-9 K.
 
 ## Reading the table
 
-Units are K, and relative velocity for `du_rel`.
+- **`T_sprd`, `Tbed_sprd`, `u_sprd`, `Zs_sprd`:** the largest range over a horizontal layer of T
+  (K), basal T, u (relative) and the surface (m). The exact value is 0.
+- **`v_max`:** max |v| / max |u|. The exact value is 0.
+- **`dT_max`, `dT_iface`, `dT_inter`, `dT_side`:** |T − T_ref| everywhere, at partition-interface
+  nodes, at interior nodes, and at nodes on the periodic sides.
+- **`du_rel`:** the same comparison for u, relative to the reference's largest u.
+- **`mismatch`:** partitions disagreeing about a shared node; it should be 0.
+- **`worst_at`** (in `summary.csv`): where the largest deviation from the layer mean sits.
 
-- **`T_y_spread`, `Tbed_y_spread`, `u_y_spread`:** the largest range across y at fixed (x, z). The
-  exact value is 0; for a correct set-up it is at round-off or solver-tolerance level.
-- **`dT_max`:** the largest |T − T_ref|, against the serial direct reference of the same physics.
-  - `dT_iface`, `dT_inter` and `dT_side` split it over partition-interface nodes, interior nodes and
-    the periodic sides. A problem located at partition boundaries shows as `dT_iface` ≫ `dT_inter`.
-- **`mismatch`:** the largest disagreement between partitions about the value at a shared node. It
-  should be 0.
-- **`worst_at`** (in `summary.csv`): where the largest deviation from the across-flow mean sits, and
-  whether that node is on an interface or a periodic side.
-- **`status`:** whether Elmer finished, whether any linear solves did not converge, and whether the
-  extruded bed/surface conditions (5, 6) were applied.
+## Looking at it
 
-If plotly is installed, `out/np<N>/<case>/bed.html` maps the basal temperature minus its across-flow mean,
-with the partition-interface nodes ringed.
-
-## Transient cases (T)
-
-Some artefacts only appear after many time steps, so the T cases run 100 steps of 100 yr (with P1/P1 stabilised Stokes, to keep them fast) with
-temperature-dependent sliding: C·exp(−min(T − T0, 0)/1 K). Each step solves Stokes, then heat, so
-sliding and temperature feed back on each other and a small partition error can grow. They start from a
-linear profile, 270 K at the bed and 255.15 K at the surface, so the bed warms towards melting during
-the run.
-- **Variants:** flux or nodal-load heating (loads halved at y = 0, as in ElmerStreams), each in serial,
-  y-cut with `-periodic`, and with your iterative solvers on the y-cut and METIS partitionings.
-- **Snapshots:** every 5 steps each case writes one (`snap_t<step>.<pe>`). The analysis turns
-  them into `<case>/bed_time.npz`.
-- **Run them:** `sbatch periodic_test/run.cmd --only T_`. Rebuild `elmer/SteadyStateIO.so` first if
-  needed; `run.cmd` does it when the source is newer.
-
-To look at them on your laptop, copy the `bed*.npz` files and run:
-```bash
-python periodic_test/plot_bed_time.py periodic_test/out/np8        # or set DIR and press Run
-```
-This writes one page per case, `bed_time_<case>.html`, with a time slider. Its rows:
-1. the growth of the across-flow variation of basal T against time for every case (serial dotted, this
-   case thick);
-2. basal T;
-3. basal T minus its across-flow mean;
-4. basal T minus the serial reference at the same time;
-5. the partitions.
-
-Black dots mark the partition-interface nodes.
-
-## Strain heating and the ElmerStreams sliding law (S)
-
-The S cases are like T, with two changes:
-- **The ElmerStreams sliding law,** `TDepSlidingExp`: C·exp(−min(T − T0, 0)/dT) with dT = 0.15 K.
-- **Strain heating:** the ElmerStreams DeformationalHeatSolver, plus `Heat Source = Strain Heating/rhoi`.
-
-They start at 271 K at the bed and 257.15 K at the surface, so the bed reaches the sliding band near
-melting during the run.
-- **`_iter`:** the ElmerStreams solvers (heat GCR+ILU2, Stokes GCR+ILU8, strain heating GCR+ILU1).
-- **`_shnoper`:** without `Periodic BC Strain Heating`, which the ElmerStreams template does not list.
-- **`_nostrain`:** the sharp sliding law alone.
-
-Each has a serial direct reference. `sh_y_spread_rel` in `summary.csv` is the across-flow spread of the
-strain heating, relative to its maximum. Run them with `sbatch periodic_test/run.cmd --only S_`
-(16 cases, a few hours).
-
-## Mesh resolution
-
-The default mesh is 500 m × 500 m with 10 layers, which is too coarse to see partition-scale patterns.
-`--res DX DY` sets the element size along and across the flow, `--L` the length and `--layers` the
-vertical layers. Results then go to `out/np<N>_L.._dx.._dy..`, kept apart from the default ones. For
-example, 250 m × 100 m on a 15 km strip with 16 partitions, without the slow serial references (the
-direct-solver parallel case is the clean comparison):
-
-    sbatch --ntasks=16 periodic_test/run.cmd --L 15000 --res 250 100 --no-refs \
-        --exact W_loads_ycut_per W_loads_ycut_per_iter W_loads_ycut_per_iter_nostrain W_loads_metis_per_iter
-
-## Looking at the basal temperature on the footprint
-
-The analysis also writes `out/np<N>/<case>/bed.npz`: basal temperature, its difference from the
-reference, the nodal friction load, partition ownership and the interface nodes, for every bed node.
-These files are small. Copy them to your laptop and plot them there:
+Copy the small npz files, then run the plot scripts:
 
 ```bash
-rsync -av --include='*/' --include='bed*.npz' --include='summary.csv' --exclude='*' \
-    <tethys>:<repo>/periodic_test/out/ periodic_test/out/
-python periodic_test/plot_bed.py periodic_test/out/np8      # or set DIR and press Run
+rsync -avz -e "ssh -J slloyd@sshproxy-m.geophysik.uni-muenchen.de" --include='*/' --include='bed*.npz' \
+  --include='summary.csv' --exclude='*' \
+  slloyd@tethys-3g:/SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates/periodic_test/out_sq/ \
+  periodic_test/out_sq/
+python periodic_test/plot_bed.py periodic_test/out_sq/np16           # final states, menu of cases
+python periodic_test/plot_bed_time.py periodic_test/out_sq/np16      # transient cases, time slider
 ```
 
-`bed_maps.html` has a menu to pick the case. Its rows (x along the flow, y across):
-1. basal temperature;
-2. basal temperature minus its across-flow mean, where any artefact shows (exactly 0 without one);
-3. basal temperature minus the serial reference;
-4. the friction load minus its across-flow mean (loads cases);
-5. the partitions.
-
-Black dots mark the partition-interface nodes, so you can see whether an artefact follows them.
-To make the files again from finished runs: `python3 periodic_test/run_tests.py --analyse --np N`.
-
-## Things not covered yet
-
-- **Mortar periodic BCs** (`Mortar BC`, `Apply Mortar BCs`), Elmer's parallel-aware alternative to
-  conforming periodic projectors.
-- **The temperature limiter, cold/temperate masks and transient time stepping.** The test is linear
-  and steady on purpose. Add them once one of the groups above reproduces the problem.
+Both pages map the basal temperature minus its mean over the bed, the difference from the reference,
+the surface minus its mean (FS cases), and the partitions. The partition interfaces are marked.

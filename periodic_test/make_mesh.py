@@ -3,7 +3,7 @@
 Structured 2D footprint [0, L] x [0, W] of nx x ny quads, written directly in Elmer mesh format.
 ElmerSolver extrudes it into the 3D slab ("Extruded Mesh Levels"), as in the ElmerStreams runs.
 
-Boundary tags:  1 x = 0,  2 x = L,  3 y = 0 (side1),  4 y = W (side2).
+Boundary tags:  1 x = 0,  2 x = L,  3 y = 0,  4 y = W (periodic pairs 2 -> 1 and 4 -> 3).
 After extrusion Elmer adds 5 = bottom (bed) and 6 = top (surface).
 """
 import os
@@ -38,4 +38,4 @@ def write_footprint(out_dir, L, W, nx, ny):
 
 if __name__ == "__main__":
     a = sys.argv[1:]
-    write_footprint(a[0] if a else "footprint", 30e3, 8e3, 60, 16)
+    write_footprint(a[0] if a else "footprint", 10e3, 10e3, 20, 20)
