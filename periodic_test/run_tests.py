@@ -19,6 +19,8 @@ import subprocess
 import sys
 import time
 
+import numpy as np
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 OUT = os.path.join(HERE, "out")
@@ -70,10 +72,28 @@ end
 
 # ---------------------------------------------------------------- partitionings of the footprint
 # N partitions (--np, default $SLURM_NTASKS or 8); name -> (number of partitions, ElmerGrid options)
-def parts_table(N):
+def box_layout(N, L, W):
+    """px x py = N boxes, as close to square as the factors of N allow (px along, py across the flow)"""
+    best = None
+    for px in range(1, N + 1):
+        if N % px:
+            continue
+        py = N // px
+        score = abs(np.log((L / px) / (W / py)))
+        if best is None or score < best[0]:
+            best = (score, px, py)
+    return best[1], best[2]
+
+
+def parts_table(N, box=None):
     if N % 4:
         raise SystemExit(f"--np {N}: needs a multiple of 4 (the y-cuts are N/4 x 4 x 1, as stream.cmd)")
+    px, py = box or box_layout(N, GEOM["L"], GEOM["W"])
+    if px * py != N:
+        raise SystemExit(f"--box {px} {py}: needs px * py = --np ({N})")
     return {
+        # boxes cut along and across the flow, about square (or --box PX PY), with -periodic
+        "box_per":   (N, ["-partition", str(px), str(py), "1", "-periodic", "0", "1", "0"]),
         "serial":    (1, []),
         "xcut":      (N, ["-partition", str(N), "1", "1"]),                     # cuts across x only
         "xcut_per":  (N, ["-partition", str(N), "1", "1", "-periodic", "0", "1", "0"]),
@@ -238,6 +258,12 @@ CASES = [
       for p, it, st, sfx in (("serial", None, True, ""), ("ycut_per", None, True, ""), ("ycut_per", 1, True, ""),
                              ("metis_per", 1, True, ""), ("serial", None, False, "_nostrain"),
                              ("ycut_per", 1, False, "_nostrain"))],
+    # W on box partitions (cut along and across the flow, about square; --box PX PY to choose)
+    *[case(f"W_loads_box_per" + ("" if it is None else "_iter") + sfx, parts="box_per", heat="loads", halve=True,
+           steps=100, dt=100.0, out_every=5, sliding_dT=0.15, Ts=259.15, Tb0=272.5, element="Stabilized",
+           strain=st, ls_heat="direct" if it is None else "gcr_ilu2",
+           ls_stokes="direct" if it is None else "gcr_ilu8", ls_strain="direct" if it is None else "gcr_ilu1")
+      for it, st, sfx in ((None, True, ""), (1, True, ""), (1, False, "_nostrain"))],
     # W, tight: the ElmerStreams solvers at 1e-12 (no strain heating, which needs no reference rerun)
     case("W_loads_ycut_per_tight_nostrain", parts="ycut_per", heat="loads", halve=True, steps=100, dt=100.0,
          out_every=5, sliding_dT=0.15, Ts=259.15, Tb0=272.5, element="Stabilized", strain=False,
@@ -280,7 +306,9 @@ CASES = [
 
 
 def mesh_dir(parts):
-    return os.path.join(OUT, "meshes", parts)       # OUT is out/np<N>
+    n, opts = PARTS[parts]
+    tag = "_".join(o for o in opts[1:4]) if parts.startswith("box") else ""   # box layout in the name
+    return os.path.join(OUT, "meshes", parts + (f"_{tag}" if tag else ""))   # OUT is out/np<N>...
 
 
 def prepare_mesh(parts, elmergrid="ElmerGrid"):
@@ -389,6 +417,8 @@ def main():
                          "out/np<N>_dx<DX>_dy<DY>/ (default 500 500: out/np<N>/)")
     ap.add_argument("--L", type=float, help="length along the flow (m), default 30000")
     ap.add_argument("--layers", type=int, help="vertical layers, default 10")
+    ap.add_argument("--box", nargs=2, type=int, metavar=("PX", "PY"),
+                    help="box partitions: PX along x by PY across (PX * PY = --np); default about square")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--analyse", action="store_true", help="only analyse finished cases")
     ap.add_argument("--mpirun", default="mpirun -np {n}")
@@ -396,7 +426,6 @@ def main():
     ap.add_argument("--timeout", type=float, default=3600)
     a = ap.parse_args()
     global PARTS, OUT
-    PARTS = parts_table(a.np)
     tag = ""
     if a.L:
         GEOM["L"] = a.L
@@ -409,6 +438,8 @@ def main():
         GEOM["nz_layers"] = a.layers
         tag += f"_z{a.layers}"
     OUT = os.path.join(OUT, f"np{a.np}{tag}")            # runs with different N / meshes kept apart
+    PARTS = parts_table(a.np, a.box)
+    print(f"box partitions: {PARTS['box_per'][1][1]} along x by {PARTS['box_per'][1][2]} across", flush=True)
     print(f"mesh: {GEOM['nx']} x {GEOM['ny']} elements ({GEOM['L'] / GEOM['nx']:.0f} m x "
           f"{GEOM['W'] / GEOM['ny']:.0f} m), {GEOM['nz_layers']} layers; results in {OUT}", flush=True)
     if a.np > GEOM["nx"]:
