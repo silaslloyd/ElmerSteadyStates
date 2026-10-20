@@ -126,6 +126,8 @@ def extract(path):
         out["TS"] = (xg / 1e3, zg, np.round(G, 3))
     if "Tb_cold_max" in s.meta:
         out["Tb_cold_max"] = float(s.meta["Tb_cold_max"])
+    if "time" in s.meta:                     # states of `ess run --save-every` (one Tsurf, a time series)
+        out["t"] = float(s.meta["time"])
     return out
 
 
@@ -166,6 +168,11 @@ def main():
     from plotly.subplots import make_subplots
 
     S = [extract(f) for f in files]
+    # a time series (`ess run --save-every N`, BRANCH = <run>_chunks): time instead of Tsurf on the x axis
+    series = [s for s in S if s["k"] is not None]
+    timeser = bool(series) and all("t" in s for s in series) and len({round(s["p"], 9) for s in series}) == 1
+    px = (lambda s: s.get("t", 0.0) / 1e3) if timeser else (lambda s: s["p"])
+    xl = "t (kyr)" if timeser else "Tsurf"
     print(f"{len(S)} states: Tsurf = " + ", ".join(f"{s['p']:.3f}" for s in S))
     nv = sum("ub" in s for s in S)
     print(f"velocities for {nv} of {len(S)} states" + ("" if nv else " (run `ess velocity` to add them)"))
@@ -235,7 +242,8 @@ def main():
 
     def title(s):
         extra = f", warmest cold-bed node {s['Tb_cold_max']:.3f} K" if "Tb_cold_max" in s else ""
-        return f"{s['name']}: Tsurf = {s['p']:.4f} K{extra}"
+        when = f", t = {s['t'] / 1e3:.2f} kyr" if "t" in s else ""
+        return f"{s['name']}: Tsurf = {s['p']:.4f} K{when}{extra}"
 
     # ---- top panel: the branch, coloured by stability type, with the current state marked
     stab_cat = branch_stability(bdir, S)
@@ -245,7 +253,7 @@ def main():
                 "Zs_mean": np.mean(s["zs"]) if "zs" in s else np.nan}[BRANCH_Y]
     ylab = {"Tb_mean": "mean basal T (K)", "Tb_max": "warmest bed node (K)", "Zs_mean": "mean Zs (m)"}[BRANCH_Y]
     # branch points with the index of their slider frame (clicking a point jumps to that frame)
-    pts = sorted((s["k"], s["p"], yval(s), i) for i, s in enumerate(S) if s["k"] is not None)
+    pts = sorted((s["k"], px(s), yval(s), i) for i, s in enumerate(S) if s["k"] is not None)
 
     o = 1                                          # the state panels start in row 2
     titles = ["branch: " + ", ".join(f"<span style='color:{c}'>{n}</span>" for n, c in STAB_COLOURS.items())
@@ -270,7 +278,7 @@ def main():
     where = [r + o for r in where[:len(traces(S[0]))]]
 
     def marker(s):
-        return go.Scatter(x=[s["p"]], y=[yval(s)], mode="markers", name="current state",
+        return go.Scatter(x=[px(s)], y=[yval(s)], mode="markers", name="current state",
                           marker=dict(size=16, color="rgba(0,0,0,0)", line=dict(color="black", width=3)),
                           hovertemplate=f"{s['name']}<br>Tsurf %{{x:.4f}}<br>%{{y:.4g}}<extra></extra>")
 
@@ -306,18 +314,18 @@ def main():
                 text=[f"point {kk[i]}: {stab_cat[kk[i]][0]}<br>{stab_cat[kk[i]][1]}" for i in ck],
                 hovertemplate="%{text}<br>Tsurf %{x:.4f}<extra></extra>"), 1, 1)
     if S[0]["k"] is None:                          # the starting state: a star, also clickable
-        fig.add_trace(go.Scatter(x=[S[0]["p"]], y=[yval(S[0])], mode="markers", customdata=[0],
+        fig.add_trace(go.Scatter(x=[px(S[0])], y=[yval(S[0])], mode="markers", customdata=[0],
                                  marker=dict(symbol="star", size=13, color="#555555"),
                                  hovertemplate=f"start: {S[0]['name']} (click to show)<br>Tsurf %{{x:.4f}}"
                                                "<extra></extra>"), 1, 1)
-    fig.update_xaxes(title_text="Tsurf (K)", row=1, col=1)
+    fig.update_xaxes(title_text="t (kyr)" if timeser else "Tsurf (K)", row=1, col=1)
     fig.update_yaxes(title_text=ylab, row=1, col=1)
     fig.add_hline(y=273.15, line=dict(dash="dot", color="grey"), row=1 + o, col=1)
     frames, steps = [], []
     for k, s in enumerate(S):
         frames.append(go.Frame(name=str(k), data=traces(s) + [marker(s)], traces=list(range(nanim)),
                                layout=dict(title_text=title(s))))
-        steps.append(dict(method="animate", label=f"{s['p']:.3f}",
+        steps.append(dict(method="animate", label=f"{px(s):.3f}",
                           args=[[str(k)], dict(mode="immediate", frame=dict(duration=0, redraw=True),
                                                transition=dict(duration=0))]))
     fig.frames = frames
@@ -343,7 +351,7 @@ def main():
         fig.update_yaxes(range=[zs_all.min() - 50, zs_all.max() + 50], row=2 + o, col=1)
     fig.update_layout(
         title=title(S[0]), height=380 * rows, template="plotly_white", showlegend=False, margin=dict(t=90, b=130),
-        sliders=[dict(active=0, steps=steps, currentvalue=dict(prefix="Tsurf = ", xanchor="right"),
+        sliders=[dict(active=0, steps=steps, currentvalue=dict(prefix=xl + " = ", xanchor="right"),
                       x=0.12, len=0.88, y=0, yanchor="top", pad=dict(t=50))],
         updatemenus=[dict(type="buttons", direction="left", x=0, y=0, xanchor="left", yanchor="top",
                           pad=dict(t=60), buttons=[

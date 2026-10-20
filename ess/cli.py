@@ -273,11 +273,22 @@ def cmd_run(args):
         log.info("run: the frozen masks are moved after every chunk (cold/temperate"
                  + (", grounding line)" if _marine(model) else ")"))
     from .masks import describe, n_changes, update_masks
+    out = args.out or os.path.join(cfg["_work"], f"run_p{p:g}.npz")
+    sdir = os.path.join(os.path.splitext(out)[0] + "_chunks", "points")
+    if args.save_every:
+        os.makedirs(sdir, exist_ok=True)
+        log.info(f"run: states every {args.save_every} chunk(s) to {sdir}/state_XXXX.npz "
+                 f"(plots/plot_branch_states.py with BRANCH = {os.path.dirname(sdir)})")
     for c in range(args.chunks):
         yn = prob.phi(y, p, tag=f"run{c}", want_diag=True)
-        log.info(f"run: chunk {c + 1}/{args.chunks}  t = {(c + 1) * prob.spec.horizon:g}  "
-                 f"rms change {rms(yn - y):.3e}")
+        t = (c + 1) * prob.spec.horizon
+        log.info(f"run: chunk {c + 1}/{args.chunks}  t = {t:g}  rms change {rms(yn - y):.3e}")
         y = yn
+        # the state after this chunk, with the masks it ran with (before the remask)
+        save_state(out, saved.layout, prob.unscale(y), p, dict(saved.frozen), prob.last_diag, time=t)
+        if args.save_every and (c + 1) % args.save_every == 0:
+            save_state(os.path.join(sdir, f"state_{c + 1:04d}.npz"), saved.layout, prob.unscale(y), p,
+                       dict(saved.frozen), prob.last_diag, time=t)
         if remask:
             xn, frozen, rep = update_masks(saved.layout, prob.unscale(y), saved.frozen, prob.last_diag,
                                            marine=_marine(model), rho_ratio=getattr(model, "rho_ratio", None))
@@ -286,8 +297,7 @@ def cmd_run(args):
                 saved.frozen.clear()
                 saved.frozen.update(frozen)
                 y = prob.scale(xn)
-    out = args.out or os.path.join(cfg["_work"], f"run_p{p:g}.npz")
-    save_state(out, saved.layout, prob.unscale(y), p, saved.frozen, prob.last_diag)
+    save_state(out, saved.layout, prob.unscale(y), p, saved.frozen, prob.last_diag, time=args.chunks * prob.spec.horizon)
     log.info(f"wrote {out}")
 
 
@@ -578,6 +588,9 @@ def main(argv=None):
     s.add_argument("--remask", dest="remask", action="store_true", default=None,
                    help="move the frozen masks after every chunk (default: [masks] auto, on for marine)")
     s.add_argument("--no-remask", dest="remask", action="store_false")
+    s.add_argument("--save-every", type=int, default=0,
+                   help="also save the state every N chunks to <out>_chunks/points/state_XXXX.npz (XXXX = chunk), "
+                        "for plots/plot_branch_states.py; the --out file is rewritten after every chunk anyway")
     s.add_argument("--out")
     s.set_defaults(fn=cmd_run)
 
