@@ -21,7 +21,7 @@ End
 Simulation
   Coordinate System = "Cartesian 3D"
 __SIM_TYPE__
-  Steady State Max Iterations = 1
+  Steady State Max Iterations = __SS_ITERS__
   Steady State Min Iterations = 1
   Extruded Mesh Levels = Integer __NZ1__
   Extruded Max Coordinate = Real __H__
@@ -85,6 +85,7 @@ Solver 1
   Nonlinear System Convergence Tolerance = 1.0e-8
   Calculate Loads = Logical True
   Exported Variable 1 = -dofs 4 Flow Solution Loads
+  Steady State Convergence Tolerance = 1.0e-9
 __LS_STOKES__
 End
 
@@ -111,6 +112,7 @@ Solver 3
   Nonlinear System Max Iterations = 1
   Nonlinear System Min Iterations = 1
   Nonlinear System Convergence Tolerance = 1.0e-8
+  Steady State Convergence Tolerance = 1.0e-9
 __LS_HEAT__
 End
 

@@ -178,19 +178,20 @@ HEAT = {
 
 def case(name, parts="serial", bc="periodic", heat="flux", halve=False, ls_heat="direct", ls_stokes="direct",
          element="P2/P1", steps=0, dt=100.0, sliding_dT=0.0, out_every=10, Ts=243.15, Tb0=None,
-         strain=False, sh_periodic=True, ls_strain="direct"):
+         strain=False, sh_periodic=True, ls_strain="direct", ss_iters=1):
     """steps = 0: steady Stokes + steady heat; steps > 0: transient, one Stokes and one heat solve per step
     (sliding_dT > 0: temperature-dependent sliding, so the two are coupled and errors can grow in time)"""
     return dict(name=name, parts=parts, bc=bc, heat=heat, halve=halve, ls_heat=ls_heat, ls_stokes=ls_stokes,
                 steps=steps, dt=dt, sliding_dT=sliding_dT, out_every=out_every, Ts=Ts,
                 Tb0=Ts + 20.0 if Tb0 is None else Tb0, strain=strain, sh_periodic=sh_periodic, ls_strain=ls_strain,
+                ss_iters=ss_iters,
                 element=element)
 
 
 def physics_key(c):
     """cases with the same physics share a reference (serial, direct solvers)"""
     return (c["bc"], c["heat"], c["halve"], c["element"], c["steps"], c["dt"], c["sliding_dT"], c["Ts"], c["Tb0"],
-            c["strain"], c["sh_periodic"] if c["strain"] else None)
+            c["strain"], c["sh_periodic"] if c["strain"] else None, c["ss_iters"])
 
 
 CASES = [
@@ -241,6 +242,17 @@ CASES = [
     case("W_loads_ycut_per_tight_nostrain", parts="ycut_per", heat="loads", halve=True, steps=100, dt=100.0,
          out_every=5, sliding_dT=0.15, Ts=259.15, Tb0=272.5, element="Stabilized", strain=False,
          ls_heat="gcr_ilu2_tight", ls_stokes="gcr_ilu8_tight"),
+    # SS: steady, with the ElmerStreams sliding law (dT = 0.15 K) on a bed warm enough to slide (259.15 K
+    #     surface: the bed reaches melting) and strain heating. Temperature-dependent sliding couples Stokes
+    #     and heat, so the steady state is found by up to 60 coupled (Picard) iterations
+    #     Stokes -> strain heating -> heat, each solver to a steady-state change of 1e-9.
+    *[case(f"SS_loads_{p}" + ("" if it is None else "_iter") + sfx, parts=p, heat="loads", halve=True,
+           sliding_dT=0.15, Ts=259.15, Tb0=272.5, element="Stabilized", strain=st, ss_iters=60,
+           ls_heat="direct" if it is None else "gcr_ilu2", ls_stokes="direct" if it is None else "gcr_ilu8",
+           ls_strain="direct" if it is None else "gcr_ilu1")
+      for p, it, st, sfx in (("serial", None, True, ""), ("ycut_per", None, True, ""), ("ycut_per", 1, True, ""),
+                             ("metis_per", 1, True, ""), ("serial", None, False, "_nostrain"),
+                             ("ycut_per", 1, False, "_nostrain"))],
     # G: the ElmerStreams combination on partitionings made WITHOUT ElmerGrid's -periodic
     case("G_streams_ycut_noper", parts="ycut", heat="loads", halve=True, ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
     case("G_streams_metis_noper", parts="metis", heat="loads", halve=True, ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
@@ -315,6 +327,7 @@ def write_case(c):
                          f'  Simulation Type = "Transient"\n  Timestepping Method = "bdf"\n  BDF Order = 1\n'
                          f'  Timestep Intervals = {c["steps"]}\n  Timestep Sizes = {c["dt"]!r}'),
         "__OUT_EVERY__": str(c["out_every"] if c["steps"] else 1),
+        "__SS_ITERS__": str(c["ss_iters"]),
         "__NACTIVE__": "5" if c["steps"] else "4",
         "__ACTIVE__": "1 2 3 4 5" if c["steps"] else "1 2 3 4",
         "__STRAIN_EXEC__": '"Always"' if c["strain"] else '"Never"',

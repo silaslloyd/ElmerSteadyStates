@@ -76,6 +76,9 @@ def log_flags(d):
     n = len(re.findall(r"Too many iterations|not converged|NOT CONVERGED", t, flags=re.I))
     if n:
         flags.append(f"{n} non-converged linear solves")
+    its = re.findall(r"Steady state iteration:\s*(\d+)", t, flags=re.I)
+    if its and int(its[-1]) > 1:
+        flags.append(f"{its[-1]} coupled iterations")
     err = [l.strip() for l in t.splitlines() if "ERROR" in l]
     if err:
         flags.append(err[-1][:80])
