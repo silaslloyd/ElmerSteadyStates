@@ -112,7 +112,8 @@ PARTS = parts_table(16)
 LS = {
     "direct": """  Linear System Solver = Direct
   Linear System Direct Method = MUMPS
-  Mumps Percentage Increase Working Space = Integer 200""",
+  Mumps Percentage Increase Working Space = Integer 200
+  Linear System Convergence Tolerance = 1.0e-12   ! FreeSurfaceSolver requires it even with Direct""",
     # ElmerStreams heat solver
     "gcr_ilu2": """  Linear System Solver = "Iterative"
   Linear System Iterative Method = "GCR"
