@@ -108,6 +108,7 @@ def update_masks(layout: StateLayout, x, frozen: Records, diag: Records, *, mari
         ground = floating & (H > Hf + tol / rho_ratio)
         float_ = ~floating & (H < Hf - tol / rho_ratio)
         rep["n_base_below_bed"] = int((floating & (Zb < bed_b - 1.0)).sum())
+        rep["base_below_bed_max"] = float(np.max(bed_b[floating] - Zb[floating])) if floating.any() else 0.0
         rep["n_grounded"] = int((~floating).sum())
         rep["x_gl"] = float(xpos[~floating].max()) if (~floating).any() else np.nan
         rep["to_grounded"] = int(ground.sum())
@@ -163,7 +164,9 @@ def describe(rep):
     parts = []
     if "x_gl" in rep:
         parts.append(f"GL {rep['x_gl'] / 1e3:.2f} km" + (f" -> {rep['x_gl_new'] / 1e3:.2f} km" if "x_gl_new" in rep else "")
-                     + f" ({rep.get('to_grounded', 0)} nodes grounded, {rep.get('to_floating', 0)} floated)")
+                     + f" ({rep.get('to_grounded', 0)} nodes grounded, {rep.get('to_floating', 0)} floated)"
+                     + (f"; floating base up to {rep['base_below_bed_max']:.1f} m below the bed"
+                        f" ({rep['n_base_below_bed']} nodes > 1 m)" if rep.get("base_below_bed_max", 0) > 0.1 else ""))
     if "to_temperate" in rep:
         parts.append(f"bed {rep.get('to_temperate', 0)} cold -> temperate, {rep.get('to_cold', 0)} temperate -> cold")
     return "; ".join(parts) or "no masks"
