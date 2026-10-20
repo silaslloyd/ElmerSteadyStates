@@ -53,6 +53,12 @@ frozen = ["ColdTempMask", "GroundedMask", "bedrock"]
 # temperate, refreezing temperate -> cold) and the grounded mask (floating base on the bed -> grounded,
 # grounded ice below flotation -> floating, base put at flotation) are moved to fit the state and Newton
 # runs again, up to max_rounds times; along a branch after every point (column "remasked").
+# The thin "filler" layer between the bedrock (rock properties too) and the ice base spans bed - minh .. Zb.
+# minh = 1 m (parameters.lua) inverts it as soon as a floating base sinks > 1 m below the bed before the
+# remask grounds it (NaN in the heat solve). 50 m: room for that; thermally the same rock under grounded ice.
+[lua]
+minh = 50.0
+
 [masks]
 auto = true
 max_rounds = 6
