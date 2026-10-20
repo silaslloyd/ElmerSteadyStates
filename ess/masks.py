@@ -66,10 +66,13 @@ def grounded_of(gm, marine):
 
 
 def update_masks(layout: StateLayout, x, frozen: Records, diag: Records, *, marine=False, rho_ratio=None,
-                 tol=0.1, apply=True):
+                 tol=0.1, apply=True, grounding=True):
     """Check the frozen masks against the state x (and its diagnostics: Temperature Loads, coordinates).
     Returns (x_new, frozen_new, report). With apply=False nothing changes and only the report is made.
-    report: counts of nodes per switch, and summary numbers (n_cold, n_temperate, n_grounded, GL position)."""
+    report: counts of nodes per switch, and summary numbers (n_cold, n_temperate, n_grounded, GL position).
+    grounding=False: leave the grounded mask alone (contact runs: Elmer moves it), still report on it.
+    The grounded zone is kept contiguous from the divide: columns are scanned along the flow and the
+    grounding line is the first column that is (or becomes) afloat; everything seaward of it floats."""
     x = np.asarray(x, float).copy()
     frozen = dict(frozen)
     rep = {}
@@ -105,8 +108,22 @@ def update_masks(layout: StateLayout, x, frozen: Records, diag: Records, *, mari
         H = Zs[js] - Zb
         floating = gm_b < -0.5
         Hf = -bed_b / rho_ratio                                  # flotation thickness (sea level 0)
-        ground = floating & (H > Hf + tol / rho_ratio)
-        float_ = ~floating & (H < Hf - tol / rho_ratio)
+        # columns along the flow (the flowline is one element wide: two nodes per column)
+        ux, col = np.unique(xb, return_inverse=True)
+        col = col.ravel()
+        nc = len(ux)
+        Hc = np.bincount(col, H, nc) / np.bincount(col, None, nc)
+        Hfc = np.bincount(col, Hf, nc) / np.bincount(col, None, nc)
+        flc = np.bincount(col, floating.astype(float), nc) > 0      # a column with a floating node
+        th = tol / rho_ratio
+        i = 0
+        while i < nc and ((not flc[i] and Hc[i] >= Hfc[i] - th) or (flc[i] and Hc[i] > Hfc[i] + th)):
+            i += 1
+        grounded_new = (col < i)
+        if not grounding:
+            grounded_new = ~floating
+        ground = floating & grounded_new
+        float_ = ~floating & ~grounded_new
         rep["n_base_below_bed"] = int((floating & (Zb < bed_b - 1.0)).sum())
         rep["base_below_bed_max"] = float(np.max(bed_b[floating] - Zb[floating])) if floating.any() else 0.0
         rep["n_grounded"] = int((~floating).sum())

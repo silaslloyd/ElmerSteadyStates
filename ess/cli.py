@@ -262,9 +262,13 @@ def cmd_run(args):
     if args.steps is not None:
         cfg.setdefault("map", {})["n_steps"] = args.steps
     cfg.setdefault("map", {})["rock_heat_capacity"] = args.rock_cap
+    contact = _marine(model) and args.gl == "contact"
+    if contact:
+        model.gl_mode = "contact"          # ElmerStreams: the grounding line moves every step
     prob = _problem(cfg, model)
     log.info(f"run: dt = {prob.spec.dt:g}, {prob.spec.n_steps} steps per chunk, "
-             f"rock heat capacity x {prob.spec.rock_heat_capacity:g}")
+             f"rock heat capacity x {prob.spec.rock_heat_capacity:g}"
+             + (", grounding line by contact every step (--gl contact)" if contact else ""))
     p = saved.p if args.p is None else args.p
     y = prob.scale(saved.x)
     on, _ = _masks_auto(cfg, model)
@@ -284,6 +288,17 @@ def cmd_run(args):
         t = (c + 1) * prob.spec.horizon
         log.info(f"run: chunk {c + 1}/{args.chunks}  t = {t:g}  rms change {rms(yn - y):.3e}")
         y = yn
+        if contact:                         # the grounded mask Elmer ended the chunk with
+            from .masks import _on
+            k = find_name(saved.frozen, "GroundedMask")
+            g = saved.frozen[k][0]
+            gm_new = _on(*prob.last_diag[find_name(prob.last_diag, "GroundedMask")], g, fill=-1.0)
+            gm_old = saved.frozen[k][1]
+            saved.frozen[k] = (g, gm_new)
+            xg = _on(*prob.last_diag[find_name(prob.last_diag, "coordinate 1")], g)
+            if np.any((gm_new > -0.5) != (gm_old > -0.5)):
+                log.info(f"run: contact grounding line {xg[gm_old > -0.5].max() / 1e3:.2f} -> "
+                         f"{xg[gm_new > -0.5].max() / 1e3:.2f} km")
         # the state after this chunk, with the masks it ran with (before the remask)
         save_state(out, saved.layout, prob.unscale(y), p, dict(saved.frozen), prob.last_diag, time=t)
         if args.save_every and (c + 1) % args.save_every == 0:
@@ -291,9 +306,10 @@ def cmd_run(args):
                        dict(saved.frozen), prob.last_diag, time=t)
         if remask:
             xn, frozen, rep = update_masks(saved.layout, prob.unscale(y), saved.frozen, prob.last_diag,
-                                           marine=_marine(model), rho_ratio=getattr(model, "rho_ratio", None))
+                                           marine=_marine(model), rho_ratio=getattr(model, "rho_ratio", None),
+                                           grounding=not contact)
             if n_changes(rep):
-                log.info(f"run: remask after chunk {c + 1}: {describe(rep)}")
+                log.info(f"run: remask after chunk {c + 1}: {describe(rep) if not contact else describe({k_: v_ for k_, v_ in rep.items() if not k_.startswith(('x_gl', 'to_gr', 'to_fl'))})}")
                 saved.frozen.clear()
                 saved.frozen.update(frozen)
                 y = prob.scale(xn)
@@ -588,6 +604,9 @@ def main(argv=None):
     s.add_argument("--remask", dest="remask", action="store_true", default=None,
                    help="move the frozen masks after every chunk (default: [masks] auto, on for marine)")
     s.add_argument("--no-remask", dest="remask", action="store_false")
+    s.add_argument("--gl", choices=["contact", "frozen"], default="contact",
+                   help="marine: grounding line by ElmerStreams contact every step (default, spin-ups), or the "
+                        "frozen mask moved between chunks (as Newton)")
     s.add_argument("--save-every", type=int, default=0,
                    help="also save the state every N chunks to <out>_chunks/points/state_XXXX.npz (XXXX = chunk), "
                         "for plots/plot_branch_states.py; the --out file is rewritten after every chunk anyway")

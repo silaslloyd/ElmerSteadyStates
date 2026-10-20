@@ -13,6 +13,9 @@
 !!     no normal velocity, Weertman sliding; floating: no friction, Zb free, T = T0 at the base.
 !!     `ess remask` / [masks] auto moves it (flotation / bed contact) between Newton solves.
 !!     (ElmerStreams moves it every step, through the contact sliding function.)
+!!     [elmer] gl_mode = "contact" (the default of `ess run`, spin-ups): the ElmerStreams treatment instead,
+!!     SlidCoef_Contact in Stokes, Fw from GetHydrostaticLoads before and GroundedSolver after each step
+!!     (Solvers 15, 16), the grounded mask read back from the output; not smooth, so not for Newton.
 !!   * Min Zb = bedrock (contact; inactive at a consistent steady state); the remask grounds floating nodes
 !!     thicker than flotation;
 !!   * uniform accumulation aDIM, as Marine_Term; no basal melt under the shelf;
@@ -167,7 +170,7 @@ End
 
 Equation 4
   Name = "interface equations"
-  Active Solvers(2) = 8 12
+  Active Solvers__EQ4_SOLVERS__
   Convection = "Computed"
   Flow Solution Name = String "Flow Solution"
 End
@@ -445,8 +448,7 @@ Solver 8
   Equation = "FrozenFields"
   Procedure = "__ESS_LIB__" "ESSNoOp"
   Variable = -nooutput essfrozendummy
-  Exported Variable 1 = -dofs 1 "GroundedMask"
-  Exported Variable 2 = -dofs 1 "ColdTempMask"
+__NOOP_EXPORTS__
 End
 
 !!---- Every timestep (coupled loop) ----!!
@@ -584,6 +586,7 @@ End
 
 !!---- After all ----!!
 
+__GL_SOLVERS__
 Solver 14
   Exec Solver = "After All"
   Equation = "StateWrite"
@@ -768,10 +771,7 @@ Boundary Condition  19
     Real Procedure "__BUOYANCY_LIB__" "SeaSpring"
   Compute Sea Spring = Logical True
 
-  Slip Coefficient 2 = Variable Coordinate 1
-    Real Procedure "ElmerIceUSF" "Sliding_Weertman"
-  Slip Coefficient 3 = Variable Coordinate 1
-    Real Procedure "ElmerIceUSF" "Sliding_Weertman"
+__GL_SLIDING__
 
   ComputeNormal Condition = Variable GroundedMask
       Real MATC "tx[0] + 0.5"

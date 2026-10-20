@@ -57,6 +57,9 @@ class ElmerModel(Model):
         # marine: Min Zb = bedrock (the floating base stops on the bed; without it, ice piling up at the
         # frozen grounding line pushed the base hundreds of metres through the bed in a spin-up)
         self.zb_limiter = bool(e.get("zb_limiter", True))
+        # grounding line: "frozen" (mask from the state, smooth map: Newton, continuation) or "contact"
+        # (ElmerStreams: moves every step; `ess run` uses it for spin-ups unless --gl frozen)
+        self.gl_mode = str(e.get("gl_mode", "frozen"))
         self.mesh_db = e.get("mesh_db", "footprint")
         self.ess_lib = cfg["_path"](e.get("ess_lib", "elmer/SteadyStateIO"))
         self.ess_utils = cfg["_path"](e.get("ess_utils", "elmer/ess_utils.lua"))
@@ -213,6 +216,47 @@ class ElmerModel(Model):
                 '  Linear System Abort Not Converged = True\n'
                 '  Linear System Residual Output = 200')
 
+    def _gl_blocks(self) -> dict:
+        """marine template: the grounding-line treatment (frozen mask, or ElmerStreams contact)"""
+        contact = self.gl_mode == "contact"
+        if self.gl_mode not in ("frozen", "contact"):
+            raise ValueError(f"[elmer] gl_mode must be 'frozen' or 'contact', not {self.gl_mode!r}")
+        weert = ('  Slip Coefficient 2 = Variable Coordinate 1\n    Real Procedure "ElmerIceUSF" "{f}"\n'
+                 '  Slip Coefficient 3 = Variable Coordinate 1\n    Real Procedure "ElmerIceUSF" "{f}"')
+        if not contact:
+            return {"__EQ4_SOLVERS__": "(2) = 8 12",
+                    "__NOOP_EXPORTS__": '  Exported Variable 1 = -dofs 1 "GroundedMask"\n'
+                                        '  Exported Variable 2 = -dofs 1 "ColdTempMask"',
+                    "__GL_SOLVERS__": "",
+                    "__GL_SLIDING__": weert.format(f="Sliding_Weertman")}
+        return {"__EQ4_SOLVERS__": "(4) = 8 12 15 16",
+                "__NOOP_EXPORTS__": '  Exported Variable 1 = -dofs 1 "ColdTempMask"',
+                "__GL_SOLVERS__": """! ElmerStreams grounding line (gl_mode = contact): hydrostatic loads for the contact test, and the
+! grounded mask from Zb and the bed after every step (SlidCoef_Contact also ungrounds nodes in Stokes)
+Solver 15
+  Exec Solver = "Before Timestep"
+  Equation = "Fw"
+  Procedure = "ElmerIceSolvers" "GetHydrostaticLoads"
+  Variable = Fw[Fwater:3]
+  Variable DOFs = 3
+End
+
+Solver 16
+  Exec Solver = "After Timestep"
+  Equation = "GroundedMask"
+  Procedure = "ElmerIceSolvers" "GroundedSolver"
+  Variable = "GroundedMask"
+  Variable DOFs = 1
+  Toler = Real 1.0e-3
+  Bedrock Variable = String "bedrock"
+  Bubbles in global system = False
+End
+""",
+                "__GL_SLIDING__": weert.format(f="SlidCoef_Contact") + """
+  Grounding Line Moves = Logical True
+  Grounding Line Definition = String "Discontinuous"
+  Test Contact Tolerance = Real 1.0E-3"""}
+
     def _write_vars(self, names) -> str:
         return "\n".join(f'  State Variable {i + 1} = String "{n}"' for i, n in enumerate(names))
 
@@ -234,6 +278,7 @@ class ElmerModel(Model):
             "__CASE_DIR__": self.case_dir,
             "__ESS_LIB__": self.ess_lib,
             "__BUOYANCY_LIB__": self.buoyancy_lib,
+            **self._gl_blocks(),
             "__ZB_MIN__": ('  Min Zb = Equals "bedrock"' if self.zb_limiter
                            else "  ! no Min Zb ([elmer] zb_limiter = false)"),
             "__NSTEPS__": str(int(spec.n_steps)),
