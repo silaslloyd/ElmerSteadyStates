@@ -149,7 +149,12 @@ def main():
         c["growth"] = np.nanmax(np.abs(c["dev"]), axis=1)
         C.append(c)
     print("cases: " + ", ".join(c["name"] for c in C))
+    missing = [w for w in (want or []) if w not in [c["name"] for c in C]]
+    if missing:
+        print("no bed_time.npz (yet) for: " + ", ".join(missing))
     pages = [i for i, c in enumerate(C) if not want or c["name"] in want]
+    if not pages:
+        raise SystemExit("nothing to plot")
     for k in pages:
         out = page(C, k, d)
         print(f"wrote {out}")
