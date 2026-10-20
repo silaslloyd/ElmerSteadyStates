@@ -115,6 +115,17 @@ Each has a serial direct reference. `sh_y_spread_rel` in `summary.csv` is the ac
 strain heating, relative to its maximum. Run them with `sbatch periodic_test/run.cmd --only S_`
 (16 cases, a few hours).
 
+## Mesh resolution
+
+The default mesh is 500 m × 500 m with 10 layers, which is too coarse to see partition-scale patterns.
+`--res DX DY` sets the element size along and across the flow, `--L` the length and `--layers` the
+vertical layers. Results then go to `out/np<N>_L.._dx.._dy..`, kept apart from the default ones. For
+example, 250 m × 100 m on a 15 km strip with 16 partitions, without the slow serial references (the
+direct-solver parallel case is the clean comparison):
+
+    sbatch --ntasks=16 periodic_test/run.cmd --L 15000 --res 250 100 --no-refs \
+        --exact W_loads_ycut_per W_loads_ycut_per_iter W_loads_ycut_per_iter_nostrain W_loads_metis_per_iter
+
 ## Looking at the basal temperature on the footprint
 
 The analysis also writes `out/np<N>/<case>/bed.npz`: basal temperature, its difference from the

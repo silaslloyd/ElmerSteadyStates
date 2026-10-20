@@ -371,6 +371,11 @@ def main():
     ap.add_argument("--no-refs", action="store_true",
                     help="do not add the serial references (they ran already, e.g. in another job)")
     ap.add_argument("--no-analyse", action="store_true", help="skip the analysis at the end")
+    ap.add_argument("--res", nargs=2, type=float, metavar=("DX", "DY"),
+                    help="element size along and across the flow (m), e.g. --res 250 100; results go to "
+                         "out/np<N>_dx<DX>_dy<DY>/ (default 500 500: out/np<N>/)")
+    ap.add_argument("--L", type=float, help="length along the flow (m), default 30000")
+    ap.add_argument("--layers", type=int, help="vertical layers, default 10")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--analyse", action="store_true", help="only analyse finished cases")
     ap.add_argument("--mpirun", default="mpirun -np {n}")
@@ -379,7 +384,20 @@ def main():
     a = ap.parse_args()
     global PARTS, OUT
     PARTS = parts_table(a.np)
-    OUT = os.path.join(OUT, f"np{a.np}")                 # runs with different N do not overwrite each other
+    tag = ""
+    if a.L:
+        GEOM["L"] = a.L
+        tag += f"_L{a.L / 1e3:g}km"
+    if a.res:
+        GEOM["nx"] = max(1, int(round(GEOM["L"] / a.res[0])))
+        GEOM["ny"] = max(1, int(round(GEOM["W"] / a.res[1])))
+        tag += f"_dx{a.res[0]:g}_dy{a.res[1]:g}"
+    if a.layers:
+        GEOM["nz_layers"] = a.layers
+        tag += f"_z{a.layers}"
+    OUT = os.path.join(OUT, f"np{a.np}{tag}")            # runs with different N / meshes kept apart
+    print(f"mesh: {GEOM['nx']} x {GEOM['ny']} elements ({GEOM['L'] / GEOM['nx']:.0f} m x "
+          f"{GEOM['W'] / GEOM['ny']:.0f} m), {GEOM['nz_layers']} layers; results in {OUT}", flush=True)
     if a.np > GEOM["nx"]:
         print(f"note: xcut cases need --np <= {GEOM['nx']} (footprint columns); they are skipped")
     cases = [c for c in CASES if (not a.only or any(s in c["name"] for s in a.only))
