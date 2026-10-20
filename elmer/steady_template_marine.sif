@@ -13,7 +13,7 @@
 !!     no normal velocity, Weertman sliding; floating: no friction, Zb free, T = T0 at the base.
 !!     `ess remask` / [masks] auto moves it (flotation / bed contact) between Newton solves.
 !!     (ElmerStreams moves it every step, through the contact sliding function.)
-!!   * no limiter on Zb (smooth map); the remask grounds floating nodes that reach the bed;
+!!   * no limiter on Zb (no Min/Max Zb; smooth map); the remask grounds floating nodes thicker than flotation;
 !!   * uniform accumulation aDIM, as Marine_Term; no basal melt under the shelf;
 !!   * everything else as the land template (frozen cold/temperate mask, SUPG, direct solvers,
 !!     no hydrology, optional strain heating, flux or loads frictional heating).
@@ -331,7 +331,7 @@ Material 3
   Tm = Real #T0
 
   Sea Level = Real 0.0
-  ! no limiter on Zb (Apply Dirichlet = False in Solver 12); Zs: backstop only
+  ! no Min Zb / Max Zb: no limiter on the base (Solver 12); Zs: backstop only
   Min Zs = Real 1.0
   Max Zs = Real 10000
 End
@@ -540,13 +540,17 @@ Solver 12
   Linear System Abort Not Converged = True
   Linear System Convergence Tolerance = 1.0e-12
 
-  Nonlinear System Max Iterations = 1
+  Nonlinear System Max Iterations = 2
   Nonlinear System Convergence Tolerance  = 1.0e-10
   Steady State Convergence Tolerance = 1.0e-8
 
   Stabilization Method = Stabilized
-  ! no Min Zb = bedrock limiter (non-smooth): floating nodes that reach the bed are grounded by the remask
-  Apply Dirichlet = Logical False
+  ! Apply Dirichlet must match the Zs instance (Solver 13): the two instances of FreeSurfaceSolver share
+  ! their SAVEd arrays, and in Elmer builds before the fix (e.g. tethys 2025-09-26) different settings
+  ! crash on "DEALLOCATE unallocated 'lowerlimit'" (ElmerStreams loads two copies of the solver instead).
+  ! There are no Min Zb / Max Zb in the material, so nothing is limited: no limiter on the base
+  ! (non-smooth); floating nodes thicker than flotation are grounded by the remask.
+  Apply Dirichlet = Logical True
 End
 
 Solver 13
