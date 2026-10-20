@@ -49,6 +49,12 @@ frozen = ["ColdTempMask", "GroundedMask", "Zb", "bedrock"]
 [masks]
 auto = false
 
+# cap of the sliding factor exp(-(T - T0)/dT) (elmer/ess_utils.lua TDepSliding): 1e6 is reached ~2 K below
+# melting (the bed is frozen for practical purposes below that). Uncapped, cold surfaces (beds 10-30 K below
+# melting: factors 1e29 .. 1e87) overflow the Stokes solve (NaN)
+[lua]
+ess_slide_maxfactor = 1.0e6
+
 [extract]
 # Only for `ess extract --restart FILE` (start from an Elmer .result in the mesh directory, written
 # with the same partitioning). true: masks/bedrock/Zb from the `ess setup` tables; false: from the
