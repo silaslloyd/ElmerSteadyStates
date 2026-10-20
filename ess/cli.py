@@ -6,7 +6,7 @@ Command line driver. Run inside a batch job (it launches `mpirun ElmerSolver` it
     python3 -m ess extract    CONFIG --restart F     first state from an Elmer restart file instead
     python3 -m ess check      CONFIG [--state F]     round trip, repeatability, linearity, residual
     python3 -m ess remask     CONFIG --state F       move the frozen masks (cold/temperate; marine: grounded) to fit a state
-    python3 -m ess run        CONFIG [--state F] --chunks N      plain time integration
+    python3 -m ess run        CONFIG [--state F] --chunks N      time integration (masks moved per chunk with [masks] auto)
     python3 -m ess newton     CONFIG [--state F] [--p P]         steady state at fixed parameter
     python3 -m ess transfer   CONFIG --from F [--out G]          carry a state onto this config's mesh
     python3 -m ess continue   CONFIG [--state F] [--name B]      pseudo-arclength branch (resumes)
@@ -267,11 +267,25 @@ def cmd_run(args):
              f"rock heat capacity x {prob.spec.rock_heat_capacity:g}")
     p = saved.p if args.p is None else args.p
     y = prob.scale(saved.x)
+    on, _ = _masks_auto(cfg, model)
+    remask = on if args.remask is None else args.remask
+    if remask:
+        log.info("run: the frozen masks are moved after every chunk (cold/temperate"
+                 + (", grounding line)" if _marine(model) else ")"))
+    from .masks import describe, n_changes, update_masks
     for c in range(args.chunks):
         yn = prob.phi(y, p, tag=f"run{c}", want_diag=True)
         log.info(f"run: chunk {c + 1}/{args.chunks}  t = {(c + 1) * prob.spec.horizon:g}  "
                  f"rms change {rms(yn - y):.3e}")
         y = yn
+        if remask:
+            xn, frozen, rep = update_masks(saved.layout, prob.unscale(y), saved.frozen, prob.last_diag,
+                                           marine=_marine(model), rho_ratio=getattr(model, "rho_ratio", None))
+            if n_changes(rep):
+                log.info(f"run: remask after chunk {c + 1}: {describe(rep)}")
+                saved.frozen.clear()
+                saved.frozen.update(frozen)
+                y = prob.scale(xn)
     out = args.out or os.path.join(cfg["_work"], f"run_p{p:g}.npz")
     save_state(out, saved.layout, prob.unscale(y), p, saved.frozen, prob.last_diag)
     log.info(f"wrote {out}")
@@ -561,6 +575,9 @@ def main(argv=None):
     s.add_argument("--steps", type=int, help="steps per chunk, overrides [map] n_steps for this run")
     s.add_argument("--rock-cap", type=float, default=1.0,
                    help="factor on the bedrock heat capacity (default 1: physical transient)")
+    s.add_argument("--remask", dest="remask", action="store_true", default=None,
+                   help="move the frozen masks after every chunk (default: [masks] auto, on for marine)")
+    s.add_argument("--no-remask", dest="remask", action="store_false")
     s.add_argument("--out")
     s.set_defaults(fn=cmd_run)
 
