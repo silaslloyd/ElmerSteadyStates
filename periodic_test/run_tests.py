@@ -90,7 +90,26 @@ PARTS = parts_table(8)
 # ---------------------------------------------------------------- linear solvers
 LS = {
     "direct": """  Linear System Solver = Direct
-  Linear System Direct Method = MUMPS""",
+  Linear System Direct Method = MUMPS
+  Mumps Percentage Increase Working Space = Integer 200""",
+    # the ElmerStreams iterative solvers with 1e-12 instead of 1e-8: does the across-flow pattern scale
+    # with the solver tolerance (seeded by solver error, amplified by the physics)?
+    "gcr_ilu2_tight": """  Linear System Solver = "Iterative"
+  Linear System Iterative Method = "GCR"
+  Linear System GCR Restart = Integer 200
+  Linear System Max Iterations = 15000
+  Linear System Convergence Tolerance = 1.0E-12
+  Linear System Abort Not Converged = True
+  Linear System Preconditioning = "ILU2"
+  Linear System Residual Output = 10""",
+    "gcr_ilu8_tight": """  Linear System Solver = Iterative
+  Linear System Iterative Method = "gcr"
+  Linear System GCR Restart = Integer 200
+  Linear System Convergence Tolerance = 1.0E-12
+  Linear System Max Iterations = 5000
+  Linear System Abort Not Converged = False
+  Linear System Preconditioning = "ILU8"
+  Linear System Residual Output = 100""",
     # ElmerStreams heat solver
     "gcr_ilu2": """  Linear System Solver = "Iterative"
   Linear System Iterative Method = "GCR"
@@ -218,6 +237,10 @@ CASES = [
       for p, it, st, sfx in (("serial", None, True, ""), ("ycut_per", None, True, ""), ("ycut_per", 1, True, ""),
                              ("metis_per", 1, True, ""), ("serial", None, False, "_nostrain"),
                              ("ycut_per", 1, False, "_nostrain"))],
+    # W, tight: the ElmerStreams solvers at 1e-12 (no strain heating, which needs no reference rerun)
+    case("W_loads_ycut_per_tight_nostrain", parts="ycut_per", heat="loads", halve=True, steps=100, dt=100.0,
+         out_every=5, sliding_dT=0.15, Ts=259.15, Tb0=272.5, element="Stabilized", strain=False,
+         ls_heat="gcr_ilu2_tight", ls_stokes="gcr_ilu8_tight"),
     # G: the ElmerStreams combination on partitionings made WITHOUT ElmerGrid's -periodic
     case("G_streams_ycut_noper", parts="ycut", heat="loads", halve=True, ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
     case("G_streams_metis_noper", parts="metis", heat="loads", halve=True, ls_heat="gcr_ilu2", ls_stokes="gcr_ilu8"),
