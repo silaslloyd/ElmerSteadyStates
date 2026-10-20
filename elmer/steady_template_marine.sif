@@ -13,7 +13,8 @@
 !!     no normal velocity, Weertman sliding; floating: no friction, Zb free, T = T0 at the base.
 !!     `ess remask` / [masks] auto moves it (flotation / bed contact) between Newton solves.
 !!     (ElmerStreams moves it every step, through the contact sliding function.)
-!!   * no limiter on Zb (no Min/Max Zb; smooth map); the remask grounds floating nodes thicker than flotation;
+!!   * Min Zb = bedrock (contact; inactive at a consistent steady state); the remask grounds floating nodes
+!!     thicker than flotation;
 !!   * uniform accumulation aDIM, as Marine_Term; no basal melt under the shelf;
 !!   * everything else as the land template (frozen cold/temperate mask, SUPG, direct solvers,
 !!     no hydrology, optional strain heating, flux or loads frictional heating).
@@ -331,7 +332,9 @@ Material 3
   Tm = Real #T0
 
   Sea Level = Real 0.0
-  ! no Min Zb / Max Zb: no limiter on the base (Solver 12); Zs: backstop only
+  ! the base cannot go below the bed (contact, as ElmerStreams; [elmer] zb_limiter): a floating base that
+  ! reaches the bed stops there until the remask grounds it. Inactive at a consistent steady state.
+__ZB_MIN__
   Min Zs = Real 1.0
   Max Zs = Real 10000
 End
@@ -548,8 +551,7 @@ Solver 12
   ! Apply Dirichlet must match the Zs instance (Solver 13): the two instances of FreeSurfaceSolver share
   ! their SAVEd arrays, and in Elmer builds before the fix (e.g. tethys 2025-09-26) different settings
   ! crash on "DEALLOCATE unallocated 'lowerlimit'" (ElmerStreams loads two copies of the solver instead).
-  ! There are no Min Zb / Max Zb in the material, so nothing is limited: no limiter on the base
-  ! (non-smooth); floating nodes thicker than flotation are grounded by the remask.
+  ! The limit is Min Zb = bedrock in the material (when [elmer] zb_limiter, the default).
   Apply Dirichlet = Logical True
 End
 

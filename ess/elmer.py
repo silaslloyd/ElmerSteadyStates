@@ -54,6 +54,9 @@ class ElmerModel(Model):
         self.template = cfg["_path"](e.get("template", "elmer/steady_template_marine.sif" if self.marine
                                            else "elmer/steady_template.sif"))
         self.buoyancy_lib = cfg["_path"](e.get("buoyancy_lib", "elmer/Buoyancy"))
+        # marine: Min Zb = bedrock (the floating base stops on the bed; without it, ice piling up at the
+        # frozen grounding line pushed the base hundreds of metres through the bed in a spin-up)
+        self.zb_limiter = bool(e.get("zb_limiter", True))
         self.mesh_db = e.get("mesh_db", "footprint")
         self.ess_lib = cfg["_path"](e.get("ess_lib", "elmer/SteadyStateIO"))
         self.ess_utils = cfg["_path"](e.get("ess_utils", "elmer/ess_utils.lua"))
@@ -231,6 +234,8 @@ class ElmerModel(Model):
             "__CASE_DIR__": self.case_dir,
             "__ESS_LIB__": self.ess_lib,
             "__BUOYANCY_LIB__": self.buoyancy_lib,
+            "__ZB_MIN__": ('  Min Zb = Equals "bedrock"' if self.zb_limiter
+                           else "  ! no Min Zb ([elmer] zb_limiter = false)"),
             "__NSTEPS__": str(int(spec.n_steps)),
             "__DT__": repr(float(spec.dt)),
             "__COUPLED_ITERS__": str(int(spec.coupled_iters)),
