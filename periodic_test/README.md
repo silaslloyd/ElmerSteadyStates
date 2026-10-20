@@ -80,7 +80,7 @@ linear profile, 270 K at the bed and 255.15 K at the surface, so the bed warms t
 the run.
 - **Variants:** flux or nodal-load heating (loads halved at y = 0, as in ElmerStreams), each in serial,
   y-cut with `-periodic`, and with your iterative solvers on the y-cut and METIS partitionings.
-- **Snapshots:** every 5 steps each case writes one (`snap_t<step>.bin.<pe>`). The analysis turns
+- **Snapshots:** every 5 steps each case writes one (`snap_t<step>.<pe>`). The analysis turns
   them into `<case>/bed_time.npz`.
 - **Run them:** `sbatch periodic_test/run.cmd --only T_`. Rebuild `elmer/SteadyStateIO.so` first if
   needed; `run.cmd` does it when the source is newer.

@@ -204,7 +204,7 @@ CASES = [
     *[case(f"A_per_flux_{p}", parts=p) for p in ("xcut", "xcut_per", "ycut", "ycut_per", "metis", "metis_per")],
     # T: transient, temperature-dependent sliding (Stokes and heat coupled each step), 100 x 100 yr from a
     #    linear profile 270 K (bed) - 255.15 K (surface), the bed warming towards melting and sliding.
-    #    Snapshots every 5 steps (snap_t<step>.bin.<pe>): plot_bed_time.py shows them with a time slider.
+    #    Snapshots every 5 steps (snap_t<step>.<pe>): plot_bed_time.py shows them with a time slider.
     #    P1/P1 stabilised Stokes: P2/P1 took over an hour per serial run.
     *[case(f"T_{h}_{p}" + ("" if lh == "direct" else "_iter"), parts=p, heat=h, halve=(h == "loads"),
            steps=100, dt=100.0, out_every=5, sliding_dT=1.0, Ts=255.15, Tb0=270.0, element="Stabilized",
@@ -321,7 +321,7 @@ def write_case(c):
         "__LS_STRAIN__": LS[c["ls_strain"]],
         "__HEAT_SOURCE__": ('  ! strain heating (ElmerStreams body force)\n  Heat Source = Variable Strain Heating\n'
                             '    Real Lua "tx[0] / rhoi"' if c["strain"] else "  ! no strain heating"),
-        # transient: snapshots of the state every out_every steps, snap_t<step>.bin.<pe> (plot_bed_time.py)
+        # transient: snapshots of the state every out_every steps, snap_t<step>.<pe> (plot_bed_time.py)
         "__SNAP_SOLVER__": "" if not c["steps"] else f"""Solver 5
   Exec Solver = "After Timestep"
   Exec Intervals = Integer {c["out_every"]}
