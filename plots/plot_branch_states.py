@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-The states of a continuation branch: basal temperature, surface and (when `ess velocity` has been
+The states of a continuation branch (slider view: click a point of the branch panel to show that state): basal temperature, surface and (when `ess velocity` has been
 run on them) the along-flow and vertical velocities along x, for the starting state and every branch point, either one at a time with a slider (VIEW = "slider") or all on top of each
 other coloured along the branch (VIEW = "overlay").
 
@@ -206,7 +206,8 @@ def main():
         return {"Tb_mean": np.mean(s["Tb"]), "Tb_max": np.max(s["Tb"]),
                 "Zs_mean": np.mean(s["zs"]) if "zs" in s else np.nan}[BRANCH_Y]
     ylab = {"Tb_mean": "mean basal T (K)", "Tb_max": "warmest bed node (K)", "Zs_mean": "mean Zs (m)"}[BRANCH_Y]
-    pts = sorted((s["k"], s["p"], yval(s)) for s in S if s["k"] is not None)
+    # branch points with the index of their slider frame (clicking a point jumps to that frame)
+    pts = sorted((s["k"], s["p"], yval(s), i) for i, s in enumerate(S) if s["k"] is not None)
 
     o = 1                                          # the state panels start in row 2
     titles = ["branch: " + ", ".join(f"<span style='color:{c}'>{n}</span>" for n, c in STAB_COLOURS.items())
@@ -240,10 +241,12 @@ def main():
     fig.add_trace(marker(S[0]), 1, 1)
     nanim = len(where) + 1
     if pts:                                        # static: the branch and its stability colouring
-        kk, pp, yy = map(np.array, zip(*pts))
+        kk, pp, yy, ff = map(np.array, zip(*pts))
         fig.add_trace(go.Scatter(x=pp, y=yy, mode="lines+markers", line=dict(color="#bbbbbb", width=2),
-                                 marker=dict(size=4, color="#bbbbbb"), text=[f"point {k}" for k in kk],
-                                 hovertemplate="%{text}<br>Tsurf %{x:.4f}<br>%{y:.4g}<extra></extra>"), 1, 1)
+                                 marker=dict(size=7, color="#bbbbbb"), text=[f"point {k}" for k in kk],
+                                 customdata=ff.tolist(),
+                                 hovertemplate="%{text} (click to show)<br>Tsurf %{x:.4f}<br>%{y:.4g}"
+                                               "<extra></extra>"), 1, 1)
         seg = segment_colours(kk, stab_cat)
         i = 0
         while i < len(kk) - 1:                     # runs of equally coloured segments
@@ -259,11 +262,16 @@ def main():
         ck = [i for i, k in enumerate(kk) if k in stab_cat]
         if ck:
             fig.add_trace(go.Scatter(
-                x=pp[ck], y=yy[ck], mode="markers",
+                x=pp[ck], y=yy[ck], mode="markers", customdata=ff[ck].tolist(),
                 marker=dict(size=11, color=[STAB_COLOURS[stab_cat[kk[i]][0]] for i in ck],
                             line=dict(color="black", width=1)),
                 text=[f"point {kk[i]}: {stab_cat[kk[i]][0]}<br>{stab_cat[kk[i]][1]}" for i in ck],
                 hovertemplate="%{text}<br>Tsurf %{x:.4f}<extra></extra>"), 1, 1)
+    if S[0]["k"] is None:                          # the starting state: a star, also clickable
+        fig.add_trace(go.Scatter(x=[S[0]["p"]], y=[yval(S[0])], mode="markers", customdata=[0],
+                                 marker=dict(symbol="star", size=13, color="#555555"),
+                                 hovertemplate=f"start: {S[0]['name']} (click to show)<br>Tsurf %{{x:.4f}}"
+                                               "<extra></extra>"), 1, 1)
     fig.update_xaxes(title_text="Tsurf (K)", row=1, col=1)
     fig.update_yaxes(title_text=ylab, row=1, col=1)
     fig.add_hline(y=273.15, line=dict(dash="dot", color="grey"), row=1 + o, col=1)
@@ -307,7 +315,19 @@ def main():
             dict(label="pause", method="animate",
                  args=[[None], dict(mode="immediate", frame=dict(duration=0, redraw=False))])])])
     out = os.path.join(bdir, "states.html")
-    fig.write_html(out, include_plotlyjs="cdn")
+    # clicking a point of the branch panel shows that state (animates to its frame, moves the slider)
+    click = """
+var gd = document.getElementById('{plot_id}');
+gd.on('plotly_click', function (ev) {
+  var p = ev.points[0];
+  if (p.customdata === undefined || p.customdata === null) return;
+  var k = Array.isArray(p.customdata) ? p.customdata[0] : p.customdata;
+  Plotly.animate(gd, [String(k)], {mode: 'immediate', frame: {duration: 0, redraw: true},
+                                   transition: {duration: 0}});
+  Plotly.relayout(gd, {'sliders[0].active': Number(k)});
+});
+"""
+    fig.write_html(out, include_plotlyjs="cdn", post_script=click)
     print(f"wrote {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
     if SHOW:
         webbrowser.open("file://" + os.path.abspath(out))
