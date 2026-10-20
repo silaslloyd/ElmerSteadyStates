@@ -106,8 +106,21 @@ class BranchStore:
 
 
 def continuation(prob: FixedPointProblem, y0, p0, store: BranchStore, opt: ContinuationOptions,
-                 newton_opt: NewtonOptions | None = None):
+                 newton_opt: NewtonOptions | None = None, refine=None):
+    """refine(y, p) -> (y, result or None): called on every converged point before it is stored (the
+    frozen-mask update: it may change the masks and re-converge at the same p; result has .F,
+    .iterations, .gmres_iters, .converged)."""
     ps = prob.p_scale
+
+    def refined(y, p, F, its, gits):
+        if refine is None:
+            return y, F, its, gits, 0
+        y2, r2 = refine(y, p)
+        if r2 is None:
+            return y, F, its, gits, 0
+        if not r2.converged:
+            log.warning(f"continuation: the point at p = {p:.6g} did not re-converge after the remask")
+        return y2, r2.F, its + r2.iterations, gits + sum(r2.gmres_iters), 1
     newton_opt = newton_opt or NewtonOptions(tol=opt.tol)
     nfold = sum(1 for r in store.rows if str(r.get("fold", "")) not in ("", "0", "False"))
 
@@ -120,15 +133,17 @@ def continuation(prob: FixedPointProblem, y0, p0, store: BranchStore, opt: Conti
         r = newton_krylov(prob, y0, p0, newton_opt, label="newton p0")
         if not r.converged:
             raise RuntimeError("continuation: Newton did not converge at the starting point")
-        store.append(r.y, p0, row(r.y, p0, 0.0, r.F, r.iterations, sum(r.gmres_iters), np.nan, opt.ds))
+        y_, F_, its_, gits_, rm = refined(r.y, p0, r.F, r.iterations, sum(r.gmres_iters))
+        store.append(y_, p0, dict(row(y_, p0, 0.0, F_, its_, gits_, np.nan, opt.ds), remasked=rm))
     if len(store) == 1:
         y0, p0, _ = store.load(0)
         p1 = p0 + opt.dp0
         r = newton_krylov(prob, y0, p1, newton_opt, label="newton p1")
         if not r.converged:
             raise RuntimeError("continuation: Newton did not converge at the second point; reduce dp0")
-        s1 = np.sqrt(rms(r.y - y0) ** 2 + (opt.dp0 / ps) ** 2)
-        store.append(r.y, p1, row(r.y, p1, s1, r.F, r.iterations, sum(r.gmres_iters), np.sign(opt.dp0), opt.ds))
+        y_, F_, its_, gits_, rm = refined(r.y, p1, r.F, r.iterations, sum(r.gmres_iters))
+        s1 = np.sqrt(rms(y_ - y0) ** 2 + (opt.dp0 / ps) ** 2)
+        store.append(y_, p1, dict(row(y_, p1, s1, F_, its_, gits_, np.sign(opt.dp0), opt.ds), remasked=rm))
 
     ya, pa, sa = store.load(len(store) - 2)
     yb, pb, sb = store.load(len(store) - 1)
@@ -186,10 +201,13 @@ def continuation(prob: FixedPointProblem, y0, p0, store: BranchStore, opt: Conti
                 break
             continue
         yn, pn = z[:-1], z[-1] * ps
+        yn, F, its, gits, remasked = refined(yn, pn, F, its, gits)
+        z = np.append(yn, pn / ps)
         sn = sb + wnorm(prob, z - zb)
         tn_p = (z - zb)[-1]
         fold = int(np.sign(tn_p) != np.sign(t_prev_p) and tn_p != 0 and t_prev_p != 0)
         rw = row(yn, pn, sn, F, its, gits, tn_p / max(wnorm(prob, z - zb), 1e-300), ds, fold)
+        rw["remasked"] = remasked
         if fold:
             nfold += 1
             pf = _fold_estimate([sa, sb, sn], [pa, pb, pn])

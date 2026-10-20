@@ -5,7 +5,7 @@ Command line driver. Run inside a batch job (it launches `mpirun ElmerSolver` it
     python3 -m ess init       CONFIG                 first state from those initial conditions -> <work>/state0.npz
     python3 -m ess extract    CONFIG --restart F     first state from an Elmer restart file instead
     python3 -m ess check      CONFIG [--state F]     round trip, repeatability, linearity, residual
-    python3 -m ess remask     CONFIG --state F       re-freeze the cold/temperate mask from a state
+    python3 -m ess remask     CONFIG --state F       move the frozen masks (cold/temperate; marine: grounded) to fit a state
     python3 -m ess run        CONFIG [--state F] --chunks N      plain time integration
     python3 -m ess newton     CONFIG [--state F] [--p P]         steady state at fixed parameter
     python3 -m ess transfer   CONFIG --from F [--out G]          carry a state onto this config's mesh
@@ -71,14 +71,55 @@ def _setup(args, need_state=True):
     return cfg, build_model(cfg, saved), saved
 
 
+def _marine(model):
+    return bool(getattr(model, "marine", False))
+
+
 def _mask_cols(cfg, model, saved, x, diag):
     if cfg["model"].get("type", "elmer") != "elmer":
         return {}
     from .elmer import mask_report
-    rep = mask_report(saved.layout, x, saved.frozen, diag)
-    if rep.get("cold_above_Tm") or rep.get("temp_freezing"):
+    rep = mask_report(saved.layout, x, saved.frozen, diag, marine=_marine(model),
+                      rho_ratio=getattr(model, "rho_ratio", None))
+    if rep.get("cold_above_Tm") or rep.get("temp_freezing") or rep.get("to_grounded") or rep.get("to_floating"):
         log.warning(f"frozen mask inconsistent here: {rep}")
     return rep
+
+
+def _masks_auto(cfg, model):
+    """[masks] auto (default: on for the marine flowline): after Newton, move the frozen masks to fit
+    the converged state and solve again, up to max_rounds times"""
+    m = cfg.get("masks", {})
+    on = bool(m.get("auto", _marine(model))) and cfg["model"].get("type", "elmer") == "elmer"
+    return on, int(m.get("max_rounds", 6))
+
+
+def _remask_loop(cfg, model, saved, prob, y, p, solve, label):
+    """y converged at p: while the masks do not fit, move them (saved.frozen is the model's frozen dict,
+    changed in place) and re-solve with solve(y, p) -> result with .y, .converged. Returns (y, result)."""
+    from .masks import describe, n_changes, update_masks
+    on, rounds = _masks_auto(cfg, model)
+    r = None
+    if not on:
+        return y, r
+    for k in range(rounds):
+        x = prob.unscale(y)
+        xn, frozen, rep = update_masks(saved.layout, x, saved.frozen, prob.last_diag, marine=_marine(model),
+                                       rho_ratio=getattr(model, "rho_ratio", None))
+        if n_changes(rep) == 0:
+            if k:
+                log.info(f"{label}: masks consistent after {k} remask round(s)")
+            return y, r
+        log.info(f"{label}: remask round {k + 1}: {describe(rep)}")
+        saved.frozen.clear()
+        saved.frozen.update(frozen)
+        r = solve(prob.scale(xn), p)
+        if not r.converged:
+            log.warning(f"{label}: Newton did not converge after remask round {k + 1}")
+            return r.y, r
+        y = r.y
+    log.warning(f"{label}: masks still changing after {rounds} rounds ({describe(rep)})")
+    return y, r
 
 
 # ---------------------------------------------------------------- commands
@@ -102,6 +143,17 @@ def cmd_extract(args):
     rec, layout, frozen = model.extract(restart, bool(ex.get("restart_before_ics", False)))
     model.layout = layout
     x = layout.to_vector(rec)
+    if _marine(model):
+        # grounded mask at the nodes from the base and the bed (the table interpolation smears the step)
+        from .masks import _on
+        kg = find_name(frozen, "GroundedMask")
+        g_gm = frozen[kg][0]
+        zb = _on(*rec[find_name(rec, "Zb")], g_gm)
+        bed = _on(*frozen[find_name(frozen, "bedrock")], g_gm)
+        gm = np.where(zb - bed < 0.5, 1.0, -1.0)
+        frozen[kg] = (g_gm, gm)
+        log.info(f"extract: grounded mask from Zb - bed: {int((gm > 0).sum())} grounded, "
+                 f"{int((gm < 0).sum())} floating base nodes")
     coords = {k: v for k, v in rec.items() if k.startswith("coordinate")}
     out = args.out or os.path.join(cfg["_work"], "state0.npz")
     p = float(cfg["parameter"]["value"])
@@ -113,38 +165,24 @@ def cmd_extract(args):
 
 
 def cmd_remask(args):
-    """Re-freeze the cold/temperate mask from a converged state: cold -> temperate where the bed is
-    above T0, temperate -> cold where the bed refreezes (Temperature Loads > 0)."""
-    cfg = load_config(args.config)
-    setup_logging(cfg, args.verbose)
-    s = _saved(cfg, args.state)
-    from .statefile import find_name
-    k = find_name(s.frozen, "ColdTempMask")
-    g, ct = s.frozen[k]
-    gm = s.frozen[find_name(s.frozen, "GroundedMask")][1]
-    tname = next(b.name for b in s.layout.blocks if b.name.lower() == "temperature")
-    gT = next(b.gids for b in s.layout.blocks if b.name == tname)
-    Tb = s.layout.split(s.x)[tname][np.searchsorted(gT, g)]
-    new = ct.copy()
-    if args.all_cold:
-        new[:] = -1.0
-        log.info(f"remask: all {len(new)} bed nodes set cold (flux condition), {int((ct > 0).sum())} were temperate")
-    warm = (new < 0) & (gm > 0) & (Tb > 273.15)
-    new[warm] = 1.0
-    nfreeze = 0
-    try:
-        gL, Lv = s.diag[find_name(s.diag, "Temperature Loads")]
-        j = np.clip(np.searchsorted(gL, g), 0, len(gL) - 1)
-        freeze = (new > 0) & (gm > 0) & (gL[j] == g) & (Lv[j] > 0)
-        new[freeze] = -1.0
-        nfreeze = int(freeze.sum())
-    except KeyError:
-        log.warning("remask: no Temperature Loads in this state, only cold -> temperate switches")
+    """Move the frozen masks to fit a converged state (ess.masks.update_masks): the cold/temperate bed mask
+    (cold -> temperate above T0, temperate -> cold where the bed refreezes) and, marine, the grounded mask
+    (floating -> grounded where the base reaches the bed, grounded -> floating below flotation)."""
+    cfg, model, s = _setup(args)
+    from .masks import describe, update_masks
     frozen = dict(s.frozen)
-    frozen[k] = (g, new)
+    if args.all_cold:
+        k = find_name(frozen, "ColdTempMask")
+        g, ct = frozen[k]
+        frozen[k] = (g, np.full_like(ct, -1.0))
+        log.info(f"remask: all {len(ct)} bed nodes set cold (flux condition), {int((ct > 0).sum())} were temperate")
+    if not any(k.lower() == "temperature loads" for k in s.diag):
+        log.warning("remask: no Temperature Loads in this state, only cold -> temperate switches")
+    x, frozen, rep = update_masks(s.layout, s.x, frozen, s.diag, marine=_marine(model),
+                                  rho_ratio=getattr(model, "rho_ratio", None))
     out = args.out or os.path.splitext(args.state or os.path.join(cfg["_work"], "state0.npz"))[0] + "_remask.npz"
-    save_state(out, s.layout, s.x, s.p, frozen, s.diag, **s.meta)
-    log.info(f"remask: {int(warm.sum())} nodes cold -> temperate, {nfreeze} temperate -> cold; wrote {out}")
+    save_state(out, s.layout, x, s.p, frozen, s.diag, **s.meta)
+    log.info(f"remask: {describe(rep)}; wrote {out}")
 
 
 def cmd_check(args):
@@ -243,8 +281,13 @@ def cmd_newton(args):
     cfg, model, saved = _setup(args)
     prob = _problem(cfg, model)
     p = saved.p if args.p is None else args.p
-    r = newton_krylov(prob, prob.scale(saved.x), p, newton_options(cfg),
-                      checkpoint=os.path.join(cfg["_work"], "newton_checkpoint.npz"))
+    ck = os.path.join(cfg["_work"], "newton_checkpoint.npz")
+    r = newton_krylov(prob, prob.scale(saved.x), p, newton_options(cfg), checkpoint=ck)
+    if r.converged:
+        def solve(y, p):
+            return newton_krylov(prob, y, p, newton_options(cfg), checkpoint=ck, label="newton (remasked)")
+        _, r2 = _remask_loop(cfg, model, saved, prob, r.y, p, solve, "newton")
+        r = r2 or r
     x = prob.unscale(r.y)
     out = args.out or os.path.join(cfg["_work"], f"steady_p{p:g}.npz")
     mc = _mask_cols(cfg, model, saved, x, prob.last_diag)
@@ -289,8 +332,20 @@ def cmd_continue(args):
         if store.rows:
             store.rows[-1]["ds"] = ds_override
         log.info(f"continue: starting with ds = {ds_override:g}")
+    on, _ = _masks_auto(cfg, model)
+    refine = None
+    if on:
+        from dataclasses import replace as _replace
+        nopt = _replace(newton_options(cfg), tol=copt.tol)
+
+        def refine(y, p):
+            """after each converged point: move the masks and re-converge at the same p"""
+            return _remask_loop(cfg, model, saved, prob, y, p,
+                                lambda yy, pp: newton_krylov(prob, yy, pp, nopt, label=f"remask p={pp:.6g}"),
+                                f"continue p={p:.6g}")
+        log.info("continue: [masks] auto: the frozen masks are moved after each point (GL / cold-temperate)")
     continuation(prob, prob.scale(saved.x), saved.p if args.p is None else args.p, store,
-                 copt, newton_options(cfg))
+                 copt, newton_options(cfg), refine=refine)
     log.info(f"continue: {len(store)} points in {bdir}/branch.csv; {prob.nfev} model runs "
              f"({prob.t_model / 3600:.2f} h)")
 

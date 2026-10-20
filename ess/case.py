@@ -14,6 +14,13 @@ Tb = min(Tsurf + gthf H / k, T0), geothermal gradient in the bedrock. Temperate 
 (ColdTempMask = +1) only under the ice where Tb reaches T0 - 0.01 K; cold (flux condition) everywhere
 else, including beyond the margin. This is only a first guess: spin it
 up with `ess run`, or go straight to `ess newton`.
+
+Marine ([case] geometry = "marine"): the ElmerStreams Marine_Term initial state, from its
+Initialisation/Dimensional_ICs tables (copied to case/marine_ics): an SIA ice sheet on the bed
+-96 m .. -224 m (deepening seaward) with its grounding line where the flux matches the accumulation,
+an unconfined shelf beyond it to the calving front at L, and the SIA basal temperature. Grounded
+(GroundedMask 1) where Zb is within 0.5 m of the bed, floating (-1) elsewhere; temperate bed only under
+grounded ice at T0. Also written: ics/zb.xy (the base).
 """
 from __future__ import annotations
 
@@ -91,6 +98,21 @@ def initial_geometry(P, n=4001, x_end=1.0, edge=30.0):
     return dict(x=x, bed=bed, zs=zs, H=H, gm=gm, ct=ct, Tb=Tb, Ts_surf=np.full_like(x, Ts))
 
 
+def marine_geometry(P, icdir, n=8001, rho_tol=0.5):
+    """ElmerStreams Marine_Term initial state from its dimensional tables (x in m, values in m / K)."""
+    L = P["L"]
+    x = np.linspace(0, L, n)
+    tab = lambda f: np.loadtxt(os.path.join(icdir, f))
+    at = lambda f: np.interp(x, *tab(f).T)
+    bed, zs, zb, Tb = at("bed_dim.xy"), at("zs_dim.xy"), at("zb_dim.xy"), at("Tb_dim.xy")
+    zb = np.maximum(zb, bed)
+    H = zs - zb
+    gm = np.where(zb - bed < rho_tol, 1.0, -1.0)
+    Tb = np.where(gm > 0, np.minimum(Tb, P["T0"]), P["T0"])
+    ct = np.where((gm > 0) & (Tb >= P["T0"] - 0.01), 1.0, -1.0)
+    return dict(x=x, bed=bed, zs=zs, zb=zb, H=H, gm=gm, ct=ct, Tb=Tb, Ts_surf=np.full_like(x, P["Tsurf"]))
+
+
 def _lua_array(name, a):
     return f"{name} = {{" + ", ".join(f"{v:.10g}" for v in a) + "}\n"
 
@@ -130,7 +152,7 @@ end
 
 def write_ics(g, icdir):
     os.makedirs(icdir, exist_ok=True)
-    for name, key in [("bed", "bed"), ("zs", "zs"), ("gm", "gm"), ("ctmask", "ct")]:
+    for name, key in [("bed", "bed"), ("zs", "zs"), ("gm", "gm"), ("ctmask", "ct")] + ([("zb", "zb")] if "zb" in g else []):
         np.savetxt(os.path.join(icdir, f"{name}.xy"), np.column_stack([g["x"], g[key]]), fmt="%.10g")
     # coarser tables for Lua
     k = max(1, len(g["x"]) // 800)
@@ -161,12 +183,19 @@ def setup_case(cfg, mesh=True):
         P[pname] = float(cfg["parameter"]["value"])
     c = cfg.get("case", {})
     x_end = float(c.get("x_end", 1.0))
-    g = initial_geometry(P, x_end=x_end, edge=float(c.get("edge_thickness", 30.0)))
+    marine = c.get("geometry", "land") == "marine"
+    if marine:
+        g = marine_geometry(P, cfg["_path"](c.get("marine_ics", "case/marine_ics")))
+    else:
+        g = initial_geometry(P, x_end=x_end, edge=float(c.get("edge_thickness", 30.0)))
     write_ics(g, os.path.join(case, "ics"))
     xm = g["x"][g["gm"] > 0].max()
-    log.info(f"setup: L = {P['L'] / 1e3:.1f} km, margin at {xm / 1e3:.1f} km, max thickness {g['H'].max():.0f} m, "
-             f"bed temperature {g['Tb'][g['gm'] > 0].min():.2f}..{g['Tb'][g['gm'] > 0].max():.2f} K, "
+    log.info(f"setup: L = {P['L'] / 1e3:.1f} km, {'grounding line' if marine else 'margin'} at {xm / 1e3:.1f} km, "
+             f"max thickness {g['H'].max():.0f} m, "
+             + (f"front thickness {g['H'][-1]:.0f} m, " if marine else "")
+             + f"bed temperature {g['Tb'][g['gm'] > 0].min():.2f}..{g['Tb'][g['gm'] > 0].max():.2f} K, "
              f"cold-bed fraction {np.mean(g['ct'][g['gm'] > 0] < 0):.2f}")
+    P["GLx"] = float(xm)
     if not mesh:
         return g
     geo = open(cfg["_path"](cfg.get("case", {}).get("geo", "case/flowline.geo.in"))).read()
@@ -175,8 +204,9 @@ def setup_case(cfg, mesh=True):
         P["Wmesh"] = float(c["width"])
     ny = int(c.get("y_elements", 1))          # elements across the flow
     geo = geo.replace("{YElements}", str(ny))
-    for k in ("L", "Lend", "Wmesh", "BoundaryRes", "MarginRes"):
-        geo = geo.replace("{" + k + "}", repr(float(P[k])))
+    for k in ("L", "Lend", "Wmesh", "BoundaryRes", "MarginRes", "GLx"):
+        if "{" + k + "}" in geo:
+            geo = geo.replace("{" + k + "}", repr(float(P[k])))
     if ny > 1:
         log.info(f"setup: {ny} elements across a width of {P['Wmesh'] / 1e3:g} km")
     with open(os.path.join(case, "footprint.geo"), "w") as f:

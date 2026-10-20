@@ -95,6 +95,45 @@ used a copy of it.
 The frontal sliding zone (C/2 within 10 km of x = L) lies beyond the ice in both set-ups. Set
 `[lua] ess_front` (in m) to move it under the ice.
 
+### Marine flowline
+
+`configs/marine_flowline.toml` (`[case] geometry = "marine"`) is the ElmerStreams `Marine_Term`
+set-up:
+* **Domain:** an 816 km flowline on a bed from −96 m to −224 m below sea level, deepening seaward.
+* **Ice:** grounded to about 686 km, then an unconfined shelf to a fixed calving front at L.
+* **Mass balance:** uniform accumulation `aDIM`, no basal melt.
+* **Initial state:** read from Marine_Term's `Initialisation/Dimensional_ICs` tables, copied to
+  `case/marine_ics`.
+* **Mesh:** refined around the grounding line (`case/flowline_marine.geo.in`).
+
+`elmer/steady_template_marine.sif` differs from the land template in these ways:
+* **Base:** the base Zb is a free surface (its own solver) and part of the state (`[state]
+  variables = ["Temperature", "Zs", "Zb"]`). There is no Zb limiter.
+* **Sea pressure:** on the floating base and the calving front.
+* **Sea spring:** `elmer/Buoyancy.F90`, the ElmerStreams copy, built by `make -C elmer`. It vanishes
+  at a steady state, so it does not move the fixed points.
+* **Frozen grounded mask,** like the cold/temperate mask:
+  * grounded (1): Zb on the bed, no normal velocity, Weertman sliding;
+  * floating (−1): no friction, T = T0 at the base.
+
+  Within a run the grounding line cannot move, so the map is smooth.
+* **Moving the grounding line:** `[masks] auto` (on for marine) checks the masks after every
+  converged Newton solve and every branch point, using flotation, H vs H_f = ρw/ρi·(−bed):
+  * floating nodes thicker than flotation are grounded;
+  * grounded nodes thinner than flotation are floated, with their base put at flotation;
+  * the cold/temperate mask is updated too.
+
+  Newton is then re-run, until nothing changes. The grounding line therefore moves node by node
+  along a branch (column `remasked` in `branch.csv`).
+
+  ```bash
+  sbatch jobs/ess.cmd setup    configs/marine_flowline.toml
+  sbatch jobs/ess.cmd init     configs/marine_flowline.toml
+  sbatch jobs/ess.cmd run      configs/marine_flowline.toml --chunks 15 --rock-cap 0.001
+  sbatch jobs/ess.cmd newton   configs/marine_flowline.toml --state work/marine_flowline/run_p268.15.npz
+  sbatch jobs/ess.cmd continue configs/marine_flowline.toml --name flux --state work/marine_flowline/steady_p268.15.npz
+  ```
+
 ## Changes relative to `Land_Term/ThermoCoupled_template.sif`
 
 `elmer/steady_template.sif` keeps the same mesh, extrusion, bodies, materials, Stokes, heat and free
@@ -168,8 +207,10 @@ need many, and 32 to 64 is plenty. Everything is written under `work/land_flowli
      marks the points as stable or unstable.
 7. **`stability --name <branch> --point K`** (or `--state file.npz`): leading eigenvalues and
    eigenvectors → `stability/<label>/stability.npz`.
-8. **`remask --state F`**: re-freezes the cold/temperate mask from a state. Run it when a state
-   reports `cold_above_Tm > 0` or `temp_freezing > 0`, then continue from the new file.
+8. **`remask --state F`**: re-freezes the cold/temperate mask from a state (marine: the grounded mask
+   too). Run it when a state reports `cold_above_Tm > 0` or `temp_freezing > 0` (marine: `to_grounded`,
+   `to_floating`), then continue from the new file. `[masks] auto = true` does this inside `newton`
+   and `continue`.
 
 A job that times out can simply be resubmitted with the same command:
 

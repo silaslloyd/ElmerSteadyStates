@@ -1,0 +1,820 @@
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!! ElmerSteadyStates, MARINE flowline: one evaluation of the time-step map  x -> Phi(x)
+!!
+!! steady_template.sif (the land flowline) with the marine set-up of
+!! ElmerStreams/Marine_Term/ThermoCoupled_template.sif (MISMIP-style, Zwinger 2024):
+!!   * an ice shelf from the grounding line to a fixed calving front at x = L, sea level 0;
+!!   * the base Zb is a free surface (Solver 12) and part of the state; Zb = bedrock where grounded;
+!!   * sea pressure on the floating base and on the calving front, and the sea spring (its implicit
+!!     correction, rho_w g dt; zero at a steady state, u.n = 0 on a base without melt): Buoyancy.F90,
+!!     the ElmerStreams copy (gravity from Body 3);
+!!   * the grounded mask is FROZEN like the cold/temperate mask (1 grounded, -1 floating): within a
+!!     map run the grounding line does not move, so the map is smooth. Grounded: Zb = bedrock,
+!!     no normal velocity, Weertman sliding; floating: no friction, Zb free, T = T0 at the base.
+!!     `ess remask` / [masks] auto moves it (flotation / bed contact) between Newton solves.
+!!     (ElmerStreams moves it every step, through the contact sliding function.)
+!!   * no limiter on Zb (smooth map); the remask grounds floating nodes that reach the bed;
+!!   * uniform accumulation aDIM, as Marine_Term; no basal melt under the shelf;
+!!   * everything else as the land template (frozen cold/temperate mask, SUPG, direct solvers,
+!!     no hydrology, optional strain heating, flux or loads frictional heating).
+!!
+!! The double-underscore placeholders are filled in by the Python driver (ess/elmer.py).
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+$namerun = "__RUNNAME__"
+$directsolver = "MUMPS"
+$fssaflag = "full"
+
+!---LUA BEGIN
+! assert(loadfile('__ESS_UTILS__'))()
+!---LUA END
+
+!---LUA BEGIN
+! assert(loadfile('__PARAMS__'))()
+!---LUA END
+
+!---LUA BEGIN
+! assert(loadfile('__CASE_DIR__/ics/ics.lua'))()
+!---LUA END
+
+Header
+  Mesh DB "__MESH_DIR__" "__MESH_NAME__"
+End
+
+!---------------------------------------------------
+!---------------- CONSTANTS ------------------------
+!---------------------------------------------------
+
+Constants
+  Gravity Norm = Real #gravity
+  Fresh Water Density = Real #rhow
+  Water Density = Real #rhow
+  Ice Density = Real #rhoi
+  Rock Density = Real #rhorock
+  Gravity(4) = 0 0 -1 #gravity
+  Stefan Boltzmann = Real 6.78E-08
+  Reference Temperature = Real 273.15
+  Reference Pressure = Real #p0
+  Sea Level = Real 0.0
+End
+
+!---------------------------------------------------
+!---------------- SIMULATION -----------------------
+!---------------------------------------------------
+
+Simulation
+  Coordinate System  = "Cartesian 3D"
+  Simulation Type = "transient"
+
+  ! 1: staggered (Stokes -> heat each step); >1: iterate Stokes <-> heat
+  ! within each step. Fixed points are the same steady states either way.
+  Steady State Max Iterations = __COUPLED_ITERS__
+  Steady State Min Iterations = 1
+
+  Timestepping Method = "bdf"
+  BDF Order = 1
+
+  Timestep Intervals = __NSTEPS__
+  Timestep Sizes = __DT__
+  Output Intervals = __NSTEPS__
+
+  Extruded Mesh Levels = Integer 51
+  Preserve Baseline =  Logical True
+  Extruded Mesh Density = Variable Coordinate 3
+     Real
+     0.0 1
+     0.5 0.003
+    0.51 0.1
+     1.0  0.5
+   End
+  Extruded BC Layers(2) = Integer 28 29
+  Extruded Baseline Layer = Integer 3
+
+  Initialize Dirichlet Conditions = Logical False
+
+__RESTART_BLOCK__
+__POST_BLOCK__
+  max output level = 3
+End
+
+!---------------------------------------------------
+!---------------- BODIES ---------------------------
+!---------------------------------------------------
+
+Body 1
+  Name = "bedrock"
+  Equation = 1
+  Body Force = 1
+  Material = 1
+  Initial Condition = 1
+End
+
+Body 2
+  Name = "filler water"
+  Equation = 2
+  Body Force = 2
+  Material = 2
+  Initial Condition = 2
+End
+
+Body 3
+  Name = "ice"
+  Equation = 3
+  Body Force = 3
+  Material = 3
+  Initial Condition = 3
+End
+
+Body 4
+  Name = "interface"
+  Body Force = 4
+  Equation = 4
+  Material = 3
+  Initial Condition = 4
+End
+
+Body 5
+  Name = "top free surface"
+  Equation = 5
+  Material = 3
+  Body Force = 5
+  Initial Condition = 5
+End
+
+!---------------------------------------------------
+!---------------- EQUATIONS ------------------------
+!---------------------------------------------------
+
+Equation 1
+  Name = "bedrock equation"
+  Active Solvers(4) = 2 4 5 11
+  Convection = "Computed"
+End
+
+Equation 2
+  Name = "filler equation"
+  Active Solvers(4) = 2 4 5 11
+  Convection = "Computed"
+End
+
+Equation 3
+  Name = "ice equations"
+  Active Solvers(11) = 1 2 3 4 5 6 7 9 10 11 14
+  Convection = "Computed"
+  Flow Solution Name = String "Flow Solution"
+End
+
+Equation 4
+  Name = "interface equations"
+  Active Solvers(2) = 8 12
+  Convection = "Computed"
+  Flow Solution Name = String "Flow Solution"
+End
+
+Equation 5
+  Name = "freesurface equations"
+  Active Solvers(1) = 13
+  Convection = "Computed"
+  Flow Solution Name = String "Flow Solution"
+End
+
+!---------------------------------------------------
+!---------------- INITIAL CONDITIONS ---------------
+!---------------------------------------------------
+! Used only for the very first state (`ess init`, no state file yet); afterwards
+! Temperature, Zs and the frozen fields are set by Solver 1 (StateRead).
+! Tables and ics.lua are written by `ess setup`. Coordinates are the unmapped
+! extruded ones here (bedrock 0..0.5, ice 0.5..1).
+
+Initial Condition 1
+  Temperature = Variable Coordinate 1, Coordinate 3
+    Real Lua "Tinit_rock(tx[0], tx[1])"
+  Bedrock = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/bed.xy"
+    End
+End
+
+Initial Condition 2
+  Temperature = Variable Coordinate 1, Coordinate 3
+    Real Lua "Tinit_rock(tx[0], tx[1])"
+  Bedrock = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/bed.xy"
+    End
+End
+
+Initial Condition 3
+  Velocity 2 = 0.0
+  Temperature = Variable Coordinate 1, Coordinate 3
+    Real Lua "Tinit_ice(tx[0], tx[1])"
+  Bedrock = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/bed.xy"
+    End
+End
+
+Initial Condition 4
+  Temperature = Variable Coordinate 1, Coordinate 3
+    Real Lua "Tinit_ice(tx[0], tx[1])"
+  GroundedMask = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/gm.xy"
+    End
+  ColdTempMask = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/ctmask.xy"
+    End
+  Bedrock = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/bed.xy"
+    End
+  Zb = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/zb.xy"
+    End
+End
+
+Initial Condition 5
+  Temperature = Variable Coordinate 1, Coordinate 3
+    Real Lua "Tinit_ice(tx[0], tx[1])"
+  Zs = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/zs.xy"
+    End
+  Bedrock = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/bed.xy"
+    End
+End
+
+!---------------------------------------------------
+!---------------- BODY FORCES ----------------------
+!---------------------------------------------------
+
+Body Force 1
+  Name = "bodyforce bedrock"
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+End
+
+Body Force 2
+  Name = "bodyforce filler"
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+End
+
+Body Force 3
+  Name = "bodyforce ice"
+  Flow BodyForce 1 = Real 0
+  Flow BodyForce 2 = Real 0
+  Flow BodyForce 3 = Real #-gravity
+__HEAT_SOURCE__
+End
+
+Body Force 4
+  Name = "bodyforce interface"
+  Zb Accumulation = Real 0.0
+  Flow Solver Name = String "Flow Solution"
+End
+
+Body Force 5
+  Name = "bodyforce freesurface"
+  ! uniform accumulation (ElmerStreams Marine_Term)
+  Zs Accumulation = Real #aDIM
+  Output Accumulation = Real #aDIM
+End
+
+!---------------------------------------------------
+!---------------- MATERIALS ------------------------
+!---------------------------------------------------
+
+Material 1
+  Name = "bedrock material"
+  Density = real #rhorock
+  Heat Capacity = Real #heatcapacityrock*__ROCK_CAP__   ! factor < 1 only speeds up the bedrock (steady states unchanged)
+  Heat Conductivity = Real #heatconductivityrock
+  Mesh Elastic Modulus = Real 100.0
+  Mesh Poisson Ratio = Real 0.0
+End
+
+Material 2
+  Name = "filler material"
+  Density = real #rhorock
+  Heat Capacity = Real #heatcapacityrock*__ROCK_CAP__   ! factor < 1 only speeds up the bedrock (steady states unchanged)
+  Heat Conductivity = Real #heatconductivityrock
+  Mesh Elastic Modulus = Real 100.0
+  Mesh Poisson Ratio = Real 0.0
+End
+
+Material 3
+  Name = "ice material"
+  Density = Real #rhoi
+  Viscosity = Real #viscosity
+
+  Relative Temperature = Variable Temperature
+    Real Lua "tx[0] - 273.15"
+
+  Heat Capacity Scaling Factor = Real 1.0
+  Heat Conductivity Scaling Factor = Real 1.0
+  Heat Capacity = Real #heatcapacity
+  Heat Conductivity = Real #heatconductivity
+  Latent Heat Capacity = Real #Lw
+
+  Cauchy = Logical True
+  Glen Allow Old Keywords = Logical True
+  Temperature Field Variable = Temperature
+
+  Mesh Elastic Modulus = Real 100.0
+  Mesh Poisson Ratio = Real 0.0
+
+  Tm = Real #T0
+
+  Sea Level = Real 0.0
+  ! no limiter on Zb (Apply Dirichlet = False in Solver 12); Zs: backstop only
+  Min Zs = Real 1.0
+  Max Zs = Real 10000
+End
+
+!---------------------------------------------------
+!---------------- SOLVERS --------------------------
+!---------------------------------------------------
+
+!!---- Before all ----!!
+
+! Set the state (Temperature, Zs) and the frozen fields from the driver.
+Solver 1
+  Exec Solver = "Before All"
+  Equation = "StateRead"
+  Procedure = "__ESS_LIB__" "StateIO"
+  State Mode = String "read"
+  State File = File "__STATE_IN__"
+  Strict = Logical True
+End
+
+Solver 2
+  Equation = "MapCoordinateInit"
+  Procedure = "StructuredMeshMapper" "StructuredMeshMapper"
+  Minimum Height = Real 1.0
+  Exec Solver = "before all"
+  Active Coordinate = Integer 3
+  Variable = -nooutput DummyR
+  Mesh Velocity Variable = String "dSdt"
+  Mesh Update Variable = String "dS"
+  Mesh Velocity First Zero = Logical True
+  Exported Variable 1 = -dofs 1 "dS"
+  Exported Variable 2 = -dofs 1 "dSdt"
+  Adjust Surface = Logical True
+  Bubbles in global system = False
+End
+
+! Optional: write the state as it is at the start (round-trip check,
+! extraction of the first state from a restart file).
+Solver 3
+  Exec Solver = "Before All"
+  Equation = "StateWriteInitial"
+  Procedure = "__ESS_LIB__" "StateIO"
+  State Mode = String "write"
+  State File = File "__STATE_OUT0__"
+  Write Coordinates = Logical True
+__WRITE_VARS0__
+End
+
+!!---- Before timestep ----!!
+
+Solver 4
+  Equation = "MapCoordinate"
+  Procedure = "StructuredMeshMapper" "StructuredMeshMapper"
+  Minimum Height = Real 1.0
+  Exec Solver = "Before Timestep"
+  Active Coordinate = Integer 3
+  Variable = -nooutput DummyR
+  Mesh Velocity Variable = String "dSdt"
+  Mesh Update Variable = String "dS"
+  Mesh Velocity First Zero = Logical True
+  Exported Variable 1 = -dofs 1 "dS"
+  Exported Variable 2 = -dofs 1 "dSdt"
+  Adjust Surface = Logical True
+  Bubbles in global system = False
+End
+
+Solver 5
+  Equation = "partial update"
+  Procedure = "MeshSolve" "MeshSolver"
+  Exec Solver = "Before Timestep"
+  Variable = -dofs 3 "Partial Vertical MeshUpdate"
+  Linear System Solver = Iterative
+  Linear System Iterative Method = BiCGStabL
+  Linear System Preconditioning = ILU1
+  Linear System Max Iterations = 500
+  Linear System Convergence Tolerance = 1.0e-12
+  Linear System Residual Output = 50
+  Steady State Convergence Tolerance = 1.0e-5
+  Exported Variable 1 = -dofs 1 "bedrock"
+  Update Exported Variables = True
+End
+
+Solver 6
+  Exec Solver = "before Timestep"
+  Equation = "HeightDepth"
+  Procedure = "StructuredProjectToPlane" "StructuredProjectToPlane"
+  Active Coordinate = Integer 3
+  Operator 1 = depth
+  Operator 2 = height
+  Dot Product Tolerance = 1.0e-3
+End
+
+Solver 7
+  Exec Solver = "Before Timestep"
+  Equation = "Normal vector"
+  Variable = "Normal Vector"
+  Variable DOFs = 3
+  Optimize Bandwidth = Logical False
+  Procedure = "ElmerIceSolvers" "ComputeNormalSolver"
+  ComputeAll = Logical False
+  Bubbles in global system = False
+End
+
+! Owner of the frozen fields (never executed; values come from StateRead). Zb is not frozen here:
+! it belongs to Solver 12 and is part of the state.
+Solver 8
+  Exec Solver = "Never"
+  Equation = "FrozenFields"
+  Procedure = "__ESS_LIB__" "ESSNoOp"
+  Variable = -nooutput essfrozendummy
+  Exported Variable 1 = -dofs 1 "GroundedMask"
+  Exported Variable 2 = -dofs 1 "ColdTempMask"
+End
+
+!!---- Every timestep (coupled loop) ----!!
+
+Solver 9
+  Equation = "Stokes-Vec"
+  Procedure = "IncompressibleNSVec" "IncompressibleNSSolver"
+  Div-Curl Discretization = Logical False
+  Stokes flow  = Logical true
+  Optimize Bandwidth = Logical True
+  Flow Model = Stokes
+  Stabilization Method = String __STOKES_STAB__
+
+  ! linear problem (constant viscosity, Weertman exponent 1)
+  Nonlinear System Min Iterations = 1
+  Nonlinear System Max Iterations = 1
+  Nonlinear System Convergence Tolerance  = 1.0e-8
+
+__LS_STOKES__
+
+  Steady State Convergence Tolerance = Real 1.0e-8
+  Number of Integration Points = Integer 44
+
+  Calculate Loads = Logical True
+  Bubbles in global system = False
+  Exported Variable 1 = -dofs 4 Flow Solution Loads
+  Exported Variable 2 = -dofs 1 External Pressure
+End
+
+! Strain heating 2 eta e:e from the current Stokes solution, before the heat solver in the same
+! step (computed after it, the first step of every run would lack it, and the map's fixed points
+! would not be steady states). Exec Solver = Never unless [elmer] strain_heat = true.
+Solver 10
+  Exec Solver = __STRAIN_EXEC__
+  Equation = DeformationalHeat
+  Variable = Strain Heating
+  Variable DOFs = 1
+  Procedure = "ElmerIceSolvers" "DeformationalHeatSolver"
+__LS_STRAIN__
+  Nonlinear System Max Iterations = 1
+  Bubbles in global system = False
+End
+
+Solver 11
+  Equation = String "Homologous Temperature Equation"
+  Procedure =  File "HeatSolveVec" "HeatSolver"
+  Variable = String "Temperature"
+  ! no bubbles: condensed bubbles carry their own time history, which is not
+  ! part of the state the driver saves and restores (it would restart from zero
+  ! in every run, so the map would not be a function of the state alone).
+  ! Stabilize = True then gives SUPG, whose steady state does not depend on dt.
+
+  Number of Integration Points = Integer 64
+  Optimize Bandwidth = Logical True
+
+__LS_HEAT__
+
+  Nonlinear System Convergence Tolerance = 1.0e-10
+  Nonlinear System Max Iterations = 1
+  Nonlinear System Min Iterations = 1
+  Steady State Convergence Tolerance = 1.0E-8
+
+  Stabilize = Logical True
+  ! no limiter: the map must be smooth for Newton
+  Apply Limiter = Logical False
+
+  Exported Variable 1 = -dofs 1 "Rel Temperature"
+  Exported Variable 2 = -dofs 1 "Temperature Boundary Weights"
+  Exported Variable 3 = -dofs 1 "Friction Loads"
+  Update Exported Variables = Logical True
+  Nonlinear Update Exported Variables = Logical True
+
+  Bubbles in global system = False
+
+  ! boundary weights and loads: diagnostics for the melt rate (mask checks)
+  Calculate Boundary Weights = Logical True
+  Calculate Loads = Logical True
+  Calculate Loads Slot = String "Boundary Assembly"
+End
+
+!!---- After timestep ----!!
+
+! the base: free where floating, Zb = bedrock where grounded (boundary condition 19)
+Solver 12
+  Equation = "Free Surface Sea/Shelf"
+  Exec Solver = "after Timestep"
+  Procedure =  "FreeSurfaceSolver" "FreeSurfaceSolver"
+  Variable = "Zb"
+  Variable DOFS =  1
+  Exported Variable 1 = -dofs 1 "Zb Residual"
+
+  Linear System Solver = Direct
+  Linear System Direct Method = $directsolver
+  Linear System Abort Not Converged = True
+  Linear System Convergence Tolerance = 1.0e-12
+
+  Nonlinear System Max Iterations = 1
+  Nonlinear System Convergence Tolerance  = 1.0e-10
+  Steady State Convergence Tolerance = 1.0e-8
+
+  Stabilization Method = Stabilized
+  ! no Min Zb = bedrock limiter (non-smooth): floating nodes that reach the bed are grounded by the remask
+  Apply Dirichlet = Logical False
+End
+
+Solver 13
+  Equation = "Free Surface Top"
+  Exec Solver = "after Timestep"
+  Procedure =  "FreeSurfaceSolver" "FreeSurfaceSolver"
+  Variable = "Zs"
+  Variable DOFS =  1
+  Exported Variable 1 = -dofs 1 "Zs Residual"
+  Exported Variable 2 = "Output Accumulation"
+  Exported Variable 2 DOFs = 1
+  Exported Variable 3 = -dofs 1 "height"
+
+  Linear System Solver = Direct
+  Linear System Direct Method = $directsolver
+  Linear System Abort Not Converged = True
+  Linear System Convergence Tolerance = 1.0e-12   ! required by some solvers even with Direct
+
+  Nonlinear System Max Iterations = 100
+  Nonlinear System Convergence Tolerance  = 1.0e-10
+  Nonlinear System Relaxation Factor = 1.00
+
+  Steady State Convergence Tolerance = 1.0e-8
+
+  ! SUPG rather than bubbles, for the same reason as the heat solver
+  Stabilization Method = Stabilized
+  Apply Dirichlet = Logical True
+End
+
+!!---- After all ----!!
+
+Solver 14
+  Exec Solver = "After All"
+  Equation = "StateWrite"
+  Procedure = "__ESS_LIB__" "StateIO"
+  State Mode = String "write"
+  State File = File "__STATE_OUT__"
+  Write Coordinates = Logical True
+__WRITE_VARS__
+End
+
+!---------------------------------------------------
+!---------------- BOUNDARY CONDITIONS --------------
+!---------------------------------------------------
+
+Boundary Condition 1
+  Name = "inflow"
+  Target Boundaries(1) = 1
+End
+
+Boundary Condition 2
+  Name = "front"
+  Target Boundaries(1) = 2
+End
+
+Boundary Condition 3
+  Name = "side1"
+  Target Boundaries(1) =  3
+End
+
+Boundary Condition 4
+  Name = "side2"
+  Target Boundaries(1) =  4
+End
+
+Boundary Condition 5
+  Name = "inflow bedrock"
+  Target Boundaries(1) = 5
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+  Temperature Flux BC = Logical True
+  Heat Flux = Real 0.0
+End
+
+Boundary Condition 6
+  Name = "front bedrock"
+  Target Boundaries(1) = 6
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+End
+
+Boundary Condition 7
+  Name = "side1 bedrock"
+  Target Boundaries(1) =  7
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+End
+
+Boundary Condition 8
+  Name = "side2 bedrock"
+  Target Boundaries(1) =  8
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+End
+
+Boundary Condition 9
+  Name = "inflow filler"
+  Target Boundaries(1) = 9
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+  Temperature Flux BC = Logical True
+  Heat Flux = Real 0.0
+End
+
+Boundary Condition 10
+  Name = "front filler"
+  Target Boundaries(1) = 10
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+End
+
+Boundary Condition 11
+  Name = "side1 filler"
+  Target Boundaries(1) =  11
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+End
+
+Boundary Condition 12
+  Name = "side2 filler"
+  Target Boundaries(1) =  12
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+End
+
+Boundary Condition 13
+  Name = "inflow ice"
+  Target Boundaries(1) = 13
+  Velocity 1 = 0.0
+  Velocity 2 = 0.0
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+  Partial Vertical MeshUpdate 3 = Real 0.0
+  Temperature Flux BC = Logical True
+  Heat Flux = Real 0.0
+End
+
+Boundary Condition 14
+  Name = "front ice"
+  Target Boundaries(1) = 14
+  ! fixed calving front at x = L: sea pressure below sea level, stress free above (ElmerStreams)
+  Velocity 2 = 0.0
+  Flow Force BC = Logical True
+  External Pressure = Variable Coordinate 3
+    Real Procedure "__BUOYANCY_LIB__" "SeaPressure"
+  Compute Sea Pressure = Logical True
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+  ComputeNormal = Logical False
+End
+
+Boundary Condition 15
+  Name = "side1 ice"
+  Target Boundaries(1) = 15
+  Velocity 2 = 0.0
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+  Partial Vertical MeshUpdate 3 = Real 0.0
+End
+
+Boundary Condition 16
+  Name = "side2 ice"
+  Target Boundaries(1) = 16
+  Velocity 2 = 0.0
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+  Partial Vertical MeshUpdate 3 = Real 0.0
+End
+
+Boundary Condition 17
+  Name = "deep bedrock"
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+  Partial Vertical MeshUpdate 3 = Real 0.0
+  Bottom Surface = Variable "bedrock"
+     Real LUA "tx[0] - 10*zscale"
+  Temperature Flux BC = Logical True
+    Heat Flux = Real #gthf
+End
+
+Boundary Condition 18
+  Name = "bedrock - filler"
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+  Partial Vertical MeshUpdate 3 = Variable "Coordinate 3", "bedrock"
+    Real LUA "tx[1] - tx[0] - minh"
+End
+
+Boundary Condition  19
+  Name = "interface"
+  Body ID = 4
+
+  Mid Surface  = Equals "Zb"
+
+  ! frozen grounded mask: >= 0 grounded (Zb on the bed, no normal velocity, sliding),
+  ! -1 floating (Zb free, sea pressure, no friction)
+  Zb = Equals bedrock
+  Zb Condition = Variable GroundedMask
+    Real MATC "tx[0] + 0.5"
+
+  Normal-Tangential Velocity = Logical True
+  Velocity 1 = 0.0
+  Velocity 1 Condition = Variable GroundedMask
+    Real MATC "tx[0] + 0.5"
+  Flow Solution Name = String "Flow Solution"
+
+  ! sea pressure (normal component; on grounded nodes the Dirichlet condition overrides it) and
+  ! the sea spring rho_w g dt (implicit sea pressure; zero at a steady state)
+  External Pressure = Variable Coordinate 3
+    Real Procedure "__BUOYANCY_LIB__" "SeaPressure"
+  Compute Sea Pressure = Logical True
+  Slip Coefficient 1 = Variable Coordinate 3
+    Real Procedure "__BUOYANCY_LIB__" "SeaSpring"
+  Compute Sea Spring = Logical True
+
+  Slip Coefficient 2 = Variable Coordinate 1
+    Real Procedure "ElmerIceUSF" "Sliding_Weertman"
+  Slip Coefficient 3 = Variable Coordinate 1
+    Real Procedure "ElmerIceUSF" "Sliding_Weertman"
+
+  ComputeNormal Condition = Variable GroundedMask
+      Real MATC "tx[0] + 0.5"
+
+  ! subtemperate Weertman sliding (linear) where grounded, none where floating
+  Sliding Law = String Weertman
+  Weertman Exponent = Real 1.0
+  Weertman Friction Coefficient = Variable Temperature, Coordinate 1, GroundedMask
+    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2])"
+  Weertman Linear Velocity = Real 1.0E-3
+
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+  Partial Vertical MeshUpdate 3 = Real 0.0
+
+  ! T = T0 under the shelf and where the frozen cold/temperate mask says temperate,
+  ! frictional heat flux (natural BC) elsewhere (tempbc with ess_marine = 1)
+  Temperature = Real #T0
+  Temperature Condition = Variable "groundedmask", "ColdTempMask", "Coordinate 1"
+    Real Lua "tempbc(tx[0], tx[1], tx[2])"
+
+  Friction Loads = Variable Flow Solution Loads 1, Flow Solution Loads 2, Flow Solution Loads 3, Velocity 1, Velocity 2, Velocity 3, Coordinate 2
+    Real Lua "frictionloads(tx[0],tx[1],tx[2],tx[3],tx[4],tx[5], W, W)"
+__FRICTION_HEAT__
+
+  Calculate Temperature Boundary Weights = Logical True
+
+  FSSA Theta = Real 1.0
+  FSSA Flag = String $fssaflag
+  FSSA Accumulation = Real 0.0
+End
+
+Boundary Condition 20
+  Name = "free surface"
+  Top Surface = Equals "Zs"
+  Body ID = 5
+
+  Heat Flux BC = Logical True
+  Heat transfer coefficient = Real __HTC__
+  ! constant Tsurf (the continuation parameter), or a warm snout: ramped to T0
+  ! where the ice is thin ([elmer] surface_temp, as ElmerStreams)
+__SURFACE_T__
+  ComputeNormal = Logical True
+
+  Partial Vertical MeshUpdate 1 = Real 0.0
+  Partial Vertical MeshUpdate 2 = Real 0.0
+  Partial Vertical MeshUpdate 3 = Real 0.0
+
+  FSSA Theta = Real 1.0
+  FSSA Flag = String $fssaflag
+  FSSA Accumulation = Real #aDIM
+End

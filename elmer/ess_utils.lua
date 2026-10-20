@@ -58,12 +58,21 @@ end
 -- bed temperature condition: T = T0 (cond > 0) where the frozen mask says temperate, and, with
 -- [elmer] unglaciated_bed = "melting" (ess_ungl_melt = 1, as ElmerStreams' tempbc), also under the
 -- unglaciated 30 m layer beyond the margin (GroundedMask 0 here, -1 in ElmerStreams)
+-- marine ([case] geometry = "marine", ess_marine = 1): GroundedMask is 1 grounded, -1 floating (0 at a
+-- grounding-line node counts as grounded), and the base of the shelf is at T0 (ElmerStreams Marine_Term)
 ess_ungl_melt = 0
+ess_marine = 0
 function tempbc(gm, ct, x)
   local cond = -1
   if ct > 0 then cond = 1 end
   if ess_ungl_melt > 0 and gm < 0.5 then cond = 1 end
+  if ess_marine > 0 and gm < -0.5 then cond = 1 end
   return cond
+end
+
+-- 1 where the frozen grounded mask says grounded (marine: >= 0), 0 where floating (-1)
+function ess_grounded(gm)
+  if gm > -0.5 then return 1 else return 0 end
 end
 
 -- frictional heat load from Stokes loads and velocity (as in utils.lua)

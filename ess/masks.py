@@ -1,0 +1,169 @@
+"""
+The frozen masks and their consistency with a state.
+
+The map keeps two masks fixed (they are switches, so moving them inside a run would make the map
+non-smooth): the cold/temperate bed mask ColdTempMask (+1 temperate: T = T0; -1 cold: flux condition)
+and, for the marine flowline, the grounded mask GroundedMask (1 grounded, -1 floating). After a Newton
+solve, `update_masks` checks them against the converged state and moves them where they are wrong:
+
+  cold/temperate (grounded or glaciated bed only):
+    cold -> temperate   where the basal temperature exceeds T0
+    temperate -> cold   where the bed refreezes (Temperature Loads > 0: heat has to be removed to hold T0)
+  grounded/floating (marine), by flotation: H_f = rho_w/rho_i (sea level - bed), sea level 0
+    floating -> grounded  where the ice is thicker than flotation, H > H_f + tol/rho (its base is then
+                          below the bed: there is no Zb limiter); Zb is put on the bed, Zs kept
+    grounded -> floating  where it is thinner, H < H_f - tol/rho; the base is put at flotation,
+                          Zb = -rho_i/rho_w H, and the surface at Zs = Zb + H
+    (one criterion both ways, with a margin, so a node cannot flip back and forth; at a steady state
+    the floating base is close to hydrostatic, so "thicker than flotation" = "base below the bed")
+
+Newton is then repeated with the new masks, until nothing changes ([masks] auto in the config).
+"""
+from __future__ import annotations
+
+import logging
+
+import numpy as np
+
+from .statefile import Records, StateLayout, find_name
+
+log = logging.getLogger("ess")
+
+T0 = 273.15
+
+
+def _get(rec: Records, name):
+    try:
+        return rec[find_name(rec, name)]
+    except KeyError:
+        return None
+
+
+def _on(g_from, v_from, g_to, fill=np.nan):
+    """values of (g_from, v_from) at the gids g_to (fill where missing)"""
+    out = np.full(len(g_to), fill, float)
+    if len(g_from) == 0:
+        return out
+    o = np.argsort(g_from)
+    gs, vs = np.asarray(g_from)[o], np.asarray(v_from, float)[o]
+    k = np.clip(np.searchsorted(gs, g_to), 0, len(gs) - 1)
+    ok = gs[k] == g_to
+    out[ok] = vs[k[ok]]
+    return out
+
+
+def _xy_key(coords: Records, gids, digits=2):
+    cx, cy = _get(coords, "coordinate 1"), _get(coords, "coordinate 2")
+    if cx is None or cy is None:
+        raise KeyError("no node coordinates in this state (diagnostics 'coordinate 1/2')")
+    x, y = _on(*cx, gids), _on(*cy, gids)
+    return np.round(x, digits), np.round(y, digits), x
+
+
+def grounded_of(gm, marine):
+    """bed nodes under grounded (marine: GroundedMask >= 0) or glaciated (land: GroundedMask > 0) ice"""
+    return gm > -0.5 if marine else gm > 0
+
+
+def update_masks(layout: StateLayout, x, frozen: Records, diag: Records, *, marine=False, rho_ratio=None,
+                 tol=0.1, apply=True):
+    """Check the frozen masks against the state x (and its diagnostics: Temperature Loads, coordinates).
+    Returns (x_new, frozen_new, report). With apply=False nothing changes and only the report is made.
+    report: counts of nodes per switch, and summary numbers (n_cold, n_temperate, n_grounded, GL position)."""
+    x = np.asarray(x, float).copy()
+    frozen = dict(frozen)
+    rep = {}
+    blocks = layout.split(x)
+    names = {b.name.lower(): b.name for b in layout.blocks}
+    gids = {b.name: b.gids for b in layout.blocks}
+
+    gmr = _get(frozen, "GroundedMask")
+    ctr = _get(frozen, "ColdTempMask")
+    if gmr is None or ctr is None:
+        return x, frozen, rep
+    g_gm, gm = gmr[0], gmr[1].copy()
+    g_ct, ct = ctr[0], ctr[1].copy()
+    gm_ct = _on(g_gm, gm, g_ct, fill=-2.0)
+
+    # ---- grounding line (marine)
+    newly_grounded = np.zeros(len(g_ct), bool)
+    if marine:
+        zbn, zsn = names.get("zb"), names.get("zs")
+        bedr = _get(frozen, "bedrock")
+        if zbn is None or zsn is None or bedr is None:
+            raise KeyError("marine masks need Zb and Zs in the state and bedrock in the frozen fields")
+        gZb, Zb = gids[zbn], blocks[zbn].copy()
+        gZs, Zs = gids[zsn], blocks[zsn].copy()
+        gm_b = _on(g_gm, gm, gZb, fill=1.0)
+        bed_b = _on(*bedr, gZb)
+        xb, yb, xpos = _xy_key(diag, gZb)
+        xs, ys, _ = _xy_key(diag, gZs)
+        top = {k: i for i, k in enumerate(zip(xs, ys))}
+        js = np.array([top.get(k, -1) for k in zip(xb, yb)])
+        if (js < 0).any():
+            raise KeyError(f"{int((js < 0).sum())} base nodes have no surface node above them")
+        H = Zs[js] - Zb
+        floating = gm_b < -0.5
+        Hf = -bed_b / rho_ratio                                  # flotation thickness (sea level 0)
+        ground = floating & (H > Hf + tol / rho_ratio)
+        float_ = ~floating & (H < Hf - tol / rho_ratio)
+        rep["n_base_below_bed"] = int((floating & (Zb < bed_b - 1.0)).sum())
+        rep["n_grounded"] = int((~floating).sum())
+        rep["x_gl"] = float(xpos[~floating].max()) if (~floating).any() else np.nan
+        rep["to_grounded"] = int(ground.sum())
+        rep["to_floating"] = int(float_.sum())
+        if ground.any() or float_.any():
+            gm_new_b = np.where(ground, 1.0, np.where(float_, -1.0, gm_b))
+            Zb_new = np.where(ground, bed_b, Zb)
+            zf = -rho_ratio * H
+            Zb_new = np.where(float_, np.maximum(zf, bed_b), Zb_new)
+            Zs_new = Zs.copy()
+            Zs_new[js[float_]] = Zb_new[float_] + H[float_]
+            if apply:
+                blocks[zbn][:] = Zb_new
+                blocks[zsn][:] = Zs_new
+                gm = np.where(np.isin(g_gm, gZb[ground]), 1.0, np.where(np.isin(g_gm, gZb[float_]), -1.0, gm))
+                gm_ct = _on(g_gm, gm, g_ct, fill=-2.0)
+                newly_grounded = np.isin(g_ct, gZb[ground])
+            gl_new = xpos[gm_new_b > -0.5].max() if (gm_new_b > -0.5).any() else np.nan
+            rep["x_gl_new"] = float(gl_new)
+
+    # ---- cold / temperate bed
+    tn = names.get("temperature")
+    if tn is not None:
+        Tb = _on(gids[tn], blocks[tn], g_ct)
+        bed = grounded_of(gm_ct, marine)
+        new = ct.copy()
+        new[newly_grounded] = np.where(Tb[newly_grounded] >= T0 - 0.01, 1.0, -1.0)
+        warm = (new < 0) & bed & (Tb > T0)
+        new[warm] = 1.0
+        L = _get(diag, "Temperature Loads")
+        freeze = np.zeros(len(g_ct), bool)
+        if L is not None:
+            freeze = (new > 0) & bed & ~newly_grounded & (_on(*L, g_ct, fill=-1.0) > 0)
+            new[freeze] = -1.0
+        rep["to_temperate"] = int(warm.sum())
+        rep["to_cold"] = int(freeze.sum())
+        cold, temp = (ct < 0) & bed, (ct > 0) & bed
+        rep["n_cold"], rep["n_temperate"] = int(cold.sum()), int(temp.sum())
+        rep["Tb_cold_max"] = float(np.nanmax(Tb[cold])) if cold.any() else np.nan
+        if apply:
+            ct = new
+    if apply:
+        frozen[find_name(frozen, "GroundedMask")] = (g_gm, gm)
+        frozen[find_name(frozen, "ColdTempMask")] = (g_ct, ct)
+    return x, frozen, rep            # (the blocks are views of x: Zb / Zs were changed in place)
+
+
+def n_changes(rep):
+    return sum(int(rep.get(k, 0)) for k in ("to_grounded", "to_floating", "to_temperate", "to_cold"))
+
+
+def describe(rep):
+    parts = []
+    if "x_gl" in rep:
+        parts.append(f"GL {rep['x_gl'] / 1e3:.2f} km" + (f" -> {rep['x_gl_new'] / 1e3:.2f} km" if "x_gl_new" in rep else "")
+                     + f" ({rep.get('to_grounded', 0)} nodes grounded, {rep.get('to_floating', 0)} floated)")
+    if "to_temperate" in rep:
+        parts.append(f"bed {rep.get('to_temperate', 0)} cold -> temperate, {rep.get('to_cold', 0)} temperate -> cold")
+    return "; ".join(parts) or "no masks"

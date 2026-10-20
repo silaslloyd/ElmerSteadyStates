@@ -49,7 +49,11 @@ class ElmerModel(Model):
         self.repo = cfg["_repo"]
         self.work = cfg["_work"]
         self.case_dir = cfg["paths"]["case_dir"]
-        self.template = cfg["_path"](e.get("template", "elmer/steady_template.sif"))
+        # marine flowline ([case] geometry = "marine"): ice shelf, sea pressure, frozen grounded mask
+        self.marine = cfg.get("case", {}).get("geometry", "land") == "marine"
+        self.template = cfg["_path"](e.get("template", "elmer/steady_template_marine.sif" if self.marine
+                                           else "elmer/steady_template.sif"))
+        self.buoyancy_lib = cfg["_path"](e.get("buoyancy_lib", "elmer/Buoyancy"))
         self.mesh_db = e.get("mesh_db", "footprint")
         self.ess_lib = cfg["_path"](e.get("ess_lib", "elmer/SteadyStateIO"))
         self.ess_utils = cfg["_path"](e.get("ess_utils", "elmer/ess_utils.lua"))
@@ -97,6 +101,8 @@ class ElmerModel(Model):
             self.lua_overrides = {"ess_xend": f"{self.x_end!r} * L",
                                   "ess_Hedge": repr(float(c.get("edge_thickness", 30.0))),
                                   "ess_Hs": "0.0", **self.lua_overrides}
+        if self.marine:
+            self.lua_overrides = {"ess_marine": "1.0", **self.lua_overrides}
         if self.unglaciated_bed == "melting":
             self.lua_overrides = {"ess_ungl_melt": "1.0", **self.lua_overrides}
         if self.surface_temp == "snout":
@@ -115,6 +121,9 @@ class ElmerModel(Model):
             self._template_text = f.read()
         with open(self.params_file) as f:
             self._params_text = f.read()
+        from .case import eval_lua_parameters
+        P = eval_lua_parameters(self.params_file)
+        self.rho_ratio = float(P["rhoi"] / P["rhow"]) if "rhoi" in P and "rhow" in P else 920 / 1003.27
         self._check_inputs()
 
     # ---------------------------------------------------------------- set-up checks
@@ -125,9 +134,10 @@ class ElmerModel(Model):
         elif self.n_procs > 1 and not os.path.isdir(os.path.join(mesh, f"partitioning.{self.n_procs}")):
             log.warning(f"no {mesh}/partitioning.{self.n_procs}: partition the mesh for {self.n_procs} "
                         f"processes (ElmerGrid ... -metiskway {self.n_procs})")
-        lib = self.ess_lib if self.ess_lib.endswith(".so") else self.ess_lib + ".so"
-        if not os.path.exists(lib):
-            log.warning(f"{lib} not found: build it with `make -C elmer` (needs elmerf90)")
+        for l in [self.ess_lib] + ([self.buoyancy_lib] if self.marine else []):
+            lib = l if l.endswith(".so") else l + ".so"
+            if not os.path.exists(lib):
+                log.warning(f"{lib} not found: build it with `make -C elmer` (needs elmerf90)")
 
     # ---------------------------------------------------------------- inputs of a run
     def params_lua(self, p) -> str:
@@ -220,6 +230,7 @@ class ElmerModel(Model):
             "__MESH_NAME__": self.mesh_db,
             "__CASE_DIR__": self.case_dir,
             "__ESS_LIB__": self.ess_lib,
+            "__BUOYANCY_LIB__": self.buoyancy_lib,
             "__NSTEPS__": str(int(spec.n_steps)),
             "__DT__": repr(float(spec.dt)),
             "__COUPLED_ITERS__": str(int(spec.coupled_iters)),
@@ -391,46 +402,18 @@ class ElmerModel(Model):
 
 # -------------------------------------------------------------------- consistency of the frozen masks
 
-def mask_report(layout: StateLayout, x, frozen: Records, diag: Records, T0=273.15) -> dict:
-    """Where would the frozen cold/temperate mask be wrong at this state?
-    cold_above_Tm:  cold-bed glaciated nodes with T > T0 (would switch to temperate)
-    temp_freezing:  temperate glaciated nodes with basal refreezing (loads > 0), if loads are available
-    Tb_cold_max:    max basal temperature over cold glaciated nodes"""
-    out = {}
+def mask_report(layout: StateLayout, x, frozen: Records, diag: Records, T0=273.15, marine=False,
+                rho_ratio=None) -> dict:
+    """Where would the frozen masks be wrong at this state? (ess.masks.update_masks, nothing changed)
+    cold_above_Tm:  cold-bed nodes with T > T0 (would switch to temperate)
+    temp_freezing:  temperate nodes with basal refreezing (loads > 0), if loads are available
+    marine: to_grounded / to_floating (grounding-line nodes that would switch), x_gl (m)"""
+    from .masks import update_masks
     try:
-        ct_k, gm_k = find_name(frozen, "ColdTempMask"), find_name(frozen, "GroundedMask")
-    except KeyError:
-        return out
-    g_ct, ct = frozen[ct_k]
-    g_gm, gm = frozen[gm_k]
-    if np.array_equal(g_ct, g_gm):
-        gm_on_ct = gm
-    else:
-        k = np.clip(np.searchsorted(g_gm, g_ct), 0, len(g_gm) - 1)
-        gm_on_ct = np.where(g_gm[k] == g_ct, gm[k], -1.0)
-    tb = layout.split(np.asarray(x))
-    tname = next((b.name for b in layout.blocks if b.name.lower() == "temperature"), None)
-    if tname is None:
-        return out
-    gT = dict((b.name, b.gids) for b in layout.blocks)[tname]
-    idx = np.searchsorted(gT, g_ct)
-    ok = (idx < len(gT)) & (gT[np.minimum(idx, len(gT) - 1)] == g_ct)
-    Tb = np.full(len(g_ct), np.nan)
-    Tb[ok] = tb[tname][idx[ok]]
-    cold = (ct < 0) & (gm_on_ct > 0) & ok
-    temp = (ct > 0) & (gm_on_ct > 0) & ok
-    out["n_cold"] = int(cold.sum())
-    out["n_temperate"] = int(temp.sum())
-    out["cold_above_Tm"] = int(np.sum(Tb[cold] > T0))
-    out["Tb_cold_max"] = float(np.nanmax(Tb[cold])) if cold.any() else np.nan
-    out["Tb_cold_mean"] = float(np.nanmean(Tb[cold])) if cold.any() else np.nan
-    try:
-        gL, L = diag[find_name(diag, "Temperature Loads")]
-        Lc = np.full(len(g_ct), np.nan)
-        j = np.searchsorted(gL, g_ct)
-        okL = (j < len(gL)) & (gL[np.minimum(j, len(gL) - 1)] == g_ct)
-        Lc[okL] = L[j[okL]]
-        out["temp_freezing"] = int(np.sum(Lc[temp] > 0))
-    except KeyError:
-        pass
-    return out
+        _, _, rep = update_masks(layout, x, frozen, diag, marine=marine, rho_ratio=rho_ratio, apply=False)
+    except KeyError as e:
+        log.debug(f"mask report: {e}")
+        return {}
+    rep["cold_above_Tm"] = rep.pop("to_temperate", 0)
+    rep["temp_freezing"] = rep.pop("to_cold", 0)
+    return rep
