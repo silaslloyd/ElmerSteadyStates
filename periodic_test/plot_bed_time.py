@@ -34,6 +34,7 @@ DIR = "periodic_test/out/np8"     # one out/np<N> folder
 CASES = None                      # list of case names to make pages for; None: every T case
 SHOW_INTERFACES = True
 SHOW = True
+OPEN_MAX = 6                      # open every page in the browser when there are at most this many
 
 
 def grid(x, y, v):
@@ -158,7 +159,7 @@ def main():
     for k in pages:
         out = page(C, k, d)
         print(f"wrote {out}")
-        if SHOW and k == pages[0]:
+        if SHOW and len(pages) <= OPEN_MAX:
             webbrowser.open("file://" + os.path.abspath(out))
 
 
