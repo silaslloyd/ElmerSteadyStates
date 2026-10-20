@@ -219,8 +219,8 @@ def save_bed(d, D, T, bed, c, row, R):
 
 def snapshot_steps(d):
     steps = set()
-    for f in glob.glob(os.path.join(d, "snap_t*.bin.*")):
-        m = re.match(r"snap_t(\d+)\.bin\.\d+$", os.path.basename(f))
+    for f in glob.glob(os.path.join(d, "snap_t*")):
+        m = re.match(r"snap_t(\d+)(?:\.bin)?\.\d+$", os.path.basename(f))   # snap_t<step>.<pe>
         if m:
             steps.add(int(m.group(1)))
     return sorted(steps)
@@ -231,7 +231,7 @@ def bed_series(d):
     steps = snapshot_steps(d)
     keys, Ts, info = None, [], None
     for k in steps:
-        D = load_case(d, f"snap_t{k}.bin")
+        D = load_case(d, f"snap_t{k}") or load_case(d, f"snap_t{k}.bin")
         if D is None:
             continue
         bed = np.abs(D["z"] - D["z"].min()) < 1e-3
