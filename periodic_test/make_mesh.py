@@ -38,4 +38,4 @@ def write_footprint(out_dir, L, W, nx, ny):
 
 if __name__ == "__main__":
     a = sys.argv[1:]
-    write_footprint(a[0] if a else "footprint", 10e3, 10e3, 20, 20)
+    write_footprint(a[0] if a else "footprint", 200e3, 200e3, 40, 40)

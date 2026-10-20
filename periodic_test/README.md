@@ -7,8 +7,9 @@ where the exact answer is known.
 ## The case
 
 A parallel-sided slab on a flat bed:
-- **Footprint:** square, 10 km × 10 km, 500 m cells by default (`--res` for finer), extruded by
-  ElmerSolver into 10 layers, as the ElmerStreams meshes are. The slab is 600 m thick.
+- **Footprint:** square, 200 km × 200 km, 5 km cells by default (`--res` for finer, `--size` for
+  another side length), extruded by ElmerSolver into 10 layers, as the ElmerStreams meshes are. The
+  slab is 600 m thick.
 - **Boundaries:** periodic on all four sides, x = 0 ↔ x = L and y = 0 ↔ y = W, and ElmerGrid
   partitions with `-periodic 1 1 0`.
 - **Flow:** z is normal to the bed, and gravity is tilted by a slope of 0.005, so a component of
@@ -47,7 +48,8 @@ master nodes carry the loads of their periodic images too. `R_loads` (no halving
 **Free-surface time step.** Without stabilisation the free surface is unstable above about 1 yr. That
 is the relaxation time of the fastest surface mode for this slab (600 m, 10¹⁴ Pa s, sliding at
 melting), about 0.6 yr. The FS cases therefore default to 0.5 yr × 2000 steps (1 kyr), with a snapshot
-every 100 steps. The relevant options:
+every 100 steps. Finer cells do not change this: the fastest mode has a wavelength of about 5.5 km,
+resolved from 2 km cells down (at 5 km cells the limit is about 2 yr). The relevant options:
 - `--fs-dt`, `--fs-steps`, `--fs-every` change these.
 - `--nsvec <ElmerStreams>/SRC/IncompressibleNSVec.so` uses the FSSA-capable Stokes solver and turns
   FSSA on (θ = 1, "full"), which allows a larger `--fs-dt`.
@@ -58,9 +60,9 @@ every 100 steps. The relevant options:
 
 ```bash
 git pull
-sbatch periodic_test/run.cmd                              # every case, 16 tasks, 500 m
+sbatch periodic_test/run.cmd                              # every case, 16 tasks, 5 km cells
 sbatch periodic_test/run.cmd --only R_ A_                 # some groups (serial references added)
-sbatch periodic_test/run.cmd --res 100 --box 4 4 --only FS_ --no-refs   # high resolution
+sbatch periodic_test/run.cmd --res 1000 --box 4 4 --only FS_ --no-refs  # high resolution (1 km)
 python3 periodic_test/run_tests.py --np 16 --analyse      # the table again (same options as the run)
 ```
 

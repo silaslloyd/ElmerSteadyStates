@@ -28,7 +28,7 @@ sys.path.insert(0, HERE)
 from make_mesh import write_footprint  # noqa: E402
 
 # ---------------------------------------------------------------- geometry and physics (MPa - a - m)
-GEOM = dict(L=10e3, W=10e3, H=600.0, nx=20, ny=20, nz_layers=10)     # 500 m footprint cells by default
+GEOM = dict(L=200e3, W=200e3, H=600.0, nx=40, ny=40, nz_layers=10)   # 200 km square, 5 km cells by default
 PARAMS = """
 yearinsec = 31556926.0
 rhoi = 917.0e-6 / yearinsec^2              -- MPa a2 m-2
@@ -439,8 +439,8 @@ def main():
                     help="do not add the serial references (they ran already, or are too slow: the analysis "
                          "then uses a partitioned direct-solver run of the same physics)")
     ap.add_argument("--no-analyse", action="store_true", help="skip the analysis at the end")
-    ap.add_argument("--res", type=float, help="footprint cell size (m), e.g. 100; default 500")
-    ap.add_argument("--size", type=float, help="side of the square footprint (m), default 10000")
+    ap.add_argument("--res", type=float, help="footprint cell size (m), e.g. 1000; default 5000")
+    ap.add_argument("--size", type=float, help="side of the square footprint (m), default 200000")
     ap.add_argument("--layers", type=int, help="vertical layers, default 10")
     ap.add_argument("--box", nargs=2, type=int, metavar=("PX", "PY"),
                     help="box partitions: PX along x by PY along y (PX * PY = --np); default about square")
@@ -461,7 +461,7 @@ def main():
     if a.size:
         GEOM["L"] = GEOM["W"] = a.size
         tag += f"_L{a.size / 1e3:g}km"
-    res = a.res or 500.0
+    res = a.res or 5000.0
     GEOM["nx"] = max(1, int(round(GEOM["L"] / res)))
     GEOM["ny"] = max(1, int(round(GEOM["W"] / res)))
     if a.res:
