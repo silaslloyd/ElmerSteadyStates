@@ -2,8 +2,7 @@
 # configs/land_flowline_T2k.toml (flux friction heating, 10 x 200 yr map, central differences,
 # natural-parameter continuation, branch "flux"), plus viscous heating 2 eta e:e in the ice
 # (DeformationalHeatSolver before the heat solve, Heat Source = SH / rho_i; ElmerStreams has it on).
-# Shares the land_flowline mesh (case_dir), so no setup/init. Strain heating warms the bed, so the frozen
-# cold/temperate mask is moved automatically ([masks] auto, after every run chunk and Newton solve).
+# Shares the land_flowline mesh (case_dir), so no setup/init. No mask switching ([masks] auto = false).
 #
 #   sbatch jobs/ess.cmd run      configs/land_flowline_T2k_strain.toml --state work/land_flowline_T2k/steady_p268.15.npz --chunks 15 --rock-cap 0.001
 #   sbatch jobs/ess.cmd newton   configs/land_flowline_T2k_strain.toml --state work/land_flowline_T2k_strain/run_p268.15.npz
@@ -46,11 +45,9 @@ variables = ["Temperature", "Zs"]       # the state vector (velocity is slaved t
 scales = { Temperature = 5.0, Zs = 50.0 }   # K and m per scaled unit (norms, tolerances, FD steps)
 frozen = ["ColdTempMask", "GroundedMask", "Zb", "bedrock"]
 
-# move the frozen cold/temperate mask to fit the state after every `run` chunk and Newton solve, and at
-# every branch point (column "remasked" in branch.csv)
+# no mask switching: the bed keeps the start state's cold/temperate mask (as the T2k sweep)
 [masks]
-auto = true
-max_rounds = 6
+auto = false
 
 [extract]
 # Only for `ess extract --restart FILE` (start from an Elmer .result in the mesh directory, written
