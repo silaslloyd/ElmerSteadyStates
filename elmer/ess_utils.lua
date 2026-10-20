@@ -55,9 +55,14 @@ end
 -- < 0: flux condition (geothermal + friction) everywhere else, including the
 -- unglaciated region beyond the margin. (ElmerStreams also forced T = T0 under
 -- unglaciated ice and in the last 10 km, for the hydrology; not needed here.)
+-- bed temperature condition: T = T0 (cond > 0) where the frozen mask says temperate, and, with
+-- [elmer] unglaciated_bed = "melting" (ess_ungl_melt = 1, as ElmerStreams' tempbc), also under the
+-- unglaciated 30 m layer beyond the margin (GroundedMask 0 here, -1 in ElmerStreams)
+ess_ungl_melt = 0
 function tempbc(gm, ct, x)
   local cond = -1
   if ct > 0 then cond = 1 end
+  if ess_ungl_melt > 0 and gm < 0.5 then cond = 1 end
   return cond
 end
 

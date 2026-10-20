@@ -70,6 +70,11 @@ class ElmerModel(Model):
         self.surface_temp = str(e.get("surface_temp", "constant"))
         # surface Robin condition k dT/dn = h (T_ext - T): h ("Heat transfer coefficient", ElmerStreams: 1)
         self.surface_transfer = float(e.get("surface_transfer", 1.0))
+        # bed under the unglaciated 30 m layer beyond the margin (GroundedMask 0): "flux" (geothermal +
+        # friction, like the glaciated bed) or "melting" (T = T0, as ElmerStreams' tempbc)
+        self.unglaciated_bed = str(e.get("unglaciated_bed", "flux"))
+        if self.unglaciated_bed not in ("flux", "melting"):
+            raise ValueError(f"[elmer] unglaciated_bed must be 'flux' or 'melting', not {self.unglaciated_bed!r}")
         if self.surface_temp not in ("constant", "snout"):
             raise ValueError(f"[elmer] surface_temp must be 'constant' or 'snout', not {self.surface_temp!r}")
         # linear solvers: "direct" (MUMPS) or "iterative" (Krylov + ILU, tolerance iterative_tol)
@@ -92,6 +97,8 @@ class ElmerModel(Model):
             self.lua_overrides = {"ess_xend": f"{self.x_end!r} * L",
                                   "ess_Hedge": repr(float(c.get("edge_thickness", 30.0))),
                                   "ess_Hs": "0.0", **self.lua_overrides}
+        if self.unglaciated_bed == "melting":
+            self.lua_overrides = {"ess_ungl_melt": "1.0", **self.lua_overrides}
         if self.surface_temp == "snout":
             self.lua_overrides = {"ess_snoutH": repr(float(e.get("snout_thickness", 100.0))),
                                   "ess_snoutW": repr(float(e.get("snout_smooth", 0.0))),
