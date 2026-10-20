@@ -38,6 +38,8 @@ COLORSCALE = "Viridis"
 VEL_PLOT = "contour"  # slider only: "contour" (filled x-z sections of T, u, w in the ice, surface drawn on
                       # them) or "lines" (surface elevation panel; u, w at the surface and bed)
 VEL_NZ = 60           # vertical points of the contour grids (more: finer, but a bigger html)
+U_CAP = "grounded"    # colour range of the u sections: "grounded" (up to the largest u on grounded ice:
+                      # the marine shelf, much faster, saturates), a number (m/yr), or None (full range)
 BRANCH_Y = "Tb_mean"  # slider only, top panel (the branch, with the current state marked): y-axis quantity,
                       # "Tb_mean" (mean basal temperature), "Tb_max" (warmest bed node) or "Zs_mean"
 # stability type of the leading mode (from `ess stability --name B --point K`, or n_unstable in branch.csv)
@@ -83,6 +85,7 @@ def extract(path):
     xb = at(gb, gx, X)
     o = o_b = np.argsort(xb)
     out["xb"], out["Tb"] = xb[o], split[tname][np.searchsorted(gids[tname], gb)][o]
+    out["x_gl"] = grounding_line(s.frozen, gx, X)
     if zname:
         gs = gids[zname][on_side(gids[zname])]
         xs = at(gs, gx, X)
@@ -126,6 +129,32 @@ def extract(path):
     return out
 
 
+def grounding_line(frozen, gx, X):
+    """x of the last grounded base node (marine: GroundedMask -1 = floating), None without a shelf"""
+    try:
+        g, gm = frozen[find_name(frozen, "GroundedMask")]
+    except KeyError:
+        return None
+    if not (gm < -0.5).any():
+        return None
+    return float(X[np.searchsorted(gx, g[gm > -0.5])].max())
+
+
+def u_cap(S):
+    """upper end of the u colour range (U_CAP)"""
+    if U_CAP is None:
+        return None
+    if U_CAP != "grounded":
+        return float(U_CAP)
+    caps = []
+    for s in S:
+        if "U" not in s or s.get("x_gl") is None:
+            continue
+        xg, _, G = s["U"]
+        caps.append(np.nanmax(G[:, xg <= s["x_gl"] / 1e3]))
+    return max(caps) if caps else None
+
+
 def main():
     bdir = repo_path(sys.argv[1] if len(sys.argv) > 1 else BRANCH)
     start = repo_path(sys.argv[2] if len(sys.argv) > 2 else START)
@@ -157,7 +186,14 @@ def main():
         umax = max(np.nanmax(s["U"][2]) for s in S if "U" in s)
         umin = min(np.nanmin(s["U"][2]) for s in S if "U" in s)
         wlim = max(np.nanmax(np.abs(s["W"][2])) for s in S if "W" in s) or 1.0
-        crange["U"] = dict(colorscale="Viridis", zmin=umin, zmax=umax, colorbar=dict(title="u (m/yr)"))
+        cap = u_cap(S)
+        title = "u (m/yr)"
+        if cap is not None and cap < umax:
+            umax, title = cap, f"u (m/yr), capped at {cap:.0f}" + (" (grounded max)" if U_CAP == "grounded" else "")
+            print(f"u colour range capped at {cap:.1f} m/yr (U_CAP = {U_CAP!r}); faster ice saturates")
+        crange["U"] = dict(colorscale="Viridis", zmin=umin, zmax=umax, colorbar=dict(title=title),
+                           contours=dict(coloring="fill", showlines=False, start=umin, end=umax,
+                                         size=(umax - umin) / 30 or 1.0))
         crange["W"] = dict(colorscale="RdBu_r", zmin=-wlim, zmax=wlim, colorbar=dict(title="w (m/yr)"))
 
     def line(x, y, colour, name, unit, dash=None):
@@ -168,8 +204,10 @@ def main():
         if k not in s:
             return E
         xg, zg, G = s[k]
+        cr = dict(crange[k])
+        cont = cr.pop("contours", dict(coloring="fill", showlines=False))
         return go.Contour(x=xg, y=zg, z=G, name=nm, connectgaps=False, ncontours=30,
-                          contours=dict(coloring="fill", showlines=False), line=dict(width=0), **crange[k],
+                          contours=cont, line=dict(width=0), **cr,
                           hovertemplate=f"x %{{x:.1f}} km<br>z %{{y:.0f}} m<br>{nm} %{{z:.4g}} {unit}<extra></extra>")
 
     def surface(s):

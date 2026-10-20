@@ -30,6 +30,8 @@ Y_SIDE = "min"       # the flowline mesh is one element wide: show the nodes at 
 SHOW = True
 NZ_GRID = 200        # vertical resolution of the regular grid the velocities are contoured on
 N_CONTOURS = 30
+U_CAP = "grounded"   # colour range of u: "grounded" (up to the largest u on grounded ice: the marine shelf,
+                     # much faster, saturates), a number (m/yr), or None (full range)
 
 
 def load(path, mode):
@@ -165,11 +167,27 @@ def main():
                 xv, zv, val = xv[ice], zv[ice], val[ice]
             xg, zg, G = column_grid(xv, zv, val, NZ_GRID)
             lim = np.nanmax(np.abs(G)) or 1.0
+            zmin, zmax, ctitle = (-lim, lim, "w (m/yr)") if nm == "w" else (None, None, "u (m/yr)")
+            cont = dict(coloring="fill", showlines=False)
+            if nm == "u" and U_CAP is not None:
+                cap = None
+                if U_CAP != "grounded":
+                    cap = float(U_CAP)
+                elif any(k.lower() == "groundedmask" for k in frozen):
+                    gg, gm = frozen[find_name(frozen, "GroundedMask")]
+                    if (gm < -0.5).any():
+                        x_gl = X[np.searchsorted(gx, gg[gm > -0.5])].max()
+                        cap = float(np.nanmax(G[:, xg <= x_gl]))
+                        fig.add_vline(x=x_gl, line=dict(dash="dot", color="grey"), row=r, col=1)
+                if cap is not None and cap < np.nanmax(G):
+                    zmin, zmax = float(np.nanmin(G)), cap
+                    cont.update(start=zmin, end=zmax, size=(zmax - zmin) / N_CONTOURS or 1.0)
+                    ctitle = f"u (m/yr), capped at {cap:.0f}"
             fig.add_trace(go.Contour(
                 x=xg, y=zg, z=G, name=nm, ncontours=N_CONTOURS, connectgaps=False,
-                colorscale=cs, zmin=-lim if nm == "w" else None, zmax=lim if nm == "w" else None,
-                contours=dict(coloring="fill", showlines=False), line=dict(width=0),
-                colorbar=dict(title=f"{nm} (m/yr)", y=bar_y[r - 1], len=0.2),
+                colorscale=cs, zmin=zmin, zmax=zmax,
+                contours=cont, line=dict(width=0),
+                colorbar=dict(title=ctitle, y=bar_y[r - 1], len=0.2),
                 hovertemplate=f"x %{{x:.4g}}<br>z %{{y:.4g}}<br>{nm} %{{z:.4g}} m/yr<extra></extra>"), r, 1)
     fig.update_xaxes(title_text="x (m)", row=rows, col=1)
     fig.update_layout(title=f"{os.path.basename(path)}: {title}", height=1000 if rows == 3 else 1600, template="plotly_white",
