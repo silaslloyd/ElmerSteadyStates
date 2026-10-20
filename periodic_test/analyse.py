@@ -20,43 +20,50 @@ KEY_DIGITS = 2       # coordinates rounded to 1 cm to identify nodes across runs
 
 def load_case(d, base="out.bin"):
     """Nodes keyed by rounded coordinates: dict of arrays + 'nparts' (how many partition files hold
-    each node) + max disagreement between partitions at shared nodes, per variable."""
+    each node) + max disagreement between partitions at shared nodes, per variable. Vectorised."""
     files = partition_files(os.path.join(d, base))
     if not files:
         return None
-    acc, cnt, spread = {}, {}, {}
-    xyz, owner = {}, {}
-    for pe, f in enumerate(files):
-        r = read_state_file(f)
-        g1, x = r["coordinate 1"]
-        _, y = r["coordinate 2"]
-        _, z = r["coordinate 3"]
-        keys = list(zip(np.round(x, KEY_DIGITS), np.round(y, KEY_DIGITS), np.round(z, KEY_DIGITS)))
-        pos = {g: k for g, k in zip(g1, keys)}
-        for k in keys:
-            cnt[k] = cnt.get(k, 0) + 1
-            xyz[k] = k
-            owner.setdefault(k, pe)                # lowest partition holding the node
-        for name, (g, v) in r.items():
-            if name.startswith("coordinate"):
+    parts = [read_state_file(f) for f in files]
+    K = []
+    for r in parts:
+        K.append(np.round(np.c_[r["coordinate 1"][1], r["coordinate 2"][1], r["coordinate 3"][1]], KEY_DIGITS))
+    uniq, inv = np.unique(np.concatenate(K), axis=0, return_inverse=True)
+    inv = inv.ravel()
+    n = len(uniq)
+    nparts = np.bincount(inv, minlength=n)
+    owner = np.full(n, len(files), int)
+    bounds = np.cumsum([0] + [len(k) for k in K])
+    node_of = []                                       # per partition: gid -> node index
+    for pe, r in enumerate(parts):
+        ip = inv[bounds[pe]:bounds[pe + 1]]
+        np.minimum.at(owner, ip, pe)                   # lowest partition holding the node
+        g1 = r["coordinate 1"][0]
+        srt = np.argsort(g1)
+        node_of.append((g1[srt], ip[srt]))
+    out = {"x": uniq[:, 0], "y": uniq[:, 1], "z": uniq[:, 2], "nparts": nparts, "owner": owner,
+           "keys": [tuple(k) for k in uniq.tolist()], "nfiles": len(files)}
+    names = []
+    for r in parts:
+        names += [k for k in r if not k.startswith("coordinate") and k not in names]
+    for name in names:
+        val = np.full(n, np.nan)
+        seen = np.zeros(n, bool)
+        mis = np.zeros(n)
+        for (gs, ns), r in zip(node_of, parts):
+            if name not in r:
                 continue
-            a = acc.setdefault(name, {})
-            s = spread.setdefault(name, {})
-            for gi, vi in zip(g, v):
-                k = pos[gi]
-                if k in a:
-                    s[k] = max(s.get(k, 0.0), abs(vi - a[k]))
-                else:
-                    a[k] = vi
-    keys = sorted(xyz)
-    out = {"x": np.array([k[0] for k in keys]), "y": np.array([k[1] for k in keys]),
-           "z": np.array([k[2] for k in keys]), "nparts": np.array([cnt[k] for k in keys]),
-           "owner": np.array([owner[k] for k in keys]),
-           "keys": keys, "nfiles": len(files)}
-    for name, a in acc.items():
-        out[name] = np.array([a.get(k, np.nan) for k in keys])
-        out[f"{name} mismatch"] = max(spread[name].values()) if spread[name] else 0.0
-        out[f"{name} node mismatch"] = np.array([spread[name].get(k, 0.0) for k in keys])
+            g, v = r[name]
+            nd = ns[np.searchsorted(gs, g)]
+            new = ~seen[nd]
+            val[nd[new]] = v[new]
+            seen[nd[new]] = True
+            old = ~new
+            if old.any():
+                np.maximum.at(mis, nd[old], np.abs(v[old] - val[nd[old]]))
+        out[name] = val
+        out[f"{name} mismatch"] = float(np.nanmax(mis)) if n else 0.0
+        out[f"{name} node mismatch"] = mis
     return out
 
 
@@ -87,21 +94,24 @@ def log_flags(d):
 
 def column_spread(D, v):
     """max over (x, z) of (max - min over y) of v, and the node of the largest deviation from its
-    column mean"""
-    cols = {}
-    for i, (x, z) in enumerate(zip(D["x"], D["z"])):
-        cols.setdefault((x, round(z, 0)), []).append(i)
-    best, worst, wi = 0.0, 0.0, None
-    for idx in cols.values():
-        vv = v[idx]
-        if len(vv) < 2 or np.all(np.isnan(vv)):
-            continue
-        best = max(best, np.nanmax(vv) - np.nanmin(vv))
-        dev = np.abs(vv - np.nanmean(vv))
-        j = int(np.nanargmax(dev))
-        if dev[j] > worst:
-            worst, wi = dev[j], idx[j]
-    return best, wi
+    column mean. Vectorised."""
+    v = np.asarray(v, float)
+    _, col = np.unique(np.c_[D["x"], np.round(D["z"], 0)], axis=0, return_inverse=True)
+    col = col.ravel()
+    nc = col.max() + 1 if len(col) else 0
+    ok = np.isfinite(v)
+    if not ok.any():
+        return 0.0, None
+    vmax = np.full(nc, -np.inf); vmin = np.full(nc, np.inf)
+    np.maximum.at(vmax, col[ok], v[ok]); np.minimum.at(vmin, col[ok], v[ok])
+    cnt = np.bincount(col[ok], minlength=nc)
+    sm = np.bincount(col[ok], weights=v[ok], minlength=nc)
+    mean = np.where(cnt > 0, sm / np.maximum(cnt, 1), np.nan)
+    use = cnt >= 2
+    best = float(np.max(vmax[use] - vmin[use])) if use.any() else 0.0
+    dev = np.where(ok & use[col], np.abs(v - mean[col]), -1.0)
+    wi = int(np.argmax(dev)) if (dev >= 0).any() else None
+    return best, (wi if wi is not None and dev[wi] > 0 else None)
 
 
 def analyse_all(CASES, PARTS, physics_key, OUT, GEOM):
@@ -229,7 +239,17 @@ def snapshot_steps(d):
     return sorted(steps)
 
 
+_BED_SERIES = {}
+
+
 def bed_series(d):
+    if d in _BED_SERIES:
+        return _BED_SERIES[d]
+    _BED_SERIES[d] = r = _bed_series(d)
+    return r
+
+
+def _bed_series(d):
     """basal temperature at every snapshot: keys of the bed nodes, steps, T[step, node], node info"""
     steps = snapshot_steps(d)
     keys, Ts, info = None, [], None
