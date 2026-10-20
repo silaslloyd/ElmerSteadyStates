@@ -264,6 +264,14 @@ CASES = [
            strain=st, ls_heat="direct" if it is None else "gcr_ilu2",
            ls_stokes="direct" if it is None else "gcr_ilu8", ls_strain="direct" if it is None else "gcr_ilu1")
       for it, st, sfx in ((None, True, ""), (1, True, ""), (1, False, "_nostrain"))],
+    # W with free-slip side walls instead of periodic sides (loads not halved: walls need no halving),
+    # y-cut partitions (no -periodic, nothing to pair): periodic vs walls with the feedback active
+    *[case(f"W_wall_loads_{p}" + ("" if it is None else "_iter") + sfx, parts=p, bc="wall", heat="loads",
+           halve=False, steps=100, dt=100.0, out_every=5, sliding_dT=0.15, Ts=259.15, Tb0=272.5,
+           element="Stabilized", strain=st, ls_heat="direct" if it is None else "gcr_ilu2",
+           ls_stokes="direct" if it is None else "gcr_ilu8", ls_strain="direct" if it is None else "gcr_ilu1")
+      for p, it, st, sfx in (("serial", None, True, ""), ("ycut", 1, True, ""),
+                             ("serial", None, False, "_nostrain"), ("ycut", 1, False, "_nostrain"))],
     # W, tight: the ElmerStreams solvers at 1e-12 (no strain heating, which needs no reference rerun)
     case("W_loads_ycut_per_tight_nostrain", parts="ycut_per", heat="loads", halve=True, steps=100, dt=100.0,
          out_every=5, sliding_dT=0.15, Ts=259.15, Tb0=272.5, element="Stabilized", strain=False,
