@@ -196,7 +196,7 @@ def phi0_bed(diag, g, rhow, gravity, layout, x):
 
 def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1, tol_T=0.0, rhoi, Lw,
                  rhow, gravity, hydro, edge_thickness=None, stop_after_dry=None):
-    """... stop_after_dry N: stop after N consecutive states that fail the hydrology check. The k = 0
+    """... stop_after_dry N: stop after N consecutive states that fail (Newton not converged, or the hydrology). The k = 0
     (all-cold) Newton result is always saved as <outdir>/k0_state.npz (the start of the next parameter)."""
     from .newton import newton_krylov
     os.makedirs(os.path.join(outdir, "points"), exist_ok=True)
@@ -233,16 +233,20 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
              + "), "
              f"k = {k_start} .. {k_end} step {k_step}")
 
+    # consecutive failures: Newton not converged, or the water sheet reaching 0 (hydrology); a converged state
+    # that passes the hydrology resets the count (thermal failures alone do not count)
+    def failed(conv, hyd_ok):
+        return (not conv) or (not hyd_ok)
     n_dry = 0
-    for r_ in reversed(rows):                 # resuming: the current run of hydrology failures
-        if str(r_.get("converged")) == "1" and str(r_.get("hydro_ok")) == "0":
+    for r_ in reversed(rows):                 # resuming: the current run of failures
+        if int(r_.get("k", 0)) > 0 and failed(str(r_.get("converged")) == "1", str(r_.get("hydro_ok")) != "0"):
             n_dry += 1
         else:
             break
     k = k_start
     while k <= k_end:
         if stop_after_dry and n_dry >= stop_after_dry:
-            log.info(f"spectrum: {n_dry} consecutive hydrology failures, stopping at k = {k - k_step}")
+            log.info(f"spectrum: {n_dry} consecutive failures (Newton or hydrology), stopping at k = {k - k_step}")
             break
         ct = mask_for(k, g_ct, col)
         frozen[kname] = (g_ct, ct)
@@ -324,7 +328,7 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
             with open(os.path.join(outdir, "spectrum_meta.json"), "w") as fm:    # for plots/plot_spectrum.py
                 json.dump(dict(p=p, n_columns=int(ncol), x_terminus_km=float(ux[0] / 1e3),
                                edge_thickness=edge_thickness), fm)
-        if r.converged and k > 0:
-            n_dry = n_dry + 1 if not hydro_ok else 0
+        if k > 0:
+            n_dry = n_dry + 1 if failed(r.converged, hydro_ok) else 0
         k += k_step
     return rows

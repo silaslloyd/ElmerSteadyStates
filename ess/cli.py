@@ -687,7 +687,7 @@ def main(argv=None):
     s.add_argument("--p-step", type=float, help="sweep: also p + dp, p + 2 dp, ... (each from the previous all-cold state)")
     s.add_argument("--p-end", type=float, help="last parameter of the sweep (default [continuation] p_max)")
     s.add_argument("--stop-after-dry", type=int,
-                   help="move on (next parameter) after this many consecutive hydrology failures")
+                   help="move on (next parameter) after this many consecutive failures (Newton or hydrology)")
     s.add_argument("--edge-thickness", type=float,
                    help="terminus = the last column (from the divide) with ice thicker than this (m), from the start "
                         "state; default: the frozen GroundedMask (the glaciated mask of the initial geometry)")

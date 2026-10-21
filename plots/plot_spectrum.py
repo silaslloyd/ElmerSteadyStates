@@ -90,9 +90,9 @@ def n_columns(f):
 
 
 def stopped(rows, n=3):
-    """the spectrum stopped after n consecutive hydrology failures"""
+    """the spectrum stopped after n consecutive failures (Newton or hydrology)"""
     tail = rows[-n:]
-    return len(tail) == n and all(str(r.get("converged")) == "1" and str(r.get("hydro_ok")) == "0" for r in tail)
+    return len(tail) == n and all(str(r.get("converged")) != "1" or str(r.get("hydro_ok")) == "0" for r in tail)
 
 
 def main():
@@ -155,7 +155,7 @@ def main():
                 ik = ik_of[k]
                 if np.isnan(Z2[ik, i]):
                     Z2[ik, i] = NOT_RUN              # grey: not run, the forcing is finished
-                    notes2[ik][i] = "not tried: the spectrum moved on (hydrology failures)"
+                    notes2[ik][i] = "not run: the spectrum moved on (Newton / hydrology failures)"
         S = {(ip, ik_of[K_old[ik]]): v for (ip, ik), v in S.items()}
         Z, notes = Z2, notes2
     print(f"{len(P)} surface temperatures, k = {K[0]}..{K[-1]}, {len(S)} kept states")
