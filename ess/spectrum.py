@@ -8,9 +8,10 @@ nearest the terminus and cold (flux condition) everywhere else. For each k:
      solve), starting from the previous k's state.
   2. Thermal consistency: a cold glaciated bed node above melting (T_b > T0 + tol) means the mask does not
      fit: the state is DISCARDED (recorded, not kept).
-  3. Steady hydrology on the temperate patch (hydrology_steady below: a PLACEHOLDER until the model is
-     specified). A water sheet thickness below zero at the cold/temperate boundary (the upstream end of the
-     patch) means the patch cannot supply its own water there: DISCARDED.
+  3. Steady hydrology on the temperate patch (hydrology_steady): the flux q = int m dx from the
+     cold/temperate boundary, then the sheet h from the margin (h = h0) back upstream through
+     q = K(h) d/dx(c_N/h - phi0). If h reaches zero inside the patch (or is < 0 at the boundary), the
+     patch cannot carry its water: DISCARDED. [hydrology] in the config: K0, alpha, h0, c_N.
 
 Consistent states are kept: <work>/spectrum_<label>/points/state_XXXX.npz (XXXX = k; also viewable with
 plots/plot_branch_states.py), and every k is a row of spectrum.csv with the checks. The run stops when the
@@ -72,31 +73,86 @@ def melt_rate(diag, g, rhoi, Lw):
     return np.where(np.isfinite(m), m, np.nan)
 
 
-def hydrology_steady(x_col, melt_col):
-    """PLACEHOLDER for the steady hydrology on the temperate patch.
+def hydrology_steady(x_col, melt_col, phi0_col, hp):
+    """Steady water sheet on the temperate patch (flowline).
 
-    x_col:    x of the temperate columns, from the cold/temperate boundary (index 0, upstream) to the
-              terminus (last)
-    melt_col: basal melt rate per column (m/a; < 0 = refreezing)
-    returns:  water sheet thickness per column (same order), h[0] at the cold/temperate boundary
+        dq/dx = m                                  (m: basal melt rate, from the temperature loads)
+        q(x_b) = 0                                 (no water enters at the cold/temperate boundary x_b)
+        q = K(h) d/dx( c_N / h - phi0 ),  K(h) = K0 h^alpha (alpha > 1)
+        h = h0 at the margin (the terminus end of the patch)
 
-    Placeholder until the model is specified: h(x) = the net melt produced over the patch between x and
-    the terminus, int_x^{x_term} m dx' (m^2/a, not a thickness). So h[0] < 0 means the patch refreezes more
-    than it melts overall."""
-    if len(x_col) == 0:
-        return np.zeros(0)
-    xs, ms = np.asarray(x_col, float), np.nan_to_num(np.asarray(melt_col, float))
-    seg = 0.5 * (ms[1:] + ms[:-1]) * np.abs(np.diff(xs))       # trapezoids between columns
-    tail = np.concatenate([np.cumsum(seg[::-1])[::-1], [0.0]])  # from each column to the terminus
-    return tail
+    q is integrated from the boundary to the margin; the flux law is then an initial-value problem for h
+    from the margin back upstream:
+
+        dh/dx = -(h^2 / c_N) * ( q / (K0 h^alpha) + dphi0/dx )
+
+    x_col, melt_col, phi0_col: per temperate column, from the boundary (index 0) to the margin (last).
+    phi0 as ElmerStreams' Phi0 = -sigma_zz + rho_w g z_b (here the Stokes pressure at the bed for -sigma_zz).
+    hp: dict with K0, alpha, h0, c_N.
+    Returns (h per column (NaN beyond where the integration stopped), q per column, ok, status):
+    status "dry": h reached 0 inside the patch (ok = False: discarded); "flood": h exceeded h_max (default
+    1e3 m; the solution blows up), recorded but not discarded; "ok"."""
+    from scipy.integrate import solve_ivp
+    xs = np.asarray(x_col, float)
+    ms = np.nan_to_num(np.asarray(melt_col, float))
+    ph = np.asarray(phi0_col, float)
+    n = len(xs)
+    q = np.concatenate([[0.0], np.cumsum(0.5 * (ms[1:] + ms[:-1]) * np.diff(xs))]) if n > 1 else np.zeros(n)
+    h = np.full(n, np.nan)
+    h[-1] = hp["h0"]
+    if n < 2:
+        return h, q, True, "ok"
+    K0, al, cN = hp["K0"], hp["alpha"], hp["c_N"]
+    dphi = np.diff(ph) / np.diff(xs)                     # piecewise constant between columns
+
+    hmax = hp.get("h_max", 1e3)
+    hdry = 1e-6 * hp["h0"]                   # "zero" (the flux law is singular at h = 0)
+
+    def rhs(x, y):
+        hh = min(max(y[0], 0.5 * hdry), 10 * hmax)
+        j = min(max(np.searchsorted(xs, x) - 1, 0), n - 2)
+        qq = np.interp(x, xs, q)
+        return [-(hh * hh / cN) * (qq / (K0 * hh ** al) + dphi[j])]
+
+    def dry(x, y):                          # h reaches 0: the patch cannot carry its water
+        return y[0] - hdry
+    dry.terminal, dry.direction = True, -1
+
+    def flood(x, y):                        # h grows without bound (blows up in finite distance)
+        return y[0] - hmax
+    flood.terminal, flood.direction = True, 1
+    try:
+        sol = solve_ivp(rhs, (xs[-1], xs[0]), [hp["h0"]], t_eval=xs[::-1], events=(dry, flood), method="LSODA",
+                        rtol=1e-8, atol=1e-3 * hdry)
+    except ValueError:                       # event root finding failed right at h -> 0
+        return h, q, False, "dry"
+    hv = np.full(n, np.nan)
+    got = sol.y[0] if sol.y.size else np.zeros(0)
+    hv[::-1][:len(got)] = got
+    dried = len(sol.t_events[0]) > 0
+    flooded = len(sol.t_events[1]) > 0
+    ok = not dried and (np.nanmin(hv) >= 0 if np.isfinite(hv).any() else True)
+    status = "dry" if dried else ("flood" if flooded else "ok")
+    return hv, q, bool(ok), status
 
 
 # ---------------------------------------------------------------- the loop
 COLS = ["k", "n_temperate_cols", "x_boundary_km", "converged", "newton_its", "rms_F", "n_cold_above_Tm",
-        "Tb_cold_max", "h_boundary", "melt_mean", "thermal_ok", "hydro_ok", "kept", "note"]
+        "Tb_cold_max", "h_boundary", "h_min", "q_margin", "hydro_status", "melt_mean", "thermal_ok", "hydro_ok", "kept", "note"]
 
 
-def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1, tol_T=0.0, rhoi, Lw):
+def phi0_bed(diag, g, rhow, gravity, layout, x):
+    """ElmerStreams' Phi0 = -sigma_zz + rho_w g z_b at the bed nodes, with the Stokes pressure for -sigma_zz
+    and the (mapped) bed coordinate for z_b. None without Pressure in the diagnostics."""
+    P = _get(diag, "Pressure")
+    Z = _get(diag, "coordinate 3")
+    if P is None or Z is None:
+        return None
+    return _on(*P, g) + rhow * gravity * _on(*Z, g)
+
+
+def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1, tol_T=0.0, rhoi, Lw,
+                 rhow, gravity, hydro):
     from .newton import newton_krylov
     os.makedirs(os.path.join(outdir, "points"), exist_ok=True)
     csvf = os.path.join(outdir, "spectrum.csv")
@@ -140,14 +196,23 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
         hydro_ok, h_b, mmean, note = True, np.nan, np.nan, ""
         if k > 0 and r.converged:
             m = melt_rate(diag, g_ct, rhoi, Lw)
-            if m is None:
-                hydro_ok, note = False, "no Temperature Loads / Boundary Weights in the diagnostics"
+            phi0 = phi0_bed(diag, g_ct, rhow, gravity, layout, x)
+            if m is None or phi0 is None:
+                hydro_ok, note = False, "no Temperature Loads / Boundary Weights / Pressure in the diagnostics"
             else:
                 mc = np.array([np.nanmean(m[col == c]) for c in range(k)])     # per column, terminus first
+                pc = np.array([np.nanmean(phi0[col == c]) for c in range(k)])
                 xc = ux[:k]
-                h = hydrology_steady(xc[::-1], mc[::-1])                       # boundary first
+                h, q, ok, hstat = hydrology_steady(xc[::-1], mc[::-1], pc[::-1], hydro)   # boundary first
+                row["hydro_status"] = hstat
                 h_b, mmean = float(h[0]), float(np.nanmean(mc))
-                hydro_ok = bool(h_b >= 0)
+                hydro_ok = ok and bool(h_b >= 0)
+                row["h_min"] = float(np.nanmin(h)) if np.isfinite(h).any() else np.nan
+                row["q_margin"] = float(q[-1])
+                if not ok:
+                    note = "water sheet reaches 0 inside the temperate patch"
+                elif hstat == "flood":
+                    note = f"water sheet exceeds h_max = {hydro.get('h_max', 1e3):g} m (kept)"
         if not r.converged:
             note = "Newton did not converge"
         elif not thermal_ok:

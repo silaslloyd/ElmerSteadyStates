@@ -219,9 +219,14 @@ need many, and 32 to 64 is plenty. Everything is written under `work/land_flowli
    * **Newton:** at the fixed parameter, from the previous k's state, with no remasking. The bed may go
      above melting during the solve.
    * **Thermal check:** the state is discarded if any cold bed node ends above melting (`--tol-T`).
-   * **Hydrology check:** the steady hydrology on the patch is solved (`hydrology_steady`, a
-     PLACEHOLDER for now). The state is discarded if the water sheet at the cold/temperate boundary is
-     below zero.
+   * **Hydrology check:** the steady hydrology on the patch is solved (`hydrology_steady`, settings in
+     `[hydrology]`):
+     * the water flux q = ∫ m dx, from the cold/temperate boundary (q = 0) to the margin, with the melt
+       rate m from the temperature loads;
+     * then the sheet h from the margin (h = h0) back upstream through q = K0 h^α d/dx(c_N/h − φ0), with
+       ElmerStreams' φ0 = −σ_zz + ρ_w g z_b.
+
+     The state is discarded if h reaches zero inside the patch.
 
    Kept states go to `<work>/spectrum_p<P>/points/state_XXXX.npz`, with XXXX = k. Every k gets a row in
    `spectrum.csv`, with the checks and the reason for any discard. `plot_branch_states.py` with that

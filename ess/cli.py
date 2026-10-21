@@ -408,8 +408,17 @@ def cmd_spectrum(args):
     nopt = newton_options(cfg)
     if args.maxit:
         nopt = _replace(nopt, maxit=args.maxit)
+    hy = cfg.get("hydrology", {})
+    hydro = dict(K0=float(hy.get("K0", 1.0)), alpha=float(hy.get("alpha", 3.0)), h0=float(hy.get("h0", 0.1)),
+                 c_N=float(hy.get("c_N", 1.0)), h_max=float(hy.get("h_max", 1e3)))
+    log.info(f"spectrum: hydrology K(h) = {hydro['K0']:g} h^{hydro['alpha']:g}, h0 = {hydro['h0']:g} m at the "
+             f"margin, potential {hydro['c_N']:g}/h - phi0")
+    # the bed pressure (phi0) and the melt rate need these diagnostics
+    model.diagnostics = list(dict.fromkeys(model.diagnostics + ["Pressure", "Temperature Loads",
+                                                                "Temperature Boundary Weights"]))
     rows = run_spectrum(prob, saved, prob.scale(saved.x), p, nopt, out, k_max=args.k_max, k_step=args.k_step,
-                        tol_T=args.tol_T, rhoi=P["rhoi"], Lw=P["Lw"])
+                        tol_T=args.tol_T, rhoi=P["rhoi"], Lw=P["Lw"], rhow=P["rhow"], gravity=P["gravity"],
+                        hydro=hydro)
     kept = [r for r in rows if str(r["kept"]) == "1"]
     log.info(f"spectrum: {len(kept)} consistent states of {len(rows)} tried; {out}/spectrum.csv, {out}/points/")
 
