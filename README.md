@@ -212,6 +212,22 @@ need many, and 32 to 64 is plenty. Everything is written under `work/land_flowli
    `to_floating`), then continue from the new file. `[masks] auto = true` does this inside `newton`
    and `continue`.
 
+9. **`spectrum --state F [--p P]`**: the steady states at one parameter value with temperate beds of
+   increasing size (`ess/spectrum.py`). For k = 0, 1, 2, ... it does the following:
+   * **Mask:** temperate (T = T0) on the k glaciated bed columns nearest the terminus, cold everywhere
+     else.
+   * **Newton:** at the fixed parameter, from the previous k's state, with no remasking. The bed may go
+     above melting during the solve.
+   * **Thermal check:** the state is discarded if any cold bed node ends above melting (`--tol-T`).
+   * **Hydrology check:** the steady hydrology on the patch is solved (`hydrology_steady`, a
+     PLACEHOLDER for now). The state is discarded if the water sheet at the cold/temperate boundary is
+     below zero.
+
+   Kept states go to `<work>/spectrum_p<P>/points/state_XXXX.npz`, with XXXX = k. Every k gets a row in
+   `spectrum.csv`, with the checks and the reason for any discard. `plot_branch_states.py` with that
+   folder shows them against the boundary position. `--k-max` and `--k-step` limit the work, and
+   resubmitting resumes.
+
 A job that times out can simply be resubmitted with the same command:
 
 * Every finished Elmer run is cached by a hash of its inputs, so no run is repeated.

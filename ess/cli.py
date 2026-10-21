@@ -10,6 +10,7 @@ Command line driver. Run inside a batch job (it launches `mpirun ElmerSolver` it
     python3 -m ess newton     CONFIG [--state F] [--p P]         steady state at fixed parameter
     python3 -m ess transfer   CONFIG --from F [--out G]          carry a state onto this config's mesh
     python3 -m ess continue   CONFIG [--state F] [--name B]      pseudo-arclength branch (resumes)
+    python3 -m ess spectrum   CONFIG --state F [--p P]           steady states with temperate beds growing from the terminus
     python3 -m ess stability  CONFIG (--state F | --name B --point K)
     python3 -m ess velocity   CONFIG (--state F [F ...] | --name B [--points K ...])   Stokes velocities
     python3 -m ess toy-demo   [WORKDIR]               whole pipeline on the stand-in model, no Elmer
@@ -390,6 +391,29 @@ def cmd_continue(args):
              f"({prob.t_model / 3600:.2f} h)")
 
 
+def cmd_spectrum(args):
+    """Steady states at one parameter value with temperate beds of 0, 1, 2, ... columns from the terminus
+    (ess/spectrum.py): inconsistent ones (cold bed above melting; water sheet < 0 at the cold/temperate
+    boundary) are discarded."""
+    cfg, model, saved = _setup(args)
+    if cfg["model"].get("type", "elmer") != "elmer":
+        raise SystemExit("spectrum needs the Elmer model")
+    from dataclasses import replace as _replace
+    from .case import eval_lua_parameters
+    from .spectrum import run_spectrum
+    prob = _problem(cfg, model)
+    p = saved.p if args.p is None else args.p
+    P = eval_lua_parameters(model.params_file)
+    out = args.out or os.path.join(cfg["_work"], f"spectrum_p{p:g}")
+    nopt = newton_options(cfg)
+    if args.maxit:
+        nopt = _replace(nopt, maxit=args.maxit)
+    rows = run_spectrum(prob, saved, prob.scale(saved.x), p, nopt, out, k_max=args.k_max, k_step=args.k_step,
+                        tol_T=args.tol_T, rhoi=P["rhoi"], Lw=P["Lw"])
+    kept = [r for r in rows if str(r["kept"]) == "1"]
+    log.info(f"spectrum: {len(kept)} consistent states of {len(rows)} tried; {out}/spectrum.csv, {out}/points/")
+
+
 def cmd_transfer(args):
     """Carry a converged state (any config, e.g. the regularised full domain) onto this config's mesh."""
     cfg = load_config(args.config)
@@ -623,6 +647,15 @@ def main(argv=None):
     s.add_argument("--name", help="branch name (directory <work>/branch_<name>)")
     s.add_argument("--ds", type=float, help="arclength step to (re)start with, overriding the saved one")
     s.set_defaults(fn=cmd_continue)
+
+    s = sub.add_parser("spectrum")
+    common(s)
+    s.add_argument("--k-max", type=int, help="largest temperate patch (bed columns from the terminus); default: to the divide")
+    s.add_argument("--k-step", type=int, default=1, help="columns added per step (default 1)")
+    s.add_argument("--tol-T", type=float, default=0.0, help="cold bed nodes may exceed T0 by this much (K)")
+    s.add_argument("--maxit", type=int, help="Newton iterations per state (overrides [newton] maxit)")
+    s.add_argument("--out", help="output directory (default <work>/spectrum_p<P>)")
+    s.set_defaults(fn=cmd_spectrum)
 
     s = sub.add_parser("transfer")
     common(s)

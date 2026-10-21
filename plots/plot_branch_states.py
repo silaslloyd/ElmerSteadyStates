@@ -128,6 +128,8 @@ def extract(path):
         out["Tb_cold_max"] = float(s.meta["Tb_cold_max"])
     if "time" in s.meta:                     # states of `ess run --save-every` (one Tsurf, a time series)
         out["t"] = float(s.meta["time"])
+    if "x_boundary" in s.meta:               # states of `ess spectrum`: the cold/temperate boundary (m)
+        out["xbd"] = float(s.meta["x_boundary"])
     return out
 
 
@@ -171,8 +173,14 @@ def main():
     # a time series (`ess run --save-every N`, BRANCH = <run>_chunks): time instead of Tsurf on the x axis
     series = [s for s in S if s["k"] is not None]
     timeser = bool(series) and all("t" in s for s in series) and len({round(s["p"], 9) for s in series}) == 1
-    px = (lambda s: s.get("t", 0.0) / 1e3) if timeser else (lambda s: s["p"])
-    xl = "t (kyr)" if timeser else "Tsurf"
+    specser = bool(series) and all("xbd" in s for s in series) and len({round(s["p"], 9) for s in series}) == 1
+    if specser:      # `ess spectrum`: the cold/temperate boundary instead of Tsurf (no patch: the terminus)
+        xmax_b = max(s["xb"].max() for s in S)
+        px = lambda s: (s["xbd"] if np.isfinite(s.get("xbd", np.nan)) else xmax_b) / 1e3
+        xl = "cold/temperate boundary (km)"
+    else:
+        px = (lambda s: s.get("t", 0.0) / 1e3) if timeser else (lambda s: s["p"])
+        xl = "t (kyr)" if timeser else "Tsurf"
     print(f"{len(S)} states: Tsurf = " + ", ".join(f"{s['p']:.3f}" for s in S))
     nv = sum("ub" in s for s in S)
     print(f"velocities for {nv} of {len(S)} states" + ("" if nv else " (run `ess velocity` to add them)"))
@@ -318,7 +326,7 @@ def main():
                                  marker=dict(symbol="star", size=13, color="#555555"),
                                  hovertemplate=f"start: {S[0]['name']} (click to show)<br>Tsurf %{{x:.4f}}"
                                                "<extra></extra>"), 1, 1)
-    fig.update_xaxes(title_text="t (kyr)" if timeser else "Tsurf (K)", row=1, col=1)
+    fig.update_xaxes(title_text=xl if specser else ("t (kyr)" if timeser else "Tsurf (K)"), row=1, col=1)
     fig.update_yaxes(title_text=ylab, row=1, col=1)
     fig.add_hline(y=273.15, line=dict(dash="dot", color="grey"), row=1 + o, col=1)
     frames, steps = [], []
