@@ -415,7 +415,8 @@ def cmd_spectrum(args):
              f"margin, potential {hydro['c_N']:g}/h - phi0")
     # the bed pressure (phi0) and the melt rate need these diagnostics
     model.diagnostics = list(dict.fromkeys(model.diagnostics + ["Pressure", "Temperature Loads",
-                                                                "Temperature Boundary Weights"]))
+                                                                "Temperature Boundary Weights"]
+                                           + (["Strain Heating Boundary Weights"] if model.strain_heat else [])))
     rows = run_spectrum(prob, saved, prob.scale(saved.x), p, nopt, out, k_max=args.k_max, k_step=args.k_step,
                         tol_T=args.tol_T, rhoi=P["rhoi"], Lw=P["Lw"], rhow=P["rhow"], gravity=P["gravity"],
                         hydro=hydro, edge_thickness=args.edge_thickness)

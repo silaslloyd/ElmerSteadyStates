@@ -508,6 +508,10 @@ Solver 10
 __LS_STRAIN__
   Nonlinear System Max Iterations = 1
   Bubbles in global system = False
+  ! boundary weights for the basal melt rate (`ess spectrum`; ElmerStreams getmeltrate uses these: the
+  ! heat solver's Temperature Boundary Weights have non-finite values at some nodes)
+  Calculate Boundary Weights = Logical True
+  Exported Variable 1 = -dofs 1 "Strain Heating Boundary Weights"
 End
 
 Solver 11
@@ -778,6 +782,7 @@ Boundary Condition  19
 __FRICTION_HEAT__
 
   Calculate Temperature Boundary Weights = Logical True
+  Calculate Strain Heating Boundary Weights = Logical True
 
   FSSA Theta = Real 1.0
   FSSA Flag = String $fssaflag

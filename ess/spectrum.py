@@ -86,9 +86,12 @@ def basal_temperature(layout, x, g):
 
 def melt_rate(diag, g, rhoi, Lw):
     """Basal melt rate (m/a of ice) at temperate nodes from the heat solver's reaction loads, as
-    ElmerStreams getmeltrate: m = -loads / (boundary weight * rho_i * L). Positive = melting."""
+    ElmerStreams getmeltrate: m = -loads / (boundary weight * rho_i * L), with the strain heating solver's
+    boundary weights (the heat solver's, when strain heating is off). Positive = melting."""
     L = _get(diag, "Temperature Loads")
-    Wt = _get(diag, "Temperature Boundary Weights")
+    Wt = _get(diag, "Strain Heating Boundary Weights")    # as ElmerStreams getmeltrate (finite everywhere)
+    if Wt is None:                                         # strain heating off: the heat solver's weights
+        Wt = _get(diag, "Temperature Boundary Weights")
     if L is None or Wt is None:
         return None
     loads, w = _on(*L, g), _on(*Wt, g)
