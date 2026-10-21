@@ -31,7 +31,7 @@ import plot_branch_states as pbs  # noqa: E402
 
 # ---- settings for pressing Run (paths relative to the repository)
 DIR = "work/land_flowline_T2k_strain"
-PATTERN = "spectrum_p*_e50"     # the spectrum folders (one per Tsurf)
+PATTERN = "spectrum_p*_e50,fine/spectrum_p*_e50"     # the spectrum folders (one per Tsurf); comma = several
 SECTIONS = True                 # T, u, w sections (False: lines only, a much smaller html)
 VEL_NZ = 40                     # vertical points of the section grids
 SHOW = True
@@ -55,16 +55,21 @@ def status(r):
 
 
 def read_spectra(d, pattern):
-    out = []
-    for f in sorted(glob.glob(os.path.join(d, pattern))):
+    """pattern: one glob, or several separated by commas (e.g. "spectrum_p*_e50,fine/spectrum_p*_e50");
+    a Tsurf found twice keeps the folder with more rows"""
+    out = {}
+    files = sorted(f for pat in pattern.split(",") for f in glob.glob(os.path.join(d, pat.strip())))
+    for f in files:
         m = re.search(r"spectrum_p([0-9.]+)", os.path.basename(f))
         csvf = os.path.join(f, "spectrum.csv")
         if not m or not os.path.exists(csvf):
             continue
         with open(csvf) as fh:
             rows = list(csv.DictReader(fh))
-        out.append((float(m.group(1)), f, rows))
-    return sorted(out)
+        p = float(m.group(1))
+        if p not in out or len(rows) > len(out[p][2]):
+            out[p] = (p, f, rows)
+    return sorted(out.values())
 
 
 def n_columns(f):
