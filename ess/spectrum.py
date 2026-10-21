@@ -195,7 +195,9 @@ def phi0_bed(diag, g, rhow, gravity, layout, x):
 
 
 def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1, tol_T=0.0, rhoi, Lw,
-                 rhow, gravity, hydro, edge_thickness=None):
+                 rhow, gravity, hydro, edge_thickness=None, stop_after_dry=None):
+    """... stop_after_dry N: stop after N consecutive states that fail the hydrology check. The k = 0
+    (all-cold) Newton result is always saved as <outdir>/k0_state.npz (the start of the next parameter)."""
     from .newton import newton_krylov
     os.makedirs(os.path.join(outdir, "points"), exist_ok=True)
     csvf = os.path.join(outdir, "spectrum.csv")
@@ -231,8 +233,17 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
              + "), "
              f"k = {k_start} .. {k_end} step {k_step}")
 
+    n_dry = 0
+    for r_ in reversed(rows):                 # resuming: the current run of hydrology failures
+        if str(r_.get("converged")) == "1" and str(r_.get("hydro_ok")) == "0":
+            n_dry += 1
+        else:
+            break
     k = k_start
     while k <= k_end:
+        if stop_after_dry and n_dry >= stop_after_dry:
+            log.info(f"spectrum: {n_dry} consecutive hydrology failures, stopping at k = {k - k_step}")
+            break
         ct = mask_for(k, g_ct, col)
         frozen[kname] = (g_ct, ct)
         r = newton_krylov(prob, y, p, newton_opt, label=f"spectrum k={k}")
@@ -307,5 +318,9 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
                  f"cold nodes above T0 {row['n_cold_above_Tm']}, h_boundary {h_b:.3g}")
         if r.converged:
             y = r.y                          # the next k starts from this state, kept or not
+        if k == 0 and r.converged:
+            save_state(os.path.join(outdir, "k0_state.npz"), layout, x, p, dict(frozen), diag)
+        if r.converged and k > 0:
+            n_dry = n_dry + 1 if not hydro_ok else 0
         k += k_step
     return rows

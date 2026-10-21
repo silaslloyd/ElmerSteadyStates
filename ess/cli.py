@@ -394,17 +394,18 @@ def cmd_continue(args):
 def cmd_spectrum(args):
     """Steady states at one parameter value with temperate beds of 0, 1, 2, ... columns from the terminus
     (ess/spectrum.py): inconsistent ones (cold bed above melting; water sheet < 0 at the cold/temperate
-    boundary) are discarded."""
+    boundary) are discarded. With --p-step: the same at p, p + dp, ... (to --p-end), each starting from the
+    previous parameter's all-cold steady state; --stop-after-dry N moves on after N hydrology failures."""
     cfg, model, saved = _setup(args)
     if cfg["model"].get("type", "elmer") != "elmer":
         raise SystemExit("spectrum needs the Elmer model")
     from dataclasses import replace as _replace
     from .case import eval_lua_parameters
     from .spectrum import run_spectrum
+    from .statefile import load_state
     prob = _problem(cfg, model)
-    p = saved.p if args.p is None else args.p
+    p0 = saved.p if args.p is None else args.p
     P = eval_lua_parameters(model.params_file)
-    out = args.out or os.path.join(cfg["_work"], f"spectrum_p{p:g}")
     nopt = newton_options(cfg)
     if args.maxit:
         nopt = _replace(nopt, maxit=args.maxit)
@@ -417,11 +418,31 @@ def cmd_spectrum(args):
     model.diagnostics = list(dict.fromkeys(model.diagnostics + ["Pressure", "Temperature Loads",
                                                                 "Temperature Boundary Weights"]
                                            + (["Strain Heating Boundary Weights"] if model.strain_heat else [])))
-    rows = run_spectrum(prob, saved, prob.scale(saved.x), p, nopt, out, k_max=args.k_max, k_step=args.k_step,
-                        tol_T=args.tol_T, rhoi=P["rhoi"], Lw=P["Lw"], rhow=P["rhow"], gravity=P["gravity"],
-                        hydro=hydro, edge_thickness=args.edge_thickness)
-    kept = [r for r in rows if str(r["kept"]) == "1"]
-    log.info(f"spectrum: {len(kept)} consistent states of {len(rows)} tried; {out}/spectrum.csv, {out}/points/")
+    if args.p_step:
+        p_end = args.p_end if args.p_end is not None else float(cfg.get("continuation", {}).get("p_max", p0))
+        n = int(np.floor((p_end - p0) / args.p_step + 1e-9)) + 1
+        plist = [p0 + i * args.p_step for i in range(max(n, 1))]
+        base = args.out or cfg["_work"]
+        tag = f"_e{args.edge_thickness:g}" if args.edge_thickness is not None else ""
+        outs = [os.path.join(base, f"spectrum_p{p:g}{tag}") for p in plist]
+        log.info(f"spectrum sweep: p = {', '.join(f'{p:g}' for p in plist)}")
+    else:
+        plist = [p0]
+        outs = [args.out or os.path.join(cfg["_work"], f"spectrum_p{p0:g}")]
+    y0 = prob.scale(saved.x)
+    for p, out in zip(plist, outs):
+        rows = run_spectrum(prob, saved, y0, p, nopt, out, k_max=args.k_max, k_step=args.k_step,
+                            tol_T=args.tol_T, rhoi=P["rhoi"], Lw=P["Lw"], rhow=P["rhow"], gravity=P["gravity"],
+                            hydro=hydro, edge_thickness=args.edge_thickness, stop_after_dry=args.stop_after_dry)
+        kept = [r for r in rows if str(r["kept"]) == "1"]
+        log.info(f"spectrum: p = {p:g}: {len(kept)} consistent states of {len(rows)} tried; {out}/spectrum.csv")
+        f0 = os.path.join(out, "k0_state.npz")
+        if not os.path.exists(f0):
+            log.warning(f"spectrum: no converged all-cold state at p = {p:g}; stopping the sweep")
+            break
+        s0 = load_state(f0)                      # the next parameter starts from this all-cold steady state
+        y0 = prob.scale(s0.x)
+        saved.diag = s0.diag
 
 
 def cmd_transfer(args):
@@ -663,6 +684,10 @@ def main(argv=None):
     s.add_argument("--k-max", type=int, help="largest temperate patch (bed columns from the terminus); default: to the divide")
     s.add_argument("--k-step", type=int, default=1, help="columns added per step (default 1)")
     s.add_argument("--tol-T", type=float, default=0.0, help="cold bed nodes may exceed T0 by this much (K)")
+    s.add_argument("--p-step", type=float, help="sweep: also p + dp, p + 2 dp, ... (each from the previous all-cold state)")
+    s.add_argument("--p-end", type=float, help="last parameter of the sweep (default [continuation] p_max)")
+    s.add_argument("--stop-after-dry", type=int,
+                   help="move on (next parameter) after this many consecutive hydrology failures")
     s.add_argument("--edge-thickness", type=float,
                    help="terminus = the last column (from the divide) with ice thicker than this (m), from the start "
                         "state; default: the frozen GroundedMask (the glaciated mask of the initial geometry)")
