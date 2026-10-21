@@ -3,17 +3,18 @@
 The spectra of `ess spectrum` (one folder spectrum_p<Tsurf>[_e<edge>] per surface temperature) on one page:
 
   top      every (Tsurf, number of temperate bed columns k) tried: kept (consistent steady state) or
-           discarded (hover: the reason); click a cell to show that state
+           discarded (hover: the reason); click a kept (green) square to show that state
   below    the selected state: basal temperature, the water sheet h (steady hydrology on the temperate
            patch), and the x-z sections of temperature, u and w with the surface drawn on them
 
-Two sliders: one for Tsurf, one for k. Discarded or untried combinations show empty panels and the reason.
+Click a green (kept) square of the top panel to show that steady state; hover any square for its status.
 
 Copy the folders to your laptop, then press Run (settings below) or:
     python plots/plot_spectrum.py work/land_flowline_T2k_strain "spectrum_p*_e50"
 Needs numpy and plotly.
 """
 import csv
+import json
 import glob
 import os
 import re
@@ -162,19 +163,12 @@ def main():
         head = f"Tsurf = {P[ip]:g} K, k = {K[ik]} temperate bed columns"
         return head + ("" if s else f": {notes[ik][ip].replace('<br>', ', ')}")
 
-    frames = [go.Frame(name=f"{ip}_{ik}", data=state_traces((ip, ik)), traces=list(range(nanim)),
-                       layout=dict(title_text=title((ip, ik))))
-              for ip in range(len(P)) for ik in range(len(K))]
-    fig.frames = frames
-    ip0, ik0 = first
-    skip = lambda lab: dict(method="skip", label=lab, args=[None])
+    # one frame per kept state (only those can be clicked)
+    fig.frames = [go.Frame(name=f"{ip}_{ik}", data=state_traces((ip, ik)), traces=list(range(nanim)),
+                           layout=dict(title_text=title((ip, ik)))) for (ip, ik) in S]
     fig.update_layout(
         title=dict(text=title(first), font=dict(size=13)), height=330 * rows, template="plotly_white",
-        showlegend=False, margin=dict(t=90, b=160),
-        sliders=[dict(active=ip0, steps=[skip(f"{p:g}") for p in P], x=0.05, len=0.9, y=0, yanchor="top",
-                      currentvalue=dict(prefix="Tsurf (K) = "), pad=dict(t=30)),
-                 dict(active=ik0, steps=[skip(str(k)) for k in K], x=0.05, len=0.9, y=-0.05, yanchor="top",
-                      currentvalue=dict(prefix="temperate columns k = "), pad=dict(t=30))])
+        showlegend=False, margin=dict(t=90, b=60))
     fig.update_xaxes(title_text="Tsurf (K)", row=1, col=1)
     fig.update_yaxes(title_text="k", row=1, col=1)
     for r in range(2, rows + 1):
@@ -182,28 +176,18 @@ def main():
     fig.update_xaxes(title_text="x (km)", row=rows, col=1)
     fig.update_yaxes(range=tb, title_text="K", row=2, col=1)
     fig.update_yaxes(range=hr, title_text="m", row=3, col=1)
+    kept_keys = json.dumps([f"{ip}_{ik}" for (ip, ik) in S])
     js = """
 var gd = document.getElementById('{plot_id}');
-var cur = [IP0, IK0];
-function show(ip, ik) {
-  cur = [ip, ik];
-  Plotly.animate(gd, [ip + '_' + ik], {mode: 'immediate', frame: {duration: 0, redraw: true},
-                                     transition: {duration: 0}});
-}
-gd.on('plotly_sliderchange', function (ev) {
-  // which slider moved: the Tsurf one has the prefix "Tsurf"
-  var pre = (ev.slider && ev.slider.currentvalue && ev.slider.currentvalue.prefix) || '';
-  var i = ev.step._index;
-  if (pre.indexOf('Tsurf') >= 0) show(i, cur[1]); else show(cur[0], i);
-});
+var kept = new Set(KEPT_KEYS);
 gd.on('plotly_click', function (ev) {
   var c = ev.points[0].customdata;
   if (!Array.isArray(c)) return;
-  Plotly.relayout(gd, {'sliders[0].active': c[0], 'sliders[1].active': c[1]});
-  show(c[0], c[1]);
+  var name = c[0] + '_' + c[1];
+  if (!kept.has(name)) return;            // discarded / not tried: nothing to show
+  Plotly.animate(gd, [name], {mode: 'immediate', frame: {duration: 0, redraw: true}, transition: {duration: 0}});
 });
-"""
-    js = js.replace("IP0", str(ip0)).replace("IK0", str(ik0))
+""".replace("KEPT_KEYS", kept_keys)
     out = os.path.join(d, "spectra.html")
     fig.write_html(out, include_plotlyjs="cdn", post_script=js)
     print(f"wrote {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
