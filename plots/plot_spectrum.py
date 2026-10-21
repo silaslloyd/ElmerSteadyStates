@@ -37,7 +37,21 @@ VEL_NZ = 40                     # vertical points of the section grids
 SHOW = True
 FILL_PASSED = True              # finished forcings: untried patch sizes up to fully temperate shown grey
 
-KEPT, DISCARD, SKIPPED = "#2ca02c", "#e74c3c", "#b0b0b0"
+# status codes and colours of the grid
+NOT_RUN, NO_CONV, THERMAL, HYDRO, KEPT = 0, 1, 2, 3, 4
+COLOURS = {NOT_RUN: "#b0b0b0", NO_CONV: "#e74c3c", THERMAL: "#f1c40f", HYDRO: "#2e86de", KEPT: "#2ca02c"}
+
+
+def status(r):
+    """grid code of one spectrum.csv row: not converged / forbidden by the heat equation (a cold bed node
+    above melting) / forbidden by the hydrology (water sheet reaches 0) / kept"""
+    if str(r.get("converged")) != "1":
+        return NO_CONV
+    if str(r.get("thermal_ok")) == "0":
+        return THERMAL
+    if str(r.get("hydro_ok")) == "0":
+        return HYDRO
+    return KEPT if str(r.get("kept")) == "1" else HYDRO
 
 
 def read_spectra(d, pattern):
@@ -106,7 +120,7 @@ def main():
             k = int(r["k"])
             ik, ip = ik_of[k], ip_of[p]
             kept = str(r.get("kept")) == "1"
-            Z[ik, ip] = 1.0 if kept else 0.0
+            Z[ik, ip] = status(r)
             xb = r.get("x_boundary_km", "")
             notes[ik][ip] = (("kept" if kept else "discarded: " + (r.get("note") or "?"))
                              + (f"<br>boundary {float(xb):.2f} km" if xb not in ("", "nan") else "")
@@ -129,7 +143,7 @@ def main():
             ip = ip_of[p]
             for r in rows:
                 ik = ik_of[int(r["k"])]
-                Z2[ik, ip] = 1.0 if str(r.get("kept")) == "1" else 0.0
+                Z2[ik, ip] = status(r)
         for ik_old, k in enumerate(K_old):
             for ip in range(len(P)):
                 notes2[ik_of[k]][ip] = notes[ik_old][ip]
@@ -140,7 +154,7 @@ def main():
             for k in range(0, ncols[i] + 1):
                 ik = ik_of[k]
                 if np.isnan(Z2[ik, i]):
-                    Z2[ik, i] = 0.5                  # grey: not tried, the forcing is finished
+                    Z2[ik, i] = NOT_RUN              # grey: not run, the forcing is finished
                     notes2[ik][i] = "not tried: the spectrum moved on (hydrology failures)"
         S = {(ip, ik_of[K_old[ik]]): v for (ip, ik), v in S.items()}
         Z, notes = Z2, notes2
@@ -165,7 +179,7 @@ def main():
                 lo = -hi
             cr[k_] = dict(colorscale=cs, zmin=lo, zmax=hi)
 
-    titles = ["consistent steady states: Tsurf vs temperate bed columns k (green kept, red discarded, grey not tried; click)",
+    titles = ["Tsurf vs temperate bed columns k: green kept (click), red not converged, yellow forbidden by the heat equation, blue forbidden by the hydrology, grey not run",
               "basal temperature (K)", "water sheet thickness h (m)"]
     sec = [("TS", "temperature (K)", "K"), ("U", "along-flow velocity u (m/yr)", "m/yr"),
            ("W", "vertical velocity w (m/yr)", "m/yr")] if SECTIONS else []
@@ -210,8 +224,11 @@ def main():
         fig.add_trace(t, r, 1)
     nanim = len(where)
     # the status grid (static) and its click targets
-    fig.add_trace(go.Heatmap(x=P, y=K, z=Z, colorscale=[[0, DISCARD], [0.33, DISCARD], [0.34, SKIPPED], [0.66, SKIPPED],
-                                                          [0.67, KEPT], [1, KEPT]], zmin=0, zmax=1, showscale=False,
+    cs = []
+    for c in range(5):                                       # discrete: one colour per code 0..4
+        cs += [[c / 5, COLOURS[c]], [(c + 1) / 5 - 1e-9, COLOURS[c]]]
+    cs[-1][0] = 1.0
+    fig.add_trace(go.Heatmap(x=P, y=K, z=Z, colorscale=cs, zmin=-0.5, zmax=4.5, showscale=False,
                              xgap=2, ygap=1 if len(K) <= 40 else 0, text=notes,
                              customdata=[[[ip, ik] for ip in range(len(P))] for ik in range(len(K))],
                              hovertemplate="Tsurf %{x:g} K, k = %{y}<br>%{text}<extra></extra>"), 1, 1)
@@ -248,7 +265,7 @@ gd.on('plotly_click', function (ev) {
 });
 """.replace("KEPT_KEYS", kept_keys)
     out = os.path.join(d, "spectra.html")
-    fig.write_html(out, include_plotlyjs="cdn", post_script=js)
+    fig.write_html(out, include_plotlyjs="cdn", post_script=js, auto_play=False)
     print(f"wrote {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
     if SHOW:
         webbrowser.open("file://" + os.path.abspath(out))
