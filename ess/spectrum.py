@@ -199,18 +199,34 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
         if f_last and os.path.exists(f_last):
             from .statefile import load_state
             y = prob.scale(load_state(f_last).x)
+        f0 = os.path.join(outdir, "points", "state_0000.npz")
+        if edge_thickness is not None and os.path.exists(f0):       # the terminus of the k = 0 steady state
+            from .statefile import load_state
+            s0 = load_state(f0)
+            g_ct, col, ux = bed_columns(layout, frozen, s0.diag, x=s0.x, edge_thickness=edge_thickness)
+            ncol = len(ux)
+            k_end = ncol if k_max is None else min(k_max, ncol)
         log.info(f"spectrum: resuming at k = {k_start} ({len(rows)} rows in {csvf})")
     log.info(f"spectrum: p = {p:g}, {ncol} glaciated bed columns (terminus at x = {ux[0] / 1e3:.2f} km, from "
              + ("the frozen GroundedMask" if edge_thickness is None else f"ice thicker than {edge_thickness:g} m")
              + "), "
              f"k = {k_start} .. {k_end} step {k_step}")
 
-    for k in range(k_start, k_end + 1, k_step):
+    k = k_start
+    while k <= k_end:
         ct = mask_for(k, g_ct, col)
         frozen[kname] = (g_ct, ct)
         r = newton_krylov(prob, y, p, newton_opt, label=f"spectrum k={k}")
         x = prob.unscale(r.y)
         diag = prob.last_diag
+        if k == 0 and edge_thickness is not None and r.converged:
+            # the terminus of the all-cold STEADY state (the start state may not be steady: its margin moves)
+            g_ct, col, ux = bed_columns(layout, frozen, diag, x=x, edge_thickness=edge_thickness)
+            ncol = len(ux)
+            k_end = ncol if k_max is None else min(k_max, ncol)
+            ct = mask_for(0, g_ct, col)
+            log.info(f"spectrum: terminus of the k = 0 steady state at x = {ux[0] / 1e3:.2f} km "
+                     f"({ncol} glaciated columns); the patches start there")
         Tb = basal_temperature(layout, x, g_ct)
         cold = (col >= 0) & (ct < 0)
         hot = cold & (Tb > T0 + tol_T)
@@ -271,4 +287,5 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
                  f"cold nodes above T0 {row['n_cold_above_Tm']}, h_boundary {h_b:.3g}")
         if r.converged:
             y = r.y                          # the next k starts from this state, kept or not
+        k += k_step
     return rows
