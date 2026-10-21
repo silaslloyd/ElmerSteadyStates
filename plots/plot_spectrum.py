@@ -212,7 +212,7 @@ def main():
     # the status grid (static) and its click targets
     fig.add_trace(go.Heatmap(x=P, y=K, z=Z, colorscale=[[0, DISCARD], [0.33, DISCARD], [0.34, SKIPPED], [0.66, SKIPPED],
                                                           [0.67, KEPT], [1, KEPT]], zmin=0, zmax=1, showscale=False,
-                             xgap=2, ygap=1, text=notes,
+                             xgap=2, ygap=1 if len(K) <= 40 else 0, text=notes,
                              customdata=[[[ip, ik] for ip in range(len(P))] for ik in range(len(K))],
                              hovertemplate="Tsurf %{x:g} K, k = %{y}<br>%{text}<extra></extra>"), 1, 1)
 
