@@ -162,7 +162,23 @@ def hydrology_steady(x_col, melt_col, phi0_col, hp):
 
 # ---------------------------------------------------------------- the loop
 COLS = ["k", "n_temperate_cols", "x_boundary_km", "converged", "newton_its", "rms_F", "n_cold_above_Tm",
-        "Tb_cold_max", "h_boundary", "h_min", "q_margin", "hydro_status", "melt_mean", "thermal_ok", "hydro_ok", "kept", "note"]
+        "Tb_cold_max", "h_boundary", "h_min", "q_margin", "hydro_status", "n_melt_filled", "melt_mean", "thermal_ok", "hydro_ok", "kept", "note"]
+
+
+def fill_columns(xc, vals):
+    """mean over each column's nodes; a column without any finite value is interpolated (in x) from the
+    nearest columns that have one (Elmer's boundary weights are non-finite at a few nodes)"""
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        v = np.array([np.nanmean(a) if np.isfinite(a).any() else np.nan for a in vals], float)
+    ok = np.isfinite(v)
+    if ok.any() and not ok.all():
+        o = np.argsort(xc)
+        xs, vs, oks = np.asarray(xc)[o], v[o], ok[o]
+        vs[~oks] = np.interp(xs[~oks], xs[oks], vs[oks])
+        v[o] = vs
+    return v
 
 
 def phi0_bed(diag, g, rhow, gravity, layout, x):
@@ -243,9 +259,10 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
             if m is None or phi0 is None:
                 hydro_ok, note = False, "no Temperature Loads / Boundary Weights / Pressure in the diagnostics"
             else:
-                mc = np.array([np.nanmean(m[col == c]) for c in range(k)])     # per column, terminus first
-                pc = np.array([np.nanmean(phi0[col == c]) for c in range(k)])
                 xc = ux[:k]
+                mc = fill_columns(xc, [m[col == c] for c in range(k)])           # per column, terminus first
+                pc = fill_columns(xc, [phi0[col == c] for c in range(k)])
+                row["n_melt_filled"] = int(sum(not np.isfinite(m[col == c]).any() for c in range(k)))
                 h, q, ok, hstat = hydrology_steady(xc[::-1], mc[::-1], pc[::-1], hydro)   # boundary first
                 row["hydro_status"] = hstat
                 hc, qc = h[::-1], q[::-1]                                          # terminus first, by column
