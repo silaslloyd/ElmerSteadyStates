@@ -78,7 +78,7 @@ def hydrology_steady(x_col, melt_col, phi0_col, hp):
 
         dq/dx = m                                  (m: basal melt rate, from the temperature loads)
         q(x_b) = 0                                 (no water enters at the cold/temperate boundary x_b)
-        q = K(h) d/dx( c_N / h - phi0 ),  K(h) = K0 h^alpha (alpha > 1)
+        q = K(h) d/dx( c_N / h - phi0 ),  K(h) = K0 h^alpha (alpha > 1); no minus sign: N ~ c_N/h decreases with h
         h = h0 at the margin (the terminus end of the patch)
 
     q is integrated from the boundary to the margin; the flux law is then an initial-value problem for h

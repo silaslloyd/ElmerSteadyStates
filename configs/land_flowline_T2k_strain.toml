@@ -59,10 +59,11 @@ ess_slide_maxfactor = 1.0e6
 #   dq/dx = m (melt from the temperature loads), q = 0 at the cold/temperate boundary,
 #   q = K(h) d/dx(c_N / h - phi0),  K = K0 h^alpha,  h = h0 at the margin,
 #   phi0 = -sigma_zz + rho_w g z_b (ElmerStreams' Phi0; the Stokes bed pressure for -sigma_zz), MPa.
-# Units: x in m, q in m^2/a (ice), h in m, c_N / h and phi0 in MPa. A patch is discarded when h reaches 0
+# No minus sign: N ~ c_N/h decreases with h. Units: x in m, q in m^2/a (ice), h in m, c_N/h, phi0 in MPa.
+# A patch is discarded when h reaches 0
 # inside it; h > h_max is recorded ("flood") but kept.
 [hydrology]
-K0 = 1.0
+K0 = 1.0e7
 alpha = 3.0
 h0 = 0.1          # m at the margin (ElmerStreams' hr)
 c_N = 1.0         # MPa m
