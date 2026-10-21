@@ -320,6 +320,10 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
             y = r.y                          # the next k starts from this state, kept or not
         if k == 0 and r.converged:
             save_state(os.path.join(outdir, "k0_state.npz"), layout, x, p, dict(frozen), diag)
+            import json
+            with open(os.path.join(outdir, "spectrum_meta.json"), "w") as fm:    # for plots/plot_spectrum.py
+                json.dump(dict(p=p, n_columns=int(ncol), x_terminus_km=float(ux[0] / 1e3),
+                               edge_thickness=edge_thickness), fm)
         if r.converged and k > 0:
             n_dry = n_dry + 1 if not hydro_ok else 0
         k += k_step

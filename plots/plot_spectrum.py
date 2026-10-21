@@ -35,6 +35,7 @@ PATTERN = "spectrum_p*_e50"     # the spectrum folders (one per Tsurf)
 SECTIONS = True                 # T, u, w sections (False: lines only, a much smaller html)
 VEL_NZ = 40                     # vertical points of the section grids
 SHOW = True
+FILL_PASSED = True              # finished forcings: untried patch sizes up to fully temperate shown as discarded
 
 KEPT, DISCARD = "#2ca02c", "#e74c3c"
 
@@ -50,6 +51,34 @@ def read_spectra(d, pattern):
             rows = list(csv.DictReader(fh))
         out.append((float(m.group(1)), f, rows))
     return sorted(out)
+
+
+def n_columns(f):
+    """number of glaciated bed columns (patch size of a fully temperate bed) of one spectrum folder"""
+    mf = os.path.join(f, "spectrum_meta.json")
+    if os.path.exists(mf):
+        with open(mf) as fh:
+            return int(json.load(fh)["n_columns"])
+    s0 = next((g for g in (os.path.join(f, "k0_state.npz"), os.path.join(f, "points", "state_0000.npz"))
+               if os.path.exists(g)), None)
+    if s0 is None:
+        return None
+    from ess.spectrum import bed_columns
+    from ess.statefile import load_state
+    m = re.search(r"_e([0-9.]+)$", os.path.basename(f))
+    st = load_state(s0)
+    try:
+        _, _, ux = bed_columns(st.layout, st.frozen, st.diag, x=st.x,
+                               edge_thickness=float(m.group(1)) if m else None)
+    except Exception:
+        return None
+    return len(ux)
+
+
+def stopped(rows, n=3):
+    """the spectrum stopped after n consecutive hydrology failures"""
+    tail = rows[-n:]
+    return len(tail) == n and all(str(r.get("converged")) == "1" and str(r.get("hydro_ok")) == "0" for r in tail)
 
 
 def main():
@@ -86,6 +115,35 @@ def main():
             sf = os.path.join(f, "points", f"state_{k:04d}.npz")
             if kept and os.path.exists(sf):
                 S[(ip, ik)] = pbs.extract(sf)
+    # forcings that are finished (a warmer one has started, or the spectrum stopped after its hydrology
+    # failures): every patch size up to fully temperate that was not tried counts as discarded
+    ncols = [n_columns(f) for _, f, _ in spec]
+    if FILL_PASSED and any(n is not None for n in ncols):
+        kmax = max(n for n in ncols if n is not None)
+        K_old = K
+        K = sorted(set(K) | set(range(0, kmax + 1)))
+        ik_of = {k: i for i, k in enumerate(K)}
+        Z2 = np.full((len(K), len(P)), np.nan)
+        notes2 = [["not tried"] * len(P) for _ in K]
+        for p, f, rows in spec:
+            ip = ip_of[p]
+            for r in rows:
+                ik = ik_of[int(r["k"])]
+                Z2[ik, ip] = 1.0 if str(r.get("kept")) == "1" else 0.0
+        for ik_old, k in enumerate(K_old):
+            for ip in range(len(P)):
+                notes2[ik_of[k]][ip] = notes[ik_old][ip]
+        for i, (p, f, rows) in enumerate(spec):
+            later = any(rows2 for p2, _, rows2 in spec if p2 > p)
+            if not (later or stopped(rows)) or ncols[i] is None:
+                continue
+            for k in range(0, ncols[i] + 1):
+                ik = ik_of[k]
+                if np.isnan(Z2[ik, i]):
+                    Z2[ik, i] = 0.0
+                    notes2[ik][i] = "not tried: the spectrum moved on (hydrology failures)"
+        S = {(ip, ik_of[K_old[ik]]): v for (ip, ik), v in S.items()}
+        Z, notes = Z2, notes2
     print(f"{len(P)} surface temperatures, k = {K[0]}..{K[-1]}, {len(S)} kept states")
     if not S:
         raise SystemExit("no kept states to show")
