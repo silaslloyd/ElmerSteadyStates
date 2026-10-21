@@ -35,13 +35,37 @@ T0 = 273.15
 
 
 # ---------------------------------------------------------------- the bed columns and the masks
-def bed_columns(layout, frozen, diag):
+def ice_thickness(layout, x, g, diag):
+    """ice thickness above the bed nodes g: Zs (state) at the surface node of the same column minus the
+    (mapped) bed coordinate"""
+    zsb = next(b for b in layout.blocks if b.name.lower() == "zs")
+    zs = layout.split(np.asarray(x))[zsb.name]
+    xb, yb, _ = _xy_key(diag, g)
+    xs, ys, _ = _xy_key(diag, zsb.gids)
+    top = {k: i for i, k in enumerate(zip(xs, ys))}
+    js = np.array([top.get(k, -1) for k in zip(xb, yb)])
+    zb = _on(*_get(diag, "coordinate 3"), g)
+    return np.where(js >= 0, zs[np.maximum(js, 0)] - zb, np.nan)
+
+
+def bed_columns(layout, frozen, diag, x=None, edge_thickness=None):
     """Glaciated bed nodes grouped into columns along x, ordered from the terminus inwards.
+    The glaciated bed is the frozen GroundedMask (> 0: the glaciated mask written by `ess setup` from the
+    INITIAL geometry), or, with edge_thickness (m), the columns from the divide up to the first column whose
+    ice (Zs - bed, from the state x) is not thicker than that: the terminus of this state.
     Returns (gids of the mask nodes, column index per mask node (0 = at the terminus), column x)."""
     g_ct = frozen[find_name(frozen, "ColdTempMask")][0]
-    gm = _on(*frozen[find_name(frozen, "GroundedMask")], g_ct, fill=0.0)
-    xr, _, x = _xy_key(diag, g_ct)
-    glac = gm > 0
+    xr, _, xpos = _xy_key(diag, g_ct)
+    if edge_thickness is None:
+        gm = _on(*frozen[find_name(frozen, "GroundedMask")], g_ct, fill=0.0)
+        glac = gm > 0
+    else:
+        H = ice_thickness(layout, x, g_ct, diag)
+        uxa = np.unique(xr)                              # ascending from the divide
+        Hc = np.array([np.nanmean(H[xr == v]) for v in uxa])
+        thin = np.flatnonzero(~(Hc > edge_thickness))
+        last = thin[0] if thin.size else len(uxa)        # first column that is not glaciated
+        glac = np.isin(xr, uxa[:last])
     ux = np.unique(xr[glac])[::-1]                     # descending: terminus first
     col = np.full(len(g_ct), -1)
     pos = {v: i for i, v in enumerate(ux)}
@@ -152,7 +176,7 @@ def phi0_bed(diag, g, rhow, gravity, layout, x):
 
 
 def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1, tol_T=0.0, rhoi, Lw,
-                 rhow, gravity, hydro):
+                 rhow, gravity, hydro, edge_thickness=None):
     from .newton import newton_krylov
     os.makedirs(os.path.join(outdir, "points"), exist_ok=True)
     csvf = os.path.join(outdir, "spectrum.csv")
@@ -162,7 +186,7 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
             rows = list(csv.DictReader(f))
     layout, frozen = saved.layout, saved.frozen           # frozen: the model's dict (changed in place)
     diag0 = saved.diag
-    g_ct, col, ux = bed_columns(layout, frozen, diag0)
+    g_ct, col, ux = bed_columns(layout, frozen, diag0, x=prob.unscale(y0), edge_thickness=edge_thickness)
     ncol = len(ux)
     kname = find_name(frozen, "ColdTempMask")
     k_end = ncol if k_max is None else min(k_max, ncol)
@@ -176,7 +200,9 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
             from .statefile import load_state
             y = prob.scale(load_state(f_last).x)
         log.info(f"spectrum: resuming at k = {k_start} ({len(rows)} rows in {csvf})")
-    log.info(f"spectrum: p = {p:g}, {ncol} glaciated bed columns (terminus at x = {ux[0] / 1e3:.2f} km), "
+    log.info(f"spectrum: p = {p:g}, {ncol} glaciated bed columns (terminus at x = {ux[0] / 1e3:.2f} km, from "
+             + ("the frozen GroundedMask" if edge_thickness is None else f"ice thicker than {edge_thickness:g} m")
+             + "), "
              f"k = {k_start} .. {k_end} step {k_step}")
 
     for k in range(k_start, k_end + 1, k_step):

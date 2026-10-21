@@ -418,7 +418,7 @@ def cmd_spectrum(args):
                                                                 "Temperature Boundary Weights"]))
     rows = run_spectrum(prob, saved, prob.scale(saved.x), p, nopt, out, k_max=args.k_max, k_step=args.k_step,
                         tol_T=args.tol_T, rhoi=P["rhoi"], Lw=P["Lw"], rhow=P["rhow"], gravity=P["gravity"],
-                        hydro=hydro)
+                        hydro=hydro, edge_thickness=args.edge_thickness)
     kept = [r for r in rows if str(r["kept"]) == "1"]
     log.info(f"spectrum: {len(kept)} consistent states of {len(rows)} tried; {out}/spectrum.csv, {out}/points/")
 
@@ -662,6 +662,9 @@ def main(argv=None):
     s.add_argument("--k-max", type=int, help="largest temperate patch (bed columns from the terminus); default: to the divide")
     s.add_argument("--k-step", type=int, default=1, help="columns added per step (default 1)")
     s.add_argument("--tol-T", type=float, default=0.0, help="cold bed nodes may exceed T0 by this much (K)")
+    s.add_argument("--edge-thickness", type=float,
+                   help="terminus = the last column (from the divide) with ice thicker than this (m), from the start "
+                        "state; default: the frozen GroundedMask (the glaciated mask of the initial geometry)")
     s.add_argument("--maxit", type=int, help="Newton iterations per state (overrides [newton] maxit)")
     s.add_argument("--out", help="output directory (default <work>/spectrum_p<P>)")
     s.set_defaults(fn=cmd_spectrum)
