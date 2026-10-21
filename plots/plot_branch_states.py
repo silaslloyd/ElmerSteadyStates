@@ -85,6 +85,13 @@ def extract(path):
     xb = at(gb, gx, X)
     o = o_b = np.argsort(xb)
     out["xb"], out["Tb"] = xb[o], split[tname][np.searchsorted(gids[tname], gb)][o]
+    try:                                     # `ess spectrum`: the steady water sheet on the temperate patch
+        gh, vh = diag[find_name(diag, "Water Sheet Thickness")]
+        oh = np.argsort(gh)
+        k_ = np.clip(np.searchsorted(gh[oh], gb[o]), 0, len(gh) - 1)
+        out["hw"] = np.where(gh[oh][k_] == gb[o], vh[oh][k_], np.nan)
+    except KeyError:
+        pass
     out["x_gl"] = grounding_line(s.frozen, gx, X)
     if zname:
         gs = gids[zname][on_side(gids[zname])]
@@ -231,6 +238,12 @@ def main():
                 if "xs" in s else E)
 
     def traces(s):
+        tr = traces0(s)
+        if hrow:                                   # last row: the water sheet (`ess spectrum`)
+            tr.append(line(s["xb"], s["hw"], "#2980b9", "h", "m") if "hw" in s else E)
+        return tr
+
+    def traces0(s):
         tr = [go.Scatter(x=s["xb"] / 1e3, y=np.round(s["Tb"], 4), mode="lines", line=dict(color="#c0392b"),
                          name="T bed", hovertemplate="x %{x:.1f} km<br>T %{y:.3f} K<extra></extra>")]
         if sections:                               # T section, then u and w, each with the surface on it
@@ -278,6 +291,10 @@ def main():
             titles += ["along-flow velocity u (m/yr): surface, bed", "vertical velocity w (m/yr): surface, bed"]
         where = [1, 2, 3, 3, 4, 4]
         sec_rows = {}
+    hrow = any("hw" in s for s in S)
+    if hrow:
+        titles += ["water sheet thickness h (m), steady hydrology on the temperate patch"]
+        where = where[:len(traces0(S[0]))] + [len(titles) - o]
     rows = len(titles)
     for k_, r_ in sec_rows.items():                # colour bars beside their rows
         if k_ in crange:

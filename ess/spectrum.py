@@ -220,6 +220,7 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
                    x_boundary_km=float(ux[k - 1] / 1e3) if k > 0 else np.nan)
         thermal_ok = r.converged and not hot.any()
         hydro_ok, h_b, mmean, note = True, np.nan, np.nan, ""
+        hyd = {}                             # water sheet, flux and melt rate on the bed nodes (saved with the state)
         if k > 0 and r.converged:
             m = melt_rate(diag, g_ct, rhoi, Lw)
             phi0 = phi0_bed(diag, g_ct, rhow, gravity, layout, x)
@@ -231,6 +232,14 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
                 xc = ux[:k]
                 h, q, ok, hstat = hydrology_steady(xc[::-1], mc[::-1], pc[::-1], hydro)   # boundary first
                 row["hydro_status"] = hstat
+                hc, qc = h[::-1], q[::-1]                                          # terminus first, by column
+                inpatch = (col >= 0) & (col < k)
+                hn = np.full(len(g_ct), np.nan)
+                qn = np.full(len(g_ct), np.nan)
+                hn[inpatch], qn[inpatch] = hc[col[inpatch]], qc[col[inpatch]]
+                o = np.argsort(g_ct)
+                hyd = {"Water Sheet Thickness": (g_ct[o], hn[o]), "Water Flux": (g_ct[o], qn[o]),
+                       "Melt Rate": (g_ct[o], np.where(inpatch, m, np.nan)[o])}
                 h_b, mmean = float(h[0]), float(np.nanmean(mc))
                 hydro_ok = ok and bool(h_b >= 0)
                 row["h_min"] = float(np.nanmin(h)) if np.isfinite(h).any() else np.nan
@@ -250,7 +259,7 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
                    kept=int(kept), note=note)
         rows.append({c: row.get(c, "") for c in COLS})
         if kept:
-            save_state(os.path.join(outdir, "points", f"state_{k:04d}.npz"), layout, x, p, dict(frozen), diag,
+            save_state(os.path.join(outdir, "points", f"state_{k:04d}.npz"), layout, x, p, dict(frozen), {**diag, **hyd},
                        spectrum_k=k, x_boundary=row["x_boundary_km"] * 1e3 if k else np.nan)
         with open(csvf + ".tmp", "w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=COLS)
