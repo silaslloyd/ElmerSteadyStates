@@ -280,7 +280,7 @@ def main():
     if B:
         fig.add_trace(go.Scatter(
             x=[b[0] for b in B], y=[0] * len(B), mode="markers", text=[b[2] for b in B],
-            marker=dict(symbol="diamond", size=9, line=dict(color="black", width=1),
+            marker=dict(symbol="diamond", size=13, line=dict(color="white", width=2.5),
                         color=[COLOURS[KEPT] if b[1] else COLOURS[THERMAL] for b in B]),
             customdata=[["b", j, b[0]] for j, b in enumerate(B)],
             hovertemplate="Tsurf %{x:.3f} K, k = 0 (continuation)<br>%{text}<extra></extra>"), 1, 1)
