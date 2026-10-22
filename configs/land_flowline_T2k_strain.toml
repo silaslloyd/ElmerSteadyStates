@@ -121,8 +121,8 @@ ds = 0.5
 ds_min = 1e-3
 ds_max = 2.0
 dp0 = 0.01              # first step in Tsurf (K); its sign sets the direction
-p_min = 255.0
-p_max = 273.0
+p_min = 230.0             # the all-cold (k = 0) branch starts from the cold spectrum states
+p_max = 273.15
 max_points = 150
 max_folds = 4
 tol = 1e-5
