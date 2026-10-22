@@ -282,7 +282,7 @@ def main():
     else:
         xe = np.array([Pa[0] - 0.5, Pa[0] + 0.5])
     fig.add_trace(go.Heatmap(x=xe, y=K, z=Z, colorscale=cs, zmin=-0.5, zmax=4.5, showscale=False,
-                             xgap=2, ygap=1 if len(K) <= 40 else 0, text=notes,
+                             xgap=0, ygap=1 if len(K) <= 40 else 0, text=notes,
                              customdata=[[[ip, ik, P[ip]] for ip in range(len(P))] for ik in range(len(K))],
                              hovertemplate="Tsurf %{customdata[2]:g} K, k = %{y}<br>%{text}<extra></extra>"), 1, 1)
 
