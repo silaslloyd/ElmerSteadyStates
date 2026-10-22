@@ -202,7 +202,7 @@ def main():
     def state_traces(key):
         s = S.get(key)
         ip, ik = key
-        mark = go.Scatter(x=[PL[ip]], y=[K[ik]], mode="markers", hoverinfo="skip",
+        mark = go.Scatter(x=[P[ip]], y=[K[ik]], mode="markers", hoverinfo="skip",
                           marker=dict(size=16, color="rgba(0,0,0,0)", line=dict(color="black", width=3)))
         if s is None:
             return [E, E] + [E, E] * len(sec) + [mark]
@@ -236,10 +236,17 @@ def main():
     for c in range(5):                                       # discrete: one colour per code 0..4
         cs += [[c / 5, COLOURS[c]], [(c + 1) / 5 - 1e-9, COLOURS[c]]]
     cs[-1][0] = 1.0
-    fig.add_trace(go.Heatmap(x=PL, y=K, z=Z, colorscale=cs, zmin=-0.5, zmax=4.5, showscale=False,
+    # cell edges halfway between neighbouring forcings: each column as wide as the Tsurf range it stands for
+    Pa = np.asarray(P, float)
+    if len(Pa) > 1:
+        mid = 0.5 * (Pa[1:] + Pa[:-1])
+        xe = np.concatenate([[Pa[0] - (mid[0] - Pa[0])], mid, [Pa[-1] + (Pa[-1] - mid[-1])]])
+    else:
+        xe = np.array([Pa[0] - 0.5, Pa[0] + 0.5])
+    fig.add_trace(go.Heatmap(x=xe, y=K, z=Z, colorscale=cs, zmin=-0.5, zmax=4.5, showscale=False,
                              xgap=2, ygap=1 if len(K) <= 40 else 0, text=notes,
-                             customdata=[[[ip, ik] for ip in range(len(P))] for ik in range(len(K))],
-                             hovertemplate="Tsurf %{x:g} K, k = %{y}<br>%{text}<extra></extra>"), 1, 1)
+                             customdata=[[[ip, ik, P[ip]] for ip in range(len(P))] for ik in range(len(K))],
+                             hovertemplate="Tsurf %{customdata[2]:g} K, k = %{y}<br>%{text}<extra></extra>"), 1, 1)
 
     def title(key):
         ip, ik = key
@@ -253,8 +260,7 @@ def main():
     fig.update_layout(
         title=dict(text=title(first), font=dict(size=13)), height=330 * rows, template="plotly_white",
         showlegend=False, margin=dict(t=90, b=60))
-    fig.update_xaxes(title_text="Tsurf (K)", type="category", categoryorder="array", categoryarray=PL,
-                     row=1, col=1)
+    fig.update_xaxes(title_text="Tsurf (K)", tickvals=P, ticktext=PL, row=1, col=1)
     fig.update_yaxes(title_text="k", row=1, col=1)
     for r in range(2, rows + 1):
         fig.update_xaxes(range=[0, xmax], row=r, col=1)
