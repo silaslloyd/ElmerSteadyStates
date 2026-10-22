@@ -8,8 +8,9 @@ The spectra of `ess spectrum` (one folder spectrum_p<Tsurf>[_e<edge>] per surfac
            patch), and the x-z sections of temperature, u and w with the surface drawn on them
 
 Click a green (kept) square of the top panel to show that steady state; hover any square for its status.
-Diamonds along k = 0: the all-cold states of an `ess continue` branch (BRANCH) at their own Tsurf;
-green consistent, yellow a cold bed node above melting. Click one to show it.
+The all-cold states of an `ess continue` branch (BRANCH) are added as their own Tsurf columns with only
+k = 0 filled in (green, or yellow when a cold bed node is above melting); a spectrum folder at the same
+Tsurf replaces the branch column.
 
 Copy the folders to your laptop, then press Run (settings below) or:
     python plots/plot_spectrum.py work/land_flowline_T2k_strain "spectrum_p*_e50"
@@ -38,8 +39,8 @@ SECTIONS = True                 # T, u, w sections (False: lines only, a much sm
 VEL_NZ = 40                     # vertical points of the section grids
 SHOW = True
 FILL_PASSED = True              # finished forcings: untried patch sizes up to fully temperate shown grey
-BRANCH = "branch_flux"          # an `ess continue` branch of all-cold (k = 0) states, drawn as diamonds
-                                # along k = 0 at their own Tsurf (comma = several; "" or missing: none)
+BRANCH = "branch_flux"          # `ess continue` branch(es) of all-cold (k = 0) states, one Tsurf column per
+                                # point (comma = several; "" = none)
 
 # status codes and colours of the grid
 NOT_RUN, NO_CONV, THERMAL, HYDRO, KEPT = 0, 1, 2, 3, 4
@@ -76,6 +77,37 @@ def read_spectra(d, pattern):
     return sorted(out.values())
 
 
+def read_branches(d, names, have, tol=1e-3):
+    """k = 0 columns from continuation branches: (p, None, [row]) per branch point not already covered by a
+    spectrum folder (Tsurf within tol). Every stored point converged; thermal_ok from cold_above_Tm."""
+    out = []
+    for bn in [b.strip() for b in names.split(",") if b.strip()]:
+        bdir = os.path.join(d, bn)
+        bcsv = os.path.join(bdir, "branch.csv")
+        if not os.path.exists(bcsv):
+            print(f"  (no {bcsv})")
+            continue
+        with open(bcsv) as fh:
+            brows = list(csv.DictReader(fh))
+        n = 0
+        for r in brows:
+            p = float(r["p"])
+            sf = os.path.join(bdir, "points", f"state_{int(r['index']):04d}.npz")
+            if any(abs(p - q) < tol for q in have) or not os.path.exists(sf):
+                continue
+            nab = float(r.get("cold_above_Tm") or 0)
+            tmax = r.get("Tb_cold_max", "")
+            ok = nab <= 0
+            out.append((p, None, [dict(
+                k=0, converged=1, thermal_ok=int(ok), hydro_ok=1, kept=int(ok), _state=sf,
+                _note=f"{bn} point {r['index']}" + ("" if ok else f": {int(nab)} cold bed nodes above melting")
+                      + (f"<br>max cold basal T {float(tmax):.3f} K" if tmax not in ("", "nan") else ""))]))
+            have.append(p)
+            n += 1
+        print(f"  {bn}: {len(brows)} points, {n} added as k = 0 columns")
+    return out
+
+
 def n_columns(f):
     """number of glaciated bed columns (patch size of a fully temperate bed) of one spectrum folder"""
     mf = os.path.join(f, "spectrum_meta.json")
@@ -109,6 +141,7 @@ def main():
     pattern = sys.argv[2] if len(sys.argv) > 2 else PATTERN
     d = d if os.path.isabs(d) else os.path.join(REPO, d)
     spec = read_spectra(d, pattern)
+    spec = sorted(spec + read_branches(d, BRANCH, [p for p, _, _ in spec]), key=lambda t: t[0])
     if not spec:
         raise SystemExit(f"no {pattern}/spectrum.csv under {d}")
     import plotly.graph_objects as go
@@ -131,16 +164,16 @@ def main():
             kept = str(r.get("kept")) == "1"
             Z[ik, ip] = status(r)
             xb = r.get("x_boundary_km", "")
-            notes[ik][ip] = (("kept" if kept else "discarded: " + (r.get("note") or "?"))
+            notes[ik][ip] = r["_note"] if "_note" in r else (("kept" if kept else "discarded: " + (r.get("note") or "?"))
                              + (f"<br>boundary {float(xb):.2f} km" if xb not in ("", "nan") else "")
                              + (f"<br>h at boundary {float(r['h_boundary']):.3g} m"
                                 if r.get("h_boundary") not in (None, "", "nan") else ""))
-            sf = os.path.join(f, "points", f"state_{k:04d}.npz")
+            sf = r.get("_state") or os.path.join(f, "points", f"state_{k:04d}.npz")
             if kept and os.path.exists(sf):
                 S[(ip, ik)] = pbs.extract(sf)
     # forcings that are finished (a warmer one has started, or the spectrum stopped after its hydrology
     # failures): every patch size up to fully temperate that was not tried counts as discarded
-    ncols = [n_columns(f) for _, f, _ in spec]
+    ncols = [n_columns(f) if f else None for _, f, _ in spec]
     if FILL_PASSED and any(n is not None for n in ncols):
         kmax = max(n for n in ncols if n is not None)
         K_old = K
@@ -167,35 +200,11 @@ def main():
                     notes2[ik][i] = "not run: the spectrum moved on (Newton / hydrology failures)"
         S = {(ip, ik_of[K_old[ik]]): v for (ip, ik), v in S.items()}
         Z, notes = Z2, notes2
-    PL = [f"{p:g}" for p in P]      # equal-width columns whatever the spacing of the forcings
+    PL = [f"{round(p, 2):g}" for p in P]      # equal-width columns whatever the spacing of the forcings
     print(f"{len(P)} surface temperatures ({', '.join(PL)}), k = {K[0]}..{K[-1]}, {len(S)} kept states")
     for p, f, rows in spec:
-        print(f"  {p:g} K: {os.path.relpath(f, d)} ({len(rows)} rows)")
-    # ---- k = 0 states from continuation branches (continuous Tsurf): every point is Newton-converged;
-    # yellow when a cold bed node is above melting (the all-cold mask is then not consistent)
-    B = []                                  # (p, ok, note) per branch point, key ("b", j) in S
-    for bn in [b.strip() for b in BRANCH.split(",") if b.strip()]:
-        bdir = os.path.join(d, bn)
-        bcsv = os.path.join(bdir, "branch.csv")
-        if not os.path.exists(bcsv):
-            print(f"  (no {bcsv})")
-            continue
-        with open(bcsv) as fh:
-            brows = list(csv.DictReader(fh))
-        for r in brows:
-            sf = os.path.join(bdir, "points", f"state_{int(r['index']):04d}.npz")
-            if not os.path.exists(sf):
-                continue
-            nab = float(r.get("cold_above_Tm") or 0)
-            tmax = r.get("Tb_cold_max", "")
-            ok = nab <= 0
-            note = (f"{bn} point {r['index']}: " + ("kept" if ok else f"{int(nab)} cold bed nodes above melting")
-                    + (f"<br>max cold basal T {float(tmax):.3f} K" if tmax not in ("", "nan") else ""))
-            j = len(B)
-            B.append((float(r["p"]), ok, note))
-            S[("b", j)] = pbs.extract(sf)
-        print(f"  {bn}: {len(brows)} k = 0 points, Tsurf {min(float(r['p']) for r in brows):g}"
-              f"..{max(float(r['p']) for r in brows):g} K" if brows else f"  {bn}: empty")
+        if f:
+            print(f"  {p:g} K: {os.path.relpath(f, d)} ({len(rows)} rows)")
     if not S:
         raise SystemExit("no kept states to show")
     SL = list(S.values())
@@ -231,8 +240,7 @@ def main():
     def state_traces(key):
         s = S.get(key)
         ip, ik = key
-        px, ky = (B[ik][0], 0) if ip == "b" else (P[ip], K[ik])
-        mark = go.Scatter(x=[px], y=[ky], mode="markers", hoverinfo="skip",
+        mark = go.Scatter(x=[P[ip]], y=[K[ik]], mode="markers", hoverinfo="skip",
                           marker=dict(size=16, color="rgba(0,0,0,0)", line=dict(color="black", width=3)))
         if s is None:
             return [E, E] + [E, E] * len(sec) + [mark]
@@ -277,18 +285,9 @@ def main():
                              xgap=2, ygap=1 if len(K) <= 40 else 0, text=notes,
                              customdata=[[[ip, ik, P[ip]] for ip in range(len(P))] for ik in range(len(K))],
                              hovertemplate="Tsurf %{customdata[2]:g} K, k = %{y}<br>%{text}<extra></extra>"), 1, 1)
-    if B:
-        fig.add_trace(go.Scatter(
-            x=[b[0] for b in B], y=[0] * len(B), mode="markers", text=[b[2] for b in B],
-            marker=dict(symbol="diamond", size=13, line=dict(color="white", width=2.5),
-                        color=[COLOURS[KEPT] if b[1] else COLOURS[THERMAL] for b in B]),
-            customdata=[["b", j, b[0]] for j, b in enumerate(B)],
-            hovertemplate="Tsurf %{x:.3f} K, k = 0 (continuation)<br>%{text}<extra></extra>"), 1, 1)
 
     def title(key):
         ip, ik = key
-        if ip == "b":
-            return f"Tsurf = {B[ik][0]:.3f} K, k = 0 (continuation): {B[ik][2].replace('<br>', ', ')}"
         s = S.get(key)
         head = f"Tsurf = {P[ip]:g} K, k = {K[ik]} temperate bed columns"
         return head + ("" if s else f": {notes[ik][ip].replace('<br>', ', ')}")
@@ -299,9 +298,7 @@ def main():
     fig.update_layout(
         title=dict(text=title(first), font=dict(size=13)), height=330 * rows, template="plotly_white",
         showlegend=False, margin=dict(t=90, b=60))
-    fig.update_xaxes(title_text="Tsurf (K)", tickvals=P, ticktext=PL, row=1, col=1,
-                     range=[min(xe[0], min((b[0] for b in B), default=xe[0]) - 0.5),
-                            max(xe[-1], max((b[0] for b in B), default=xe[-1]) + 0.5)])
+    fig.update_xaxes(title_text="Tsurf (K)", tickvals=P, ticktext=PL, row=1, col=1)
     fig.update_yaxes(title_text="k", row=1, col=1)
     for r in range(2, rows + 1):
         fig.update_xaxes(range=[0, xmax], row=r, col=1)
