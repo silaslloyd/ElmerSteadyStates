@@ -39,9 +39,9 @@ SECTIONS = True                 # T, u, w sections (False: lines only, a much sm
 VEL_NZ = 40                     # vertical points of the section grids
 SHOW = True
 FILL_PASSED = True              # finished forcings: untried patch sizes up to fully temperate shown grey
-BRANCH = "branch_flux,branch_k1"   # `ess continue` branches, one Tsurf column per point: all-cold (k = 0), or
-                                   # with a frozen temperate patch (--temperate-k K, shown at k = K)
-                                   # (comma = several; "" = none)
+BRANCH = "branch_*"             # `ess continue` branches, one Tsurf column per point: all-cold (k = 0), or
+                                # with a frozen temperate patch (--temperate-k K, shown at k = K)
+                                # (globs, comma = several; "" = none)
 
 # status codes and colours of the grid
 NOT_RUN, NO_CONV, THERMAL, HYDRO, KEPT = 0, 1, 2, 3, 4
@@ -83,8 +83,10 @@ def read_branches(d, names, have, tol=1e-3):
     spectrum folder (Tsurf within tol), at k = temperate_k (0 when absent). Every stored point converged;
     thermal from cold_above_Tm, hydrology from hydro_ok (patch branches)."""
     out = []
-    for bn in [b.strip() for b in names.split(",") if b.strip()]:
-        bdir = os.path.join(d, bn)
+    dirs = sorted({g for b in names.split(",") if b.strip() for g in glob.glob(os.path.join(d, b.strip()))
+                   if os.path.isdir(g)})
+    for bdir in dirs:
+        bn = os.path.basename(bdir)
         bcsv = os.path.join(bdir, "branch.csv")
         if not os.path.exists(bcsv):
             print(f"  (no {bcsv})")
