@@ -194,6 +194,40 @@ def phi0_bed(diag, g, rhow, gravity, layout, x):
     return _on(*P, g) + rhow * gravity * _on(*Z, g)
 
 
+def patch_hydrology(diag, layout, x, g_ct, col, ux, k, *, rhoi, Lw, rhow, gravity, hydro):
+    """The steady water sheet on a temperate patch of k columns from the terminus (bed columns g_ct, col, ux
+    from bed_columns). Returns (hydro_ok, h at the cold/temperate boundary, mean melt rate, note,
+    extra csv columns, {Water Sheet Thickness, Water Flux, Melt Rate} on the bed nodes)."""
+    hydro_ok, h_b, mmean, note, row, hyd = True, np.nan, np.nan, "", {}, {}
+    m = melt_rate(diag, g_ct, rhoi, Lw)
+    phi0 = phi0_bed(diag, g_ct, rhow, gravity, layout, x)
+    if m is None or phi0 is None:
+        return False, h_b, mmean, "no Temperature Loads / Boundary Weights / Pressure in the diagnostics", row, hyd
+    xc = ux[:k]
+    mc = fill_columns(xc, [m[col == c] for c in range(k)])           # per column, terminus first
+    pc = fill_columns(xc, [phi0[col == c] for c in range(k)])
+    row["n_melt_filled"] = int(sum(not np.isfinite(m[col == c]).any() for c in range(k)))
+    h, q, ok, hstat = hydrology_steady(xc[::-1], mc[::-1], pc[::-1], hydro)   # boundary first
+    row["hydro_status"] = hstat
+    hc, qc = h[::-1], q[::-1]                                          # terminus first, by column
+    inpatch = (col >= 0) & (col < k)
+    hn = np.full(len(g_ct), np.nan)
+    qn = np.full(len(g_ct), np.nan)
+    hn[inpatch], qn[inpatch] = hc[col[inpatch]], qc[col[inpatch]]
+    o = np.argsort(g_ct)
+    hyd = {"Water Sheet Thickness": (g_ct[o], hn[o]), "Water Flux": (g_ct[o], qn[o]),
+           "Melt Rate": (g_ct[o], np.where(inpatch, m, np.nan)[o])}
+    h_b, mmean = float(h[0]), float(np.nanmean(mc))
+    hydro_ok = ok and bool(h_b >= 0)
+    row["h_min"] = float(np.nanmin(h)) if np.isfinite(h).any() else np.nan
+    row["q_margin"] = float(q[-1])
+    if not ok:
+        note = "water sheet reaches 0 inside the temperate patch"
+    elif hstat == "flood":
+        note = f"water sheet exceeds h_max = {hydro.get('h_max', 1e3):g} m (kept)"
+    return hydro_ok, h_b, mmean, note, row, hyd
+
+
 def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1, tol_T=0.0, rhoi, Lw,
                  rhow, gravity, hydro, edge_thickness=None, stop_after_dry=None):
     """... stop_after_dry N: stop after N consecutive states that fail (Newton not converged, or the hydrology). The k = 0
@@ -272,33 +306,9 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
         hydro_ok, h_b, mmean, note = True, np.nan, np.nan, ""
         hyd = {}                             # water sheet, flux and melt rate on the bed nodes (saved with the state)
         if k > 0 and r.converged:
-            m = melt_rate(diag, g_ct, rhoi, Lw)
-            phi0 = phi0_bed(diag, g_ct, rhow, gravity, layout, x)
-            if m is None or phi0 is None:
-                hydro_ok, note = False, "no Temperature Loads / Boundary Weights / Pressure in the diagnostics"
-            else:
-                xc = ux[:k]
-                mc = fill_columns(xc, [m[col == c] for c in range(k)])           # per column, terminus first
-                pc = fill_columns(xc, [phi0[col == c] for c in range(k)])
-                row["n_melt_filled"] = int(sum(not np.isfinite(m[col == c]).any() for c in range(k)))
-                h, q, ok, hstat = hydrology_steady(xc[::-1], mc[::-1], pc[::-1], hydro)   # boundary first
-                row["hydro_status"] = hstat
-                hc, qc = h[::-1], q[::-1]                                          # terminus first, by column
-                inpatch = (col >= 0) & (col < k)
-                hn = np.full(len(g_ct), np.nan)
-                qn = np.full(len(g_ct), np.nan)
-                hn[inpatch], qn[inpatch] = hc[col[inpatch]], qc[col[inpatch]]
-                o = np.argsort(g_ct)
-                hyd = {"Water Sheet Thickness": (g_ct[o], hn[o]), "Water Flux": (g_ct[o], qn[o]),
-                       "Melt Rate": (g_ct[o], np.where(inpatch, m, np.nan)[o])}
-                h_b, mmean = float(h[0]), float(np.nanmean(mc))
-                hydro_ok = ok and bool(h_b >= 0)
-                row["h_min"] = float(np.nanmin(h)) if np.isfinite(h).any() else np.nan
-                row["q_margin"] = float(q[-1])
-                if not ok:
-                    note = "water sheet reaches 0 inside the temperate patch"
-                elif hstat == "flood":
-                    note = f"water sheet exceeds h_max = {hydro.get('h_max', 1e3):g} m (kept)"
+            hydro_ok, h_b, mmean, note, extra, hyd = patch_hydrology(diag, layout, x, g_ct, col, ux, k, rhoi=rhoi,
+                                                                     Lw=Lw, rhow=rhow, gravity=gravity, hydro=hydro)
+            row.update(extra)
         if not r.converged:
             note = "Newton did not converge"
         elif not thermal_ok:

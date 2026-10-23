@@ -8,8 +8,8 @@ The spectra of `ess spectrum` (one folder spectrum_p<Tsurf>[_e<edge>] per surfac
            patch), and the x-z sections of temperature, u and w with the surface drawn on them
 
 Click a green (kept) square of the top panel to show that steady state; hover any square for its status.
-The all-cold states of an `ess continue` branch (BRANCH) are added as their own Tsurf columns with only
-k = 0 filled in (green, or yellow when a cold bed node is above melting); a spectrum folder at the same
+The states of `ess continue` branches (BRANCH; all-cold, or with --temperate-k K) are their own Tsurf columns with only
+k = 0 (or K) filled in (green, yellow cold bed above melting, blue hydrology); a spectrum folder at the same
 Tsurf replaces the branch column.
 
 Copy the folders to your laptop, then press Run (settings below) or:
@@ -39,8 +39,9 @@ SECTIONS = True                 # T, u, w sections (False: lines only, a much sm
 VEL_NZ = 40                     # vertical points of the section grids
 SHOW = True
 FILL_PASSED = True              # finished forcings: untried patch sizes up to fully temperate shown grey
-BRANCH = "branch_flux"          # `ess continue` branch(es) of all-cold (k = 0) states, one Tsurf column per
-                                # point (comma = several; "" = none)
+BRANCH = "branch_flux,branch_k1"   # `ess continue` branches, one Tsurf column per point: all-cold (k = 0), or
+                                   # with a frozen temperate patch (--temperate-k K, shown at k = K)
+                                   # (comma = several; "" = none)
 
 # status codes and colours of the grid
 NOT_RUN, NO_CONV, THERMAL, HYDRO, KEPT = 0, 1, 2, 3, 4
@@ -78,8 +79,9 @@ def read_spectra(d, pattern):
 
 
 def read_branches(d, names, have, tol=1e-3):
-    """k = 0 columns from continuation branches: (p, None, [row]) per branch point not already covered by a
-    spectrum folder (Tsurf within tol). Every stored point converged; thermal_ok from cold_above_Tm."""
+    """Columns from continuation branches: (p, None, [row]) per branch point not already covered by a
+    spectrum folder (Tsurf within tol), at k = temperate_k (0 when absent). Every stored point converged;
+    thermal from cold_above_Tm, hydrology from hydro_ok (patch branches)."""
     out = []
     for bn in [b.strip() for b in names.split(",") if b.strip()]:
         bdir = os.path.join(d, bn)
@@ -94,18 +96,33 @@ def read_branches(d, names, have, tol=1e-3):
             p = float(r["p"])
             sf = os.path.join(bdir, "points", f"state_{int(r['index']):04d}.npz")
             if any(abs(p - q) < tol for q in have) or not os.path.exists(sf):
-                continue
+                continue                                    # a spectrum folder covers this Tsurf
             nab = float(r.get("cold_above_Tm") or 0)
             tmax = r.get("Tb_cold_max", "")
-            ok = nab <= 0
+            hb = r.get("h_boundary", "")
+            kk = int(float(r.get("temperate_k") or 0))
+            tok = nab <= 0
+            hok = str(r.get("hydro_ok", "1")) != "0"
+            ok = tok and hok
+            why = "" if ok else (f": {int(nab)} cold bed nodes above melting" if not tok
+                                 else ": " + (r.get("note") or "water sheet < 0 at the cold/temperate boundary"))
             out.append((p, None, [dict(
-                k=0, converged=1, thermal_ok=int(ok), hydro_ok=1, kept=int(ok), _state=sf,
-                _note=f"{bn} point {r['index']}" + ("" if ok else f": {int(nab)} cold bed nodes above melting")
-                      + (f"<br>max cold basal T {float(tmax):.3f} K" if tmax not in ("", "nan") else ""))]))
-            have.append(p)
+                k=kk, converged=1, thermal_ok=int(tok), hydro_ok=int(hok), kept=int(ok), _state=sf,
+                _note=f"{bn} point {r['index']}" + why
+                      + (f"<br>max cold basal T {float(tmax):.3f} K" if tmax not in ("", "nan") else "")
+                      + (f"<br>h at boundary {float(hb):.3g} m" if hb not in ("", "nan") else ""))]))
             n += 1
-        print(f"  {bn}: {len(brows)} points, {n} added as k = 0 columns")
-    return out
+        print(f"  {bn}: {len(brows)} points, {n} added as Tsurf columns")
+    # points of different branches at the same Tsurf (e.g. k = 0 and k = 1 from the same start): one column
+    merged = []
+    for p, f, rows in sorted(out, key=lambda t: t[0]):
+        hit = next((m for m in merged if abs(m[0] - p) < tol
+                    and all(int(r["k"]) != int(rows[0]["k"]) for r in m[2])), None)
+        if hit:
+            hit[2].extend(rows)
+        else:
+            merged.append((p, f, list(rows)))
+    return merged
 
 
 def n_columns(f):

@@ -339,12 +339,49 @@ def cmd_newton(args):
     return 0 if r.converged else 1
 
 
+def _hydro_params(cfg):
+    hy = cfg.get("hydrology", {})
+    return dict(K0=float(hy.get("K0", 1.0)), alpha=float(hy.get("alpha", 3.0)), h0=float(hy.get("h0", 0.1)),
+                c_N=float(hy.get("c_N", 1.0)), h_max=float(hy.get("h_max", 1e3)))
+
+
+def _patch_diagnostics(model):
+    """the bed pressure (phi0) and the melt rate (hydrology on a temperate patch) need these"""
+    model.diagnostics = list(dict.fromkeys(model.diagnostics + ["Pressure", "Temperature Loads",
+                                                                "Temperature Boundary Weights"]
+                                           + (["Strain Heating Boundary Weights"] if model.strain_heat else [])))
+
+
 def cmd_continue(args):
     cfg, model, saved = _setup(args)
     prob = _problem(cfg, model)
     cc = cfg.get("continuation", {})
     name = args.name or cc.get("name", "main")
     bdir = os.path.join(cfg["_work"], f"branch_{name}")
+    # --temperate-k K: a frozen temperate patch of K bed columns from the terminus of the START state (all
+    # other bed nodes cold), kept fixed along the branch; every point gets the patch hydrology and the checks
+    patch = None
+    tk = getattr(args, "temperate_k", None)
+    if tk is not None:
+        if cfg["model"].get("type", "elmer") != "elmer":
+            raise SystemExit("--temperate-k needs the Elmer model")
+        if _masks_auto(cfg, model)[0]:
+            raise SystemExit("--temperate-k: set [masks] auto = false (the patch must stay frozen)")
+        from .case import eval_lua_parameters
+        from .spectrum import bed_columns, mask_for
+        g_ct, col, ux = bed_columns(saved.layout, saved.frozen, saved.diag, x=saved.x,
+                                    edge_thickness=args.edge_thickness)
+        if tk > len(ux):
+            raise SystemExit(f"--temperate-k {tk}: only {len(ux)} glaciated bed columns")
+        saved.frozen[find_name(saved.frozen, "ColdTempMask")] = (g_ct, mask_for(tk, g_ct, col))
+        _patch_diagnostics(model)
+        PP = eval_lua_parameters(model.params_file)
+        patch = dict(g_ct=g_ct, col=col, ux=ux, k=tk, hydro=_hydro_params(cfg),
+                     phys=dict(rhoi=PP["rhoi"], Lw=PP["Lw"], rhow=PP["rhow"], gravity=PP["gravity"]))
+        log.info(f"continue: temperate patch of {tk} bed column(s) from the terminus at x = {ux[0] / 1e3:.2f} km "
+                 + (f"(ice thicker than {args.edge_thickness:g} m)" if args.edge_thickness is not None
+                    else "(the frozen GroundedMask)") + f", cold/temperate boundary at {ux[tk - 1] / 1e3:.2f} km"
+                 if tk > 0 else "continue: --temperate-k 0: all-cold bed")
     every = int(cc.get("stability_every", 0))
     sopt = stability_options(cfg)
     sspec = map_spec(cfg, "stability_map")
@@ -352,6 +389,24 @@ def cmd_continue(args):
     def on_save(k, y, p, row):
         x = prob.unscale(y)
         cols = _mask_cols(cfg, model, saved, x, prob.last_diag)
+        hyd = {}
+        if patch is not None:
+            from .spectrum import patch_hydrology
+            ok, h_b, mm, note, ex, hyd = (patch_hydrology(prob.last_diag, saved.layout, x, patch["g_ct"],
+                                                          patch["col"], patch["ux"], patch["k"],
+                                                          hydro=patch["hydro"], **patch["phys"])
+                                          if patch["k"] > 0 else (True, np.nan, np.nan, "", {}, {}))
+            cols.update(ex)
+            from .spectrum import basal_temperature
+            Tb = basal_temperature(saved.layout, x, patch["g_ct"])
+            cold = (patch["col"] >= patch["k"])                 # glaciated columns outside the patch
+            cols["cold_above_Tm"] = int((cold & (Tb > 273.15)).sum())
+            cols["Tb_cold_max"] = float(np.nanmax(Tb[cold])) if cold.any() else np.nan
+            cols.update(temperate_k=patch["k"], hydro_ok=int(ok), h_boundary=h_b, melt_mean=mm,
+                        x_boundary_km=float(patch["ux"][patch["k"] - 1] / 1e3) if patch["k"] else np.nan,
+                        thermal_ok=int(not cols.get("cold_above_Tm")), note=note)
+            log.info(f"continue: point {k} p = {p:.6g}: cold nodes above T0 {cols.get('cold_above_Tm', 0)}, "
+                     f"hydrology {'ok' if ok else 'FAILS'}, h at the boundary {h_b:.3g} m" + (f" ({note})" if note else ""))
         extra = {}
         if every and k % every == 0:
             sopt_small = type(sopt)(**{**sopt.__dict__, "m": min(sopt.m, int(cc.get("stability_m", 12)))})
@@ -360,7 +415,8 @@ def cmd_continue(args):
                          mu_max=float(np.max(np.abs(st.mu))))
             cols.update(extra)
         save_state(os.path.join(bdir, "points", f"state_{k:04d}.npz"), saved.layout, x, p, saved.frozen,
-                   prob.last_diag, s=row["s"], **{c: v for c, v in cols.items() if np.isscalar(v)})
+                   {**prob.last_diag, **hyd}, s=row["s"],
+                   **{c: v for c, v in cols.items() if np.isscalar(v) and not isinstance(v, str)})
         return cols
 
     store = BranchStore(bdir, prob, on_save=on_save)
@@ -409,15 +465,10 @@ def cmd_spectrum(args):
     nopt = newton_options(cfg)
     if args.maxit:
         nopt = _replace(nopt, maxit=args.maxit)
-    hy = cfg.get("hydrology", {})
-    hydro = dict(K0=float(hy.get("K0", 1.0)), alpha=float(hy.get("alpha", 3.0)), h0=float(hy.get("h0", 0.1)),
-                 c_N=float(hy.get("c_N", 1.0)), h_max=float(hy.get("h_max", 1e3)))
+    hydro = _hydro_params(cfg)
     log.info(f"spectrum: hydrology K(h) = {hydro['K0']:g} h^{hydro['alpha']:g}, h0 = {hydro['h0']:g} m at the "
              f"margin, potential {hydro['c_N']:g}/h - phi0")
-    # the bed pressure (phi0) and the melt rate need these diagnostics
-    model.diagnostics = list(dict.fromkeys(model.diagnostics + ["Pressure", "Temperature Loads",
-                                                                "Temperature Boundary Weights"]
-                                           + (["Strain Heating Boundary Weights"] if model.strain_heat else [])))
+    _patch_diagnostics(model)
     if args.p_step:
         p_end = args.p_end if args.p_end is not None else float(cfg.get("continuation", {}).get("p_max", p0))
         n = int(np.floor((p_end - p0) / args.p_step + 1e-9)) + 1
@@ -677,6 +728,11 @@ def main(argv=None):
     common(s)
     s.add_argument("--name", help="branch name (directory <work>/branch_<name>)")
     s.add_argument("--ds", type=float, help="arclength step to (re)start with, overriding the saved one")
+    s.add_argument("--temperate-k", type=int,
+                   help="frozen temperate bed patch of this many columns from the terminus of the start state "
+                        "(all else cold); each point gets the patch hydrology ([hydrology]) and thermal check")
+    s.add_argument("--edge-thickness", type=float,
+                   help="with --temperate-k: terminus = last column with ice thicker than this (m), as in spectrum")
     s.set_defaults(fn=cmd_continue)
 
     s = sub.add_parser("spectrum")
