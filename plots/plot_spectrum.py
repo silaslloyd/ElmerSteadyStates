@@ -271,7 +271,7 @@ def main():
                 lo = -hi
             cr[k_] = dict(colorscale=cs, zmin=lo, zmax=hi)
 
-    titles = ["Tsurf vs temperate bed columns k: green kept (click), red not converged, yellow forbidden by the heat equation, blue forbidden by the hydrology, grey not run",
+    titles = ["Tsurf vs temperate bed columns k: green kept (click), red not converged, yellow forbidden by the heat equation, blue forbidden by the hydrology, grey not run; hatched outlined strips: continuation branches",
               "basal temperature (K)", "water sheet thickness h (m)"]
     sec = [("TS", "temperature (K)", "K"), ("U", "along-flow velocity u (m/yr)", "m/yr"),
            ("W", "vertical velocity w (m/yr)", "m/yr")] if SECTIONS else []
@@ -339,10 +339,15 @@ def main():
         lo, hi = strip_edges([B[j]["p"] for j in jj])
         fig.add_trace(go.Bar(
             orientation="h", base=lo, x=hi - lo, y=[B[j]["k"] for j in jj], width=1.0,
-            marker=dict(color=[COLOURS[B[j]["code"]] for j in jj], line=dict(width=0)),
+            marker=dict(color=[COLOURS[B[j]["code"]] for j in jj], line=dict(width=0),
+                        pattern=dict(shape="/", fgcolor="rgba(255,255,255,0.6)", size=6, solidity=0.25)),
             text=[B[j]["note"] for j in jj], textposition="none",
             customdata=[["b", j, B[j]["p"]] for j in jj],
             hovertemplate="Tsurf %{customdata[2]:.3f} K, k = %{y}<br>%{text}<extra></extra>"), 1, 1)
+        x0, x1, kb = float(lo.min()), float(hi.max()), B[jj[0]]["k"]      # outline of the whole strip
+        fig.add_trace(go.Scatter(x=[x0, x1, x1, x0, x0], y=[kb - 0.5, kb - 0.5, kb + 0.5, kb + 0.5, kb - 0.5],
+                                 mode="lines", line=dict(color="black", width=1.5), hoverinfo="skip"), 1, 1)
+        print(f"  {bn}: strip at k = {kb}, Tsurf {x0:.3f}..{x1:.3f} K")
 
     def title(key):
         ip, ik = key
