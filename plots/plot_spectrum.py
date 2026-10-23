@@ -60,22 +60,41 @@ def status(r):
     return KEPT if str(r.get("kept")) == "1" else HYDRO
 
 
+RANK = {KEPT: 4, THERMAL: 3, HYDRO: 3, NO_CONV: 1}    # which row wins when two folders have the same (Tsurf, k)
+
+
 def read_spectra(d, pattern):
-    """pattern: one glob, or several separated by commas (e.g. "spectrum_p*_e50,fine/spectrum_p*_e50");
-    a Tsurf found twice keeps the folder with more rows"""
+    """pattern: one glob, or several separated by commas (e.g. "spectrum_p*_e50,fine/spectrum_p*_e50").
+    A Tsurf found in several folders is merged per k: each (Tsurf, k) keeps its best row (kept > discarded
+    by heat or hydrology > Newton not converged; ties: the later folder in the pattern). Rows carry their
+    folder in "_dir"; the folder of the Tsurf is the one that gave the most rows."""
     out = {}
-    files = sorted(f for pat in pattern.split(",") for f in glob.glob(os.path.join(d, pat.strip())))
+    pats = [pat.strip() for pat in pattern.split(",")]
+    files = [f for pat in pats for f in sorted(glob.glob(os.path.join(d, pat)))]
     for f in files:
         m = re.search(r"spectrum_p([0-9.]+)", os.path.basename(f))
         csvf = os.path.join(f, "spectrum.csv")
         if not m or not os.path.exists(csvf):
             continue
         with open(csvf) as fh:
-            rows = list(csv.DictReader(fh))
-        p = float(m.group(1))
-        if p not in out or len(rows) > len(out[p][2]):
-            out[p] = (p, f, rows)
-    return sorted(out.values())
+            rows = [dict(r, _dir=f) for r in csv.DictReader(fh)]
+        out.setdefault(float(m.group(1)), []).append((f, rows))
+    spec = []
+    for p, got in sorted(out.items()):
+        best = {}
+        for f, rows in got:
+            for r in rows:
+                k = int(r["k"])
+                if k not in best or RANK[status(r)] >= RANK[status(best[k])]:
+                    best[k] = r
+        rows = [best[k] for k in sorted(best)]
+        main_dir = max(got, key=lambda t: sum(r["_dir"] == t[0] for r in rows))[0]
+        if len(got) > 1:
+            print(f"  {p:g} K in {len(got)} folders: "
+                  + ", ".join(f"{os.path.relpath(f, d)} ({sum(r['_dir'] == f for r in rows)} of {len(r_)} rows used)"
+                              for f, r_ in got))
+        spec.append((p, main_dir, rows))
+    return spec
 
 
 def read_branches(d, names):
@@ -192,7 +211,7 @@ def main():
                              + (f"<br>boundary {float(xb):.2f} km" if xb not in ("", "nan") else "")
                              + (f"<br>h at boundary {float(r['h_boundary']):.3g} m"
                                 if r.get("h_boundary") not in (None, "", "nan") else ""))
-            sf = r.get("_state") or os.path.join(f, "points", f"state_{k:04d}.npz")
+            sf = r.get("_state") or os.path.join(r.get("_dir", f), "points", f"state_{k:04d}.npz")
             if kept and os.path.exists(sf):
                 S[(ip, ik)] = pbs.extract(sf)
     # forcings that are finished (a warmer one has started, or the spectrum stopped after its hydrology
