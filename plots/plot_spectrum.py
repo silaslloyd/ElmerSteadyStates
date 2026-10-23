@@ -8,9 +8,9 @@ The spectra of `ess spectrum` (one folder spectrum_p<Tsurf>[_e<edge>] per surfac
            patch), and the x-z sections of temperature, u and w with the surface drawn on them
 
 Click a green (kept) square of the top panel to show that steady state; hover any square for its status.
-The states of `ess continue` branches (BRANCH; all-cold, or with --temperate-k K) are their own Tsurf columns with only
-k = 0 (or K) filled in (green, yellow cold bed above melting, blue hydrology); a spectrum folder at the same
-Tsurf replaces the branch column.
+The states of `ess continue` branches (BRANCH; all-cold, or with --temperate-k K) are strips along their k row,
+each cell as wide as that branch's own Tsurf step (green kept, yellow cold bed above melting, blue hydrology),
+drawn over the spectrum grid.
 
 Copy the folders to your laptop, then press Run (settings below) or:
     python plots/plot_spectrum.py work/land_flowline_T2k_strain "spectrum_p*_e50"
@@ -78,10 +78,10 @@ def read_spectra(d, pattern):
     return sorted(out.values())
 
 
-def read_branches(d, names, have, tol=1e-3):
-    """Columns from continuation branches: (p, None, [row]) per branch point not already covered by a
-    spectrum folder (Tsurf within tol), at k = temperate_k (0 when absent). Every stored point converged;
-    thermal from cold_above_Tm, hydrology from hydro_ok (patch branches)."""
+def read_branches(d, names):
+    """Points of the continuation branches (folders matching names): one dict per point with p, k
+    (temperate_k, 0 when absent), status code, hover note, state file, branch name. Every stored point
+    converged; thermal from cold_above_Tm, hydrology from hydro_ok (patch branches)."""
     out = []
     dirs = sorted({g for b in names.split(",") if b.strip() for g in glob.glob(os.path.join(d, b.strip()))
                    if os.path.isdir(g)})
@@ -95,36 +95,41 @@ def read_branches(d, names, have, tol=1e-3):
             brows = list(csv.DictReader(fh))
         n = 0
         for r in brows:
-            p = float(r["p"])
             sf = os.path.join(bdir, "points", f"state_{int(r['index']):04d}.npz")
-            if any(abs(p - q) < tol for q in have) or not os.path.exists(sf):
-                continue                                    # a spectrum folder covers this Tsurf
+            if not os.path.exists(sf):
+                continue
             nab = float(r.get("cold_above_Tm") or 0)
             tmax = r.get("Tb_cold_max", "")
             hb = r.get("h_boundary", "")
-            kk = int(float(r.get("temperate_k") or 0))
             tok = nab <= 0
             hok = str(r.get("hydro_ok", "1")) != "0"
-            ok = tok and hok
-            why = "" if ok else (f": {int(nab)} cold bed nodes above melting" if not tok
-                                 else ": " + (r.get("note") or "water sheet < 0 at the cold/temperate boundary"))
-            out.append((p, None, [dict(
-                k=kk, converged=1, thermal_ok=int(tok), hydro_ok=int(hok), kept=int(ok), _state=sf,
-                _note=f"{bn} point {r['index']}" + why
-                      + (f"<br>max cold basal T {float(tmax):.3f} K" if tmax not in ("", "nan") else "")
-                      + (f"<br>h at boundary {float(hb):.3g} m" if hb not in ("", "nan") else ""))]))
+            why = "kept" if tok and hok else (f"{int(nab)} cold bed nodes above melting" if not tok
+                                              else (r.get("note") or "water sheet < 0 at the cold/temperate boundary"))
+            out.append(dict(p=float(r["p"]), k=int(float(r.get("temperate_k") or 0)), branch=bn, sf=sf,
+                            code=KEPT if tok and hok else (THERMAL if not tok else HYDRO),
+                            note=f"{bn} point {r['index']}: {why}"
+                                 + (f"<br>max cold basal T {float(tmax):.3f} K" if tmax not in ("", "nan") else "")
+                                 + (f"<br>h at boundary {float(hb):.3g} m" if hb not in ("", "nan") else "")))
             n += 1
-        print(f"  {bn}: {len(brows)} points, {n} added as Tsurf columns")
-    # points of different branches at the same Tsurf (e.g. k = 0 and k = 1 from the same start): one column
-    merged = []
-    for p, f, rows in sorted(out, key=lambda t: t[0]):
-        hit = next((m for m in merged if abs(m[0] - p) < tol
-                    and all(int(r["k"]) != int(rows[0]["k"]) for r in m[2])), None)
-        if hit:
-            hit[2].extend(rows)
-        else:
-            merged.append((p, f, list(rows)))
-    return merged
+        print(f"  {bn}: {n} points" + (f", Tsurf {min(b['p'] for b in out[-n:]):.3f}..{max(b['p'] for b in out[-n:]):.3f} K"
+                                        if n else ""))
+    return out
+
+
+def strip_edges(p):
+    """cell edges of points along one branch: halfway between neighbours (sorted), the ends extended by
+    half the neighbouring spacing (at most 0.5 K)"""
+    p = np.asarray(p, float)
+    if len(p) == 1:
+        return p - 0.05, p + 0.05
+    o = np.argsort(p)
+    ps = p[o]
+    mid = 0.5 * (ps[1:] + ps[:-1])
+    lo = np.concatenate([[ps[0] - min(mid[0] - ps[0], 0.5)], mid])
+    hi = np.concatenate([mid, [ps[-1] + min(ps[-1] - mid[-1], 0.5)]])
+    L, H = np.empty_like(p), np.empty_like(p)
+    L[o], H[o] = lo, hi
+    return L, H
 
 
 def n_columns(f):
@@ -160,7 +165,7 @@ def main():
     pattern = sys.argv[2] if len(sys.argv) > 2 else PATTERN
     d = d if os.path.isabs(d) else os.path.join(REPO, d)
     spec = read_spectra(d, pattern)
-    spec = sorted(spec + read_branches(d, BRANCH, [p for p, _, _ in spec]), key=lambda t: t[0])
+    B = read_branches(d, BRANCH)            # continuation points: their own strips along their k rows
     if not spec:
         raise SystemExit(f"no {pattern}/spectrum.csv under {d}")
     import plotly.graph_objects as go
@@ -169,7 +174,7 @@ def main():
     pbs.VEL_PLOT = "contour" if SECTIONS else "lines"
     pbs.VEL_NZ = VEL_NZ
     P = [p for p, _, _ in spec]
-    K = sorted({int(r["k"]) for _, _, rows in spec for r in rows})
+    K = sorted({int(r["k"]) for _, _, rows in spec for r in rows} | {b["k"] for b in B})
     ip_of = {p: i for i, p in enumerate(P)}
     ik_of = {k: i for i, k in enumerate(K)}
     # ---- status grid and the kept states
@@ -219,6 +224,9 @@ def main():
                     notes2[ik][i] = "not run: the spectrum moved on (Newton / hydrology failures)"
         S = {(ip, ik_of[K_old[ik]]): v for (ip, ik), v in S.items()}
         Z, notes = Z2, notes2
+    for j, b in enumerate(B):                # branch states: keys ("b", j)
+        if b["code"] == KEPT:
+            S[("b", j)] = pbs.extract(b["sf"])
     PL = [f"{round(p, 2):g}" for p in P]      # equal-width columns whatever the spacing of the forcings
     print(f"{len(P)} surface temperatures ({', '.join(PL)}), k = {K[0]}..{K[-1]}, {len(S)} kept states")
     for p, f, rows in spec:
@@ -259,7 +267,8 @@ def main():
     def state_traces(key):
         s = S.get(key)
         ip, ik = key
-        mark = go.Scatter(x=[P[ip]], y=[K[ik]], mode="markers", hoverinfo="skip",
+        px, ky = (B[ik]["p"], B[ik]["k"]) if ip == "b" else (P[ip], K[ik])
+        mark = go.Scatter(x=[px], y=[ky], mode="markers", hoverinfo="skip",
                           marker=dict(size=16, color="rgba(0,0,0,0)", line=dict(color="black", width=3)))
         if s is None:
             return [E, E] + [E, E] * len(sec) + [mark]
@@ -305,8 +314,21 @@ def main():
                              customdata=[[[ip, ik, P[ip]] for ip in range(len(P))] for ik in range(len(K))],
                              hovertemplate="Tsurf %{customdata[2]:g} K, k = %{y}<br>%{text}<extra></extra>"), 1, 1)
 
+    # continuation branches: one strip per branch along its k row, cells as wide as its own steps
+    for bn in sorted({b["branch"] for b in B}):
+        jj = [j for j, b in enumerate(B) if b["branch"] == bn]
+        lo, hi = strip_edges([B[j]["p"] for j in jj])
+        fig.add_trace(go.Bar(
+            orientation="h", base=lo, x=hi - lo, y=[B[j]["k"] for j in jj], width=1.0,
+            marker=dict(color=[COLOURS[B[j]["code"]] for j in jj], line=dict(width=0)),
+            text=[B[j]["note"] for j in jj], textposition="none",
+            customdata=[["b", j, B[j]["p"]] for j in jj],
+            hovertemplate="Tsurf %{customdata[2]:.3f} K, k = %{y}<br>%{text}<extra></extra>"), 1, 1)
+
     def title(key):
         ip, ik = key
+        if ip == "b":
+            return f"Tsurf = {B[ik]['p']:.3f} K, k = {B[ik]['k']} ({B[ik]['note'].replace('<br>', ', ')})"
         s = S.get(key)
         head = f"Tsurf = {P[ip]:g} K, k = {K[ik]} temperate bed columns"
         return head + ("" if s else f": {notes[ik][ip].replace('<br>', ', ')}")
@@ -316,7 +338,7 @@ def main():
                            layout=dict(title_text=title((ip, ik)))) for (ip, ik) in S]
     fig.update_layout(
         title=dict(text=title(first), font=dict(size=13)), height=330 * rows, template="plotly_white",
-        showlegend=False, margin=dict(t=90, b=60))
+        showlegend=False, margin=dict(t=90, b=60), barmode="overlay")
     fig.update_xaxes(title_text="Tsurf (K)", tickvals=P, ticktext=PL, row=1, col=1)
     fig.update_yaxes(title_text="k", row=1, col=1)
     for r in range(2, rows + 1):
