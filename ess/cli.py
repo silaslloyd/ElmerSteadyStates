@@ -565,9 +565,14 @@ def cmd_temperate_sweep(args):
         cols, _ = fit_mask(saved.x, diag)
         log.info(f"temperate-sweep: p = {p0:g}, {len(cols[2])} glaciated columns temperate "
                  f"(terminus {cols[2][0] / 1e3:.2f} km)")
-        for c in range(args.chunks):
+        nmax = args.chunks or (1000 if args.spinup_tol else 0)
+        if args.spinup_tol:
+            log.info(f"temperate-sweep: spin-up until the rms change per chunk ({prob.spec.horizon:g} yr) "
+                     f"< {args.spinup_tol:g} (at most {nmax} chunks)")
+        for c in range(nmax):
             yn = prob.phi(y, p0, tag=f"spin{c}", want_diag=True)
-            log.info(f"temperate-sweep: spin-up chunk {c + 1}/{args.chunks}, rms change {rms(yn - y):.3e}")
+            dy = rms(yn - y)
+            log.info(f"temperate-sweep: spin-up chunk {c + 1}/{nmax}, rms change {dy:.3e}")
             y = yn
             cols, ch = fit_mask(prob.unscale(y), prob.last_diag)
             if ch:
@@ -576,6 +581,12 @@ def cmd_temperate_sweep(args):
             save_state(os.path.join(bdir, "spinup.npz"), saved.layout, prob.unscale(y), p0, dict(saved.frozen),
                        prob.last_diag, spinup_time=t_spin)
             log.info(f"temperate-sweep: spin-up time {t_spin:g} yr (wrote {bdir}/spinup.npz)")
+            if args.spinup_tol and dy < args.spinup_tol:
+                log.info(f"temperate-sweep: rms change {dy:.3e} < {args.spinup_tol:g}: spin-up done")
+                break
+        else:
+            if args.spinup_tol and nmax:
+                log.warning(f"temperate-sweep: spin-up tolerance not reached in {nmax} chunks; Newton anyway")
         if args.spinup_only:
             log.info(f"temperate-sweep: --spinup-only: stopping; continue with --state {bdir}/spinup.npz")
             return
@@ -937,6 +948,9 @@ def main(argv=None):
     s.add_argument("--steps", type=int, help="steps per chunk (overrides [map] n_steps)")
     s.add_argument("--max-rounds", type=int, default=5, help="Newton + mask refit rounds at the start Tsurf")
     s.add_argument("--restart", action="store_true", help="converge the start state again even if it exists")
+    s.add_argument("--spinup-tol", type=float,
+                   help="spin up until the rms change of the (scaled) state over one chunk is below this, then "
+                        "Newton and the sweep; --chunks is then the maximum (default 1000)")
     s.add_argument("--spinup-only", action="store_true",
                    help="only the transient chunks (to <work>/branch_<name>/spinup.npz), no Newton / sweep; "
                         "continue with --state that file")
