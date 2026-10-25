@@ -13,7 +13,7 @@ each cell as wide as that branch's own Tsurf step (green kept, yellow cold bed a
 drawn over the spectrum grid.
 
 Copy the folders to your laptop, then press Run (settings below) or:
-    python plots/plot_spectrum.py work/land_flowline_T2k_strain "spectrum_p*_e50"
+    python plots/plot_spectrum.py work/land_flowline_T2k_strain
 Needs numpy and plotly.
 """
 import csv
@@ -34,7 +34,7 @@ import plot_branch_states as pbs  # noqa: E402
 
 # ---- settings for pressing Run (paths relative to the repository)
 DIR = "work/land_flowline_T2k_strain"
-PATTERN = "spectrum_p*_e50,fine/spectrum_p*_e50"     # the spectrum folders (one per Tsurf); comma = several
+PATTERN = "spectrum_p*,fine/spectrum_p*,kstep5/spectrum_p*"   # the spectrum folders (one per Tsurf); comma = several
 SECTIONS = True                 # T, u, w sections (False: lines only, a much smaller html)
 VEL_NZ = 40                     # vertical points of the section grids
 SHOW = True
@@ -115,6 +115,11 @@ def read_branches(d, names):
         n = 0
         for r in brows:
             sf = os.path.join(bdir, "points", f"state_{int(r['index']):04d}.npz")
+            if str(r.get("converged", "1")) == "0":              # temperate-sweep: Newton failed (no state)
+                out.append(dict(p=float(r["p"]), k=int(float(r.get("temperate_k") or 0)), branch=bn, sf=None,
+                                code=NO_CONV, note=f"{bn} point {r['index']}: Newton did not converge"))
+                n += 1
+                continue
             if not os.path.exists(sf):
                 continue
             nab = float(r.get("cold_above_Tm") or 0)
@@ -334,8 +339,8 @@ def main():
                              hovertemplate="Tsurf %{customdata[2]:g} K, k = %{y}<br>%{text}<extra></extra>"), 1, 1)
 
     # continuation branches: one strip per branch along its k row, cells as wide as its own steps
-    for bn in sorted({b["branch"] for b in B}):
-        jj = [j for j, b in enumerate(B) if b["branch"] == bn]
+    for bn, kb in sorted({(b["branch"], b["k"]) for b in B}):
+        jj = [j for j, b in enumerate(B) if b["branch"] == bn and b["k"] == kb]
         lo, hi = strip_edges([B[j]["p"] for j in jj])
         fig.add_trace(go.Bar(
             orientation="h", base=lo, x=hi - lo, y=[B[j]["k"] for j in jj], width=1.0,
@@ -344,7 +349,7 @@ def main():
             text=[B[j]["note"] for j in jj], textposition="none",
             customdata=[["b", j, B[j]["p"]] for j in jj],
             hovertemplate="Tsurf %{customdata[2]:.3f} K, k = %{y}<br>%{text}<extra></extra>"), 1, 1)
-        x0, x1, kb = float(lo.min()), float(hi.max()), B[jj[0]]["k"]      # outline of the whole strip
+        x0, x1 = float(lo.min()), float(hi.max())                          # outline of the whole strip
         fig.add_trace(go.Scatter(x=[x0, x1, x1, x0, x0], y=[kb - 0.5, kb - 0.5, kb + 0.5, kb + 0.5, kb - 0.5],
                                  mode="lines", line=dict(color="black", width=1.5), hoverinfo="skip"), 1, 1)
         print(f"  {bn}: strip at k = {kb}, Tsurf {x0:.3f}..{x1:.3f} K")

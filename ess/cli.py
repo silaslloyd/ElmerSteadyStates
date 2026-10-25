@@ -496,6 +496,177 @@ def cmd_spectrum(args):
         saved.diag = s0.diag
 
 
+def _spectrum_ps(work):
+    """the Tsurf values of every spectrum folder under work (spectrum_p<T>..., also in subfolders)"""
+    import glob
+    import re
+    ps = set()
+    for f in glob.glob(os.path.join(work, "**", "spectrum_p*"), recursive=True):
+        m = re.match(r"spectrum_p([0-9.]+)", os.path.basename(f))
+        if m and os.path.isdir(f):
+            ps.add(round(float(m.group(1)), 6))
+    return sorted(ps)
+
+
+def cmd_temperate_sweep(args):
+    """The fully temperate bed (every glaciated bed column temperate, T = T0): with a constant viscosity
+    and sliding that depends on the basal temperature only, the flow and the geometry no longer depend on
+    Tsurf. (1) converge that state at the start Tsurf: optional transient chunks, then Newton, re-fitting
+    the temperate mask to the terminus of the converged state until it stops moving; (2) Tsurf sweep: Newton
+    at each Tsurf from the nearest finished one (only the temperature should change), the patch hydrology
+    on the whole bed, and the geometry change from the start state as a check of the decoupling.
+    Written as a branch (<work>/branch_<name>/branch.csv, points/state_XXXX.npz) for plots/plot_spectrum.py."""
+    cfg, model, saved = _setup(args)
+    if cfg["model"].get("type", "elmer") != "elmer":
+        raise SystemExit("temperate-sweep needs the Elmer model")
+    if _masks_auto(cfg, model)[0]:
+        raise SystemExit("temperate-sweep: set [masks] auto = false (the temperate mask is set here)")
+    from dataclasses import replace as _replace
+    from .case import eval_lua_parameters
+    from .spectrum import bed_columns, mask_for, patch_hydrology
+    if args.dt is not None:
+        cfg.setdefault("map", {})["dt"] = args.dt
+    if args.steps is not None:
+        cfg.setdefault("map", {})["n_steps"] = args.steps
+    _patch_diagnostics(model)
+    prob = _problem(cfg, model)
+    PP = eval_lua_parameters(model.params_file)
+    phys = dict(rhoi=PP["rhoi"], Lw=PP["Lw"], rhow=PP["rhow"], gravity=PP["gravity"])
+    hydro = _hydro_params(cfg)
+    nopt = newton_options(cfg)
+    if args.maxit:
+        nopt = _replace(nopt, maxit=args.maxit)
+    kname = find_name(saved.frozen, "ColdTempMask")
+    et = args.edge_thickness
+    bdir = os.path.join(cfg["_work"], f"branch_{args.name}")
+    os.makedirs(os.path.join(bdir, "points"), exist_ok=True)
+    p0 = saved.p if args.p is None else args.p
+
+    def fit_mask(x, diag):
+        """all glaciated columns (terminus of x) temperate; returns (columns, changed)"""
+        g, col, ux = bed_columns(saved.layout, saved.frozen, diag, x=x, edge_thickness=et)
+        ct = mask_for(len(ux), g, col)
+        old = saved.frozen[kname]
+        same = len(old[0]) == len(g) and np.array_equal(old[0], g) and np.array_equal(old[1], ct)
+        saved.frozen[kname] = (g, ct)
+        return (g, col, ux), not same
+
+    # ---- (1) the fully temperate steady state at p0
+    start = os.path.join(bdir, "temperate_steady.npz")
+    if os.path.exists(start) and not args.restart:
+        s0 = load_state(start)
+        saved.frozen.clear()
+        saved.frozen.update(s0.frozen)
+        y, p0, diag0 = prob.scale(s0.x), s0.p, s0.diag
+        cols, _ = fit_mask(s0.x, s0.diag)
+        log.info(f"temperate-sweep: start from {start} (p = {p0:g}); --restart to converge it again")
+    else:
+        y, diag = prob.scale(saved.x), saved.diag
+        cols, _ = fit_mask(saved.x, diag)
+        log.info(f"temperate-sweep: p = {p0:g}, {len(cols[2])} glaciated columns temperate "
+                 f"(terminus {cols[2][0] / 1e3:.2f} km)")
+        for c in range(args.chunks):
+            yn = prob.phi(y, p0, tag=f"spin{c}", want_diag=True)
+            log.info(f"temperate-sweep: spin-up chunk {c + 1}/{args.chunks}, rms change {rms(yn - y):.3e}")
+            y = yn
+            cols, ch = fit_mask(prob.unscale(y), prob.last_diag)
+            if ch:
+                log.info(f"temperate-sweep: terminus now {cols[2][0] / 1e3:.2f} km ({len(cols[2])} columns): mask refitted")
+            save_state(os.path.join(bdir, "spinup.npz"), saved.layout, prob.unscale(y), p0, dict(saved.frozen),
+                       prob.last_diag, chunk=c + 1)
+        for rnd in range(args.max_rounds):
+            r = newton_krylov(prob, y, p0, nopt, label=f"temperate newton {rnd}")
+            if not r.converged:
+                raise SystemExit(f"temperate-sweep: Newton did not converge at p = {p0:g} (more --chunks of "
+                                 "spin-up, or a smaller --dt)")
+            y = r.y
+            cols, ch = fit_mask(prob.unscale(y), prob.last_diag)
+            if not ch:
+                break
+            log.info(f"temperate-sweep: terminus of the steady state {cols[2][0] / 1e3:.2f} km "
+                     f"({len(cols[2])} columns): mask refitted, Newton again")
+        else:
+            log.warning(f"temperate-sweep: the terminus still moved after {args.max_rounds} rounds")
+        diag0 = prob.last_diag
+        save_state(start, saved.layout, prob.unscale(y), p0, dict(saved.frozen), diag0)
+        log.info(f"temperate-sweep: wrote {start}")
+    names = {b.name.lower(): b.name for b in saved.layout.blocks}
+    zsn = names.get("zs")
+    Zs0 = saved.layout.split(prob.unscale(y))[zsn].copy() if zsn else None
+
+    # ---- (2) the Tsurf sweep
+    if args.p_list:
+        plist = sorted(float(v) for v in args.p_list.split(","))
+    elif args.p_step:
+        a, b = args.p_start if args.p_start is not None else p0, args.p_end if args.p_end is not None else p0
+        n = int(np.floor((b - a) / args.p_step + 1e-9)) + 1
+        plist = [a + i * args.p_step for i in range(max(n, 1))]
+    else:
+        plist = _spectrum_ps(cfg["_work"])
+        log.info(f"temperate-sweep: the Tsurf of the spectrum folders: {', '.join(f'{v:g}' for v in plist)}")
+    if not plist:
+        raise SystemExit("temperate-sweep: no Tsurf values (--p-list, --p-step, or spectrum folders)")
+    csvf = os.path.join(bdir, "branch.csv")
+    import csv
+    rows = []
+    if os.path.exists(csvf):
+        with open(csvf) as fh:
+            rows = list(csv.DictReader(fh))
+    done = {round(float(r["p"]), 6): int(r["index"]) for r in rows}
+    states = {p0: y}
+    for r_ in rows:                                         # resume: the finished states as starting points
+        sf = os.path.join(bdir, "points", f"state_{int(r_['index']):04d}.npz")
+        if str(r_.get("converged")) == "1" and os.path.exists(sf):
+            states[float(r_["p"])] = prob.scale(load_state(sf).x)
+    # from p0 outwards, so each start is the nearest finished Tsurf
+    order = sorted(plist, key=lambda v: abs(v - p0))
+    COLS = ["index", "p", "converged", "newton_its", "rms_F", "temperate_k", "n_columns", "x_terminus_km",
+            "cold_above_Tm", "temp_freezing", "hydro_ok", "hydro_status", "h_boundary", "h_min", "q_margin",
+            "melt_mean", "n_melt_filled", "dZs_max", "dZs_rms", "note"]
+    for p in order:
+        if round(p, 6) in done:
+            continue
+        pn = min(states, key=lambda q: abs(q - p))
+        log.info(f"temperate-sweep: p = {p:g} from the state at {pn:g}")
+        r = newton_krylov(prob, states[pn], p, nopt, label=f"temperate p={p:g}")
+        x = prob.unscale(r.y)
+        diag = prob.last_diag
+        g, col, ux = bed_columns(saved.layout, saved.frozen, diag, x=x, edge_thickness=et)
+        ncol = len(ux)
+        row = dict(index=len(rows), p=p, converged=int(r.converged), newton_its=r.iterations,
+                   rms_F=r.history[-1] if r.history else np.nan, temperate_k=ncol, n_columns=ncol,
+                   x_terminus_km=float(ux[0] / 1e3), cold_above_Tm=0)
+        hyd = {}
+        if r.converged:
+            states[p] = r.y
+            mr = _mask_cols(cfg, model, saved, x, diag)
+            row["temp_freezing"] = mr.get("temp_freezing", "")
+            ok, h_b, mm, note, ex, hyd = patch_hydrology(diag, saved.layout, x, *cols, len(cols[2]),
+                                                         hydro=hydro, **phys)
+            row.update(ex)
+            row.update(hydro_ok=int(ok), h_boundary=h_b, melt_mean=mm, note=note)
+            if Zs0 is not None:
+                dz = saved.layout.split(x)[zsn] - Zs0
+                row.update(dZs_max=float(np.max(np.abs(dz))), dZs_rms=float(np.sqrt(np.mean(dz ** 2))))
+            if ncol != len(cols[2]):
+                row["note"] = (note + "; " if note else "") + f"terminus moved: {ncol} columns, mask has {len(cols[2])}"
+            save_state(os.path.join(bdir, "points", f"state_{row['index']:04d}.npz"), saved.layout, x, p,
+                       dict(saved.frozen), {**diag, **hyd}, temperate_k=ncol)
+            log.info(f"temperate-sweep: p = {p:g}: converged in {r.iterations} its; hydrology "
+                     f"{'ok' if ok else 'FAILS'} (h at the divide end {h_b:.3g} m{', ' + note if note else ''}); "
+                     f"geometry change from p = {p0:g}: max |dZs| {row.get('dZs_max', np.nan):.3g} m")
+        else:
+            row["note"] = "Newton did not converge"
+            log.warning(f"temperate-sweep: p = {p:g}: Newton did not converge")
+        rows.append({c: row.get(c, "") for c in COLS})
+        with open(csvf + ".tmp", "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=COLS, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(rows)
+        os.replace(csvf + ".tmp", csvf)
+    log.info(f"temperate-sweep: {sum(str(r_['converged']) == '1' for r_ in rows)} of {len(rows)} converged; {csvf}")
+
+
 def cmd_transfer(args):
     """Carry a converged state (any config, e.g. the regularised full domain) onto this config's mesh."""
     cfg = load_config(args.config)
@@ -750,6 +921,23 @@ def main(argv=None):
     s.add_argument("--maxit", type=int, help="Newton iterations per state (overrides [newton] maxit)")
     s.add_argument("--out", help="output directory (default <work>/spectrum_p<P>)")
     s.set_defaults(fn=cmd_spectrum)
+
+    s = sub.add_parser("temperate-sweep")
+    common(s)
+    s.add_argument("--name", default="temperate", help="branch name (<work>/branch_<name>), default temperate")
+    s.add_argument("--edge-thickness", type=float, default=50.0,
+                   help="terminus = last column with ice thicker than this (m), default 50 (as the spectra)")
+    s.add_argument("--chunks", type=int, default=0, help="transient spin-up chunks before Newton (default 0)")
+    s.add_argument("--dt", type=float, help="spin-up / map time step (overrides [map] dt)")
+    s.add_argument("--steps", type=int, help="steps per chunk (overrides [map] n_steps)")
+    s.add_argument("--max-rounds", type=int, default=5, help="Newton + mask refit rounds at the start Tsurf")
+    s.add_argument("--restart", action="store_true", help="converge the start state again even if it exists")
+    s.add_argument("--p-list", help="Tsurf values, comma separated")
+    s.add_argument("--p-step", type=float, help="Tsurf from --p-start (default the start) to --p-end in this step")
+    s.add_argument("--p-start", type=float)
+    s.add_argument("--p-end", type=float)
+    s.add_argument("--maxit", type=int, help="Newton iterations (overrides [newton] maxit)")
+    s.set_defaults(fn=cmd_temperate_sweep)
 
     s = sub.add_parser("transfer")
     common(s)
