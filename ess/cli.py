@@ -572,8 +572,13 @@ def cmd_temperate_sweep(args):
             cols, ch = fit_mask(prob.unscale(y), prob.last_diag)
             if ch:
                 log.info(f"temperate-sweep: terminus now {cols[2][0] / 1e3:.2f} km ({len(cols[2])} columns): mask refitted")
+            t_spin = float(getattr(saved, "meta", {}).get("spinup_time", 0.0)) + (c + 1) * prob.spec.horizon
             save_state(os.path.join(bdir, "spinup.npz"), saved.layout, prob.unscale(y), p0, dict(saved.frozen),
-                       prob.last_diag, chunk=c + 1)
+                       prob.last_diag, spinup_time=t_spin)
+            log.info(f"temperate-sweep: spin-up time {t_spin:g} yr (wrote {bdir}/spinup.npz)")
+        if args.spinup_only:
+            log.info(f"temperate-sweep: --spinup-only: stopping; continue with --state {bdir}/spinup.npz")
+            return
         for rnd in range(args.max_rounds):
             r = newton_krylov(prob, y, p0, nopt, label=f"temperate newton {rnd}")
             if not r.converged:
@@ -932,6 +937,9 @@ def main(argv=None):
     s.add_argument("--steps", type=int, help="steps per chunk (overrides [map] n_steps)")
     s.add_argument("--max-rounds", type=int, default=5, help="Newton + mask refit rounds at the start Tsurf")
     s.add_argument("--restart", action="store_true", help="converge the start state again even if it exists")
+    s.add_argument("--spinup-only", action="store_true",
+                   help="only the transient chunks (to <work>/branch_<name>/spinup.npz), no Newton / sweep; "
+                        "continue with --state that file")
     s.add_argument("--p-list", help="Tsurf values, comma separated")
     s.add_argument("--p-step", type=float, help="Tsurf from --p-start (default the start) to --p-end in this step")
     s.add_argument("--p-start", type=float)
