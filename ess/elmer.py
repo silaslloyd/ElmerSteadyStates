@@ -79,6 +79,11 @@ class ElmerModel(Model):
         # stays as in the input state; Stokes still runs (same velocity every step on a frozen geometry
         # when nothing in the flow depends on temperature)
         self.heat_only = False
+        # [elmer] min_zs (m above sea level): the surface limiter Min Zs = max(bed + 5, min_zs), so over a bed
+        # below sea level the ice is at least as thick as the water is deep (a marine-like thickness);
+        # unset: Min Zs = bed + 5 (the run inputs, and so the cached runs, are unchanged)
+        mz = e.get("min_zs")
+        self.min_zs_expr = "tx[0] + 5" if mz is None else f"max(tx[0] + 5, {float(mz)!r})"
         # surface temperature: "constant" (Tsurf everywhere) or "snout" (Tsurf where the ice is thicker
         # than snout_thickness, linear to T0 at zero thickness: ElmerStreams' warm snout)
         self.surface_temp = str(e.get("surface_temp", "constant"))
@@ -298,6 +303,7 @@ End
             "__POST_BLOCK__": pb,
             "__FRICTION_HEAT__": self._friction_heat_block(),
             "__FS_EXEC__": '"Never"' if self.heat_only else '"after Timestep"',
+            "__MIN_ZS_EXPR__": self.min_zs_expr,
             "__LS_STOKES__": self._linear_block(self.linear_stokes, "stokes"),
             "__LS_HEAT__": self._linear_block(self.linear_heat, "heat"),
             "__LS_STRAIN__": self._linear_block(self.linear_heat, "strain"),

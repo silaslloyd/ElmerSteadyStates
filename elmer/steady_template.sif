@@ -355,7 +355,7 @@ Material 3
   ! fixed-margin mode the end of the domain is a Dirichlet condition on Zs in
   ! the "front ice" boundary condition)
   Min Zs = Variable "bedrock"
-    Real Lua "tx[0] + 5"
+    Real Lua "__MIN_ZS_EXPR__"
   Max Zs = Real 10000
 End
 
