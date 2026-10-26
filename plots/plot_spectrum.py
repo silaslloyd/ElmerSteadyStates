@@ -39,6 +39,8 @@ PATTERN = "spectrum_p*,fine/spectrum_p*,kstep5/spectrum_p*"   # the spectrum fol
 SECTIONS = True                 # T, u, w sections (False: lines only, a much smaller html)
 VEL_NZ = 40                     # vertical points of the section grids
 N_CONTOURS = 100                # colour levels of the T, u, w sections
+MELT_NORMALISE = False          # basal melt rate on the water-sheet panel: False = m/yr on one axis for all
+                                # states (changes between states visible); True = each state / its own max
 SHOW = True
 FILL_PASSED = True              # finished forcings: untried patch sizes up to fully temperate shown grey
 BRANCH = "branch_*"             # `ess continue` branches, one Tsurf column per point: all-cold (k = 0), or
@@ -279,7 +281,8 @@ def main():
             cr[k_] = dict(colorscale=cs, zmin=lo, zmax=hi)
 
     titles = ["Tsurf vs temperate bed columns k (click any converged square): green kept, red not converged, yellow forbidden by the heat equation, blue forbidden by the hydrology, grey not run; hatched outlined strips: continuation branches",
-              "basal temperature (K)", "water sheet thickness h (m, blue) and basal melt rate / its maximum (orange, right axis)"]
+              "basal temperature (K)", "water sheet thickness h (m, blue) and basal melt rate "
+              + ("/ its maximum" if MELT_NORMALISE else "(m/yr, < 0: freezing)") + " (orange, right axis)"]
     sec = [("TS", "temperature (K)", "K"), ("U", "along-flow velocity u (m/yr)", "m/yr"),
            ("W", "vertical velocity w (m/yr)", "m/yr")] if SECTIONS else []
     sec = [t for t in sec if t[0] in cr]
@@ -293,10 +296,14 @@ def main():
         m = s.get("mr")
         if m is None or not np.isfinite(m).any():
             return None
+        if not MELT_NORMALISE:
+            return m
         mx = float(np.nanmax(np.abs(m)))
         return m / mx if mx > 0 else m
-    mn_all = [melt_norm(s) for s in S.values()]
-    mlo = min([0.0] + [float(np.nanmin(v)) for v in mn_all if v is not None])
+    mn_all = [v for v in (melt_norm(s) for s in S.values()) if v is not None]
+    mlo = min([0.0] + [float(np.nanmin(v)) for v in mn_all])
+    mhi = max([0.0] + [float(np.nanmax(v)) for v in mn_all])
+    mpad = 0.05 * ((mhi - mlo) or 1.0)
     cb = lambda r, t: dict(title=t, len=0.8 / rows, y=1 - (r - 0.5) / rows * (1 - 0.0))
     E = go.Scatter(x=[], y=[])
 
@@ -316,8 +323,9 @@ def main():
         mn = melt_norm(s)
         tr.append(go.Scatter(x=s["xb"] / 1e3, y=mn, customdata=s["mr"], mode="lines",
                              line=dict(color="#e67e22", dash="dot"),
-                             hovertemplate="x %{x:.2f} km<br>melt %{customdata:.4g} m/yr "
-                                           "(%{y:.3f} of max)<extra></extra>") if mn is not None else E)
+                             hovertemplate="x %{x:.2f} km<br>melt %{customdata:.4g} m/yr"
+                                           + (" (%{y:.3f} of max)" if MELT_NORMALISE else "")
+                                           + "<extra></extra>") if mn is not None else E)
         for i, (k_, _, unit) in enumerate(sec):
             if k_ in s:
                 xg, zg, G = s[k_]
@@ -397,8 +405,8 @@ def main():
     fig.update_xaxes(title_text="x (km)", row=rows, col=1)
     fig.update_yaxes(range=tb, title_text="K", row=2, col=1)
     fig.update_yaxes(range=hr, title_text="m", row=3, col=1, secondary_y=False)
-    fig.update_yaxes(range=[mlo - 0.05, 1.05], title_text="melt / max", row=3, col=1, secondary_y=True,
-                     showgrid=False)
+    fig.update_yaxes(range=[mlo - mpad, mhi + mpad], title_text="melt / max" if MELT_NORMALISE else "melt (m/yr)",
+                     row=3, col=1, secondary_y=True, showgrid=False, zeroline=True, zerolinecolor="#e67e22")
     kept_keys = json.dumps([f"{ip}_{ik}" for (ip, ik) in S])
     js = """
 var gd = document.getElementById('{plot_id}');
