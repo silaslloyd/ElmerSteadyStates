@@ -21,7 +21,7 @@ esac
 PREP=${2:-}
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
-module load elmerfem
+module load elmerfem/2026-07-13
 export DIM=2
 export ESS_NPROCS=32
 MPIRUN_DEFAULT='mpirun -np {n} --bind-to none'

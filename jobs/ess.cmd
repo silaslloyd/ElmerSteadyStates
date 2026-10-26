@@ -29,7 +29,7 @@ echo "ess ${ARGS[*]}"
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
 
-module load elmerfem
+module load elmerfem/2026-07-13
 export DIM=2
 
 if [ ! -f elmer/SteadyStateIO.so ] || [ elmer/SteadyStateIO.F90 -nt elmer/SteadyStateIO.so ] || [ ! -f elmer/Buoyancy.so ]; then
