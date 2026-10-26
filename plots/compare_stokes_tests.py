@@ -26,6 +26,9 @@ from ess.statefile import find_name, load_state  # noqa: E402
 
 SOLVERS = ("direct", "iterative", "block", "amg")
 SHOW = True
+# not drawn in the html: block preconditioning with the normal-tangential bed, wrong on Elmer builds before the
+# 2026-10-14 fix (ElmerCSC/elmerfem 30a191d); their numbers are still printed
+NO_PLOT = ("block", "amg")
 
 
 def fields(s):
@@ -107,6 +110,8 @@ def compare(folder):
     cols = {"direct": "black", "iterative": "#e67e22", "block": "#2980b9", "amg": "#27ae60"}
     cols.update({k + "_cart": v for k, v in list(cols.items())})
     for sv, A in F.items():
+        if sv in NO_PLOT:
+            continue
         # surface u: the node with the largest z per column is not stored; use the Zs nodes' u
         us = _on(A["g"], A["u"], A["gz"])
         o = np.argsort(A["xz"])
