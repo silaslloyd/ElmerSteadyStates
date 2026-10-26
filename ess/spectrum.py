@@ -152,8 +152,11 @@ def hydrology_steady(x_col, melt_col, phi0_col, hp):
         # min_step: where h collapses towards 0 (dh/dx ~ 1/h) LSODA would otherwise shrink its step to
         # ~1e-11 m and stall ("t + h = t") before the dry event fires; with a floor it stops (status -1):
         # dry when h was falling there, flooding when rising
-        sol = solve_ivp(rhs, (xs[-1], xs[0]), [hp["h0"]], t_eval=xs[::-1], events=(dry, flood), method="LSODA",
-                        rtol=1e-8, atol=1e-3 * hdry, min_step=hp.get("min_step", 1e-3))
+        import warnings
+        with warnings.catch_warnings():      # "repeated error test failures": the stall, handled below
+            warnings.simplefilter("ignore", UserWarning)
+            sol = solve_ivp(rhs, (xs[-1], xs[0]), [hp["h0"]], t_eval=xs[::-1], events=(dry, flood), method="LSODA",
+                            rtol=1e-8, atol=1e-3 * hdry, min_step=hp.get("min_step", 1e-3))
     except ValueError:                       # event root finding failed right at h -> 0
         return h, q, False, "dry"
     hv = np.full(n, np.nan)
