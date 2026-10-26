@@ -1,5 +1,5 @@
-# ElmerSteadyStates: the MARINE flowline with a fully temperate bed (ess run --bed temperate) at Tsurf = 268.15 K, on a mesh
-# refined to 100 m around the grounding line of the coarse (1 km) temperate run, work/marine_flowline/run_temperate_p268.15.npz:
+# ElmerSteadyStates: the MARINE flowline with a fully temperate bed (ess run --bed temperate) at Tsurf = 273.15 K, on a mesh
+# refined to 100 m around the grounding line of the coarse (1 km, Tsurf 268.15 K) temperate run, work/marine_flowline/run_temperate_p268.15.npz:
 # two bands (case/flowline_marine_gl.geo.in), fine_res = 100 m within the grounding line +- 10 km and 1 km over
 # GL - GL/6 .. GL + GL/16, 10 km elsewhere; ~700 columns. Its own work dir and mesh. Partition for ~32-64 tasks on
 # one node (more parts leave a column or two per part); every job on this mesh must use the setup's --ntasks.
@@ -11,7 +11,7 @@
 #   J1=$(sbatch --parsable --ntasks=$N jobs/ess.cmd setup $C)
 #   J2=$(sbatch --parsable --ntasks=$N --dependency=afterok:$J1 jobs/ess.cmd init $C)
 #   J3=$(sbatch --parsable --ntasks=$N --dependency=afterok:$J2 jobs/ess.cmd transfer $C --from work/marine_flowline/run_temperate_p268.15.npz --out $W/start.npz)
-#   J4=$(sbatch --parsable --ntasks=$N --dependency=afterok:$J3 jobs/ess.cmd run $C --state $W/start.npz --p 268.15 --bed temperate \
+#   J4=$(sbatch --parsable --ntasks=$N --dependency=afterok:$J3 jobs/ess.cmd run $C --state $W/start.npz --p 273.15 --bed temperate \
 #        --stokes-only --chunks 200 --until-tol 1e-4 --save-every 5 --out $W/stokes.npz)
 #   J5=$(sbatch --parsable --ntasks=$N --dependency=afterok:$J4 jobs/ess.cmd run $C --state $W/stokes.npz --bed temperate \
 #        --heat-only --dt 1e6 --steps 2 --chunks 1 --rock-cap 0.001 --out $W/heat.npz)
