@@ -280,7 +280,7 @@ def main():
                 lo = -hi
             cr[k_] = dict(colorscale=cs, zmin=lo, zmax=hi)
 
-    titles = ["Tsurf vs temperate bed columns k (click any converged square): green kept, red not converged, yellow forbidden by the heat equation, blue forbidden by the hydrology, grey not run; hatched outlined strips: continuation branches",
+    titles = ["Tsurf vs temperate bed columns k (click any converged square): green kept, red not converged, yellow forbidden by the heat equation, blue forbidden by the hydrology, grey not run; finer-spaced data drawn on top",
               "basal temperature (K)", "water sheet thickness h (m, blue) and basal melt rate "
               + ("/ its maximum" if MELT_NORMALISE else "(m/yr, < 0: freezing)") + " (orange, right axis)"]
     sec = [("TS", "temperature (K)", "K"), ("U", "along-flow velocity u (m/yr)", "m/yr"),
@@ -369,22 +369,24 @@ def main():
                              hovertemplate="Tsurf %{customdata[2]:g} K, k = %{y}<br>%{text}<extra></extra>"), 1, 1)
 
     # continuation branches: one strip per branch along its k row, cells as wide as its own steps
-    for bn, kb in sorted({(b["branch"], b["k"]) for b in B}):
-        jj = [j for j, b in enumerate(B) if b["branch"] == bn and b["k"] == kb]
+    # drawn coarsest first, so finer-spaced data lies on top (all strips lie on top of the spectrum grid)
+    def spacing(group):
+        ps = np.sort([B[j]["p"] for j in group])
+        d = np.diff(ps)
+        d = d[d > 1e-9]
+        return float(np.median(d)) if len(d) else np.inf
+    groups = {}
+    for j, b in enumerate(B):
+        groups.setdefault((b["branch"], b["k"]), []).append(j)
+    for (bn, kb), jj in sorted(groups.items(), key=lambda t: -spacing(t[1])):
         lo, hi = strip_edges([B[j]["p"] for j in jj])
         fig.add_trace(go.Bar(
             orientation="h", base=lo, x=hi - lo, y=[B[j]["k"] for j in jj], width=1.0,
-            marker=dict(color=[COLOURS[B[j]["code"]] for j in jj], line=dict(width=0),
-                        **({} if bn.startswith("branch_temperate") else          # the fully temperate row:
-                           dict(pattern=dict(shape="/", fgcolor="rgba(255,255,255,0.6)",  # nothing under it
-                                             size=6, solidity=0.25)))),
+            marker=dict(color=[COLOURS[B[j]["code"]] for j in jj], line=dict(width=0)),
             text=[B[j]["note"] for j in jj], textposition="none",
             customdata=[["b", j, B[j]["p"]] for j in jj],
             hovertemplate="Tsurf %{customdata[2]:.3f} K, k = %{y}<br>%{text}<extra></extra>"), 1, 1)
-        x0, x1 = float(lo.min()), float(hi.max())                          # outline of the whole strip
-        if not bn.startswith("branch_temperate"):                          # (not on the temperate row)
-            fig.add_trace(go.Scatter(x=[x0, x1, x1, x0, x0], y=[kb - 0.5, kb - 0.5, kb + 0.5, kb + 0.5, kb - 0.5],
-                                     mode="lines", line=dict(color="black", width=1.5), hoverinfo="skip"), 1, 1)
+        x0, x1 = float(lo.min()), float(hi.max())
         print(f"  {bn}: strip at k = {kb}, Tsurf {x0:.3f}..{x1:.3f} K")
 
     def title(key):
