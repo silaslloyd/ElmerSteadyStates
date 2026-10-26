@@ -32,8 +32,16 @@ mkdir -p slurms
 module load elmerfem/2026-07-13
 export DIM=2
 
-if [ ! -f elmer/SteadyStateIO.so ] || [ elmer/SteadyStateIO.F90 -nt elmer/SteadyStateIO.so ] || [ ! -f elmer/Buoyancy.so ]; then
-    make -C elmer
-fi
+# the user libraries (state I/O, marine sea pressure) must be compiled against the Elmer that runs them: rebuild
+# when that Elmer changes (elmer/.built_with records it), under a lock so simultaneous jobs build once
+build_libs() {
+    local cur; cur=$(command -v ElmerSolver)
+    if [ ! -f elmer/SteadyStateIO.so ] || [ ! -f elmer/Buoyancy.so ] || [ elmer/SteadyStateIO.F90 -nt elmer/SteadyStateIO.so ] \
+       || [ elmer/Buoyancy.F90 -nt elmer/Buoyancy.so ] || [ "$(cat elmer/.built_with 2>/dev/null)" != "$cur" ]; then
+        echo "building elmer/*.so for $cur"
+        make -C elmer clean && make -C elmer && echo "$cur" > elmer/.built_with
+    fi
+}
+( flock 9; build_libs ) 9> elmer/.build.lock
 
 python3 -u -m ess "${ARGS[@]}"

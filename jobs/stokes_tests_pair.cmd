@@ -30,6 +30,17 @@ cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
 module load elmerfem/2026-07-13
 export DIM=2
+# the user libraries (state I/O, marine sea pressure) must be compiled against the Elmer that runs them: rebuild
+# when that Elmer changes (elmer/.built_with records it), under a lock so simultaneous jobs build once
+build_libs() {
+    local cur; cur=$(command -v ElmerSolver)
+    if [ ! -f elmer/SteadyStateIO.so ] || [ ! -f elmer/Buoyancy.so ] || [ elmer/SteadyStateIO.F90 -nt elmer/SteadyStateIO.so ] \
+       || [ elmer/Buoyancy.F90 -nt elmer/Buoyancy.so ] || [ "$(cat elmer/.built_with 2>/dev/null)" != "$cur" ]; then
+        echo "building elmer/*.so for $cur"
+        make -C elmer clean && make -C elmer && echo "$cur" > elmer/.built_with
+    fi
+}
+( flock 9; build_libs ) 9> elmer/.build.lock
 export ESS_NPROCS=32
 MPIRUN_DEFAULT='mpirun -np {n} --bind-to none'
 export ESS_MPIRUN="${ESS_MPIRUN:-$MPIRUN_DEFAULT}"
@@ -40,9 +51,6 @@ MARINE_FROM=${MARINE_FROM:-work/marine_flowline/run_cold_p268.15.npz}
 L=slurms/stokes_${SV}_${SLURM_JOB_ID:-local}
 
 if [ "$PREP" = prep ]; then
-    if [ ! -f elmer/SteadyStateIO.so ] || [ elmer/SteadyStateIO.F90 -nt elmer/SteadyStateIO.so ] || [ ! -f elmer/Buoyancy.so ]; then
-        make -C elmer
-    fi
     rm -f work/test_stokes_land/.prep_done work/test_stokes_marine/.prep_done
     for G in land marine; do
         C=configs/test_stokes_$G.toml; W=work/test_stokes_$G
