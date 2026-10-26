@@ -22,6 +22,7 @@ elmergrid = "ElmerGrid"
 type = "elmer"
 
 [elmer]
+output_level = 7                        # verbose Elmer log: the block solver and the Krylov iterations
 template = "elmer/steady_template_marine.sif"
 buoyancy_lib = "elmer/Buoyancy"      # SeaPressure / SeaSpring (make -C elmer)
 mesh_db = "footprint"

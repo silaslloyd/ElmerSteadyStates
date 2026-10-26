@@ -82,6 +82,8 @@ class ElmerModel(Model):
         # stays as in the input state; Stokes still runs (same velocity every step on a frozen geometry
         # when nothing in the flow depends on temperature)
         self.heat_only = False
+        # Elmer's output level ([elmer] output_level, default 3); e.g. 7 shows the block solver and its iterations
+        self.output_level = int(e.get("output_level", 3))
         # Stokes-only runs (`ess run --stokes-only`): no heat solve and no strain heating, so the temperature
         # stays as in the input state; Stokes and the free surface run (the geometry with the flow, for a bed
         # whose sliding does not depend on temperature: fully temperate, or cold enough that the factor is capped)
@@ -319,6 +321,7 @@ End
             "__POST_BLOCK__": pb,
             "__FRICTION_HEAT__": self._friction_heat_block(),
             "__FS_EXEC__": '"Never"' if self.heat_only else '"after Timestep"',
+            "__OUTPUT_LEVEL__": str(self.output_level),
             "__MIN_ZS_EXPR__": self.min_zs_expr,
             "__LS_STOKES__": self._linear_block(self.linear_stokes, "stokes"),
             "__LS_HEAT__": self._linear_block(self.linear_heat, "heat"),

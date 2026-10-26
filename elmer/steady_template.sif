@@ -107,7 +107,7 @@ Simulation
 
 __RESTART_BLOCK__
 __POST_BLOCK__
-  max output level = 3
+  max output level = __OUTPUT_LEVEL__
 End
 
 !---------------------------------------------------
