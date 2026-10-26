@@ -20,7 +20,8 @@ export DIM=2
 export ESS_NPROCS=32
 MPIRUN_DEFAULT='mpirun -np {n} --bind-to none'
 export ESS_MPIRUN="${ESS_MPIRUN:-$MPIRUN_DEFAULT}"
-CHUNKS=${CHUNKS:-5}
+CHUNKS=${CHUNKS:-1}
+STEPS=${STEPS:-20}          # time steps per chunk (each config's own dt): a short solver test
 LAND_FROM=${LAND_FROM:-work/land_flowline_T2k_strain/branch_temperate/temperate_steady.npz}
 MARINE_FROM=${MARINE_FROM:-work/marine_flowline/run_cold_p268.15.npz}
 L=slurms/stokes_${SV}_${SLURM_JOB_ID:-local}
@@ -52,7 +53,7 @@ fi
 run() {   # run <geometry> [options]: in the background, log slurms/stokes_<solver>_<job>_<geometry>.log
     local G=$1; shift
     python3 -u -m ess run configs/test_stokes_$G.toml --state work/test_stokes_$G/start.npz --stokes-only \
-        --linear-stokes $SV --chunks $CHUNKS --out work/test_stokes_$G/run_$SV.npz "$@" > ${L}_$G.log 2>&1 &
+        --linear-stokes $SV --chunks $CHUNKS --steps $STEPS --out work/test_stokes_$G/run_$SV.npz "$@" > ${L}_$G.log 2>&1 &
     echo "$(date +%T) started $G $SV (pid $!, log ${L}_$G.log)"
 }
 run marine --bed cold

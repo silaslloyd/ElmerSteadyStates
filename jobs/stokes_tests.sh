@@ -7,7 +7,7 @@
 #
 #   bash jobs/stokes_tests.sh
 #
-# Options by environment (passed to the jobs): CHUNKS (default 5), LAND_FROM / MARINE_FROM (start states),
+# Options by environment (passed to the jobs): STEPS (time steps per run, default 20), CHUNKS (default 1), LAND_FROM / MARINE_FROM (start states),
 # ESS_MPIRUN (default "mpirun -np {n} --bind-to none").   Results: python plots/compare_stokes_tests.py
 set -e
 cd "$(dirname "$0")/.."
