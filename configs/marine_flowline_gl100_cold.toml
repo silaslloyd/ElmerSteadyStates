@@ -87,7 +87,7 @@ restart_before_ics = true
 
 [parameter]
 name = "Tsurf"          # any top-level assignment in parameters.lua
-value = 268.15
+value = 273.15
 scale = 1.0             # parameter change (K) counted like one scaled unit of state change
 
 # The map used by Newton and continuation: n_steps of size dt (years). Its horizon T = n_steps*dt
