@@ -132,12 +132,43 @@ def main():
         fig.add_trace(go.Scatter(x=xb[o], y=fields[tname][j][o], mode="lines", name="T bed"), 1, 1)
         if not is_mode:
             fig.add_hline(y=273.15, line=dict(dash="dot", color="grey"), row=1, col=1)
+    # the boundaries of the ice along x: surface Zs, lower surface Zb (marine: in the state, the shelf base),
+    # and the bed (frozen bedrock) where it differs from Zb
+    lines = []                              # (x, z, name, colour, dash)
+
+    def profile(name):
+        nm = next((n for n in layout.names if n.lower() == name), None)
+        if nm is None or is_mode:
+            return None
+        g_ = next(b.gids for b in layout.blocks if b.name == nm)
+        sl_ = on_side(g_, coords)
+        x_ = xy(g_[sl_])[0]
+        o_ = np.argsort(x_)
+        return x_[o_], fields[nm][sl_][o_]
+    pzs, pzb = profile("zs"), profile("zb")
+    if pzs is not None:
+        lines.append((*pzs, "Zs", "black", None))
+    if pzb is not None:
+        lines.append((*pzb, "Zb (ice base)", "#8e44ad", None))
+    if pzb is not None and any(k.lower() == "bedrock" for k in frozen):
+        gr, vr = frozen[find_name(frozen, "bedrock")]
+        sr = on_side(gr, coords)
+        xr_ = xy(gr[sr])[0]
+        o_ = np.argsort(xr_)
+        lines.append((xr_[o_], vr[sr][o_], "bed", "#7f6000", "dot"))
+
+    def draw_lines(r):
+        for x_, z_, nm_, col_, dash_ in lines:
+            fig.add_trace(go.Scatter(x=x_, y=z_, mode="lines", name=nm_, line=dict(color=col_, width=1.5, dash=dash_),
+                                     hovertemplate=f"x %{{x:.4g}}<br>{nm_} %{{y:.4g}} m<extra></extra>"), r, 1)
     if zname:
         gs = next(b.gids for b in layout.blocks if b.name == zname)
         sel = on_side(gs, coords)
         xs = xy(gs[sel])[0]
         o = np.argsort(xs)
         fig.add_trace(go.Scatter(x=xs[o], y=fields[zname][sel][o], mode="lines", name="Zs"), 2, 1)
+        for x_, z_, nm_, col_, dash_ in lines[1:]:          # marine: the base and the bed on the elevation panel
+            fig.add_trace(go.Scatter(x=x_, y=z_, mode="lines", name=nm_, line=dict(color=col_, dash=dash_)), 2, 1)
     sel = on_side(gT, coords)
     xt, zt = xy(gT[sel])
     fig.add_trace(go.Scattergl(x=xt, y=zt, mode="markers",
@@ -146,6 +177,7 @@ def main():
                                            cmid=0 if is_mode else None),
                                hovertemplate="x %{x:.4g}<br>z %{y:.4g}<br>T %{marker.color:.5g}<extra></extra>",
                                name="T"), 3, 1)
+    draw_lines(3)
     if vrows:
         bar_y = [None, None, None, 0.35, 0.11]
         # bed elevation along x (the nodes carrying the frozen mask), to keep the contours in the ice
@@ -193,6 +225,7 @@ def main():
                 contours=cont, line=dict(width=0),
                 colorbar=dict(title=ctitle, y=bar_y[r - 1], len=0.2),
                 hovertemplate=f"x %{{x:.4g}}<br>z %{{y:.4g}}<br>{nm} %{{z:.4g}} m/yr<extra></extra>"), r, 1)
+            draw_lines(r)
     fig.update_xaxes(title_text="x (m)", row=rows, col=1)
     fig.update_layout(title=f"{os.path.basename(path)}: {title}", height=1000 if rows == 3 else 1600, template="plotly_white",
                       showlegend=False)
