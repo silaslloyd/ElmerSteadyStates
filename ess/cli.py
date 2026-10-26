@@ -272,13 +272,48 @@ def cmd_run(args):
              f"rock heat capacity x {prob.spec.rock_heat_capacity:g}"
              + (", grounding line by contact every step (--gl contact)" if contact else ""))
     p = saved.p if args.p is None else args.p
-    y = prob.scale(saved.x)
+    if args.stokes_only and args.heat_only:
+        raise SystemExit("run: --stokes-only and --heat-only exclude each other")
+    if args.heat_only:
+        model.heat_only = True
+        log.info("run: --heat-only: no free surface (the geometry stays as in the start state); Stokes and heat run")
+    if args.stokes_only:
+        model.stokes_only = True
+        log.info("run: --stokes-only: Stokes and the free surface only (no heat solve, no strain heating); "
+                 "the temperature stays as in the start state")
     if args.bed:                            # the whole bed temperate or cold (marine: the shelf base is at T0
         kn = find_name(saved.frozen, "ColdTempMask")      # whatever the mask says: tempbc in ess_utils.lua)
         g_ = saved.frozen[kn][0]
         saved.frozen[kn] = (g_, np.full(len(g_), 1.0 if args.bed == "temperate" else -1.0))
         log.info(f"run: the whole bed {args.bed} (ColdTempMask {'+1' if args.bed == 'temperate' else '-1'} on "
                  f"{len(g_)} nodes); the cold/temperate mask is not moved")
+        tb = next(b for b in saved.layout.blocks if b.name.lower() == "temperature")
+        j = np.searchsorted(tb.gids, g_)
+        ok = (j < len(tb.gids)) & (tb.gids[np.clip(j, 0, len(tb.gids) - 1)] == g_)
+        xs = saved.x.copy()
+        Tbed = saved.layout.split(xs)[tb.name]               # a view into xs
+        if args.bed == "temperate":         # sliding reads the bed temperature: T0 now, not after the first heat solve
+            Tbed[j[ok]] = 273.15
+            saved.x = xs
+            log.info(f"run: bed temperature set to T0 on {int(ok.sum())} bed nodes")
+        else:                               # cold: the sliding factor is capped (temperature-independent) only well below T0
+            from .masks import _on
+            gm = _on(*saved.frozen[find_name(saved.frozen, "GroundedMask")], g_, fill=1.0)
+            P_ = {}
+            try:
+                from .case import eval_lua_parameters
+                P_ = eval_lua_parameters(model.params_file)
+            except Exception:
+                pass
+            dTs = float(P_.get("dT", 0.15))
+            cap = float(cfg.get("lua", {}).get("ess_slide_maxfactor", 0) or 0)
+            Tw = 273.15 - (dTs * np.log(cap) if cap > 0 else 0.0)
+            warm = ok & (gm > -0.5) & (Tbed[np.clip(j, 0, len(Tbed) - 1)] > Tw)
+            if warm.any():
+                log.warning(f"run: {int(warm.sum())} grounded bed nodes are warmer than {Tw:.2f} K, where the sliding "
+                            f"factor still depends on temperature" + (" (--stokes-only keeps their temperature fixed)"
+                                                                       if args.stokes_only else ""))
+    y = prob.scale(saved.x)
     on, _ = _masks_auto(cfg, model)
     remask = on if args.remask is None else args.remask
     if args.bed and remask:
@@ -1000,6 +1035,12 @@ def main(argv=None):
     s.add_argument("--bed", choices=["temperate", "cold"],
                    help="the whole bed temperate or cold for this run (ColdTempMask +1 / -1 everywhere, not moved; "
                         "marine: the shelf base stays at T0 either way)")
+    s.add_argument("--stokes-only", action="store_true",
+                   help="Stokes and the free surface only: no heat solve or strain heating (the temperature stays as in "
+                        "the start state); for a bed whose sliding does not depend on temperature (with --bed)")
+    s.add_argument("--heat-only", action="store_true",
+                   help="no free surface: the geometry stays as in the start state, Stokes and heat run (with --dt 1e6 "
+                        "--steps 2 --chunks 1: the steady temperature on that geometry in one run)")
     s.add_argument("--until-tol", type=float,
                    help="stop when the rms change of the (scaled) state over one chunk is below this; --chunks is "
                         "then the maximum")

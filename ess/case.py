@@ -196,7 +196,15 @@ def setup_case(cfg, mesh=True):
              + f"bed temperature {g['Tb'][g['gm'] > 0].min():.2f}..{g['Tb'][g['gm'] > 0].max():.2f} K, "
              f"cold-bed fraction {np.mean(g['ct'][g['gm'] > 0] < 0):.2f}")
     P["GLx"] = float(xm)
-    if "gl_x_km" in c:                        # refine around this grounding line instead of the initial one
+    if "gl_from_state" in c:                  # refine around the grounding line of this state (another mesh is fine)
+        from .masks import _on
+        from .statefile import find_name, load_state
+        st = load_state(cfg["_path"](c["gl_from_state"]))
+        g_, m_ = st.frozen[find_name(st.frozen, "GroundedMask")]
+        x_ = _on(*st.diag[find_name(st.diag, "coordinate 1")], g_)
+        P["GLx"] = float(x_[m_ > -0.5].max())
+        log.info(f"setup: mesh refined around the grounding line of {c['gl_from_state']}: x = {P['GLx'] / 1e3:.2f} km")
+    elif "gl_x_km" in c:                      # refine around this grounding line instead of the initial one
         P["GLx"] = float(c["gl_x_km"]) * 1e3
         log.info(f"setup: mesh refined around x = {P['GLx'] / 1e3:.2f} km ([case] gl_x_km)")
     P["FineRes"] = float(c.get("fine_res", P.get("MarginRes", 1000.0)))       # flowline_marine_gl.geo.in

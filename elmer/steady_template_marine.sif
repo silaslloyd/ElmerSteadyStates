@@ -498,7 +498,7 @@ End
 
 Solver 11
   Equation = String "Homologous Temperature Equation"
-  Procedure =  File "HeatSolveVec" "HeatSolver"
+  Procedure =  File "HeatSolveVec" "HeatSolver"__HEAT_EXEC__
   Variable = String "Temperature"
   ! no bubbles: condensed bubbles carry their own time history, which is not
   ! part of the state the driver saves and restores (it would restart from zero
@@ -538,7 +538,7 @@ End
 ! the base: free where floating, Zb = bedrock where grounded (boundary condition 19)
 Solver 12
   Equation = "Free Surface Sea/Shelf"
-  Exec Solver = "after Timestep"
+  Exec Solver = __FS_EXEC__
   Procedure =  "FreeSurfaceSolver" "FreeSurfaceSolver"
   Variable = "Zb"
   Variable DOFS =  1
@@ -563,7 +563,7 @@ End
 
 Solver 13
   Equation = "Free Surface Top"
-  Exec Solver = "after Timestep"
+  Exec Solver = __FS_EXEC__
   Procedure =  "FreeSurfaceSolver" "FreeSurfaceSolver"
   Variable = "Zs"
   Variable DOFS =  1

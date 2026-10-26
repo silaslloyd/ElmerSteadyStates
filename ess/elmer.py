@@ -79,6 +79,10 @@ class ElmerModel(Model):
         # stays as in the input state; Stokes still runs (same velocity every step on a frozen geometry
         # when nothing in the flow depends on temperature)
         self.heat_only = False
+        # Stokes-only runs (`ess run --stokes-only`): no heat solve and no strain heating, so the temperature
+        # stays as in the input state; Stokes and the free surface run (the geometry with the flow, for a bed
+        # whose sliding does not depend on temperature: fully temperate, or cold enough that the factor is capped)
+        self.stokes_only = False
         # [elmer] min_zs (m above sea level): the surface limiter Min Zs = max(bed + 5, min_zs), so over a bed
         # below sea level the ice is at least as thick as the water is deep (a marine-like thickness);
         # unset: Min Zs = bed + 5 (the run inputs, and so the cached runs, are unchanged)
@@ -309,7 +313,8 @@ End
             "__LS_STRAIN__": self._linear_block(self.linear_heat, "strain"),
             "__STOKES_STAB__": f'"{self.stokes_element}"',
             # strain heating (ElmerStreams: on): DeformationalHeatSolver + volumetric heat source
-            "__STRAIN_EXEC__": '"Always"' if self.strain_heat else '"Never"',
+            "__STRAIN_EXEC__": '"Always"' if self.strain_heat and not self.stokes_only else '"Never"',
+            "__HEAT_EXEC__": '\n  Exec Solver = "Never"   ! --stokes-only' if self.stokes_only else "",
             "__HEAT_SOURCE__": ('  Heat Source = Variable Strain Heating\n    Real Lua "tx[0]/rhoi"'
                                 if self.strain_heat else "  ! no Heat Source: strain heating off ([elmer] strain_heat)"),
             "__HTC__": f"{self.surface_transfer:g}",

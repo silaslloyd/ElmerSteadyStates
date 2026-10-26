@@ -516,7 +516,7 @@ End
 
 Solver 11
   Equation = String "Homologous Temperature Equation"
-  Procedure =  File "HeatSolveVec" "HeatSolver"
+  Procedure =  File "HeatSolveVec" "HeatSolver"__HEAT_EXEC__
   Variable = String "Temperature"
   ! no bubbles: condensed bubbles carry their own time history, which is not
   ! part of the state the driver saves and restores (it would restart from zero

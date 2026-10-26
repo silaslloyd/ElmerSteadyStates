@@ -1,22 +1,26 @@
-# ElmerSteadyStates: the MARINE flowline (configs/marine_flowline.toml) on a mesh refined to 100 m around the
-# grounding line: two bands (case/flowline_marine_gl.geo.in), fine_res = 100 m within gl_x_km +- 10 km and the
-# usual 1 km over GL - GL/6 .. GL + GL/16, 10 km elsewhere; ~700 columns in all. Its own work dir and mesh.
-# Partition for ~32-64 tasks (one node): more parts than that leave only a column or two per part.
-# Every job on this mesh must use the same --ntasks as the setup (the mesh is partitioned for it).
+# ElmerSteadyStates: the MARINE flowline with a fully cold bed (ess run --bed cold) at Tsurf = 268.15 K, on a mesh
+# refined to 100 m around the grounding line of the coarse (1 km) cold run, work/marine_flowline/run_cold_p268.15.npz:
+# two bands (case/flowline_marine_gl.geo.in), fine_res = 100 m within the grounding line +- 10 km and 1 km over
+# GL - GL/6 .. GL + GL/16, 10 km elsewhere; ~700 columns. Its own work dir and mesh. Partition for ~32-64 tasks on
+# one node (more parts leave a column or two per part); every job on this mesh must use the setup's --ntasks.
 #
-# 1. the grounding line of the coarse state to start from (put it in gl_x_km below):
-#      python3 -c "import sys; sys.path.insert(0,'.'); from ess.statefile import load_state, find_name; from ess.masks import _on; \
-#        s=load_state('work/marine_flowline/run_cold_p268.15.npz'); g,m=s.frozen[find_name(s.frozen,'GroundedMask')]; \
-#        x=_on(*s.diag[find_name(s.diag,'coordinate 1')], g); print(round(x[m>-0.5].max()/1e3, 2), 'km')"
-# 2. sbatch --ntasks=64 jobs/ess.cmd setup configs/marine_flowline_gl100.toml
-#    sbatch --ntasks=64 jobs/ess.cmd init  configs/marine_flowline_gl100.toml
-# 3. sbatch --ntasks=64 jobs/ess.cmd transfer configs/marine_flowline_gl100.toml --from work/marine_flowline/run_cold_p268.15.npz
-# 4. sbatch --ntasks=64 jobs/ess.cmd run configs/marine_flowline_gl100.toml --state work/marine_flowline_gl100/start_p268.15.npz \
-#      --bed cold --chunks 100 --until-tol 1e-4 --rock-cap 0.001 --save-every 1 --out work/marine_flowline_gl100/run_cold_p268.15.npz
+# With a fully cold bed the flow does not depend on the temperature (a cold bed well below T0: the sliding factor is capped),
+# so: Stokes + free surface to an approximate steady geometry, the steady temperature on it in one long-step run,
+# then coupled runs to the steady state:
+#   C=configs/marine_flowline_gl100_cold.toml; W=work/marine_flowline_gl100_cold; N=32
+#   J1=$(sbatch --parsable --ntasks=$N jobs/ess.cmd setup $C)
+#   J2=$(sbatch --parsable --ntasks=$N --dependency=afterok:$J1 jobs/ess.cmd init $C)
+#   J3=$(sbatch --parsable --ntasks=$N --dependency=afterok:$J2 jobs/ess.cmd transfer $C --from work/marine_flowline/run_cold_p268.15.npz --out $W/start.npz)
+#   J4=$(sbatch --parsable --ntasks=$N --dependency=afterok:$J3 jobs/ess.cmd run $C --state $W/start.npz --p 268.15 --bed cold \
+#        --stokes-only --chunks 200 --until-tol 1e-4 --save-every 5 --out $W/stokes.npz)
+#   J5=$(sbatch --parsable --ntasks=$N --dependency=afterok:$J4 jobs/ess.cmd run $C --state $W/stokes.npz --bed cold \
+#        --heat-only --dt 1e6 --steps 2 --chunks 1 --rock-cap 0.001 --out $W/heat.npz)
+#   sbatch --ntasks=$N --dependency=afterok:$J5 jobs/ess.cmd run $C --state $W/heat.npz --bed cold \
+#        --chunks 200 --until-tol 1e-4 --rock-cap 0.001 --save-every 5 --out $W/coupled.npz
 # Relative paths are relative to the repository root; {work}, {case_dir} and {repo} are expanded.
 
 [paths]
-work_dir = "work/marine_flowline_gl100"
+work_dir = "work/marine_flowline_gl100_cold"
 case_dir = "{work}/case"                # mesh and initial conditions, written by `ess setup`
 
 [case]
@@ -24,7 +28,7 @@ geometry = "marine"                     # ice shelf, sea pressure, frozen ground
 marine_ics = "case/marine_ics"          # ElmerStreams Marine_Term Initialisation/Dimensional_ICs tables
 parameters = "case/parameters.lua"      # physical parameters (the same as Marine_Term's)
 geo = "case/flowline_marine_gl.geo.in"  # footprint: fine_res within gl_x_km +- fine_half_width, MarginRes around it
-gl_x_km = 686.0                         # SET THIS: the grounding line of the state you start from (see the header)
+gl_from_state = "work/marine_flowline/run_cold_p268.15.npz"   # refine around its grounding line (or gl_x_km = ...)
 fine_res = 100.0                        # m, element size in the band around the grounding line
 fine_half_width = 10000.0               # m, half width of that band
 gmsh = "gmsh"
