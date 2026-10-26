@@ -174,6 +174,46 @@ def hydrology_steady(x_col, melt_col, phi0_col, hp):
     return hv, q, bool(ok), status
 
 
+# ---------------------------------------------------------------- one state of a spectrum
+def evaluate_patch(r, x, diag, k, layout, g_ct, col, ux, ct, ncol, *, tol_T, hydro, phys):
+    """The checks of a state with a temperate patch of k columns from the terminus (mask ct): Newton
+    result r, state x, diagnostics diag. Thermal: no cold glaciated bed node above T0 + tol_T; hydrology:
+    the steady water sheet on the patch (patch_hydrology). Returns (spectrum.csv row, the water-sheet
+    fields to save with the state, kept, hydro_ok, note, h at the boundary)."""
+    Tb = basal_temperature(layout, x, g_ct)
+    cold = (col >= 0) & (ct < 0)
+    hot = cold & (Tb > T0 + tol_T)
+    row = dict(k=k, n_temperate_cols=min(k, ncol), converged=int(r.converged), newton_its=r.iterations,
+               rms_F=r.history[-1] if r.history else np.nan, n_cold_above_Tm=int(hot.sum()),
+               Tb_cold_max=float(np.nanmax(Tb[cold])) if cold.any() else np.nan,
+               x_boundary_km=float(ux[k - 1] / 1e3) if k > 0 else np.nan)
+    thermal_ok = r.converged and not hot.any()
+    hydro_ok, h_b, mmean, note = True, np.nan, np.nan, ""
+    hyd = {}                             # water sheet, flux and melt rate on the bed nodes (saved with the state)
+    if k > 0 and r.converged:
+        hydro_ok, h_b, mmean, note, extra, hyd = patch_hydrology(diag, layout, x, g_ct, col, ux, k, hydro=hydro,
+                                                                 **phys)
+        row.update(extra)
+    if not r.converged:
+        note = "Newton did not converge"
+    elif not thermal_ok:
+        note = f"{int(hot.sum())} cold bed nodes above melting"
+    elif not hydro_ok and not note:
+        note = "water sheet < 0 at the cold/temperate boundary"
+    kept = thermal_ok and hydro_ok
+    row.update(h_boundary=h_b, melt_mean=mmean, thermal_ok=int(thermal_ok), hydro_ok=int(hydro_ok),
+               kept=int(kept), note=note)
+    return row, hyd, kept, hydro_ok, note, h_b
+
+
+def write_rows(csvf, rows):
+    with open(csvf + ".tmp", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=COLS)
+        w.writeheader()
+        w.writerows(rows)
+    os.replace(csvf + ".tmp", csvf)
+
+
 # ---------------------------------------------------------------- the loop
 COLS = ["k", "n_temperate_cols", "x_boundary_km", "converged", "newton_its", "rms_F", "n_cold_above_Tm",
         "Tb_cold_max", "h_boundary", "h_min", "q_margin", "hydro_status", "n_melt_filled", "melt_mean", "thermal_ok", "hydro_ok", "kept", "note"]
@@ -306,29 +346,9 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
             ct = mask_for(0, g_ct, col)
             log.info(f"spectrum: terminus of the k = 0 steady state at x = {ux[0] / 1e3:.2f} km "
                      f"({ncol} glaciated columns); the patches start there")
-        Tb = basal_temperature(layout, x, g_ct)
-        cold = (col >= 0) & (ct < 0)
-        hot = cold & (Tb > T0 + tol_T)
-        row = dict(k=k, n_temperate_cols=min(k, ncol), converged=int(r.converged), newton_its=r.iterations,
-                   rms_F=r.history[-1] if r.history else np.nan, n_cold_above_Tm=int(hot.sum()),
-                   Tb_cold_max=float(np.nanmax(Tb[cold])) if cold.any() else np.nan,
-                   x_boundary_km=float(ux[k - 1] / 1e3) if k > 0 else np.nan)
-        thermal_ok = r.converged and not hot.any()
-        hydro_ok, h_b, mmean, note = True, np.nan, np.nan, ""
-        hyd = {}                             # water sheet, flux and melt rate on the bed nodes (saved with the state)
-        if k > 0 and r.converged:
-            hydro_ok, h_b, mmean, note, extra, hyd = patch_hydrology(diag, layout, x, g_ct, col, ux, k, rhoi=rhoi,
-                                                                     Lw=Lw, rhow=rhow, gravity=gravity, hydro=hydro)
-            row.update(extra)
-        if not r.converged:
-            note = "Newton did not converge"
-        elif not thermal_ok:
-            note = f"{int(hot.sum())} cold bed nodes above melting"
-        elif not hydro_ok and not note:
-            note = "water sheet < 0 at the cold/temperate boundary"
-        kept = thermal_ok and hydro_ok
-        row.update(h_boundary=h_b, melt_mean=mmean, thermal_ok=int(thermal_ok), hydro_ok=int(hydro_ok),
-                   kept=int(kept), note=note)
+        row, hyd, kept, hydro_ok, note, h_b = evaluate_patch(
+            r, x, diag, k, layout, g_ct, col, ux, ct, ncol, tol_T=tol_T, hydro=hydro,
+            phys=dict(rhoi=rhoi, Lw=Lw, rhow=rhow, gravity=gravity))
         rows.append({c: row.get(c, "") for c in COLS})
         if r.converged:                       # discarded ones too (heat / hydrology): to look at them
             save_state(os.path.join(outdir, "points", f"state_{k:04d}.npz"), layout, x, p, dict(frozen), {**diag, **hyd},
@@ -352,4 +372,87 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
         if k > 0:
             n_dry = n_dry + 1 if failed(r.converged, hydro_ok) else 0
         k += k_step
+    return rows
+
+
+# ---------------------------------------------------------------- downward from the fully temperate bed
+def run_spectrum_down(prob, saved, y0, p, newton_opt, outdir, *, k_step=5, k_min=0, tol_T=0.0, rhoi, Lw, rhow,
+                      gravity, hydro, edge_thickness=None):
+    """From a (fully) temperate steady state at p: patches of k = n, n - k_step, ... columns from the terminus
+    (the cold bed spreading from the divide towards the margin), each Newton-solved from the last converged
+    state (Stokes and heat coupled). When Newton fails, the step is cut (k_step - 1, ..., 1) from the last
+    converged state; after a success the full step is used again; when a step of 1 fails, the run stops.
+    The terminus (columns) is that of the start state. Written as a spectrum folder (spectrum.csv,
+    points/state_XXXX.npz with the water sheet, spectrum_meta.json) for plots/plot_spectrum.py."""
+    from .newton import newton_krylov
+    from .statefile import load_state
+    os.makedirs(os.path.join(outdir, "points"), exist_ok=True)
+    csvf = os.path.join(outdir, "spectrum.csv")
+    rows = []
+    if os.path.exists(csvf):
+        with open(csvf) as f:
+            rows = list(csv.DictReader(f))
+    layout, frozen = saved.layout, saved.frozen
+    kname = find_name(frozen, "ColdTempMask")
+    g_ct, col, ux = bed_columns(layout, frozen, saved.diag, x=prob.unscale(y0), edge_thickness=edge_thickness)
+    ncol = len(ux)
+    import json
+    with open(os.path.join(outdir, "spectrum_meta.json"), "w") as fm:
+        json.dump(dict(p=p, n_columns=int(ncol), x_terminus_km=float(ux[0] / 1e3), edge_thickness=edge_thickness,
+                       direction="down"), fm)
+    phys = dict(rhoi=rhoi, Lw=Lw, rhow=rhow, gravity=gravity)
+    y, k_last = y0, None                   # the last converged state and its k
+    for r_ in rows:
+        if str(r_.get("converged")) == "1":
+            sf = os.path.join(outdir, "points", f"state_{int(r_['k']):04d}.npz")
+            if os.path.exists(sf) and (k_last is None or int(r_["k"]) < k_last):
+                k_last, y = int(r_["k"]), prob.scale(load_state(sf).x)
+    log.info(f"spectrum-down: p = {p:g}, {ncol} glaciated columns (terminus {ux[0] / 1e3:.2f} km), "
+             f"k from {ncol if k_last is None else k_last} down to {k_min}, step {k_step}"
+             + (f" (resuming at k = {k_last})" if k_last is not None else ""))
+
+    def solve(k, y_start):
+        ct = mask_for(k, g_ct, col)
+        frozen[kname] = (g_ct, ct)
+        r = newton_krylov(prob, y_start, p, newton_opt, label=f"spectrum-down k={k}")
+        x = prob.unscale(r.y)
+        diag = prob.last_diag
+        row, hyd, kept, hydro_ok, note, h_b = evaluate_patch(r, x, diag, k, layout, g_ct, col, ux, ct, ncol,
+                                                             tol_T=tol_T, hydro=hydro, phys=phys)
+        rows[:] = [r_ for r_ in rows if int(r_["k"]) != k]           # a retried k replaces its earlier row
+        rows.append({c: row.get(c, "") for c in COLS})
+        rows.sort(key=lambda r_: -int(r_["k"]))
+        if r.converged:
+            save_state(os.path.join(outdir, "points", f"state_{k:04d}.npz"), layout, x, p, dict(frozen),
+                       {**diag, **hyd}, spectrum_k=k, x_boundary=row["x_boundary_km"] * 1e3 if k else np.nan,
+                       kept=int(kept))
+        write_rows(csvf, rows)
+        log.info(f"spectrum-down: k = {k}: " + ("NOT converged" if not r.converged else
+                 ("KEPT" if kept else "discarded") + (f" ({note})" if note else ""))
+                 + (f"; boundary {row['x_boundary_km']:.2f} km" if k else "")
+                 + f"; cold nodes above T0 {row['n_cold_above_Tm']}, h_boundary {h_b:.3g}")
+        return r
+
+    if k_last is None:                      # the start: all glaciated columns temperate (cold beyond the margin)
+        r = solve(ncol, y0)
+        if not r.converged:
+            log.warning("spectrum-down: Newton did not converge at k = n (all glaciated columns temperate)")
+            return rows
+        k_last, y = ncol, r.y
+    while k_last > k_min:
+        here = set()
+        for s in range(k_step, 0, -1):
+            k = max(k_last - s, k_min)
+            if k in here:                    # clamped at k_min: already tried from this state
+                continue
+            here.add(k)
+            r = solve(k, y)
+            if r.converged:
+                k_last, y = k, r.y
+                break
+            log.info(f"spectrum-down: k = {k} from k = {k_last} did not converge"
+                     + (f"; trying a step of {s - 1}" if s > 1 else ""))
+        else:
+            log.warning(f"spectrum-down: no converged state below k = {k_last} (even a step of 1); stopping")
+            break
     return rows

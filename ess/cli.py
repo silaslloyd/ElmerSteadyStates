@@ -733,6 +733,34 @@ def cmd_temperate_sweep(args):
     log.info(f"temperate-sweep: {sum(str(r_['converged']) == '1' for r_ in rows)} of {len(rows)} converged; {csvf}")
 
 
+def cmd_spectrum_down(args):
+    """From a (fully) temperate steady state (e.g. a temperate-sweep point at 273.15 K): temperate patches of
+    n, n - k_step, ... columns from the terminus, the cold bed spreading from the divide; full Newton for each
+    (Stokes and heat coupled), the step cut down to 1 where Newton fails. A spectrum folder for the plots."""
+    cfg, model, saved = _setup(args)
+    if cfg["model"].get("type", "elmer") != "elmer":
+        raise SystemExit("spectrum-down needs the Elmer model")
+    if _masks_auto(cfg, model)[0]:
+        raise SystemExit("spectrum-down: set [masks] auto = false (the patches are set here)")
+    from dataclasses import replace as _replace
+    from .case import eval_lua_parameters
+    from .spectrum import run_spectrum_down
+    _patch_diagnostics(model)
+    prob = _problem(cfg, model)
+    p = saved.p if args.p is None else args.p
+    P = eval_lua_parameters(model.params_file)
+    nopt = newton_options(cfg)
+    if args.maxit:
+        nopt = _replace(nopt, maxit=args.maxit)
+    tag = f"_e{args.edge_thickness:g}" if args.edge_thickness is not None else ""
+    out = args.out or os.path.join(cfg["_work"], f"spectrum_p{p:g}{tag}_down")
+    rows = run_spectrum_down(prob, saved, prob.scale(saved.x), p, nopt, out, k_step=args.k_step, k_min=args.k_min,
+                             tol_T=args.tol_T, rhoi=P["rhoi"], Lw=P["Lw"], rhow=P["rhow"], gravity=P["gravity"],
+                             hydro=_hydro_params(cfg), edge_thickness=args.edge_thickness)
+    kept = [r for r in rows if str(r["kept"]) == "1"]
+    log.info(f"spectrum-down: {len(kept)} consistent states of {len(rows)}; {out}/spectrum.csv")
+
+
 def cmd_transfer(args):
     """Carry a converged state (any config, e.g. the regularised full domain) onto this config's mesh."""
     cfg = load_config(args.config)
@@ -1014,6 +1042,18 @@ def main(argv=None):
     s.add_argument("--heat-dt", type=float, default=1e6, help="--heat-only: step length (yr), default 1e6")
     s.add_argument("--heat-steps", type=int, default=2, help="--heat-only: steps, default 2")
     s.set_defaults(fn=cmd_temperate_sweep)
+
+    s = sub.add_parser("spectrum-down")
+    common(s)
+    s.add_argument("--k-step", type=int, default=5, help="temperate columns removed per step (default 5; cut "
+                                                         "down to 1 where Newton fails)")
+    s.add_argument("--k-min", type=int, default=0, help="stop at this patch size (default 0: all cold)")
+    s.add_argument("--edge-thickness", type=float, default=50.0,
+                   help="terminus = last column with ice thicker than this (m), from the start state (default 50)")
+    s.add_argument("--tol-T", type=float, default=0.0, help="cold bed nodes may exceed T0 by this much (K)")
+    s.add_argument("--maxit", type=int, help="Newton iterations (overrides [newton] maxit)")
+    s.add_argument("--out", help="output folder (default <work>/spectrum_p<P>_e<edge>_down)")
+    s.set_defaults(fn=cmd_spectrum_down)
 
     s = sub.add_parser("transfer")
     common(s)
