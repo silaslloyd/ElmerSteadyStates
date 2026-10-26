@@ -272,6 +272,9 @@ def cmd_run(args):
              f"rock heat capacity x {prob.spec.rock_heat_capacity:g}"
              + (", grounding line by contact every step (--gl contact)" if contact else ""))
     p = saved.p if args.p is None else args.p
+    if args.cartesian_bed:
+        model.cartesian_bed = True
+        log.info("run: --cartesian-bed: the bed condition in x/y/z components (no normal-tangential velocities)")
     if args.stokes_block_file:
         model.stokes_block_file = args.stokes_block_file
     if args.stokes_element:
@@ -1051,6 +1054,9 @@ def main(argv=None):
     s.add_argument("--linear-stokes", choices=["direct", "iterative", "block"],
                    help="Stokes linear solver for this run: direct (MUMPS), iterative (GCR + ILU), block (block "
                         "preconditioning, keywords from [elmer] stokes_block_file); default: [elmer] linear_stokes")
+    s.add_argument("--cartesian-bed", action="store_true",
+                   help="test: the bed condition in x/y/z instead of normal-tangential components (nearly flat beds; "
+                        "marine: with --gl frozen)")
     s.add_argument("--stokes-block-file", help="block-preconditioner keywords for --linear-stokes block "
                                                 "(default [elmer] stokes_block_file, elmer/stokes_block.sif.in)")
     s.add_argument("--stokes-element", choices=["P2/P1", "Stabilized"],

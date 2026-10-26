@@ -82,6 +82,11 @@ class ElmerModel(Model):
         # stays as in the input state; Stokes still runs (same velocity every step on a frozen geometry
         # when nothing in the flow depends on temperature)
         self.heat_only = False
+        # [elmer] cartesian_bed (test): the bed condition in x/y/z instead of normal-tangential (N-T) components:
+        # vertical velocity 0 where grounded, Weertman sliding on u and v, the sea spring on w. For nearly flat beds
+        # only (it takes the bed normal as vertical); for testing linear solvers whose N-T handling is in doubt
+        # (Elmer's block solver before 2026-10-14). Frozen grounding line only (the contact one needs N-T).
+        self.cartesian_bed = bool(e.get("cartesian_bed", False))
         # Elmer's output level ([elmer] output_level, default 3); e.g. 7 shows the block solver and its iterations
         self.output_level = int(e.get("output_level", 3))
         # Stokes-only runs (`ess run --stokes-only`): no heat solve and no strain heating, so the temperature
@@ -344,10 +349,36 @@ End
         text = self._template_text
         for k, v in subs.items():
             text = text.replace(k, v)
+        if self.cartesian_bed:
+            text = self._cartesian_bed(text)
         left = sorted(set(PLACEHOLDER.findall(text)))
         if left:
             raise ValueError(f"unfilled placeholders in {self.template}: {', '.join(left)}")
         return text
+
+    def _cartesian_bed(self, text):
+        """the bed boundary condition ("interface") in x/y/z components (see cartesian_bed)"""
+        if self.marine and self.gl_mode == "contact":
+            raise ValueError("cartesian_bed: the contact grounding line needs normal-tangential velocities; use the "
+                             "frozen one (ess run --gl frozen)")
+        k = text.index("Normal-Tangential Velocity = Logical True")      # the bed condition (the only N-T one)
+        i = text.rindex("Boundary Condition", 0, k)
+        j = text.index("\nEnd", k)
+        bc = text[i:j]
+        swaps = [("  Normal-Tangential Velocity = Logical True", "  Normal-Tangential Velocity = Logical False"),
+                 ("  Velocity 1 = 0.0", "  Velocity 3 = 0.0"),                       # no flow through the bed
+                 ("  Velocity 1 Condition", "  Velocity 3 Condition")]
+        for a, b in swaps:
+            if a in bc:
+                bc = bc.replace(a, b)
+        # slip coefficients: N-T (1 normal, 2/3 tangential) -> x/y/z (3 vertical, 1/2 horizontal), via markers
+        bc = (bc.replace("  Slip Coefficient 1 =", "  @S3@ =").replace("  Slip Coefficient 2 =", "  @S1@ =")
+                .replace("  Slip Coefficient 3 =", "  @S2@ ="))
+        for k in "123":
+            bc = bc.replace(f"  @S{k}@ =", f"  Slip Coefficient {k} =")
+        if "Normal-Tangential Velocity = Logical False" not in bc:
+            raise ValueError("cartesian_bed: no Normal-Tangential Velocity line in the interface condition")
+        return text[:i] + bc + text[j:]
 
     def state_records(self, x) -> Records:
         rec = dict(self.layout.to_records(np.asarray(x, float)))

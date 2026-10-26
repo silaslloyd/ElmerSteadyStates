@@ -11,12 +11,19 @@
 # With "prep" it first builds both test meshes and start states (marker files .prep_done); without, it waits
 # for those markers.
 set -e
-SV=${1:?usage: sbatch jobs/stokes_tests_pair.cmd <direct|iterative|block|amg> [prep]}
+SV=${1:?usage: sbatch jobs/stokes_tests_pair.cmd <direct|iterative|block|amg>[_cart] [prep]}
 # amg: block preconditioning with BoomerAMG on the velocity block (elmer/stokes_block_amg.sif.in, Elmer with Hypre)
+# <solver>_cart: the same with the bed condition in x/y/z components (--cartesian-bed; marine with the frozen
+# grounding line), a test of the normal-tangential handling of the block solver (fixed in Elmer 2026-10-14)
+MARINE_OPTS="--bed cold"
 case $SV in
-    direct|iterative|block) SOLVER_OPTS="--linear-stokes $SV";;
-    amg) SOLVER_OPTS="--linear-stokes block --stokes-block-file elmer/stokes_block_amg.sif.in";;
-    *) echo "unknown solver $SV (direct, iterative, block, amg)"; exit 1;;
+    *_cart) BASE=${SV%_cart}; CART_OPTS="--cartesian-bed"; MARINE_OPTS="--bed cold --gl frozen";;
+    *) BASE=$SV; CART_OPTS="";;
+esac
+case $BASE in
+    direct|iterative|block) SOLVER_OPTS="--linear-stokes $BASE $CART_OPTS";;
+    amg) SOLVER_OPTS="--linear-stokes block --stokes-block-file elmer/stokes_block_amg.sif.in $CART_OPTS";;
+    *) echo "unknown solver $SV (direct, iterative, block, amg, each optionally with _cart)"; exit 1;;
 esac
 PREP=${2:-}
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
@@ -62,7 +69,7 @@ run() {   # run <geometry> [options]: in the background, log slurms/stokes_<solv
         $SOLVER_OPTS --chunks $CHUNKS --steps $STEPS --out work/test_stokes_$G/run_$SV.npz "$@" > ${L}_$G.log 2>&1 &
     echo "$(date +%T) started $G $SV (pid $!, log ${L}_$G.log)"
 }
-run marine --bed cold
+run marine $MARINE_OPTS
 run land
 fail=0
 for p in $(jobs -p); do wait $p || fail=$((fail + 1)); done

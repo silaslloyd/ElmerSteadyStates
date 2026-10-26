@@ -12,6 +12,7 @@ Writes <folder>/stokes_tests.html: the surface velocity u(x) and Zs(x) of the th
     python plots/compare_stokes_tests.py                         (both folders)
     python plots/compare_stokes_tests.py work/test_stokes_marine
 """
+import glob
 import os
 import sys
 
@@ -56,10 +57,10 @@ def stats(a, b, sel=None):
 
 def compare(folder):
     runs = {}
-    for sv in SOLVERS:
-        f = os.path.join(folder, f"run_{sv}.npz")
-        if os.path.exists(f):
-            runs[sv] = load_state(f)
+    names = sorted(os.path.basename(f)[4:-4] for f in glob.glob(os.path.join(folder, "run_*.npz")))
+    order = {sv: i for i, sv in enumerate(SOLVERS)}
+    for sv in sorted(names, key=lambda n: (n.endswith("_cart"), order.get(n.replace("_cart", ""), 9), n)):
+        runs[sv] = load_state(os.path.join(folder, f"run_{sv}.npz"))
     print(f"\n{folder}: " + (", ".join(runs) if runs else "no runs yet"))
     if not runs:
         return
@@ -69,20 +70,22 @@ def compare(folder):
         sec, st = float(m.get("elmer_seconds", np.nan)), int(m.get("steps", 0))
         print(f"  {sv:9s}: {st} steps, Elmer {sec:.0f} s" + (f", {sec / st:.2f} s per step" if st else "")
               + f", t = {float(m.get('time', np.nan)):g} yr")
-    if "direct" not in F:
-        print("  (no direct run: no reference for the differences)")
-        return
-    R = F["direct"]
-    umax = float(np.max(np.abs(R["u"]))) or 1.0
-    marine = R["floating"].any()
-    for sv in [v for v in SOLVERS if v in F and v != "direct"]:
-        A = F[sv]
+    for sv in F:                         # each run against the direct one with the same bed condition
+        ref = "direct_cart" if sv.endswith("_cart") else "direct"
+        if sv == ref:
+            continue
+        if ref not in F:
+            print(f"  {sv}: no {ref} run to compare with")
+            continue
+        R, A = F[ref], F[sv]
+        umax = float(np.max(np.abs(R["u"]))) or 1.0
+        marine = R["floating"].any()
         if not np.array_equal(A["g"], R["g"]):
             print(f"  {sv}: different nodes from the direct run (not the same mesh?)")
             continue
         zmax, zrms = stats(A["zs"], R["zs"])
         umx, urms = stats(A["u"], R["u"])
-        line = (f"  {sv:9s} - direct: Zs max {zmax:.3g} m, rms {zrms:.3g} m; u max {umx:.3g} m/yr "
+        line = (f"  {sv:9s} - {ref}: Zs max {zmax:.3g} m, rms {zrms:.3g} m; u max {umx:.3g} m/yr "
                 f"({umx / umax:.2%} of max |u|), rms {urms:.3g} m/yr")
         if marine:
             fl = R["floating"]
@@ -91,7 +94,7 @@ def compare(folder):
             ufl = float(np.max(np.abs(R["u"][fl])))
             line += (f"\n              grounded: u max {gmx:.3g} m/yr; floating: u max {fmx:.3g} m/yr, rms {frms:.3g} "
                      f"({fmx / ufl:.2%} of max floating |u| {ufl:.4g}); mean floating u "
-                     f"{np.mean(A['u'][fl]):.4g} vs direct {np.mean(R['u'][fl]):.4g} m/yr")
+                     f"{np.mean(A['u'][fl]):.4g} vs {ref} {np.mean(R['u'][fl]):.4g} m/yr")
         print(line)
     try:
         import plotly.graph_objects as go
@@ -102,11 +105,12 @@ def compare(folder):
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
                         subplot_titles=["along-flow velocity at the surface (m/yr)", "surface elevation Zs (m)"])
     cols = {"direct": "black", "iterative": "#e67e22", "block": "#2980b9", "amg": "#27ae60"}
+    cols.update({k + "_cart": v for k, v in list(cols.items())})
     for sv, A in F.items():
         # surface u: the node with the largest z per column is not stored; use the Zs nodes' u
         us = _on(A["g"], A["u"], A["gz"])
         o = np.argsort(A["xz"])
-        dash = None if sv == "direct" else "dash"
+        dash = None if sv.startswith("direct") else "dash"
         fig.add_trace(go.Scatter(x=A["xz"][o] / 1e3, y=us[o], mode="lines", name=f"u {sv}",
                                  line=dict(color=cols[sv], dash=dash)), 1, 1)
         fig.add_trace(go.Scatter(x=A["xz"][o] / 1e3, y=A["zs"][o], mode="lines", name=f"Zs {sv}",
