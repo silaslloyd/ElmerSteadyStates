@@ -509,12 +509,12 @@ def _spectrum_ps(work):
 
 
 def cmd_temperate_sweep(args):
-    """The fully temperate bed (every glaciated bed column temperate, T = T0): with a constant viscosity
+    """The fully temperate bed (T = T0 on the whole bed, beyond the margin too): with a constant viscosity
     and sliding that depends on the basal temperature only, the flow and the geometry no longer depend on
-    Tsurf. (1) converge that state at the start Tsurf: optional transient chunks, then Newton, re-fitting
-    the temperate mask to the terminus of the converged state until it stops moving; (2) Tsurf sweep: Newton
+    Tsurf. (1) converge that state at the start Tsurf: transient chunks (until --spinup-tol), then Newton;
+    (2) Tsurf sweep: Newton
     at each Tsurf from the nearest finished one (only the temperature should change), the patch hydrology
-    on the whole bed, and the geometry change from the start state as a check of the decoupling.
+    on the glaciated bed (from the terminus: ice thicker than --edge-thickness), and the geometry change from the start state as a check of the decoupling.
     Written as a branch (<work>/branch_<name>/branch.csv, points/state_XXXX.npz) for plots/plot_spectrum.py."""
     cfg, model, saved = _setup(args)
     if cfg["model"].get("type", "elmer") != "elmer":
@@ -542,14 +542,17 @@ def cmd_temperate_sweep(args):
     os.makedirs(os.path.join(bdir, "points"), exist_ok=True)
     p0 = saved.p if args.p is None else args.p
 
+    g_all = saved.frozen[kname][0]
+    saved.frozen[kname] = (g_all, np.ones(len(g_all)))      # the WHOLE bed temperate, beyond the margin too
+
     def fit_mask(x, diag):
-        """all glaciated columns (terminus of x) temperate; returns (columns, changed)"""
+        """the glaciated columns (terminus of x: ice thicker than --edge-thickness), for the hydrology and
+        the reports; the mask itself is temperate everywhere. Returns (columns, terminus moved)"""
         g, col, ux = bed_columns(saved.layout, saved.frozen, diag, x=x, edge_thickness=et)
-        ct = mask_for(len(ux), g, col)
-        old = saved.frozen[kname]
-        same = len(old[0]) == len(g) and np.array_equal(old[0], g) and np.array_equal(old[1], ct)
-        saved.frozen[kname] = (g, ct)
-        return (g, col, ux), not same
+        moved = fit_mask.n is not None and fit_mask.n != len(ux)
+        fit_mask.n = len(ux)
+        return (g, col, ux), moved
+    fit_mask.n = None
 
     # ---- (1) the fully temperate steady state at p0
     start = os.path.join(bdir, "temperate_steady.npz")
@@ -558,13 +561,14 @@ def cmd_temperate_sweep(args):
         saved.frozen.clear()
         saved.frozen.update(s0.frozen)
         y, p0, diag0 = prob.scale(s0.x), s0.p, s0.diag
+        saved.frozen[kname] = (g_all, np.ones(len(g_all)))
         cols, _ = fit_mask(s0.x, s0.diag)
         log.info(f"temperate-sweep: start from {start} (p = {p0:g}); --restart to converge it again")
     else:
         y, diag = prob.scale(saved.x), saved.diag
         cols, _ = fit_mask(saved.x, diag)
-        log.info(f"temperate-sweep: p = {p0:g}, {len(cols[2])} glaciated columns temperate "
-                 f"(terminus {cols[2][0] / 1e3:.2f} km)")
+        log.info(f"temperate-sweep: p = {p0:g}, the whole bed temperate ({len(g_all)} bed nodes); "
+                 f"{len(cols[2])} glaciated columns (terminus {cols[2][0] / 1e3:.2f} km)")
         nmax = args.chunks or (1000 if args.spinup_tol else 0)
         if args.spinup_tol:
             log.info(f"temperate-sweep: spin-up until the rms change per chunk ({prob.spec.horizon:g} yr) "
@@ -576,7 +580,7 @@ def cmd_temperate_sweep(args):
             y = yn
             cols, ch = fit_mask(prob.unscale(y), prob.last_diag)
             if ch:
-                log.info(f"temperate-sweep: terminus now {cols[2][0] / 1e3:.2f} km ({len(cols[2])} columns): mask refitted")
+                log.info(f"temperate-sweep: terminus now {cols[2][0] / 1e3:.2f} km ({len(cols[2])} glaciated columns)")
             t_spin = float(getattr(saved, "meta", {}).get("spinup_time", 0.0)) + (c + 1) * prob.spec.horizon
             save_state(os.path.join(bdir, "spinup.npz"), saved.layout, prob.unscale(y), p0, dict(saved.frozen),
                        prob.last_diag, spinup_time=t_spin)
@@ -590,19 +594,14 @@ def cmd_temperate_sweep(args):
         if args.spinup_only:
             log.info(f"temperate-sweep: --spinup-only: stopping; continue with --state {bdir}/spinup.npz")
             return
-        for rnd in range(args.max_rounds):
-            r = newton_krylov(prob, y, p0, nopt, label=f"temperate newton {rnd}")
-            if not r.converged:
-                raise SystemExit(f"temperate-sweep: Newton did not converge at p = {p0:g} (more --chunks of "
-                                 "spin-up, or a smaller --dt)")
-            y = r.y
-            cols, ch = fit_mask(prob.unscale(y), prob.last_diag)
-            if not ch:
-                break
-            log.info(f"temperate-sweep: terminus of the steady state {cols[2][0] / 1e3:.2f} km "
-                     f"({len(cols[2])} columns): mask refitted, Newton again")
-        else:
-            log.warning(f"temperate-sweep: the terminus still moved after {args.max_rounds} rounds")
+        r = newton_krylov(prob, y, p0, nopt, label="temperate newton")
+        if not r.converged:
+            raise SystemExit(f"temperate-sweep: Newton did not converge at p = {p0:g} (spin up further: a "
+                             "smaller --spinup-tol)")
+        y = r.y
+        cols, _ = fit_mask(prob.unscale(y), prob.last_diag)
+        log.info(f"temperate-sweep: steady at p = {p0:g}: terminus {cols[2][0] / 1e3:.2f} km "
+                 f"({len(cols[2])} glaciated columns)")
         diag0 = prob.last_diag
         save_state(start, saved.layout, prob.unscale(y), p0, dict(saved.frozen), diag0)
         log.info(f"temperate-sweep: wrote {start}")
@@ -657,7 +656,7 @@ def cmd_temperate_sweep(args):
             states[p] = r.y
             mr = _mask_cols(cfg, model, saved, x, diag)
             row["temp_freezing"] = mr.get("temp_freezing", "")
-            ok, h_b, mm, note, ex, hyd = patch_hydrology(diag, saved.layout, x, *cols, len(cols[2]),
+            ok, h_b, mm, note, ex, hyd = patch_hydrology(diag, saved.layout, x, g, col, ux, ncol,
                                                          hydro=hydro, **phys)
             row.update(ex)
             row.update(hydro_ok=int(ok), h_boundary=h_b, melt_mean=mm, note=note)
@@ -665,7 +664,7 @@ def cmd_temperate_sweep(args):
                 dz = saved.layout.split(x)[zsn] - Zs0
                 row.update(dZs_max=float(np.max(np.abs(dz))), dZs_rms=float(np.sqrt(np.mean(dz ** 2))))
             if ncol != len(cols[2]):
-                row["note"] = (note + "; " if note else "") + f"terminus moved: {ncol} columns, mask has {len(cols[2])}"
+                row["note"] = (note + "; " if note else "") + f"terminus moved: {ncol} glaciated columns ({len(cols[2])} at p0)"
             save_state(os.path.join(bdir, "points", f"state_{row['index']:04d}.npz"), saved.layout, x, p,
                        dict(saved.frozen), {**diag, **hyd}, temperate_k=ncol)
             log.info(f"temperate-sweep: p = {p:g}: converged in {r.iterations} its; hydrology "
@@ -946,7 +945,6 @@ def main(argv=None):
     s.add_argument("--chunks", type=int, default=0, help="transient spin-up chunks before Newton (default 0)")
     s.add_argument("--dt", type=float, help="spin-up / map time step (overrides [map] dt)")
     s.add_argument("--steps", type=int, help="steps per chunk (overrides [map] n_steps)")
-    s.add_argument("--max-rounds", type=int, default=5, help="Newton + mask refit rounds at the start Tsurf")
     s.add_argument("--restart", action="store_true", help="converge the start state again even if it exists")
     s.add_argument("--spinup-tol", type=float,
                    help="spin up until the rms change of the (scaled) state over one chunk is below this, then "
