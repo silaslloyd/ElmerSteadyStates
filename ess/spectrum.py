@@ -440,10 +440,12 @@ def run_spectrum_down(prob, saved, y0, p, newton_opt, outdir, *, k_step=5, k_min
 
     if k_last is None:                      # the start: the whole bed temperate (as the start state)
         r = solve(ncol, y0)
-        if not r.converged:
-            log.warning("spectrum-down: Newton did not converge at k = n (all glaciated columns temperate)")
-            return rows
-        k_last, y = ncol, r.y
+        if r.converged:
+            k_last, y = ncol, r.y
+        else:                               # the start state is a converged temperate state already: go on
+            log.warning("spectrum-down: Newton did not converge at k = n (the start mask); stepping down from "
+                        "the start state anyway")
+            k_last, y = ncol, y0
     while k_last > k_min:
         here = set()
         for s in range(k_step, 0, -1):
