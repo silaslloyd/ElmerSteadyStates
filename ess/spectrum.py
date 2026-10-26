@@ -319,9 +319,9 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
         row.update(h_boundary=h_b, melt_mean=mmean, thermal_ok=int(thermal_ok), hydro_ok=int(hydro_ok),
                    kept=int(kept), note=note)
         rows.append({c: row.get(c, "") for c in COLS})
-        if kept:
+        if r.converged:                       # discarded ones too (heat / hydrology): to look at them
             save_state(os.path.join(outdir, "points", f"state_{k:04d}.npz"), layout, x, p, dict(frozen), {**diag, **hyd},
-                       spectrum_k=k, x_boundary=row["x_boundary_km"] * 1e3 if k else np.nan)
+                       spectrum_k=k, x_boundary=row["x_boundary_km"] * 1e3 if k else np.nan, kept=int(kept))
         with open(csvf + ".tmp", "w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=COLS)
             w.writeheader()

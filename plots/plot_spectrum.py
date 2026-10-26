@@ -7,7 +7,8 @@ The spectra of `ess spectrum` (one folder spectrum_p<Tsurf>[_e<edge>] per surfac
   below    the selected state: basal temperature, the water sheet h (steady hydrology on the temperate
            patch), and the x-z sections of temperature, u and w with the surface drawn on them
 
-Click a green (kept) square of the top panel to show that steady state; hover any square for its status.
+Click any converged square of the top panel (kept, or discarded by the heat equation or the hydrology) to show
+that steady state, with the water sheet up to where the hydrology failed; hover any square for its status.
 The states of `ess continue` branches (BRANCH; all-cold, or with --temperate-k K) are strips along their k row,
 each cell as wide as that branch's own Tsurf step (green kept, yellow cold bed above melting, blue hydrology),
 drawn over the spectrum grid.
@@ -201,7 +202,7 @@ def main():
     K = sorted({int(r["k"]) for _, _, rows in spec for r in rows} | {b["k"] for b in B})
     ip_of = {p: i for i, p in enumerate(P)}
     ik_of = {k: i for i, k in enumerate(K)}
-    # ---- status grid and the kept states
+    # ---- status grid and the converged states
     Z = np.full((len(K), len(P)), np.nan)
     notes = [["not tried"] * len(P) for _ in K]
     S = {}
@@ -217,7 +218,7 @@ def main():
                              + (f"<br>h at boundary {float(r['h_boundary']):.3g} m"
                                 if r.get("h_boundary") not in (None, "", "nan") else ""))
             sf = r.get("_state") or os.path.join(r.get("_dir", f), "points", f"state_{k:04d}.npz")
-            if kept and os.path.exists(sf):
+            if str(r.get("converged")) == "1" and os.path.exists(sf):   # kept or discarded: both can be shown
                 S[(ip, ik)] = pbs.extract(sf)
     # forcings that are finished (a warmer one has started, or the spectrum stopped after its hydrology
     # failures): every patch size up to fully temperate that was not tried counts as discarded
@@ -248,18 +249,18 @@ def main():
                     notes2[ik][i] = "not run: the spectrum moved on (Newton / hydrology failures)"
         S = {(ip, ik_of[K_old[ik]]): v for (ip, ik), v in S.items()}
         Z, notes = Z2, notes2
-    for j, b in enumerate(B):                # branch states: keys ("b", j)
-        if b["code"] == KEPT:
+    for j, b in enumerate(B):                # branch states: keys ("b", j), every converged point
+        if b["code"] != NO_CONV and b["sf"]:
             S[("b", j)] = pbs.extract(b["sf"])
     PL = [f"{round(p, 2):g}" for p in P]      # equal-width columns whatever the spacing of the forcings
-    print(f"{len(P)} surface temperatures ({', '.join(PL)}), k = {K[0]}..{K[-1]}, {len(S)} kept states")
+    print(f"{len(P)} surface temperatures ({', '.join(PL)}), k = {K[0]}..{K[-1]}, {len(S)} converged states to show")
     for p, f, rows in spec:
         if f:
             print(f"  {p:g} K: {os.path.relpath(f, d)} ({len(rows)} rows)")
     if not S:
-        raise SystemExit("no kept states to show")
+        raise SystemExit("no converged states to show")
     SL = list(S.values())
-    # ---- fixed ranges over all kept states
+    # ---- fixed ranges over all shown states
     xmax = max(s["xb"].max() for s in SL) / 1e3
     tb = [min(s["Tb"].min() for s in SL) - 0.2, max(273.3, max(s["Tb"].max() for s in SL) + 0.1)]
     hw = [s["hw"] for s in SL if "hw" in s and np.isfinite(s["hw"]).any()]
@@ -276,7 +277,7 @@ def main():
                 lo = -hi
             cr[k_] = dict(colorscale=cs, zmin=lo, zmax=hi)
 
-    titles = ["Tsurf vs temperate bed columns k: green kept (click), red not converged, yellow forbidden by the heat equation, blue forbidden by the hydrology, grey not run; hatched outlined strips: continuation branches",
+    titles = ["Tsurf vs temperate bed columns k (click any converged square): green kept, red not converged, yellow forbidden by the heat equation, blue forbidden by the hydrology, grey not run; hatched outlined strips: continuation branches",
               "basal temperature (K)", "water sheet thickness h (m)"]
     sec = [("TS", "temperature (K)", "K"), ("U", "along-flow velocity u (m/yr)", "m/yr"),
            ("W", "vertical velocity w (m/yr)", "m/yr")] if SECTIONS else []
@@ -360,7 +361,7 @@ def main():
             return f"Tsurf = {B[ik]['p']:.3f} K, k = {B[ik]['k']} ({B[ik]['note'].replace('<br>', ', ')})"
         s = S.get(key)
         head = f"Tsurf = {P[ip]:g} K, k = {K[ik]} temperate bed columns"
-        return head + ("" if s else f": {notes[ik][ip].replace('<br>', ', ')}")
+        return head + ("" if notes[ik][ip].startswith("kept") else f": {notes[ik][ip].replace('<br>', ', ')}")
 
     # one frame per kept state (only those can be clicked)
     fig.frames = [go.Frame(name=f"{ip}_{ik}", data=state_traces((ip, ik)), traces=list(range(nanim)),
