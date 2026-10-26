@@ -678,8 +678,8 @@ def cmd_temperate_sweep(args):
         log.info(f"temperate-sweep: p = {p:g}: heat-only residual {res:.2e} > {nopt.tol:g}: Newton from there")
         return None
 
-    # from p0 outwards, so each start is the nearest finished Tsurf
-    order = sorted(plist, key=lambda v: abs(v - p0))
+    # from p0 upwards, then from p0 downwards: each start is the neighbouring finished Tsurf
+    order = sorted(v for v in plist if v >= p0) + sorted((v for v in plist if v < p0), reverse=True)
     COLS = ["index", "p", "converged", "newton_its", "rms_F", "temperate_k", "n_columns", "x_terminus_km",
             "cold_above_Tm", "temp_freezing", "hydro_ok", "hydro_status", "h_boundary", "h_min", "q_margin",
             "melt_mean", "n_melt_filled", "dZs_max", "dZs_rms", "note"]
