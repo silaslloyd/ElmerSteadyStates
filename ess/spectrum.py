@@ -149,8 +149,11 @@ def hydrology_steady(x_col, melt_col, phi0_col, hp):
         return y[0] - hmax
     flood.terminal, flood.direction = True, 1
     try:
+        # min_step: where h collapses towards 0 (dh/dx ~ 1/h) LSODA would otherwise shrink its step to
+        # ~1e-11 m and stall ("t + h = t") before the dry event fires; with a floor it stops (status -1):
+        # dry when h was falling there, flooding when rising
         sol = solve_ivp(rhs, (xs[-1], xs[0]), [hp["h0"]], t_eval=xs[::-1], events=(dry, flood), method="LSODA",
-                        rtol=1e-8, atol=1e-3 * hdry)
+                        rtol=1e-8, atol=1e-3 * hdry, min_step=hp.get("min_step", 1e-3))
     except ValueError:                       # event root finding failed right at h -> 0
         return h, q, False, "dry"
     hv = np.full(n, np.nan)
@@ -158,6 +161,11 @@ def hydrology_steady(x_col, melt_col, phi0_col, hp):
     hv[::-1][:len(got)] = got
     dried = len(sol.t_events[0]) > 0
     flooded = len(sol.t_events[1]) > 0
+    if sol.status == -1 and not (dried or flooded):     # the step floor was hit
+        xl = sol.t[-1] if len(sol.t) else xs[-1]          # the last output point (or the margin)
+        hl = got[-1] if len(got) else hp["h0"]
+        dried = bool(rhs(xl, [hl])[0] > 0)                # going upstream (dx < 0), h falls where dh/dx > 0
+        flooded = not dried
     ok = not dried and (np.nanmin(hv) >= 0 if np.isfinite(hv).any() else True)
     status = "dry" if dried else ("flood" if flooded else "ok")
     return hv, q, bool(ok), status

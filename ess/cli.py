@@ -76,13 +76,14 @@ def _marine(model):
     return bool(getattr(model, "marine", False))
 
 
-def _mask_cols(cfg, model, saved, x, diag):
+def _mask_cols(cfg, model, saved, x, diag, warn=True):
     if cfg["model"].get("type", "elmer") != "elmer":
         return {}
     from .elmer import mask_report
     rep = mask_report(saved.layout, x, saved.frozen, diag, marine=_marine(model),
                       rho_ratio=getattr(model, "rho_ratio", None))
-    if rep.get("cold_above_Tm") or rep.get("temp_freezing") or rep.get("to_grounded") or rep.get("to_floating"):
+    if warn and (rep.get("cold_above_Tm") or rep.get("temp_freezing") or rep.get("to_grounded")
+                 or rep.get("to_floating")):
         log.warning(f"frozen mask inconsistent here: {rep}")
     return rep
 
@@ -702,7 +703,9 @@ def cmd_temperate_sweep(args):
         hyd = {}
         if r.converged:
             states[p] = r.y
-            mr = _mask_cols(cfg, model, saved, x, diag)
+            # refreezing temperate nodes (heat removed to hold T0): information only; on the temperate bed
+            # freezing is a matter for the hydrology (a negative melt rate), not for the mask
+            mr = _mask_cols(cfg, model, saved, x, diag, warn=False)
             row["temp_freezing"] = mr.get("temp_freezing", "")
             ok, h_b, mm, note, ex, hyd = patch_hydrology(diag, saved.layout, x, g, col, ux, ncol,
                                                          hydro=hydro, **phys)
