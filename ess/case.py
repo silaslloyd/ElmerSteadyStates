@@ -225,7 +225,8 @@ def setup_case(cfg, mesh=True):
     with open(os.path.join(case, "footprint.geo"), "w") as f:
         f.write(geo)
     _run([c.get("gmsh", "gmsh"), "footprint.geo", "-1", "-2", "-format", "msh2", "-o", "footprint.msh"], case)
-    n = int(cfg["elmer"].get("n_procs", 0)) or int(os.environ.get("SLURM_NTASKS", "1"))
+    n = (int(os.environ.get("ESS_NPROCS", 0)) or int(cfg["elmer"].get("n_procs", 0))
+         or int(os.environ.get("SLURM_NTASKS", "1")))
     eg = c.get("elmergrid", "ElmerGrid")
     out = os.path.join(case, cfg["elmer"].get("mesh_db", "footprint"))
     if os.path.isdir(out):

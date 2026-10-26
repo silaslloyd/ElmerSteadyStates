@@ -64,8 +64,11 @@ class ElmerModel(Model):
         self.ess_lib = cfg["_path"](e.get("ess_lib", "elmer/SteadyStateIO"))
         self.ess_utils = cfg["_path"](e.get("ess_utils", "elmer/ess_utils.lua"))
         self.params_file = cfg["_path"](cfg.get("case", {}).get("parameters", "case/parameters.lua"))
-        self.n_procs = int(e.get("n_procs", 0)) or int(os.environ.get("SLURM_NTASKS", "1"))
-        self.mpirun = e.get("mpirun", "mpirun -np {n}")
+        # ESS_NPROCS / ESS_MPIRUN (environment) override [elmer] n_procs / mpirun: several drivers in one batch
+        # job, each with its own share of the cores (jobs/stokes_tests_*.cmd)
+        self.n_procs = (int(os.environ.get("ESS_NPROCS", 0)) or int(e.get("n_procs", 0))
+                        or int(os.environ.get("SLURM_NTASKS", "1")))
+        self.mpirun = os.environ.get("ESS_MPIRUN") or e.get("mpirun", "mpirun -np {n}")
         self.solver = e.get("solver", "ElmerSolver")
         self.timeout = float(e.get("timeout", 6 * 3600))
         self.keep_runs = bool(e.get("keep_runs", False))
