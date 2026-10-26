@@ -1,0 +1,29 @@
+# Stokes linear solve with block preconditioning ([elmer] linear_stokes = "block", or `ess run --linear-stokes block`).
+# Every line that is not blank and does not start with # or // goes verbatim into the Stokes solver section of the
+# template (in place of the direct / iterative keywords). A STARTING POINT: check it against the block settings you
+# use with Elmer/Ice and replace it with those; the keyword set depends on the Elmer version.
+# Velocity block (1: the 3 velocity components) and pressure block (2): outer GCR, block Gauss-Seidel, the
+# velocity block by an inner Krylov solve, the pressure block (Schur complement) approximated in Elmer.
+Linear System Solver = Iterative
+Linear System Iterative Method = GCR
+Linear System GCR Restart = Integer 200
+Linear System Max Iterations = 1000
+Linear System Convergence Tolerance = 1.0e-8
+Linear System Abort Not Converged = False
+Linear System Residual Output = 10
+Block Preconditioner = Logical True
+Block Gauss-Seidel = Logical True
+Block Matrix Reuse = Logical False
+Block Structure(4) = Integer 1 1 1 2
+Block Order(2) = Integer 1 2
+Block 11: Linear System Solver = Iterative
+Block 11: Linear System Iterative Method = GCR
+Block 11: Linear System GCR Restart = Integer 100
+Block 11: Linear System Max Iterations = 500
+Block 11: Linear System Convergence Tolerance = 1.0e-4
+Block 11: Linear System Preconditioning = ILU0
+Block 22: Linear System Solver = Iterative
+Block 22: Linear System Iterative Method = GCR
+Block 22: Linear System Max Iterations = 200
+Block 22: Linear System Convergence Tolerance = 1.0e-4
+Block 22: Linear System Preconditioning = Diagonal

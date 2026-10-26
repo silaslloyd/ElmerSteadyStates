@@ -102,6 +102,8 @@ class ElmerModel(Model):
             raise ValueError(f"[elmer] surface_temp must be 'constant' or 'snout', not {self.surface_temp!r}")
         # linear solvers: "direct" (MUMPS) or "iterative" (Krylov + ILU, tolerance iterative_tol)
         self.linear_stokes = str(e.get("linear_stokes", "direct"))
+        # "block": the keywords of this file go into the Stokes solver section verbatim (block preconditioning)
+        self.stokes_block_file = str(e.get("stokes_block_file", "elmer/stokes_block.sif.in"))
         self.linear_heat = str(e.get("linear_heat", "direct"))
         self.iterative_tol = float(e.get("iterative_tol", 1e-10))
         self.stokes_precond = str(e.get("stokes_preconditioner", "ILU2"))
@@ -204,8 +206,15 @@ class ElmerModel(Model):
                     '  Linear System Direct Method = $directsolver\n'
                     '  Linear System Abort Not Converged = True\n'
                     '  Linear System Convergence Tolerance = 1.0e-12')
+        if kind == "block" and which == "stokes":
+            path = self.stokes_block_file
+            if not os.path.isabs(path):
+                path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), path)
+            with open(path) as f:
+                lines = [l.rstrip() for l in f if l.strip() and not l.lstrip().startswith(("#", "//"))]
+            return "\n".join("  " + l.lstrip() for l in lines)
         if kind != "iterative":
-            raise ValueError(f"[elmer] linear solver must be 'direct' or 'iterative', not {kind!r}")
+            raise ValueError(f"[elmer] linear solver must be 'direct', 'iterative' or 'block' (Stokes), not {kind!r}")
         tol = f"{self.iterative_tol:.1e}"
         if which == "stokes":
             # saddle-point system: GCR with a long restart and a strong ILU

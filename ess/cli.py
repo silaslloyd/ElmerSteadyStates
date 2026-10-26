@@ -272,6 +272,10 @@ def cmd_run(args):
              f"rock heat capacity x {prob.spec.rock_heat_capacity:g}"
              + (", grounding line by contact every step (--gl contact)" if contact else ""))
     p = saved.p if args.p is None else args.p
+    if args.linear_stokes:
+        model.linear_stokes = args.linear_stokes
+        log.info(f"run: Stokes linear solver {args.linear_stokes}"
+                 + (f" ({model.stokes_block_file})" if args.linear_stokes == "block" else ""))
     if args.stokes_only and args.heat_only:
         raise SystemExit("run: --stokes-only and --heat-only exclude each other")
     if args.heat_only:
@@ -366,8 +370,12 @@ def cmd_run(args):
                 saved.frozen.clear()
                 saved.frozen.update(frozen)
                 y = prob.scale(xn)
-    save_state(out, saved.layout, prob.unscale(y), p, saved.frozen, prob.last_diag, time=t_end)
-    log.info(f"wrote {out}")
+    nsteps_done = int(round(t_end / prob.spec.dt)) if prob.spec.dt else 0
+    save_state(out, saved.layout, prob.unscale(y), p, saved.frozen, prob.last_diag, time=t_end,
+               elmer_seconds=prob.t_model, elmer_runs=prob.nfev, steps=nsteps_done,
+               linear_stokes=str(getattr(model, "linear_stokes", "")))
+    log.info(f"wrote {out}; Elmer {prob.t_model:.0f} s for {prob.nfev} runs, {nsteps_done} steps"
+             + (f" ({prob.t_model / nsteps_done:.2f} s per step)" if nsteps_done else ""))
 
 
 def cmd_newton(args):
@@ -1035,6 +1043,9 @@ def main(argv=None):
     s.add_argument("--bed", choices=["temperate", "cold"],
                    help="the whole bed temperate or cold for this run (ColdTempMask +1 / -1 everywhere, not moved; "
                         "marine: the shelf base stays at T0 either way)")
+    s.add_argument("--linear-stokes", choices=["direct", "iterative", "block"],
+                   help="Stokes linear solver for this run: direct (MUMPS), iterative (GCR + ILU), block (block "
+                        "preconditioning, keywords from [elmer] stokes_block_file); default: [elmer] linear_stokes")
     s.add_argument("--stokes-only", action="store_true",
                    help="Stokes and the free surface only: no heat solve or strain heating (the temperature stays as in "
                         "the start state); for a bed whose sliding does not depend on temperature (with --bed)")
