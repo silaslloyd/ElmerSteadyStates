@@ -278,14 +278,24 @@ def main():
             cr[k_] = dict(colorscale=cs, zmin=lo, zmax=hi)
 
     titles = ["Tsurf vs temperate bed columns k (click any converged square): green kept, red not converged, yellow forbidden by the heat equation, blue forbidden by the hydrology, grey not run; hatched outlined strips: continuation branches",
-              "basal temperature (K)", "water sheet thickness h (m)"]
+              "basal temperature (K)", "water sheet thickness h (m, blue) and basal melt rate / its maximum (orange, right axis)"]
     sec = [("TS", "temperature (K)", "K"), ("U", "along-flow velocity u (m/yr)", "m/yr"),
            ("W", "vertical velocity w (m/yr)", "m/yr")] if SECTIONS else []
     sec = [t for t in sec if t[0] in cr]
     titles += [t[1] for t in sec]
     rows = len(titles)
     fig = make_subplots(rows=rows, cols=1, vertical_spacing=0.05, subplot_titles=titles,
-                        row_heights=[1.3] + [1] * (rows - 1))
+                        row_heights=[1.3] + [1] * (rows - 1),
+                        specs=[[{}], [{}], [{"secondary_y": True}]] + [[{}]] * (rows - 3))
+
+    def melt_norm(s):
+        m = s.get("mr")
+        if m is None or not np.isfinite(m).any():
+            return None
+        mx = float(np.nanmax(np.abs(m)))
+        return m / mx if mx > 0 else m
+    mn_all = [melt_norm(s) for s in S.values()]
+    mlo = min([0.0] + [float(np.nanmin(v)) for v in mn_all if v is not None])
     cb = lambda r, t: dict(title=t, len=0.8 / rows, y=1 - (r - 0.5) / rows * (1 - 0.0))
     E = go.Scatter(x=[], y=[])
 
@@ -296,12 +306,17 @@ def main():
         mark = go.Scatter(x=[px], y=[ky], mode="markers", hoverinfo="skip",
                           marker=dict(size=16, color="rgba(0,0,0,0)", line=dict(color="black", width=3)))
         if s is None:
-            return [E, E] + [E, E] * len(sec) + [mark]
+            return [E, E, E] + [E, E] * len(sec) + [mark]
         tr = [go.Scatter(x=s["xb"] / 1e3, y=np.round(s["Tb"], 4), mode="lines", line=dict(color="#c0392b"),
                          hovertemplate="x %{x:.2f} km<br>T %{y:.3f} K<extra></extra>"),
               go.Scatter(x=s["xb"] / 1e3, y=s["hw"], mode="lines+markers", line=dict(color="#2980b9"),
                          marker=dict(size=4), hovertemplate="x %{x:.2f} km<br>h %{y:.4g} m<extra></extra>")
               if "hw" in s else E]
+        mn = melt_norm(s)
+        tr.append(go.Scatter(x=s["xb"] / 1e3, y=mn, customdata=s["mr"], mode="lines",
+                             line=dict(color="#e67e22", dash="dot"),
+                             hovertemplate="x %{x:.2f} km<br>melt %{customdata:.4g} m/yr "
+                                           "(%{y:.3f} of max)<extra></extra>") if mn is not None else E)
         for i, (k_, _, unit) in enumerate(sec):
             if k_ in s:
                 xg, zg, G = s[k_]
@@ -317,10 +332,13 @@ def main():
         tr.append(mark)
         return tr
 
-    where = [2, 3] + [r for i in range(len(sec)) for r in (4 + i, 4 + i)] + [1]
+    where = [2, 3, 3] + [r for i in range(len(sec)) for r in (4 + i, 4 + i)] + [1]
     first = next(iter(S))
-    for t, r in zip(state_traces(first), where):
-        fig.add_trace(t, r, 1)
+    for i, (t, r) in enumerate(zip(state_traces(first), where)):
+        if i == 2:                                           # the melt rate: right axis of the h panel
+            fig.add_trace(t, r, 1, secondary_y=True)
+        else:
+            fig.add_trace(t, r, 1)
     nanim = len(where)
     # the status grid (static) and its click targets
     cs = []
@@ -375,7 +393,9 @@ def main():
         fig.update_xaxes(range=[0, xmax], row=r, col=1)
     fig.update_xaxes(title_text="x (km)", row=rows, col=1)
     fig.update_yaxes(range=tb, title_text="K", row=2, col=1)
-    fig.update_yaxes(range=hr, title_text="m", row=3, col=1)
+    fig.update_yaxes(range=hr, title_text="m", row=3, col=1, secondary_y=False)
+    fig.update_yaxes(range=[mlo - 0.05, 1.05], title_text="melt / max", row=3, col=1, secondary_y=True,
+                     showgrid=False)
     kept_keys = json.dumps([f"{ip}_{ik}" for (ip, ik) in S])
     js = """
 var gd = document.getElementById('{plot_id}');

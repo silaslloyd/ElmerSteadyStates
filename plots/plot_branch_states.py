@@ -92,6 +92,13 @@ def extract(path):
         out["hw"] = np.where(gh[oh][k_] == gb[o], vh[oh][k_], np.nan)
     except KeyError:
         pass
+    try:                                     # the basal melt rate on the temperate patch (saved with it)
+        gm_, vm_ = diag[find_name(diag, "Melt Rate")]
+        om = np.argsort(gm_)
+        k_ = np.clip(np.searchsorted(gm_[om], gb[o]), 0, len(gm_) - 1)
+        out["mr"] = np.where(gm_[om][k_] == gb[o], vm_[om][k_], np.nan)
+    except KeyError:
+        pass
     out["x_gl"] = grounding_line(s.frozen, gx, X)
     if zname:
         gs = gids[zname][on_side(gids[zname])]
