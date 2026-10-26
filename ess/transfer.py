@@ -8,6 +8,11 @@ below the bed, then linearly in x between neighbouring columns. Zs is interpolat
 fixed-margin mode clamped to bed + edge_thickness at the end of the domain. The target mesh's own
 frozen fields (bedrock, Zb, GroundedMask) are kept; the cold/temperate mask is taken from the source
 (nearest bed node in x). Coordinates must be in both files (every run and `ess init` write them).
+
+Marine states (Zb, the ice base, in the state vector; e.g. onto a mesh refined at the grounding line):
+the ice is measured from the base Zb instead of the bed (zeta = (z - Zb) / (Zs - Zb), and below the base
+the depth below Zb), Zb is interpolated in x and put on the bed where the ice is grounded, and the
+grounded mask is taken from the source (nearest bed node in x) like the cold/temperate mask.
 """
 from __future__ import annotations
 
@@ -48,13 +53,29 @@ def _all_fields(s: SavedState):
     return {**s.diag, **s.frozen}
 
 
-def _surface(s: SavedState):
-    """Zs as a function of x (sorted, duplicates over the footprint width averaged)."""
-    g, zs = _block(s, "Zs")
+def _profile(s: SavedState, name):
+    """a state block (Zs, Zb) as a function of x (sorted, duplicates over the footprint width averaged)."""
+    g, v = _block(s, name)
     x = _lookup(_all_fields(s), "coordinate 1", g)
     xr = np.round(x, 3)
     ux, inv = np.unique(xr, return_inverse=True)
-    return ux, np.bincount(inv, zs) / np.bincount(inv)
+    return ux, np.bincount(inv, v) / np.bincount(inv)
+
+
+def _surface(s: SavedState):
+    return _profile(s, "Zs")
+
+
+def _has(s: SavedState, name):
+    return any(b.name.lower() == name.lower() for b in s.layout.blocks)
+
+
+def _base(s: SavedState, gids, x):
+    """the ice base at the nodes: Zb (marine, in the state) interpolated in x, else the bed"""
+    if _has(s, "Zb"):
+        bx, bz = _profile(s, "Zb")
+        return np.interp(x, bx, bz)
+    return _bed(_all_fields(s), gids, x)
 
 
 def _columns(s: SavedState):
@@ -63,7 +84,7 @@ def _columns(s: SavedState):
     f = _all_fields(s)
     x = _lookup(f, "coordinate 1", gT)
     z = _lookup(f, "coordinate 3", gT)
-    b = _bed(f, gT, x)
+    b = _base(s, gT, x)
     sx, szs = _surface(s)
     zs = np.interp(x, sx, szs)
     xr = np.round(x, 3)
@@ -105,7 +126,7 @@ def transfer(src: SavedState, dst: SavedState, x_end_m: float | None = None, edg
     gT, _ = _block(dst, "Temperature")
     x = _lookup(fd, "coordinate 1", gT)
     z = _lookup(fd, "coordinate 3", gT)
-    b = _bed(fd, gT, x)
+    b = _base(dst, gT, x)                     # the target's own (initial) base, which placed its nodes
     dx, dzs = _surface(dst)
     zs = np.interp(x, dx, dzs)
     T = np.empty(len(gT))
@@ -131,18 +152,38 @@ def transfer(src: SavedState, dst: SavedState, x_end_m: float | None = None, edg
     zname = next(b_.name for b_ in dst.layout.blocks if b_.name.lower() == "zs")
     x_new[sl[zname]] = Z
 
-    # frozen: the target's, with the cold/temperate mask from the source (nearest bed node in x)
+    # frozen: the target's, with the cold/temperate mask (and, marine, the grounded mask) from the source
+    # (nearest bed node in x)
     frozen = dict(dst.frozen)
-    ks, kd = find_name(src.frozen, "ColdTempMask"), find_name(dst.frozen, "ColdTempMask")
-    gs, cts = src.frozen[ks]
-    xsrc = _lookup(_all_fields(src), "coordinate 1", gs)
-    gd, ctd = dst.frozen[kd]
-    xdst = _lookup(fd, "coordinate 1", gd)
-    o = np.argsort(xsrc)
-    j = np.clip(np.searchsorted(xsrc[o], xdst), 0, len(o) - 1)
-    jm = np.clip(j - 1, 0, len(o) - 1)
-    near = np.where(np.abs(xsrc[o][jm] - xdst) < np.abs(xsrc[o][j] - xdst), jm, j)
-    frozen[kd] = (gd, cts[o][near])
-    log.info(f"transfer: {len(gT)} temperatures, {len(gZ)} surface nodes; "
-             f"temperate bed nodes {int((cts[o][near] > 0).sum())} of {len(gd)}")
+
+    def nearest(name):
+        ks, kd = find_name(src.frozen, name), find_name(dst.frozen, name)
+        gs, vs = src.frozen[ks]
+        xsrc = _lookup(_all_fields(src), "coordinate 1", gs)
+        gd, _ = dst.frozen[kd]
+        xdst = _lookup(fd, "coordinate 1", gd)
+        o = np.argsort(xsrc)
+        j = np.clip(np.searchsorted(xsrc[o], xdst), 0, len(o) - 1)
+        jm = np.clip(j - 1, 0, len(o) - 1)
+        near = np.where(np.abs(xsrc[o][jm] - xdst) < np.abs(xsrc[o][j] - xdst), jm, j)
+        frozen[kd] = (gd, vs[o][near])
+        return gd, xdst, vs[o][near]
+    gd, _, ct = nearest("ColdTempMask")
+    msg = f"temperate bed nodes {int((ct > 0).sum())} of {len(gd)}"
+
+    if _has(dst, "Zb") and _has(src, "Zb"):   # marine: the ice base and the grounded mask
+        gg, xg, gm = nearest("GroundedMask")
+        gB, _ = _block(dst, "Zb")
+        xB = _lookup(fd, "coordinate 1", gB)
+        bB = _bed(fd, gB, xB)
+        bx, bz = _profile(src, "Zb")
+        Zb = np.interp(xB, bx, bz)
+        jg = np.clip(np.searchsorted(gg, gB), 0, len(gg) - 1)
+        grounded = (gg[jg] == gB) & (gm[jg] > -0.5)
+        Zb = np.where(grounded, bB, np.maximum(Zb, bB))      # grounded: on the bed; floating: not below it
+        zbname = next(b_.name for b_ in dst.layout.blocks if b_.name.lower() == "zb")
+        x_new[sl[zbname]] = Zb
+        x_gl = float(xg[gm > -0.5].max()) if (gm > -0.5).any() else np.nan
+        msg += f"; grounding line at {x_gl / 1e3:.2f} km ({int((gm > -0.5).sum())} grounded bed nodes)"
+    log.info(f"transfer: {len(gT)} temperatures, {len(gZ)} surface nodes; " + msg)
     return x_new, frozen

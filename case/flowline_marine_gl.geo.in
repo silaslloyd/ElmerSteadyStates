@@ -1,0 +1,31 @@
+// Marine flowline footprint, one element wide, refined in two bands around the grounding line GLx
+// ([case] gl_x_km, else the initial grounding line): FineRes within GLx +- FineHalf, MarginRes over
+// GL - GL/6 .. GL + GL/16 (as flowline_marine.geo.in), BoundaryRes at the divide and the calving front;
+// gmsh grades the element size linearly between the points. The physical-group order (inflow, front,
+// side1, side2) gives Elmer boundaries 1-4, which the extruded mesh and steady_template_marine.sif rely on.
+L = {L};
+W = {Wmesh};
+GL = {GLx};
+resb = {BoundaryRes};
+resgl = {MarginRes};
+resf = {FineRes};
+df = {FineHalf};
+Point(1) = {0, 0, 0, resb};
+Point(2) = {GL - GL/6, 0, 0, resgl};
+Point(3) = {GL - df, 0, 0, resf};
+Point(4) = {GL + df, 0, 0, resf};
+Point(5) = {GL + GL/16, 0, 0, resgl};
+Point(6) = {L, 0, 0, resb};
+Line(1) = {1, 2};
+Line(2) = {2, 3};
+Line(3) = {3, 4};
+Line(4) = {4, 5};
+Line(5) = {5, 6};
+Extrude {0, W, 0} {
+  Curve{1}; Curve{2}; Curve{3}; Curve{4}; Curve{5}; Recombine; Layers{1};
+}
+Physical Surface(21) = {9, 13, 17, 21, 25};
+Physical Curve(22) = {7};
+Physical Curve(23) = {24};
+Physical Curve(24) = {1, 2, 3, 4, 5};
+Physical Curve(25) = {6, 10, 14, 18, 22};

@@ -196,6 +196,11 @@ def setup_case(cfg, mesh=True):
              + f"bed temperature {g['Tb'][g['gm'] > 0].min():.2f}..{g['Tb'][g['gm'] > 0].max():.2f} K, "
              f"cold-bed fraction {np.mean(g['ct'][g['gm'] > 0] < 0):.2f}")
     P["GLx"] = float(xm)
+    if "gl_x_km" in c:                        # refine around this grounding line instead of the initial one
+        P["GLx"] = float(c["gl_x_km"]) * 1e3
+        log.info(f"setup: mesh refined around x = {P['GLx'] / 1e3:.2f} km ([case] gl_x_km)")
+    P["FineRes"] = float(c.get("fine_res", P.get("MarginRes", 1000.0)))       # flowline_marine_gl.geo.in
+    P["FineHalf"] = float(c.get("fine_half_width", 10e3))
     if not mesh:
         return g
     geo = open(cfg["_path"](cfg.get("case", {}).get("geo", "case/flowline.geo.in"))).read()
@@ -204,7 +209,7 @@ def setup_case(cfg, mesh=True):
         P["Wmesh"] = float(c["width"])
     ny = int(c.get("y_elements", 1))          # elements across the flow
     geo = geo.replace("{YElements}", str(ny))
-    for k in ("L", "Lend", "Wmesh", "BoundaryRes", "MarginRes", "GLx"):
+    for k in ("L", "Lend", "Wmesh", "BoundaryRes", "MarginRes", "GLx", "FineRes", "FineHalf"):
         if "{" + k + "}" in geo:
             geo = geo.replace("{" + k + "}", repr(float(P[k])))
     if ny > 1:
