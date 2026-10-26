@@ -73,9 +73,13 @@ def bed_columns(layout, frozen, diag, x=None, edge_thickness=None):
     return g_ct, col, ux
 
 
-def mask_for(k, g_ct, col):
-    """temperate (+1) on columns 0..k-1 from the terminus, cold (-1) elsewhere"""
-    return np.where((col >= 0) & (col < k), 1.0, -1.0)
+def mask_for(k, g_ct, col, beyond_temperate=False):
+    """temperate (+1) on columns 0..k-1 from the terminus, cold (-1) elsewhere; beyond_temperate: the bed
+    beyond the terminus (col < 0) temperate too"""
+    t = (col >= 0) & (col < k)
+    if beyond_temperate:
+        t = t | (col < 0)
+    return np.where(t, 1.0, -1.0)
 
 
 # ---------------------------------------------------------------- consistency checks
@@ -379,7 +383,8 @@ def run_spectrum(prob, saved, y0, p, newton_opt, outdir, *, k_max=None, k_step=1
 def run_spectrum_down(prob, saved, y0, p, newton_opt, outdir, *, k_step=5, k_min=0, tol_T=0.0, rhoi, Lw, rhow,
                       gravity, hydro, edge_thickness=None):
     """From a (fully) temperate steady state at p: patches of k = n, n - k_step, ... columns from the terminus
-    (the cold bed spreading from the divide towards the margin), each Newton-solved from the last converged
+    (the cold bed spreading from the divide towards the margin; the bed beyond the terminus stays temperate,
+    as in the temperate sweep), each Newton-solved from the last converged
     state (Stokes and heat coupled). When Newton fails, the step is cut (k_step - 1, ..., 1) from the last
     converged state; after a success the full step is used again; when a step of 1 fails, the run stops.
     The terminus (columns) is that of the start state. Written as a spectrum folder (spectrum.csv,
@@ -412,7 +417,7 @@ def run_spectrum_down(prob, saved, y0, p, newton_opt, outdir, *, k_step=5, k_min
              + (f" (resuming at k = {k_last})" if k_last is not None else ""))
 
     def solve(k, y_start):
-        ct = mask_for(k, g_ct, col)
+        ct = mask_for(k, g_ct, col, beyond_temperate=True)      # beyond the margin: temperate, as at the start
         frozen[kname] = (g_ct, ct)
         r = newton_krylov(prob, y_start, p, newton_opt, label=f"spectrum-down k={k}")
         x = prob.unscale(r.y)
@@ -433,7 +438,7 @@ def run_spectrum_down(prob, saved, y0, p, newton_opt, outdir, *, k_step=5, k_min
                  + f"; cold nodes above T0 {row['n_cold_above_Tm']}, h_boundary {h_b:.3g}")
         return r
 
-    if k_last is None:                      # the start: all glaciated columns temperate (cold beyond the margin)
+    if k_last is None:                      # the start: the whole bed temperate (as the start state)
         r = solve(ncol, y0)
         if not r.converged:
             log.warning("spectrum-down: Newton did not converge at k = n (all glaciated columns temperate)")
