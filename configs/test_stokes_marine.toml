@@ -22,6 +22,7 @@ elmergrid = "ElmerGrid"
 type = "elmer"
 
 [elmer]
+stokes_element = "Stabilized"           # as the MLB block setups (P1/P1 + pressure stabilisation), for all three solvers
 output_level = 7                        # verbose Elmer log: the block solver and the Krylov iterations
 template = "elmer/steady_template_marine.sif"
 buoyancy_lib = "elmer/Buoyancy"      # SeaPressure / SeaSpring (make -C elmer)
@@ -32,7 +33,7 @@ n_procs = 0                             # 0: $SLURM_NTASKS. `ess setup` partitio
 mpirun = "mpirun -np {n}"
 solver = "ElmerSolver"
 timeout = 21600                         # seconds per Elmer run
-keep_runs = false                       # true: keep every run directory (sif, log, state files)
+keep_runs = true                        # the Elmer logs of the (one-chunk) test runs stay in runs/
 cache = false                           # timing test: every run really runs
 vtu = false                             # true: every run also writes a VTU at its end
 friction_heat = "flux"                  # C(T) |u_b|^2 as a basal heat flux

@@ -1,45 +1,49 @@
-# Stokes linear solve with block preconditioning ([elmer] linear_stokes = "block", or `ess run --linear-stokes block`).
-# Every line that is not blank and does not start with # or // goes verbatim into the Stokes solver section of the
-# template (in place of the direct / iterative keywords).
+# Stokes linear solve with block preconditioning ([elmer] linear_stokes = "block", or `ess run --linear-stokes block`):
+# the keywords below go verbatim into the Stokes solver section of the template (lines starting with # or // and
+# blank lines are dropped; ! comments are kept).
 #
-# Set up as Elmer's own test fem/tests/Step_stokes_vec_blockprec (IncompressibleNSVec + BlockSolve.F90):
-#   * block mode is switched on by the solver TYPE: Linear System Solver = "Block"; the outer Krylov solve takes
-#     the "Outer:" prefix, the inner solves of the diagonal blocks the "block NN:" prefix;
-#   * two blocks: the velocity (u, v, w together, so the normal-tangential rotation at the bed stays inside one
-#     block) and the pressure. Elmer's keyword check lists "Block Structure"/"Block Order" as unlisted, but
-#     BlockSolve reads them;
-#   * the pressure-pressure block of P2/P1 Stokes is zero, so its preconditioner is an approximate Schur
-#     complement built by Elmer from the velocity block and the couplings (Create Schur Matrix Approximation).
-# Block Gauss-Seidel: the pressure block sees the velocity update (upper triangular block preconditioner).
-Linear System Solver = "Block"
-Block Preconditioner = Logical True
-Block Gauss-Seidel = Logical True
-Block Matrix Reuse = Logical False
-Block Scaling = Logical False
-Block Structure(4) = Integer 1 1 1 2
-Block Order(2) = Integer 1 2
-Create Schur Matrix Approximation = Logical True
+# Taken unchanged from the Elmer/Ice MLB test case, https://github.com/ElmerCSC/MLB, linsys/block2_idrs.sif
+# (commit ad6db46): Elmer's block mode (Linear System Solver = "Block"), two blocks (velocity u, v, w | pressure),
+# outer GCR, IDR(s) + ILU inside each block. Like MLB it needs the STABILIZED Stokes element
+# ([elmer] stokes_element = "Stabilized", equal-order P1/P1 with pressure stabilisation): with P2/P1 the pressure
+# block is zero and ILU on it fails. The BoomerAMG variant (Hypre) is elmer/stokes_block_amg.sif.in.
+  Linear System Solver = "Block"
+  Block Gauss-Seidel = Logical True
+  Block Matrix Reuse = Logical False
+  Block Scaling = Logical False
+  Block Preconditioner = Logical True
+! Default is [1 2 3 4]
+  Block Structure(4) = Integer 1 1 1 2
+!  Block Order(2) = Integer 1 2 
 
-Outer: Linear System Solver = "Iterative"
-Outer: Linear System Iterative Method = GCR
-Outer: Linear System GCR Restart = 250
-Outer: Linear System Max Iterations = 500
-Outer: Linear System Convergence Tolerance = 1.0e-8
-Outer: Linear System Abort Not Converged = True
-Outer: Linear System Residual Output = 1
+! Linear System Scaling = False
+! Linear system solver for outer loop
+!-----------------------------------------
+  Linear System Residual Output = 25
 
-block 11: Linear System Solver = "Iterative"
-block 11: Linear System Iterative Method = idrs
-block 11: Linear System Preconditioning = ILU0
-block 11: Linear System Convergence Tolerance = 1.0e-2
-block 11: Linear System Max Iterations = 1000
-block 11: Linear System Residual Output = 100
-block 11: Linear System Scaling = False
+  Outer: Linear System Solver = "Iterative"
+  Outer: Linear System Iterative Method = GCR
+  Outer: Linear System GCR Restart =  250
+  Outer: Linear System Residual Output = 1
+  Outer: Linear System Max Iterations = 200
+  Outer: Linear System Abort Not Converged = False
+  Outer: Linear System Convergence Tolerance = 1e-8
 
-block 22: Linear System Solver = "Iterative"
-block 22: Linear System Iterative Method = idrs
-block 22: Linear System Preconditioning = ILU0
-block 22: Linear System Convergence Tolerance = 1.0e-2
-block 22: Linear System Max Iterations = 1000
-block 22: Linear System Residual Output = 100
-block 22: Linear System Scaling = False
+  $blocktol = 0.001
+
+  block 11: Linear System Convergence Tolerance = $blocktol
+  block 11: Linear System Solver = "iterative"
+  block 11: Linear System Scaling = false
+  block 11: Linear System Preconditioning = ilu0
+  block 11: Linear System Residual Output = 100
+  block 11: Linear System Max Iterations = 500
+  block 11: Linear System Iterative Method = idrs
+
+
+  block 22: Linear System Convergence Tolerance = $blocktol
+  block 22: Linear System Solver = "iterative"
+  block 22: Linear System Scaling = true
+  block 22: Linear System Preconditioning = ilu
+  block 22: Linear System Residual Output = 100
+  block 22: Linear System Max Iterations = 500
+  block 22: Linear System Iterative Method = idrs

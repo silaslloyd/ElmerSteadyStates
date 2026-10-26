@@ -272,6 +272,11 @@ def cmd_run(args):
              f"rock heat capacity x {prob.spec.rock_heat_capacity:g}"
              + (", grounding line by contact every step (--gl contact)" if contact else ""))
     p = saved.p if args.p is None else args.p
+    if args.stokes_block_file:
+        model.stokes_block_file = args.stokes_block_file
+    if args.stokes_element:
+        model.stokes_element = args.stokes_element
+        log.info(f"run: Stokes element {args.stokes_element}")
     if args.linear_stokes:
         model.linear_stokes = args.linear_stokes
         log.info(f"run: Stokes linear solver {args.linear_stokes}"
@@ -1046,6 +1051,10 @@ def main(argv=None):
     s.add_argument("--linear-stokes", choices=["direct", "iterative", "block"],
                    help="Stokes linear solver for this run: direct (MUMPS), iterative (GCR + ILU), block (block "
                         "preconditioning, keywords from [elmer] stokes_block_file); default: [elmer] linear_stokes")
+    s.add_argument("--stokes-block-file", help="block-preconditioner keywords for --linear-stokes block "
+                                                "(default [elmer] stokes_block_file, elmer/stokes_block.sif.in)")
+    s.add_argument("--stokes-element", choices=["P2/P1", "Stabilized"],
+                   help="Stokes element for this run (default [elmer] stokes_element, P2/P1)")
     s.add_argument("--stokes-only", action="store_true",
                    help="Stokes and the free surface only: no heat solve or strain heating (the temperature stays as in "
                         "the start state); for a bed whose sliding does not depend on temperature (with --bed)")
