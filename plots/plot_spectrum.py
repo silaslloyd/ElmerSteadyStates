@@ -280,7 +280,7 @@ def main():
                 lo = -hi
             cr[k_] = dict(colorscale=cs, zmin=lo, zmax=hi)
 
-    titles = ["Tsurf vs temperate bed columns k (click any converged square): green kept, red not converged, yellow forbidden by the heat equation, blue forbidden by the hydrology, grey not run; hatched outlined strips: continuation branches",
+    titles = ["Tsurf vs temperate bed columns k (click any converged square): green kept, red not converged, yellow forbidden by the heat equation, blue forbidden by the hydrology, grey not run; outlined strips: continuation branches (hatched) and the temperate sweep",
               "basal temperature (K)", "water sheet thickness h (m, blue) and basal melt rate "
               + ("/ its maximum" if MELT_NORMALISE else "(m/yr, < 0: freezing)") + " (orange, right axis)"]
     sec = [("TS", "temperature (K)", "K"), ("U", "along-flow velocity u (m/yr)", "m/yr"),
@@ -375,7 +375,9 @@ def main():
         fig.add_trace(go.Bar(
             orientation="h", base=lo, x=hi - lo, y=[B[j]["k"] for j in jj], width=1.0,
             marker=dict(color=[COLOURS[B[j]["code"]] for j in jj], line=dict(width=0),
-                        pattern=dict(shape="/", fgcolor="rgba(255,255,255,0.6)", size=6, solidity=0.25)),
+                        **({} if bn.startswith("branch_temperate") else          # the fully temperate row:
+                           dict(pattern=dict(shape="/", fgcolor="rgba(255,255,255,0.6)",  # nothing under it
+                                             size=6, solidity=0.25)))),
             text=[B[j]["note"] for j in jj], textposition="none",
             customdata=[["b", j, B[j]["p"]] for j in jj],
             hovertemplate="Tsurf %{customdata[2]:.3f} K, k = %{y}<br>%{text}<extra></extra>"), 1, 1)
