@@ -38,6 +38,7 @@ DIR = "work/land_flowline_T2k_strain"
 PATTERN = "spectrum_p*,fine/spectrum_p*,kstep5/spectrum_p*"   # the spectrum folders (one per Tsurf); comma = several
 SECTIONS = True                 # T, u, w sections (False: lines only, a much smaller html)
 VEL_NZ = 40                     # vertical points of the section grids
+N_CONTOURS = 100                # colour levels of the T, u, w sections
 SHOW = True
 FILL_PASSED = True              # finished forcings: untried patch sizes up to fully temperate shown grey
 BRANCH = "branch_*"             # `ess continue` branches, one Tsurf column per point: all-cold (k = 0), or
@@ -320,8 +321,10 @@ def main():
         for i, (k_, _, unit) in enumerate(sec):
             if k_ in s:
                 xg, zg, G = s[k_]
-                tr.append(go.Contour(x=xg, y=zg, z=G, connectgaps=False, ncontours=30, showscale=True,
-                                     contours=dict(coloring="fill", showlines=False), line=dict(width=0),
+                lo_, hi_ = cr[k_]["zmin"], cr[k_]["zmax"]
+                tr.append(go.Contour(x=xg, y=zg, z=G, connectgaps=False, autocontour=False, showscale=True,
+                                     contours=dict(coloring="fill", showlines=False, start=lo_, end=hi_,
+                                                   size=(hi_ - lo_) / N_CONTOURS or 1.0), line=dict(width=0),
                                      colorbar=cb(4 + i, unit), **cr[k_],
                                      hovertemplate=f"x %{{x:.2f}} km<br>z %{{y:.0f}} m<br>%{{z:.4g}} {unit}"
                                                    "<extra></extra>"))

@@ -29,7 +29,7 @@ MODE = 0             # eigenvector index for stability files
 Y_SIDE = "min"       # the flowline mesh is one element wide: show the nodes at y = min (or "max")
 SHOW = True
 NZ_GRID = 200        # vertical resolution of the regular grid the velocities are contoured on
-N_CONTOURS = 30
+N_CONTOURS = 100
 U_CAP = "grounded"   # colour range of u: "grounded" (up to the largest u on grounded ice: the marine shelf,
                      # much faster, saturates), a number (m/yr), or None (full range)
 
@@ -183,8 +183,12 @@ def main():
                     zmin, zmax = float(np.nanmin(G)), cap
                     cont.update(start=zmin, end=zmax, size=(zmax - zmin) / N_CONTOURS or 1.0)
                     ctitle = f"u (m/yr), capped at {cap:.0f}"
+            if "size" not in cont:                    # fixed levels: N_CONTOURS of them over the range
+                lo_ = float(np.nanmin(G)) if zmin is None else zmin
+                hi_ = float(np.nanmax(G)) if zmax is None else zmax
+                cont.update(start=lo_, end=hi_, size=(hi_ - lo_) / N_CONTOURS or 1.0)
             fig.add_trace(go.Contour(
-                x=xg, y=zg, z=G, name=nm, ncontours=N_CONTOURS, connectgaps=False,
+                x=xg, y=zg, z=G, name=nm, autocontour=False, connectgaps=False,
                 colorscale=cs, zmin=zmin, zmax=zmax,
                 contours=cont, line=dict(width=0),
                 colorbar=dict(title=ctitle, y=bar_y[r - 1], len=0.2),

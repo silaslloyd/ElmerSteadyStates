@@ -38,6 +38,7 @@ COLORSCALE = "Viridis"
 VEL_PLOT = "contour"  # slider only: "contour" (filled x-z sections of T, u, w in the ice, surface drawn on
                       # them) or "lines" (surface elevation panel; u, w at the surface and bed)
 VEL_NZ = 60           # vertical points of the contour grids (more: finer, but a bigger html)
+N_CONTOURS = 100                # colour levels of the sections
 U_CAP = "grounded"    # colour range of the u sections: "grounded" (up to the largest u on grounded ice:
                       # the marine shelf, much faster, saturates), a number (m/yr), or None (full range)
 BRANCH_Y = "Tb_mean"  # slider only, top panel (the branch, with the current state marked): y-axis quantity,
@@ -222,7 +223,7 @@ def main():
             print(f"u colour range capped at {cap:.1f} m/yr (U_CAP = {U_CAP!r}); faster ice saturates")
         crange["U"] = dict(colorscale="Viridis", zmin=umin, zmax=umax, colorbar=dict(title=title),
                            contours=dict(coloring="fill", showlines=False, start=umin, end=umax,
-                                         size=(umax - umin) / 30 or 1.0))
+                                         size=(umax - umin) / N_CONTOURS or 1.0))
         crange["W"] = dict(colorscale="RdBu_r", zmin=-wlim, zmax=wlim, colorbar=dict(title="w (m/yr)"))
 
     def line(x, y, colour, name, unit, dash=None):
@@ -234,8 +235,10 @@ def main():
             return E
         xg, zg, G = s[k]
         cr = dict(crange[k])
-        cont = cr.pop("contours", dict(coloring="fill", showlines=False))
-        return go.Contour(x=xg, y=zg, z=G, name=nm, connectgaps=False, ncontours=30,
+        lo_, hi_ = cr["zmin"], cr["zmax"]
+        cont = cr.pop("contours", dict(coloring="fill", showlines=False, start=lo_, end=hi_,
+                                       size=(hi_ - lo_) / N_CONTOURS or 1.0))
+        return go.Contour(x=xg, y=zg, z=G, name=nm, connectgaps=False, autocontour=False,
                           contours=cont, line=dict(width=0), **cr,
                           hovertemplate=f"x %{{x:.1f}} km<br>z %{{y:.0f}} m<br>{nm} %{{z:.4g}} {unit}<extra></extra>")
 
