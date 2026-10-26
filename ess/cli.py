@@ -516,6 +516,11 @@ def cmd_temperate_sweep(args):
     at each Tsurf from the nearest finished one (only the temperature should change), the patch hydrology
     on the glaciated bed (from the terminus: ice thicker than --edge-thickness), and the geometry change from the start state as a check of the decoupling.
     Written as a branch (<work>/branch_<name>/branch.csv, points/state_XXXX.npz) for plots/plot_spectrum.py."""
+    if not args.state:                      # default: this sweep's own converged start state
+        st0 = os.path.join(load_config(args.config)["_work"], f"branch_{args.name}", "temperate_steady.npz")
+        if not os.path.exists(st0):
+            raise SystemExit(f"temperate-sweep: no {st0} yet: give --state (a state to spin up from)")
+        args.state = st0
     cfg, model, saved = _setup(args)
     if cfg["model"].get("type", "elmer") != "elmer":
         raise SystemExit("temperate-sweep needs the Elmer model")
