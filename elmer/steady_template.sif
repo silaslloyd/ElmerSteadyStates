@@ -555,7 +555,8 @@ End
 
 Solver 12
   Equation = "Free Surface Top"
-  Exec Solver = "after Timestep"
+  ! "Never" in the driver's heat-only runs (geometry frozen: `ess temperate-sweep --heat-only`)
+  Exec Solver = __FS_EXEC__
   Procedure =  "FreeSurfaceSolver" "FreeSurfaceSolver"
   Variable = "Zs"
   Variable DOFS =  1

@@ -633,6 +633,45 @@ def cmd_temperate_sweep(args):
         sf = os.path.join(bdir, "points", f"state_{int(r_['index']):04d}.npz")
         if str(r_.get("converged")) == "1" and os.path.exists(sf):
             states[float(r_["p"])] = prob.scale(load_state(sf).x)
+    # --heat-only: the steady temperature on the frozen geometry by one Elmer run of a few very long
+    # implicit steps without the free surface (BDF1, linear heat equation: a step of dt -> infinity is the
+    # steady solve), then ONE ordinary map evaluation as the check: accepted when its residual is below the
+    # Newton tolerance (its diagnostics, e.g. the melt rate, are then those of the full map, as in Newton);
+    # otherwise Newton from there
+    from .model import MapSpec
+    hspec = MapSpec(float(args.heat_dt), int(args.heat_steps), 1, prob.spec.rock_heat_capacity)
+    r_pred = None
+    if args.heat_only:
+        if _marine(model):
+            raise SystemExit("--heat-only: land flowline only (the marine template has its own free surfaces)")
+        log.info(f"temperate-sweep: --heat-only: {hspec.n_steps} step(s) of {hspec.dt:g} yr without the free "
+                 f"surface per Tsurf, then one map evaluation as the check (Newton tolerance {nopt.tol:g})")
+
+    class _Res:
+        def __init__(self, y, F, its):
+            self.y, self.converged, self.iterations = y, True, its
+            self.history, self.F, self.gmres_iters = [rms(F)], F, []
+
+    def heat_only_solve(y_start, p):
+        nonlocal r_pred
+        model.heat_only = True
+        try:
+            yh = prob.phi(y_start, p, tag=f"heat p={p:g}", spec=hspec)
+        finally:
+            model.heat_only = False
+        if zsn:
+            dz = np.max(np.abs(saved.layout.split(prob.unscale(yh))[zsn] - saved.layout.split(prob.unscale(y_start))[zsn]))
+            if dz > 1e-6:
+                log.warning(f"temperate-sweep: heat-only run changed Zs by {dz:.3g} m (free surface not off?)")
+        F = prob.F(yh, p, tag=f"check p={p:g}", want_diag=True)
+        res = rms(F)
+        r_pred = yh
+        if res <= nopt.tol:
+            log.info(f"temperate-sweep: p = {p:g}: heat-only state is steady (residual {res:.2e} <= {nopt.tol:g})")
+            return _Res(yh, F, 0)
+        log.info(f"temperate-sweep: p = {p:g}: heat-only residual {res:.2e} > {nopt.tol:g}: Newton from there")
+        return None
+
     # from p0 outwards, so each start is the nearest finished Tsurf
     order = sorted(plist, key=lambda v: abs(v - p0))
     COLS = ["index", "p", "converged", "newton_its", "rms_F", "temperate_k", "n_columns", "x_terminus_km",
@@ -643,7 +682,11 @@ def cmd_temperate_sweep(args):
             continue
         pn = min(states, key=lambda q: abs(q - p))
         log.info(f"temperate-sweep: p = {p:g} from the state at {pn:g}")
-        r = newton_krylov(prob, states[pn], p, nopt, label=f"temperate p={p:g}")
+        r = None
+        if args.heat_only:
+            r = heat_only_solve(states[pn], p)
+        if r is None:
+            r = newton_krylov(prob, states[pn] if not args.heat_only else r_pred, p, nopt, label=f"temperate p={p:g}")
         x = prob.unscale(r.y)
         diag = prob.last_diag
         g, col, ux = bed_columns(saved.layout, saved.frozen, diag, x=x, edge_thickness=et)
@@ -957,6 +1000,11 @@ def main(argv=None):
     s.add_argument("--p-start", type=float)
     s.add_argument("--p-end", type=float)
     s.add_argument("--maxit", type=int, help="Newton iterations (overrides [newton] maxit)")
+    s.add_argument("--heat-only", action="store_true",
+                   help="per Tsurf: a steady heat solve on the frozen geometry (no free surface), checked by one "
+                        "map evaluation; Newton only if that check fails")
+    s.add_argument("--heat-dt", type=float, default=1e6, help="--heat-only: step length (yr), default 1e6")
+    s.add_argument("--heat-steps", type=int, default=2, help="--heat-only: steps, default 2")
     s.set_defaults(fn=cmd_temperate_sweep)
 
     s = sub.add_parser("transfer")

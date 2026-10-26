@@ -75,6 +75,10 @@ class ElmerModel(Model):
         self.vtu = bool(e.get("vtu", False))
         self.friction_heat = str(e.get("friction_heat", "flux"))
         self.strain_heat = bool(e.get("strain_heat", False))
+        # heat-only runs (`ess temperate-sweep --heat-only`): the free surface is not solved, so the geometry
+        # stays as in the input state; Stokes still runs (same velocity every step on a frozen geometry
+        # when nothing in the flow depends on temperature)
+        self.heat_only = False
         # surface temperature: "constant" (Tsurf everywhere) or "snout" (Tsurf where the ice is thicker
         # than snout_thickness, linear to T0 at zero thickness: ElmerStreams' warm snout)
         self.surface_temp = str(e.get("surface_temp", "constant"))
@@ -293,6 +297,7 @@ End
             "__RESTART_BLOCK__": rb,
             "__POST_BLOCK__": pb,
             "__FRICTION_HEAT__": self._friction_heat_block(),
+            "__FS_EXEC__": '"Never"' if self.heat_only else '"after Timestep"',
             "__LS_STOKES__": self._linear_block(self.linear_stokes, "stokes"),
             "__LS_HEAT__": self._linear_block(self.linear_heat, "heat"),
             "__LS_STRAIN__": self._linear_block(self.linear_heat, "strain"),
