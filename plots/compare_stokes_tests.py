@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Compare the Stokes solver tests (jobs/stokes_tests.sh): for each geometry folder (work/test_stokes_land,
-work/test_stokes_marine), the runs run_direct.npz, run_iterative.npz, run_block.npz (same mesh, same start, same
+work/test_stokes_marine), the runs run_direct.npz, run_iterative.npz, run_block.npz, run_amg.npz (same mesh, same start, same
 steps; only the Stokes linear solver differs).
 
 Prints, per run: Elmer seconds per time step, and the differences from the direct (MUMPS) run: surface Zs, and the
@@ -23,7 +23,7 @@ sys.path.insert(0, REPO)
 from ess.masks import _on  # noqa: E402
 from ess.statefile import find_name, load_state  # noqa: E402
 
-SOLVERS = ("direct", "iterative", "block")
+SOLVERS = ("direct", "iterative", "block", "amg")
 SHOW = True
 
 
@@ -101,7 +101,7 @@ def compare(folder):
         return
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
                         subplot_titles=["along-flow velocity at the surface (m/yr)", "surface elevation Zs (m)"])
-    cols = {"direct": "black", "iterative": "#e67e22", "block": "#2980b9"}
+    cols = {"direct": "black", "iterative": "#e67e22", "block": "#2980b9", "amg": "#27ae60"}
     for sv, A in F.items():
         # surface u: the node with the largest z per column is not stored; use the Zs nodes' u
         us = _on(A["g"], A["u"], A["gz"])

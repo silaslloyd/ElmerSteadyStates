@@ -21,4 +21,5 @@ K=$(sbatch --parsable --export=ALL --job-name=stokes_block --dependency=after:$D
 echo "direct:    job $D (builds the meshes and start states, then land + marine)"
 echo "iterative: job $I (land + marine, after the preparation)"
 echo "block:     job $K (land + marine, after the preparation)"
+echo "BoomerAMG variant (Elmer with Hypre), after these: sbatch --export=ALL --job-name=stokes_amg jobs/stokes_tests_pair.cmd amg"
 echo "logs: slurms/stokes_<solver>_<job>.out and slurms/stokes_<solver>_<job>_{prep_land,prep_marine,land,marine}.log"
