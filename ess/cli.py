@@ -273,8 +273,17 @@ def cmd_run(args):
              + (", grounding line by contact every step (--gl contact)" if contact else ""))
     p = saved.p if args.p is None else args.p
     y = prob.scale(saved.x)
+    if args.bed:                            # the whole bed temperate or cold (marine: the shelf base is at T0
+        kn = find_name(saved.frozen, "ColdTempMask")      # whatever the mask says: tempbc in ess_utils.lua)
+        g_ = saved.frozen[kn][0]
+        saved.frozen[kn] = (g_, np.full(len(g_), 1.0 if args.bed == "temperate" else -1.0))
+        log.info(f"run: the whole bed {args.bed} (ColdTempMask {'+1' if args.bed == 'temperate' else '-1'} on "
+                 f"{len(g_)} nodes); the cold/temperate mask is not moved")
     on, _ = _masks_auto(cfg, model)
     remask = on if args.remask is None else args.remask
+    if args.bed and remask:
+        log.info("run: --bed: no remask of the cold/temperate mask (the grounding line still moves with --gl contact)")
+        remask = False
     if remask:
         log.info("run: the frozen masks are moved after every chunk (cold/temperate"
                  + (", grounding line)" if _marine(model) else ")"))
@@ -285,10 +294,12 @@ def cmd_run(args):
         os.makedirs(sdir, exist_ok=True)
         log.info(f"run: states every {args.save_every} chunk(s) to {sdir}/state_XXXX.npz "
                  f"(plots/plot_branch_states.py with BRANCH = {os.path.dirname(sdir)})")
+    t_end = 0.0
     for c in range(args.chunks):
         yn = prob.phi(y, p, tag=f"run{c}", want_diag=True)
         t = (c + 1) * prob.spec.horizon
-        log.info(f"run: chunk {c + 1}/{args.chunks}  t = {t:g}  rms change {rms(yn - y):.3e}")
+        dy = rms(yn - y)
+        log.info(f"run: chunk {c + 1}/{args.chunks}  t = {t:g}  rms change {dy:.3e}")
         y = yn
         if contact:                         # the grounded mask Elmer ended the chunk with
             from .masks import _on
@@ -306,6 +317,11 @@ def cmd_run(args):
         if args.save_every and (c + 1) % args.save_every == 0:
             save_state(os.path.join(sdir, f"state_{c + 1:04d}.npz"), saved.layout, prob.unscale(y), p,
                        dict(saved.frozen), prob.last_diag, time=t)
+        t_end = t
+        if args.until_tol and dy < args.until_tol:
+            log.info(f"run: rms change {dy:.3e} < {args.until_tol:g} over one chunk ({prob.spec.horizon:g} yr): "
+                     f"steady enough, stopping at t = {t:g}")
+            break
         if remask:
             xn, frozen, rep = update_masks(saved.layout, prob.unscale(y), saved.frozen, prob.last_diag,
                                            marine=_marine(model), rho_ratio=getattr(model, "rho_ratio", None),
@@ -315,7 +331,7 @@ def cmd_run(args):
                 saved.frozen.clear()
                 saved.frozen.update(frozen)
                 y = prob.scale(xn)
-    save_state(out, saved.layout, prob.unscale(y), p, saved.frozen, prob.last_diag, time=args.chunks * prob.spec.horizon)
+    save_state(out, saved.layout, prob.unscale(y), p, saved.frozen, prob.last_diag, time=t_end)
     log.info(f"wrote {out}")
 
 
@@ -981,6 +997,12 @@ def main(argv=None):
     s.add_argument("--save-every", type=int, default=0,
                    help="also save the state every N chunks to <out>_chunks/points/state_XXXX.npz (XXXX = chunk), "
                         "for plots/plot_branch_states.py; the --out file is rewritten after every chunk anyway")
+    s.add_argument("--bed", choices=["temperate", "cold"],
+                   help="the whole bed temperate or cold for this run (ColdTempMask +1 / -1 everywhere, not moved; "
+                        "marine: the shelf base stays at T0 either way)")
+    s.add_argument("--until-tol", type=float,
+                   help="stop when the rms change of the (scaled) state over one chunk is below this; --chunks is "
+                        "then the maximum")
     s.add_argument("--out")
     s.set_defaults(fn=cmd_run)
 
