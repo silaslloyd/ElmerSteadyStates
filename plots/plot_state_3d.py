@@ -157,7 +157,9 @@ def main():
             print(f"  {label}: no GroundedMask / Zb in {f}")
         else:
             gx = gl_line(base)[0]
-            print(f"  {label}: grounding line per row {np.round(gx, 2)} km; mask values {np.unique(base['mask'])}")
+            per = (f"per row {np.round(gx, 2)}" if len(gx) <= 6 else
+                   f"min {np.min(gx):.2f} mean {np.mean(gx):.2f} max {np.max(gx):.2f} over {len(gx)} rows")
+            print(f"  {label}: grounding line {per} km; mask values {np.unique(base['mask'])}")
     # window around the grounding line
     if X_WINDOW:
         x0, x1 = X_WINDOW
