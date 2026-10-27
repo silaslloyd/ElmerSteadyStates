@@ -119,18 +119,22 @@ def triangles(x, y):
     return np.array(I), np.array(J), np.array(K)
 
 
-def gl_line(base):
-    """per row across y: the last grounded node (mask >= 0)"""
-    xs, ys, zs = [], [], []
+def gl_line(base, top=None):
+    """per row across y: the last grounded node (mask >= 0): x, y (km), base z and surface z there"""
+    xs, ys, zb, zt = [], [], [], []
+    tz = {}
+    if top is not None:
+        tz = {(round(x, 0), round(y, 0)): v for x, y, v in zip(top["x"], top["y"], top["v"])}
     for yj in np.unique(np.round(base["y"], 1)):
         m = (np.abs(base["y"] - yj) < 1) & (base["mask"] > -0.5)
         if m.any():
             k = np.where(m)[0][np.argmax(base["x"][m])]
             xs.append(base["x"][k] / 1e3)
             ys.append(base["y"][k] / 1e3)
-            zs.append(base["v"][k])
+            zb.append(base["v"][k])
+            zt.append(tz.get((round(base["x"][k], 0), round(base["y"][k], 0)), base["v"][k]))
     o = np.argsort(ys)
-    return np.array(xs)[o], np.array(ys)[o], np.array(zs)[o]
+    return np.array(xs)[o], np.array(ys)[o], np.array(zb)[o], np.array(zt)[o]
 
 
 def main():
@@ -141,11 +145,17 @@ def main():
     for label, f in items:
         top, base, t = surfaces(f)
         data.append((label, top, base, t))
+        if base is None or "mask" not in base:
+            print(f"  {label}: no GroundedMask / Zb in {f}")
+        else:
+            gx = gl_line(base)[0]
+            print(f"  {label}: grounding line per row {np.round(gx, 2)} km; mask values {np.unique(base['mask'])}")
     # window around the grounding line
     if X_WINDOW:
         x0, x1 = X_WINDOW
     else:
         gls = [gl_line(b)[0] for _, _, b, _ in data if b is not None and "mask" in b]
+        gls = [g for g in gls if len(g)]
         xmax = max(float(np.max(top["x"])) for _, top, _, _ in data if top is not None) / 1e3
         x0 = (min(float(np.min(g)) for g in gls if len(g)) - 60.0) if gls else 0.0
         x1 = xmax
@@ -179,10 +189,19 @@ def main():
                 tr.append(go.Mesh3d(x=base["x"] / 1e3, y=base["y"] / 1e3, z=base["bed"] - 1.0, i=i, j=j, k=k,
                                     color="#999999", opacity=0.35, name="bedrock", hoverinfo="skip"))
             if "mask" in base:
-                gx, gy, gz = gl_line(base)
-                tr.append(go.Scatter3d(x=gx, y=gy, z=gz, mode="lines+markers", line=dict(color="black", width=6),
-                                       marker=dict(size=3, color="black"), name="grounding line",
-                                       hovertemplate="GL x %{x:.2f} km at y %{y:.2f} km<extra></extra>"))
+                # on top of the surface (a line on the base is hidden by the base itself), and a vertical
+                # curtain from the bed to the surface at the grounding line
+                gx, gy, gzb, gzt = gl_line(base, top)
+                tr.append(go.Scatter3d(x=gx, y=gy, z=gzt + 5.0, mode="lines+markers",
+                                       line=dict(color="black", width=8), marker=dict(size=4, color="black"),
+                                       name="grounding line", hovertemplate="GL x %{x:.2f} km at y %{y:.2f} km<extra></extra>"))
+                cx, cy, cz = [], [], []
+                for a_, b_, lo, hi in zip(gx, gy, gzb, gzt):
+                    cx += [a_, a_, None]
+                    cy += [b_, b_, None]
+                    cz += [lo - 50.0, hi + 5.0, None]
+                tr.append(go.Scatter3d(x=cx, y=cy, z=cz, mode="lines", line=dict(color="black", width=4),
+                                       name="grounding line (bed to surface)", hoverinfo="skip"))
         return tr
     first = traces(data[0][1], data[0][2])
     frames = [go.Frame(data=traces(tp, b), name=str(n)) for n, (_, tp, b, _) in enumerate(data)]
