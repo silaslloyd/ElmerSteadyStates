@@ -3,8 +3,8 @@
 !! bump across y (so the grounding line is not straight); Glen ice (n = 3), linear Weertman sliding through
 !! the contact sliding function (grounding line moves every step, as ElmerStreams), free top and bottom
 !! surfaces. Forcing in phases (sliding factor, accumulation) to move the grounding line back and forth.
-!! Bodies: 1 = bottom surface (Zb, GroundedMask), 2 = top surface (Zs), 3 = ice (Buoyancy.F90 reads the
-!! gravity from Body 3). Filled in by run_gl.py.
+!! Bodies: 3 = ice (Buoyancy.F90 reads the gravity from Body 3), 4 = bottom surface (Zb, GroundedMask),
+!! 5 = top surface (Zs); 1, 2 unused. Filled in by run_gl.py.
 
 !---LUA BEGIN
 ! assert(loadfile('params.lua'))()
@@ -35,20 +35,18 @@ Simulation
   max output level = __OUTPUT_LEVEL__
 End
 
+! Bodies 1 and 2 are empty placeholders: Buoyancy.F90 reads the gravity from Body 3 (the ice), and the boundary
+! bodies (Body Id on the bed and surface BCs) must come after the bulk body, as in ESS and ElmerStreams
 Body 1
-  Name = "bottom surface"
-  Equation = 1
-  Body Force = 2
+  Name = "unused 1"
+  Equation = 3
   Material = 1
-  Initial Condition = 1
 End
 
 Body 2
-  Name = "top surface"
-  Equation = 2
-  Body Force = 3
+  Name = "unused 2"
+  Equation = 3
   Material = 1
-  Initial Condition = 2
 End
 
 Body 3
@@ -57,6 +55,22 @@ Body 3
   Body Force = 1          ! Buoyancy.F90 checks the ice body force number against the number of materials (1)
   Material = 1
   Initial Condition = 3
+End
+
+Body 4
+  Name = "bottom surface"
+  Equation = 1
+  Body Force = 2
+  Material = 1
+  Initial Condition = 1
+End
+
+Body 5
+  Name = "top surface"
+  Equation = 2
+  Body Force = 3
+  Material = 1
+  Initial Condition = 2
 End
 
 Initial Condition 1
@@ -170,7 +184,7 @@ End
 Boundary Condition 5
   Name = "bed"
   Target Boundaries(1) = 5
-  Body Id = 1
+  Body Id = 4
   Bottom Surface = Equals Zb
 
   ! grounded (mask >= 0): Zb on the bed, no normal velocity; floating: free base, sea pressure
@@ -211,7 +225,7 @@ End
 Boundary Condition 6
   Name = "surface"
   Target Boundaries(1) = 6
-  Body Id = 2
+  Body Id = 5
   Top Surface = Equals Zs
   ComputeNormal = Logical False
 End
