@@ -259,25 +259,19 @@ def main():
         if SIDES and top is not None and base is not None:
             tr += walls(top, base)
         if base is not None and "mask" in base:
-            # the grounding line through all copies (a jump at a seam: not periodic), on top of the surface, and a
-            # curtain from the bed to the surface at each row
+            # the grounding line through all copies (a jump at a seam: not periodic), in red on the surface and on
+            # the base (just outside each, so neither surface hides it)
             gx, gy, gzb, gzt = gl_line(base, top)
-            ax, ay, az = [], [], []
-            cx, cy, cz = [], [], []
+            ax, ay, at, ab = [], [], [], []
             for c in range(TILE):
-                dy = c * W / 1e3
                 ax += list(gx)
-                ay += list(gy + dy)
-                az += list(gzt + 5.0)
-                for a_, b_, lo, hi in zip(gx, gy + dy, gzb, gzt):
-                    cx += [a_, a_, None]
-                    cy += [b_, b_, None]
-                    cz += [lo - 50.0, hi + 5.0, None]
-            tr.append(go.Scatter3d(x=ax, y=ay, z=az, mode="lines+markers", line=dict(color="black", width=8),
-                                   marker=dict(size=4, color="black"), name="grounding line",
-                                   hovertemplate="GL x %{x:.2f} km at y %{y:.2f} km<extra></extra>"))
-            tr.append(go.Scatter3d(x=cx, y=cy, z=cz, mode="lines", line=dict(color="black", width=4),
-                                   name="grounding line (bed to surface)", hoverinfo="skip"))
+                ay += list(gy + c * W / 1e3)
+                at += list(gzt + 5.0)
+                ab += list(gzb - 5.0)
+            for z_, nm in ((at, "grounding line (surface)"), (ab, "grounding line (base)")):
+                tr.append(go.Scatter3d(x=ax, y=ay, z=z_, mode="lines+markers", line=dict(color="red", width=8),
+                                       marker=dict(size=3, color="red"), name=nm,
+                                       hovertemplate="GL x %{x:.2f} km at y %{y:.2f} km<extra></extra>"))
         if top is not None and TILE > 1:
             m = np.abs(top["y"] - W) < 1
             o = np.argsort(top["x"][m])
@@ -287,7 +281,7 @@ def main():
                 qx += list(sx) + [None]
                 qy += [c * W / 1e3] * len(sx) + [None]
                 qz += list(sz) + [None]
-            tr.append(go.Scatter3d(x=qx, y=qy, z=qz, mode="lines", line=dict(color="red", width=3),
+            tr.append(go.Scatter3d(x=qx, y=qy, z=qz, mode="lines", line=dict(color="white", width=3, dash="dash"),
                                    name="periodic seam (y = W of one copy = y = 0 of the next)", hoverinfo="skip"))
         return tr
     first = traces(data[0][1], data[0][2])
