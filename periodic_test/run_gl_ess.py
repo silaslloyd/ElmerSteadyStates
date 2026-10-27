@@ -30,8 +30,16 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, REPO)
-CONFIG = os.path.join("configs", "test_periodic_gl.toml")
-WORK = os.path.join(REPO, "work", "test_periodic_gl")
+# GL_CONFIG (environment) picks the config, e.g. configs/test_periodic_gl_50km.toml; the work dir is its work_dir
+CONFIG = os.environ.get("GL_CONFIG", os.path.join("configs", "test_periodic_gl.toml"))
+
+
+def _work():
+    from ess.config import load_config
+    return load_config(os.path.join(REPO, CONFIG))["_work"]
+
+
+WORK = _work()
 START_FROM = os.path.join("work", "marine_flowline", "run_cold_p268.15.npz")
 MODES = ("elmerstreams", "fix", "none")
 # (name, chunks, fcoeff factor, aDIM factor): chunks of [map] n_steps x dt (100 yr)
@@ -178,7 +186,9 @@ def cmd_analyse(a):
             r["phase"], r["chunk"] = name, int(os.path.basename(f)[6:10])
             rows.append(r)
             fmt = lambda v: f"{v:9.2g}" if np.isfinite(v) else f"{'-':>9s}"
-            gls = " ".join(f"{v:7.2f}" for v in r["GL"])
+            g_ = np.array(r["GL"], float)
+            gls = (" ".join(f"{v:7.2f}" for v in g_) if len(g_) <= 6 else
+                   f"min {np.nanmin(g_):7.2f} mean {np.nanmean(g_):7.2f} max {np.nanmax(g_):7.2f}")
             print(f"{name:8s} {r['chunk']:5d} {gls:>44s} {r['mask']:5.0f} {fmt(r['Zs'])} {fmt(r['Zb'])} "
                   f"{fmt(r['du'])} {fmt(r['loads_z'])}")
         with open(os.path.join(WORK, mode, "periodicity.csv"), "w", newline="") as fh:

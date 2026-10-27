@@ -236,7 +236,14 @@ def setup_case(cfg, mesh=True):
     if periodic:                              # side 2 the periodic image of side 1 (ElmerStreams flowline.cmd periodic)
         cmd += ["-periodic", "0", "1", "0"]
     if n > 1:
-        cmd += ["-partition", str(n), "1", "1"] if periodic else ["-metiskway", str(n)]
+        part = c.get("partition")              # [px, py]: px x py boxes (px * py = n), e.g. [64, 4] (stream.cmd)
+        if part:
+            px, py = (int(v) for v in part)
+            if px * py != n:
+                raise SystemExit(f"[case] partition {px} x {py} != {n} processes")
+            cmd += ["-partition", str(px), str(py), "1"]
+        else:
+            cmd += ["-partition", str(n), "1", "1"] if periodic else ["-metiskway", str(n)]
     _run(cmd, case)
     log.info(f"setup: mesh in {out}" + (f" (partitioned for {n})" if n > 1 else ""))
     return g
