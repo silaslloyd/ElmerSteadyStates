@@ -206,7 +206,7 @@ def loads_keywords():
     kw = []
     if OPTS["loads"]:
         kw += ["  Calculate Loads = Logical True", "  Exported Variable 1 = -dofs 4 Flow Solution Loads"]
-    if OPTS["weights"]:
+    if OPTS["weights"] and not OPTS.get("parallel"):
         kw += ["  Calculate Boundary Weights = Logical True",
                f"  Exported Variable {len(kw) // 2 + 1} = -dofs 1 Flow Solution Boundary Weights"]
     return "\n".join(kw)
@@ -218,7 +218,7 @@ def state_vars(c):
         names += [f"Flow Solution Loads {k}" for k in (1, 2, 3, 4)]
         if OPTS["fix"]:
             names += [f"{FIXED} {k}" for k in (1, 2, 3)]
-    if OPTS["weights"]:
+    if OPTS["weights"] and not OPTS.get("parallel"):
         names.append("Flow Solution Boundary Weights")
     if c["fs"]:
         names.append("Zs")
@@ -226,6 +226,7 @@ def state_vars(c):
 
 
 def write_case(c):
+    OPTS["parallel"] = c["parts"] != "serial"
     d = os.path.join(OUT, c["name"])
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
@@ -569,6 +570,10 @@ def main():
                     help="linear solver: MUMPS (default) or GCR + ILU1 (MUMPS crashed on partitioned periodic meshes)")
     a = ap.parse_args()
     OPTS["weights"] = not a.no_weights
+    # Calculate Boundary Weights in the Stokes solver segfaults on partitioned meshes (also ElmerStreams' note)
+    if OPTS["weights"] and not a.analyse and any(c["parts"] != "serial" for c in CASES
+                                                 if not a.only or any(s_ in c["name"] for s_ in a.only)):
+        print("note: partitioned cases run without boundary weights (they segfault in parallel); serial ones keep them")
     OPTS["loads"] = not a.no_loads
     OPTS["fix"] = not a.no_fix
     OPTS["linear"] = a.linear
