@@ -51,6 +51,10 @@ PHASES = dict(t_spin=150.0, t_retreat=300.0, t_end=450.0,      # phase ends (yr)
               a_spin=0.5, a_retreat=0.5, a_advance=1.5)        # accumulation (m/yr)
 DT = 1.0
 OUT_EVERY = 10
+ICE_BODY = 3            # Buoyancy.F90 reads the gravity from Body 3
+# Elmer numbers the bottom / top boundaries of an extruded mesh bcoffset + (k - 1) max_body + body (MeshExtrusion):
+# here the 4 footprint edges, so the bed is 4 + 3 = 7 and the surface 4 + 2 x 3 = 10
+BED_BC, TOP_BC = 4 + ICE_BODY, 4 + 2 * ICE_BODY
 
 PARAMS = """
 yearinsec = 31556926.0
@@ -229,14 +233,14 @@ def write_case(name, parts, nsteps, output_level):
     g = GEOM
     with open(os.path.join(d, "params.lua"), "w") as f:
         f.write(PARAMS.format(W=float(g["W"]), **PHASES))
-    write_footprint(os.path.join(d, "footprint"), g["L"], g["W"], g["nx"], g["ny"], body=3)
+    write_footprint(os.path.join(d, "footprint"), g["L"], g["W"], g["nx"], g["ny"], body=ICE_BODY)
     if parts > 1:
         with open(os.path.join(d, "elmergrid.log"), "w") as f:
             subprocess.run(["ElmerGrid", "2", "2", "footprint", "-partition", str(parts), "1", "1",
                             "-periodic", "0", "1", "0"], cwd=d, check=True, stdout=f, stderr=subprocess.STDOUT)
     text, act = solvers(c)
     subs = {"__MESH_DIR__": ".", "__NZ1__": str(g["nz_layers"] + 1), "__NSTEPS__": str(nsteps),
-            "__DT__": repr(DT), "__W__": repr(float(g["W"])), "__OUTPUT_LEVEL__": str(output_level),
+            "__DT__": repr(DT), "__BED_BC__": str(BED_BC), "__TOP_BC__": str(TOP_BC), "__W__": repr(float(g["W"])), "__OUTPUT_LEVEL__": str(output_level),
             "__BUOY__": os.path.join(REPO, "elmer", "Buoyancy"),
             "__CONTACT_LIB__": os.path.join(REPO, "elmer", "PeriodicGL"),
             "__CONTACT_FN__": "SlidCoef_ContactPeriodic", "__CONTACT_KW__": c["contact_kw"],

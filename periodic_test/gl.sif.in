@@ -183,7 +183,7 @@ End
 
 Boundary Condition 5
   Name = "bed"
-  Target Boundaries(1) = 5
+  Target Boundaries(1) = __BED_BC__        ! extruded bottom: 4 + footprint body (Elmer's MeshExtrusion numbering)
   Body Id = 4
   Bottom Surface = Equals Zb
 
@@ -224,7 +224,7 @@ End
 
 Boundary Condition 6
   Name = "surface"
-  Target Boundaries(1) = 6
+  Target Boundaries(1) = __TOP_BC__        ! extruded top: 4 + 2 x footprint body
   Body Id = 5
   Top Surface = Equals Zs
   ComputeNormal = Logical False
