@@ -17,8 +17,8 @@ back and forth:
   (`--bed temperate`) and the sliding coefficient `fcoeff` x `--fbase`. `--no-remask`: only Elmer moves the
   grounding line. On the cold bed nothing moved in 1500 yr; with fbase 1 the grounding line ran to the calving
   front within 300 yr. So first a scan of fbase (spin-ups only, `SCAN="10 30 100"`), then the full test with the
-  fbase that keeps the grounding line inside: spin-up (5 chunks of 100 yr, dt 5 yr), retreat (10: friction x 3),
-  advance (10: friction / 3).
+  fbase that keeps the grounding line inside (10: all of 10, 30, 100 advanced, 10 the wavier): spin-up (5 chunks
+  of 100 yr, dt 5 yr), retreat (10: friction x 30, accumulation x 0.3), advance (10: back to the base friction).
 * `[elmer] periodic_gl` / `ess run --periodic-gl`: `elmerstreams` (ElmerStreams' contact.f90 on the raw loads,
   `Fw2` = Fw doubled on the master side), `fix` (SlidCoef_ContactPeriodic + the grounded mask made periodic after
   GroundedSolver), `none` (Elmer/Ice's SlidCoef_Contact).
@@ -26,8 +26,8 @@ back and forth:
 Run (login node, repository root):
 
     git pull && SCAN="10 30 100" bash periodic_test/run_gl_ess.sh   # spin-ups with fcoeff x 10, 30, 100 (fix)
-    FBASE=30 bash periodic_test/run_gl_ess.sh                  # then the full test (elmerstreams and fix)
-    CHUNKS=1 FBASE=30 bash periodic_test/run_gl_ess.sh         # a short trial
+    FBASE=10 bash periodic_test/run_gl_ess.sh                  # then the full test (elmerstreams and fix)
+    CHUNKS=1 FBASE=10 bash periodic_test/run_gl_ess.sh         # a short trial
     sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd analyse   # the tables again (each run job prints its own)
 
 The table: after every chunk, the grounding line per row across y (y = 0 and y = W are the same physical row) and

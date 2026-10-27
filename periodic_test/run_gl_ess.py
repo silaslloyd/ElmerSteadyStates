@@ -38,7 +38,10 @@ MODES = ("elmerstreams", "fix", "none")
 # The bed is temperate (--bed temperate) and the sliding coefficient fcoeff x --fbase: with fbase 1 the grounding
 # line of the cold start state ran to the calving front; on the cold bed it did not move. Find an fbase that keeps it
 # inside the domain (run_gl_ess.sh SCAN="10 30 100"), then: more friction retreats it, less advances it.
-PHASES = [("spinup", 5, 1.0, 1.0), ("retreat", 10, 3.0, 1.0), ("advance", 10, 1.0 / 3.0, 1.0)]
+# scan (spin-ups, 500 yr): fbase 10, 30, 100 all advanced the grounding line (~3, 2, 1.5 km per 100 yr at the end),
+# still adjusting from the cold-state geometry; fbase 10 gave the wavier grounding line (5 km across the rows).
+# Retreat: friction x 30 more and accumulation x 0.3; advance: back to the base friction.
+PHASES = [("spinup", 5, 1.0, 1.0), ("retreat", 10, 30.0, 0.3), ("advance", 10, 1.0, 1.0)]
 
 
 def ess(*args):

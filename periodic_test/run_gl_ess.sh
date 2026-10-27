@@ -4,7 +4,7 @@
 #   bash periodic_test/run_gl_ess.sh                       # elmerstreams and fix
 #   MODES="elmerstreams fix none" bash periodic_test/run_gl_ess.sh
 #   SCAN="10 30 100" bash periodic_test/run_gl_ess.sh      # spin-ups (fix) with fcoeff x 10, 30, 100: pick FBASE
-#   FBASE=30 bash periodic_test/run_gl_ess.sh             # the full test with that base friction
+#   FBASE=10 bash periodic_test/run_gl_ess.sh             # the full test with that base friction
 #   CHUNKS=1 bash periodic_test/run_gl_ess.sh             # a short trial (1 chunk = 100 yr per phase)
 # Results: at the end of each run job's log (slurms/pgless_<job>.out); again with
 #   sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd analyse
