@@ -32,6 +32,7 @@ SUBROUTINE FixPeriodicLoads( Model, Solver, dt, Transient )
   TYPE(ValueList_t), POINTER :: Params
   TYPE(Variable_t), POINTER :: Src, Tgt
   INTEGER :: dofs, npairs, norphan
+  REAL(KIND=dp), POINTER :: NewValues(:)
   CHARACTER(LEN=MAX_NAME_LEN) :: sname, tname, pmode
   CHARACTER(*), PARAMETER :: Caller = 'FixPeriodicLoads'
   LOGICAL :: Found
@@ -57,7 +58,11 @@ SUBROUTINE FixPeriodicLoads( Model, Solver, dt, Transient )
 
   Tgt => VariableGet( Mesh % Variables, TRIM(tname), ThisOnly = .TRUE. )
   IF ( .NOT. ASSOCIATED( Tgt ) ) THEN
-    CALL VariableAddVector( Mesh % Variables, Mesh, Solver, TRIM(tname), dofs, Perm = Src % Perm )
+    ! the same size as the source (VariableAddVector would size it by MAXVAL(Perm), which can differ)
+    ALLOCATE( NewValues( SIZE( Src % Values ) ) )
+    NewValues = 0.0_dp
+    CALL VariableAddVector( Mesh % Variables, Mesh, Solver, TRIM(tname), dofs, Values = NewValues, &
+        Perm = Src % Perm )
     Tgt => VariableGet( Mesh % Variables, TRIM(tname), ThisOnly = .TRUE. )
     CALL Info( Caller, 'Created "'//TRIM(tname)//'" with '//I2S(dofs)//' components', Level=5 )
   END IF
