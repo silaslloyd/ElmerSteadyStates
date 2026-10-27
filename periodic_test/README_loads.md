@@ -43,3 +43,13 @@ sbatch periodic_test/run_loads.cmd                    # every case (4 tasks, a f
 python3 periodic_test/run_loads.py --analyse          # the table again
 ```
 Results: `periodic_test/out_loads/<case>/` (case.sif, elmer.log, out.bin.<pe>) and `out_loads/summary.csv`.
+
+## Failed runs and crash bisection
+
+Each case writes `status.txt` (Elmer's exit code); `--analyse` skips cases that failed or whose `out.bin.*` cannot be
+read, and says so. A failed run prints the error lines and the end of its `elmer.log`.
+
+`--no-weights` leaves out `Calculate Boundary Weights`, `--no-loads` leaves out `Calculate Loads` (and both from
+what is written), to find what makes the partitioned runs crash, e.g.
+
+    sbatch periodic_test/run_loads.cmd --only ny1_periodic_xcut --no-weights

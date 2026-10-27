@@ -145,13 +145,10 @@ def solvers(c):
   Nonlinear System Min Iterations = 1
   Nonlinear System Convergence Tolerance = 1.0e-8
   Steady State Convergence Tolerance = 1.0e-9
-  Calculate Loads = Logical True
-  Calculate Boundary Weights = Logical True
-  Exported Variable 1 = -dofs 4 Flow Solution Loads
-  Exported Variable 2 = -dofs 1 Flow Solution Boundary Weights
+{LOADS_KW}
 {DIRECT}
 """)
-    zs = '  State Variable 10 = String "Zs"\n' if c["fs"] else ""
+    LOADS_KW = loads_keywords()
     add(f"""  Exec Solver = "After All"
   Equation = "StateWrite"
   Procedure = "{ess}" "StateIO"
@@ -162,12 +159,7 @@ def solvers(c):
   State Variable 2 = String "Velocity 2"
   State Variable 3 = String "Velocity 3"
   State Variable 4 = String "Pressure"
-  State Variable 5 = String "Flow Solution Loads 1"
-  State Variable 6 = String "Flow Solution Loads 2"
-  State Variable 7 = String "Flow Solution Loads 3"
-  State Variable 8 = String "Flow Solution Loads 4"
-  State Variable 9 = String "Flow Solution Boundary Weights"
-{zs}""")
+{state_vars(c)}""")
     if c["fs"]:
         add(f"""  Equation = "Free Surface Top"
   Exec Solver = "After Timestep"
@@ -183,6 +175,31 @@ def solvers(c):
   Apply Dirichlet = Logical True
 """, body="surface")
     return "\n".join(blocks), ice, surf
+
+
+# what the Stokes solver computes and StateWrite writes; --no-weights / --no-loads take parts out
+OPTS = dict(weights=True, loads=True)
+
+
+def loads_keywords():
+    kw = []
+    if OPTS["loads"]:
+        kw += ["  Calculate Loads = Logical True", "  Exported Variable 1 = -dofs 4 Flow Solution Loads"]
+    if OPTS["weights"]:
+        kw += ["  Calculate Boundary Weights = Logical True",
+               f"  Exported Variable {len(kw) // 2 + 1} = -dofs 1 Flow Solution Boundary Weights"]
+    return "\n".join(kw)
+
+
+def state_vars(c):
+    names = ["Velocity 1", "Velocity 2", "Velocity 3", "Pressure"]
+    if OPTS["loads"]:
+        names += [f"Flow Solution Loads {k}" for k in (1, 2, 3, 4)]
+    if OPTS["weights"]:
+        names.append("Flow Solution Boundary Weights")
+    if c["fs"]:
+        names.append("Zs")
+    return "".join(f'  State Variable {i} = String "{n}"\n' for i, n in enumerate(names, 1))
 
 
 def write_case(c):
@@ -258,14 +275,26 @@ def run_case(c, mpirun, timeout):
             ret = subprocess.run(cmd, cwd=d, stdout=f, stderr=subprocess.STDOUT, timeout=timeout).returncode
         except subprocess.TimeoutExpired:
             ret = "timeout"
+    open(os.path.join(d, "status.txt"), "w").write(f"{ret}\n")
     print(f"  {c['name']:28s} {n:2d} procs  exit {ret}  {time.time() - t0:6.1f} s", flush=True)
+    if ret != 0:
+        log = open(os.path.join(d, "elmer.log"), errors="replace").read().splitlines()
+        hits = [l for l in log if any(k in l.lower() for k in ("error", "fatal", "signal", "warn", "backtrace"))]
+        for l in (hits[-8:] + ["    ..."] + log[-12:]):
+            print("      | " + l[:160])
 
 
 # ---------------------------------------------------------------- analysis
 def read_copies(d):
     """per-partition records: {name: (gids, values)} for each out.bin.<pe>"""
     files = sorted(glob.glob(os.path.join(d, "out.bin.*")), key=lambda p: int(p.rsplit(".", 1)[1]))
-    return [read_state_file(f) for f in files]
+    out = []
+    for f in files:
+        try:
+            out.append({k.lower(): v for k, v in read_state_file(f).items()})
+        except (ValueError, IndexError, OSError) as e:
+            raise RuntimeError(f"unreadable {os.path.basename(f)} ({e})")
+    return out
 
 
 def own_area(x, y, L, W, dx, dy):
@@ -277,9 +306,28 @@ def own_area(x, y, L, W, dx, dy):
 
 def analyse_case(c):
     d = os.path.join(OUT, c["name"])
-    parts = read_copies(d)
-    if not parts:
+    st = os.path.join(d, "status.txt")
+    status = "?"
+    if os.path.exists(st):
+        with open(st) as f:
+            status = f.read().strip()
+    if not os.path.isdir(d):
         return None
+    if status not in ("0", "?"):            # "?": run before status.txt existed; read it if it is readable
+        print(f"  {c['name']}: skipped (Elmer exit {status})")
+        return None
+    try:
+        parts = read_copies(d)
+    except RuntimeError as e:
+        print(f"  {c['name']}: skipped, {e}")
+        return None
+    if not parts:
+        print(f"  {c['name']}: skipped, no out.bin.*")
+        return None
+    missing = [n for n in ("flow solution loads 1", "flow solution loads 2", "flow solution loads 3",
+                           "flow solution boundary weights") if n not in parts[0]]
+    if missing:
+        print(f"  {c['name']}: not written: {', '.join(missing)} (present: {', '.join(sorted(parts[0]))})")
     g = GEOM
     L, W, dx, dy = g["L"], c["ny"] * g["dy"], g["dx"], g["dy"]
     # every copy of every node (shared nodes appear once per partition)
@@ -287,7 +335,7 @@ def analyse_case(c):
     for pe, rec in enumerate(parts):
         gids = rec["coordinate 1"][0]
         X, Y, Z = (rec[f"coordinate {k}"][1] for k in (1, 2, 3))
-        get = lambda name: dict(zip(*rec[name])) if name in rec else {}
+        get = lambda name: dict(zip(*rec[name.lower()])) if name.lower() in rec else {}
         Lc = [get(f"Flow Solution Loads {k}") for k in (1, 2, 3)]
         Wt = get("Flow Solution Boundary Weights")
         for i, gid in enumerate(gids):
@@ -310,7 +358,13 @@ def analyse_case(c):
     A = own_area(x, y, L, W, dx, dy)
     # exact bed loads (magnitudes); the sign of Elmer's loads is taken from the data
     ex = dict(x=RHOG * SINA * H * A, z=RHOG * COSA * H * A)
-    sgn = {k: float(np.sign(np.nanmedian(Lone[bed & (A == A.max()), j]))) or 1.0 for k, j in (("x", 0), ("z", 2))}
+    if np.isnan(Lone[bed]).all():
+        return None
+    sgn = {}
+    for k, j in (("x", 0), ("z", 2)):
+        v = Lone[bed & (A == A.max()), j]
+        sgn[k] = float(np.sign(np.nanmedian(v))) if np.isfinite(v).any() else 1.0
+        sgn[k] = sgn[k] or 1.0
     xper = (np.abs(x) < 1) | (np.abs(x - L) < 1)             # the x-periodic columns (left out of the classes)
     cls = {"y0 (master)": bed & ~xper & (np.abs(y) < 1),
            "yW (image)": bed & ~xper & (np.abs(y - W) < 1),
@@ -374,7 +428,11 @@ def main():
     ap.add_argument("--mpirun", default=os.environ.get("ESS_MPIRUN", "mpirun -np {n}"))
     ap.add_argument("--elmergrid", default="ElmerGrid")
     ap.add_argument("--timeout", type=float, default=None)
+    ap.add_argument("--no-weights", action="store_true", help="no Calculate Boundary Weights (crash bisection)")
+    ap.add_argument("--no-loads", action="store_true", help="no Calculate Loads (crash bisection)")
     a = ap.parse_args()
+    OPTS["weights"] = not a.no_weights
+    OPTS["loads"] = not a.no_loads
     NP = min(a.np, 4)
     cases = [c for c in CASES if not a.only or any(s in c["name"] for s in a.only)]
     if a.element:
