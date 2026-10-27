@@ -38,7 +38,7 @@ End
 Body 1
   Name = "bottom surface"
   Equation = 1
-  Body Force = 1
+  Body Force = 2
   Material = 1
   Initial Condition = 1
 End
@@ -46,7 +46,7 @@ End
 Body 2
   Name = "top surface"
   Equation = 2
-  Body Force = 2
+  Body Force = 3
   Material = 1
   Initial Condition = 2
 End
@@ -54,7 +54,7 @@ End
 Body 3
   Name = "ice"
   Equation = 3
-  Body Force = 3
+  Body Force = 1          ! Buoyancy.F90 checks the ice body force number against the number of materials (1)
   Material = 1
   Initial Condition = 3
 End
@@ -79,18 +79,21 @@ Initial Condition 3
 End
 
 Body Force 1
-  Zb Accumulation = Real 0.0
-End
-
-Body Force 2
-  Zs Accumulation = Variable Time
-    Real Lua "acc(tx[0])"
-End
-
-Body Force 3
+  Name = "ice"
   Flow BodyForce 1 = Real 0.0
   Flow BodyForce 2 = Real 0.0
   Flow BodyForce 3 = Real #-gravity
+End
+
+Body Force 2
+  Name = "bottom surface"
+  Zb Accumulation = Real 0.0
+End
+
+Body Force 3
+  Name = "top surface"
+  Zs Accumulation = Variable Time
+    Real Lua "acc(tx[0])"
 End
 
 Material 1
