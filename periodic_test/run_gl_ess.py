@@ -81,6 +81,8 @@ def cmd_run(a):
             raise SystemExit(f"--resume: one of {names}")
         k = names.index(a.resume)
         done = sorted(glob.glob(os.path.join(WORK, tag, f"{a.resume}_chunks", "points", "state_*.npz")))
+        if a.resume_at is not None:                 # a given chunk instead of the last one
+            done = [f for f in done if int(os.path.basename(f)[6:10]) <= a.resume_at]
         if done:
             state, resume = done[-1], (a.resume, int(os.path.basename(done[-1])[6:10]))
         elif k > 0:
@@ -243,6 +245,7 @@ def main():
     s.add_argument("--spinup-only", action="store_true", help="only the spin-up phase (to choose --fbase)")
     s.add_argument("--tag", help="results folder under the work dir (default MODE, or MODE_f<FBASE>)")
     s.add_argument("--resume", metavar="PHASE", help="continue from PHASE's last saved chunk (then the later phases)")
+    s.add_argument("--resume-at", type=int, metavar="N", help="with --resume: from chunk N of that phase, not the last")
     s.set_defaults(fn=cmd_run)
     s = sub.add_parser("analyse")
     s.add_argument("modes", nargs="*", help="results folders (treatments, e.g. fix, fix_f30; default all)")

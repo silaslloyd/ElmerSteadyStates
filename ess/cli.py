@@ -1068,7 +1068,7 @@ def main(argv=None):
                         "marine: with --gl frozen)")
     s.add_argument("--stokes-block-file", help="block-preconditioner keywords for --linear-stokes block "
                                                 "(default [elmer] stokes_block_file, elmer/stokes_block.sif.in)")
-    s.add_argument("--stokes-element", choices=["P2/P1", "Stabilized"],
+    s.add_argument("--stokes-element", choices=["P2/P1", "Stabilized", "Bubbles"],
                    help="Stokes element for this run (default [elmer] stokes_element, P2/P1)")
     s.add_argument("--chunk-offset", type=int, default=0,
                    help="number the --save-every states from this + 1 (continuing an interrupted run)")

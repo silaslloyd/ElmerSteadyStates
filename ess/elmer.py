@@ -125,6 +125,10 @@ class ElmerModel(Model):
         # "P2/P1" (default) or "Stabilized" (P1/P1 with stabilisation: far easier for ILU-preconditioned
         # Krylov solvers, but a different discretisation, so slightly different steady states)
         self.stokes_element = str(e.get("stokes_element", "P2/P1"))
+        # iterative Stokes ([elmer] linear_stokes = "iterative"): tolerance (default iterative_tol) and whether to
+        # stop when GCR does not converge (default yes; ElmerStreams' linsys/gcr.sif: 1e-8 and no)
+        self.stokes_iterative_tol = e.get("stokes_iterative_tol")
+        self.stokes_abort = bool(e.get("stokes_abort_not_converged", True))
         # [lua]: extra global assignments, appended to parameters.lua (they override ess_utils.lua
         # defaults such as ess_Hs / ess_Hmin, which is loaded first)
         self.lua_overrides = {k: repr(float(v)) for k, v in cfg.get("lua", {}).items()}
@@ -249,6 +253,8 @@ class ElmerModel(Model):
         if kind != "iterative":
             raise ValueError(f"[elmer] linear solver must be 'direct', 'iterative' or 'block' (Stokes), not {kind!r}")
         tol = f"{self.iterative_tol:.1e}"
+        if which == "stokes" and self.stokes_iterative_tol is not None:
+            tol = f"{float(self.stokes_iterative_tol):.1e}"
         if which == "stokes":
             # saddle-point system: GCR with a long restart and a strong ILU
             return ('  Linear System Solver = Iterative\n'
@@ -259,7 +265,7 @@ class ElmerModel(Model):
                     + (f'  Linear System ILUT Tolerance = Real {self.ilut_tol:.1e}\n'
                        if self.stokes_precond.upper() == "ILUT" else '') +
                     f'  Linear System Convergence Tolerance = {tol}\n'
-                    '  Linear System Abort Not Converged = True\n'
+                    f'  Linear System Abort Not Converged = {"True" if self.stokes_abort else "False"}\n'
                     '  Linear System Residual Output = 200')
         # heat (advection-diffusion, non-symmetric) and strain heating (mass matrix)
         return ('  Linear System Solver = Iterative\n'
@@ -388,7 +394,9 @@ End
             "__LS_STOKES__": self._linear_block(self.linear_stokes, "stokes"),
             "__LS_HEAT__": self._linear_block(self.linear_heat, "heat"),
             "__LS_STRAIN__": self._linear_block(self.linear_heat, "strain"),
-            "__STOKES_STAB__": f'"{self.stokes_element}"',
+            # "Bubbles": ElmerStreams' P1 + bubbles (Stabilization Method = Bubbles with its Element line)
+            "__STOKES_STAB__": ('"Bubbles"\n  Element = "p:1 -tri b:1 -quad b:3 -wedge b:1 -brick b:4"'
+                                if self.stokes_element == "Bubbles" else f'"{self.stokes_element}"'),
             # strain heating (ElmerStreams: on): DeformationalHeatSolver + volumetric heat source
             "__STRAIN_EXEC__": '"Always"' if self.strain_heat and not self.stokes_only else '"Never"',
             "__HEAT_EXEC__": '\n  Exec Solver = "Never"   ! --stokes-only' if self.stokes_only else "",

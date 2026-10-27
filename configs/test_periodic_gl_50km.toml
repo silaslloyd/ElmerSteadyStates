@@ -49,8 +49,14 @@ periodic_gl = "fix"                     # none | elmerstreams | fix (ess run --p
 # MUMPS segfaulted in the heat solve on the partitioned periodic mesh (Elmer bcc2c52); ElmerStreams solves heat
 # (and Stokes) iteratively. Stokes stays direct until shown otherwise (ess run --linear-stokes iterative).
 linear_heat = "iterative"
-# MUMPS ran out of workspace (INFO(1) = -9) in the Stokes solve of fix, retreat chunk 3: 200 % extra
-mumps_workspace = 200
+# MUMPS ran out of workspace (INFO(1) = -9, twice) on this 4.5M-unknown P2/P1 Stokes system: as ElmerStreams,
+# P1 + bubbles and GCR + ILU8 (linsys/gcr.sif: restart 200 here 250, tolerance 1e-8, no abort when not converged)
+mumps_workspace = 200                   # only if linear_stokes = "direct"
+linear_stokes = "iterative"
+stokes_element = "Bubbles"
+stokes_preconditioner = "ILU8"
+stokes_iterative_tol = 1.0e-8
+stokes_abort_not_converged = false
 vtu = false                             # true: every run also writes a VTU at its end
 friction_heat = "flux"                  # C(T) |u_b|^2 as a basal heat flux
 # written with every run besides the state, used for the mask checks and plots
