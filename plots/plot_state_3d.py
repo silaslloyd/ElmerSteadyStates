@@ -9,6 +9,8 @@ slider through the states.
     python plots/plot_state_3d.py work/test_periodic_gl/fix/retreat_chunks  # one phase
     python plots/plot_state_3d.py STATE.npz [STATE2.npz ...]                # given states
     python plots/plot_state_3d.py work/test_periodic_gl/fix --x 700 820     # x window (km)
+    python plots/plot_state_3d.py work/test_periodic_gl/fix --tile 1        # one copy (default 2: side by side, so
+                                                                            # anything not periodic shows at the seam)
 A treatment folder is read phase by phase (spinup, retreat, advance: <phase>_chunks/points/state_*.npz).
 Writes <first input>_3d.html and opens it. Needs numpy and plotly.
 """
@@ -29,6 +31,7 @@ X_WINDOW = None          # (xmin, xmax) km; None: from 60 km behind the most inl
 Z_EXAGGERATION = 1.0     # extra vertical stretch on top of the automatic aspect ratio
 ASPECT = dict(x=4.0, y=1.0, z=1.2)
 SHOW_BED = True
+TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
 SHOW = True
 
 
@@ -140,12 +143,16 @@ def gl_line(base, top=None):
 
 def main():
     import plotly.graph_objects as go
-    global X_WINDOW
+    global X_WINDOW, TILE
     args = sys.argv[1:]
     if "--x" in args:                             # --x XMIN XMAX (km)
         k = args.index("--x")
         X_WINDOW = (float(args[k + 1]), float(args[k + 2]))
         args = args[:k] + args[k + 3:]
+    if "--tile" in args:                          # --tile N copies across y
+        k = args.index("--tile")
+        TILE = max(1, int(args[k + 1]))
+        args = args[:k] + args[k + 2:]
     sys.argv = [sys.argv[0]] + args
     items = collect(args or ["work/test_periodic_gl/fix"])
     print(f"{len(items)} states")
@@ -180,39 +187,66 @@ def main():
     data = [(l, crop(tp), crop(b), t) for l, tp, b, t in data]
     smax = max(float(np.nanmax(tp["speed"])) for _, tp, _, _ in data if tp is not None)
 
+    W = max(float(np.ptp(tp["y"])) for _, tp, _, _ in data if tp is not None)      # strip width (m)
+
     def traces(top, base):
+        """TILE copies side by side, copy c shifted by c W in y: at each seam y = c W the image side (y = W) of
+        one copy meets the master side (y = 0) of the next, so anything not periodic shows as a step there"""
         tr = []
-        if top is not None:
-            i, j, k = triangles(top["x"], top["y"])
-            tr.append(go.Mesh3d(x=top["x"] / 1e3, y=top["y"] / 1e3, z=top["v"], i=i, j=j, k=k,
-                                intensity=top["speed"], colorscale="Viridis", cmin=0, cmax=smax,
-                                colorbar=dict(title="surface speed (m/yr)", x=1.0), name="surface Zs",
-                                hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zs %{z:.1f} m<extra></extra>"))
-        if base is not None:
-            i, j, k = triangles(base["x"], base["y"])
-            mask = base.get("mask", np.zeros_like(base["v"]))
-            tr.append(go.Mesh3d(x=base["x"] / 1e3, y=base["y"] / 1e3, z=base["v"], i=i, j=j, k=k,
-                                intensity=np.where(mask > -0.5, 1.0, 0.0), cmin=0, cmax=1,
-                                colorscale=[[0, "#3a7bd5"], [1, "#c0392b"]], showscale=False,
-                                name="base Zb (red grounded, blue floating)", opacity=0.9,
-                                hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<extra></extra>"))
-            if SHOW_BED and "bed" in base:
-                tr.append(go.Mesh3d(x=base["x"] / 1e3, y=base["y"] / 1e3, z=base["bed"] - 1.0, i=i, j=j, k=k,
-                                    color="#999999", opacity=0.35, name="bedrock", hoverinfo="skip"))
-            if "mask" in base:
-                # on top of the surface (a line on the base is hidden by the base itself), and a vertical
-                # curtain from the bed to the surface at the grounding line
-                gx, gy, gzb, gzt = gl_line(base, top)
-                tr.append(go.Scatter3d(x=gx, y=gy, z=gzt + 5.0, mode="lines+markers",
-                                       line=dict(color="black", width=8), marker=dict(size=4, color="black"),
-                                       name="grounding line", hovertemplate="GL x %{x:.2f} km at y %{y:.2f} km<extra></extra>"))
-                cx, cy, cz = [], [], []
-                for a_, b_, lo, hi in zip(gx, gy, gzb, gzt):
+        for c in range(TILE):
+            dy = c * W / 1e3
+            leg = c == 0
+            if top is not None:
+                i, j, k = triangles(top["x"], top["y"])
+                tr.append(go.Mesh3d(x=top["x"] / 1e3, y=top["y"] / 1e3 + dy, z=top["v"], i=i, j=j, k=k,
+                                    intensity=top["speed"], colorscale="Viridis", cmin=0, cmax=smax, showscale=leg,
+                                    colorbar=dict(title="surface speed (m/yr)", x=1.0), name="surface Zs",
+                                    showlegend=False,
+                                    hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zs %{z:.1f} m<extra></extra>"))
+            if base is not None:
+                i, j, k = triangles(base["x"], base["y"])
+                mask = base.get("mask", np.zeros_like(base["v"]))
+                tr.append(go.Mesh3d(x=base["x"] / 1e3, y=base["y"] / 1e3 + dy, z=base["v"], i=i, j=j, k=k,
+                                    intensity=np.where(mask > -0.5, 1.0, 0.0), cmin=0, cmax=1,
+                                    colorscale=[[0, "#3a7bd5"], [1, "#c0392b"]], showscale=False,
+                                    name="base Zb (red grounded, blue floating)", opacity=0.9, showlegend=False,
+                                    hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>mask %{intensity}"
+                                                  "<extra></extra>"))
+                if SHOW_BED and "bed" in base:
+                    tr.append(go.Mesh3d(x=base["x"] / 1e3, y=base["y"] / 1e3 + dy, z=base["bed"] - 1.0, i=i, j=j,
+                                        k=k, color="#999999", opacity=0.35, name="bedrock", hoverinfo="skip",
+                                        showlegend=False))
+        if base is not None and "mask" in base:
+            # the grounding line through all copies (a jump at a seam: not periodic), on top of the surface, and a
+            # curtain from the bed to the surface at each row
+            gx, gy, gzb, gzt = gl_line(base, top)
+            ax, ay, az = [], [], []
+            cx, cy, cz = [], [], []
+            for c in range(TILE):
+                dy = c * W / 1e3
+                ax += list(gx)
+                ay += list(gy + dy)
+                az += list(gzt + 5.0)
+                for a_, b_, lo, hi in zip(gx, gy + dy, gzb, gzt):
                     cx += [a_, a_, None]
                     cy += [b_, b_, None]
                     cz += [lo - 50.0, hi + 5.0, None]
-                tr.append(go.Scatter3d(x=cx, y=cy, z=cz, mode="lines", line=dict(color="black", width=4),
-                                       name="grounding line (bed to surface)", hoverinfo="skip"))
+            tr.append(go.Scatter3d(x=ax, y=ay, z=az, mode="lines+markers", line=dict(color="black", width=8),
+                                   marker=dict(size=4, color="black"), name="grounding line",
+                                   hovertemplate="GL x %{x:.2f} km at y %{y:.2f} km<extra></extra>"))
+            tr.append(go.Scatter3d(x=cx, y=cy, z=cz, mode="lines", line=dict(color="black", width=4),
+                                   name="grounding line (bed to surface)", hoverinfo="skip"))
+        if top is not None and TILE > 1:
+            m = np.abs(top["y"] - W) < 1
+            o = np.argsort(top["x"][m])
+            sx, sz = top["x"][m][o] / 1e3, top["v"][m][o] + 15.0
+            qx, qy, qz = [], [], []
+            for c in range(1, TILE):
+                qx += list(sx) + [None]
+                qy += [c * W / 1e3] * len(sx) + [None]
+                qz += list(sz) + [None]
+            tr.append(go.Scatter3d(x=qx, y=qy, z=qz, mode="lines", line=dict(color="red", width=3),
+                                   name="periodic seam (y = W of one copy = y = 0 of the next)", hoverinfo="skip"))
         return tr
     first = traces(data[0][1], data[0][2])
     frames = [go.Frame(data=traces(tp, b), name=str(n)) for n, (_, tp, b, _) in enumerate(data)]
@@ -223,6 +257,7 @@ def main():
     zs += [np.nanmin(b["bed"]) for _, _, b, _ in data if b is not None and "bed" in b]
     asp = dict(ASPECT)
     asp["z"] = ASPECT["z"] * Z_EXAGGERATION
+    asp["y"] = ASPECT["y"] * TILE
     fig = go.Figure(data=first, frames=frames)
     fig.update_layout(
         title=f"{sys.argv[1] if len(sys.argv) > 1 else ''}: {data[0][0]}",
