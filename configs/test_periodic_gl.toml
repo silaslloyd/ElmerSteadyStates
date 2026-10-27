@@ -38,6 +38,9 @@ timeout = 21600                         # seconds per Elmer run
 keep_runs = true                        # keep every run directory (sif, log, state files)
 cache = false                           # every run fresh
 periodic_gl = "fix"                     # none | elmerstreams | fix (ess run --periodic-gl)
+# MUMPS segfaulted in the heat solve on the partitioned periodic mesh (Elmer bcc2c52); ElmerStreams solves heat
+# (and Stokes) iteratively. Stokes stays direct until shown otherwise (ess run --linear-stokes iterative).
+linear_heat = "iterative"
 vtu = false                             # true: every run also writes a VTU at its end
 friction_heat = "flux"                  # C(T) |u_b|^2 as a basal heat flux
 # written with every run besides the state, used for the mask checks and plots

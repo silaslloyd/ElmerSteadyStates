@@ -52,6 +52,13 @@ COSA = float(np.sqrt(1 - SINA ** 2))
 
 FS = dict(dt=0.5, steps=20)          # free-surface cases: 20 x 0.5 yr (the slab's surface is unstable above ~1 yr)
 
+ITERATIVE = """  Linear System Solver = Iterative
+  Linear System Iterative Method = GCR
+  Linear System GCR Restart = 200
+  Linear System Max Iterations = 2000
+  Linear System Preconditioning = ILU1
+  Linear System Convergence Tolerance = 1.0e-10
+  Linear System Abort Not Converged = True"""
 DIRECT = """  Linear System Solver = Direct
   Linear System Direct Method = MUMPS
   Linear System Convergence Tolerance = 1.0e-12"""
@@ -153,7 +160,7 @@ def solvers(c):
   Nonlinear System Convergence Tolerance = 1.0e-8
   Steady State Convergence Tolerance = 1.0e-9
 {LOADS_KW}
-{DIRECT}
+{linear()}
 """)
     if OPTS["loads"] and OPTS["fix"]:
         fix = os.path.join(REPO, "elmer", "PeriodicGL")
@@ -176,7 +183,7 @@ def solvers(c):
   Variable = "Zs"
   Variable DOFs = 1
   Exported Variable 1 = -dofs 1 "Zs Residual"
-{DIRECT}
+{linear()}
   Nonlinear System Max Iterations = 100
   Nonlinear System Convergence Tolerance = 1.0e-5
   Steady State Convergence Tolerance = 1.0e-04
@@ -187,7 +194,11 @@ def solvers(c):
 
 
 # what the Stokes solver computes and StateWrite writes; --no-weights / --no-loads take parts out
-OPTS = dict(weights=True, loads=True, fix=True)
+OPTS = dict(weights=True, loads=True, fix=True, linear="direct")
+
+
+def linear():
+    return ITERATIVE if OPTS["linear"] == "iterative" else DIRECT
 FIXED = "Periodic Flow Solution Loads"          # FixPeriodicLoads' output
 
 
@@ -554,10 +565,13 @@ def main():
     ap.add_argument("--no-weights", action="store_true", help="no Calculate Boundary Weights (crash bisection)")
     ap.add_argument("--no-loads", action="store_true", help="no Calculate Loads (crash bisection)")
     ap.add_argument("--no-fix", action="store_true", help="without FixPeriodicLoads")
+    ap.add_argument("--linear", choices=["direct", "iterative"], default="direct",
+                    help="linear solver: MUMPS (default) or GCR + ILU1 (MUMPS crashed on partitioned periodic meshes)")
     a = ap.parse_args()
     OPTS["weights"] = not a.no_weights
     OPTS["loads"] = not a.no_loads
     OPTS["fix"] = not a.no_fix
+    OPTS["linear"] = a.linear
     NP = min(a.np, 4)
     cases = [c for c in CASES if not a.only or any(s in c["name"] for s in a.only)]
     if a.element:
