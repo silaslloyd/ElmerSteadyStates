@@ -31,6 +31,8 @@ X_WINDOW = None          # (xmin, xmax) km; None: from 60 km behind the most inl
 Z_EXAGGERATION = 1.0     # extra vertical stretch on top of the automatic aspect ratio
 ASPECT = dict(x=4.0, y=1.0, z=1.2)
 SHOW_BED = True
+BASE_COLOUR = "speed"    # "speed" (basal speed, the same colour scale as the surface) or "mask" (red grounded, blue floating)
+SIDES = True             # side walls (base to surface) at the window ends and the two outer sides
 TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
 SHOW = True
 
@@ -189,6 +191,40 @@ def main():
 
     W = max(float(np.ptp(tp["y"])) for _, tp, _, _ in data if tp is not None)      # strip width (m)
 
+    def walls(top, base):
+        """side walls between the base and the surface: the x-window ends of every copy and the two outer y sides,
+        coloured by speed (surface speed at the top, basal speed at the bottom); not at the seams"""
+        b = {(round(x, 0), round(y, 0)): (z, sp) for x, y, z, sp in zip(base["x"], base["y"], base["v"], base["speed"])}
+        out = []
+
+        def wall(idx, dy, name):
+            idx = [k for k in idx if (round(top["x"][k], 0), round(top["y"][k], 0)) in b]
+            if len(idx) < 2:
+                return
+            n = len(idx)
+            X = np.r_[top["x"][idx], top["x"][idx]] / 1e3
+            Y = np.r_[top["y"][idx], top["y"][idx]] / 1e3 + dy
+            zb_, sb_ = zip(*[b[(round(top["x"][k], 0), round(top["y"][k], 0))] for k in idx])
+            Z = np.r_[top["v"][idx], np.array(zb_)]
+            S = np.r_[top["speed"][idx], np.array(sb_)]
+            # segment a: top a, a + 1 and bottom n + a, n + a + 1 -> triangles (a, a+1, n+a), (a+1, n+a+1, n+a)
+            I = [v for a in range(n - 1) for v in (a, a + 1)]
+            J = [v for a in range(n - 1) for v in (a + 1, n + a + 1)]
+            K = [v for a in range(n - 1) for v in (n + a, n + a)]
+            out.append(go.Mesh3d(x=X, y=Y, z=Z, i=I, j=J, k=K, intensity=S, colorscale="Viridis", cmin=0, cmax=smax,
+                                 showscale=False, opacity=1.0, name=name, showlegend=False, hoverinfo="skip"))
+        xs, ys = top["x"], top["y"]
+        for c in range(TILE):
+            dy = c * W / 1e3
+            for xe in (xs.min(), xs.max()):                       # the x ends of the window
+                m = np.where(np.abs(xs - xe) < 1)[0]
+                wall(m[np.argsort(ys[m])], dy, "end wall")
+        ylo, yhi = ys.min(), ys.max()
+        for ye, c in ((ylo, 0), (yhi, TILE - 1)):                 # the outer sides
+            m = np.where(np.abs(ys - ye) < 1)[0]
+            wall(m[np.argsort(xs[m])], c * W / 1e3, "side wall")
+        return out
+
     def traces(top, base):
         """TILE copies side by side, copy c shifted by c W in y: at each seam y = c W the image side (y = W) of
         one copy meets the master side (y = 0) of the next, so anything not periodic shows as a step there"""
@@ -206,16 +242,22 @@ def main():
             if base is not None:
                 i, j, k = triangles(base["x"], base["y"])
                 mask = base.get("mask", np.zeros_like(base["v"]))
-                tr.append(go.Mesh3d(x=base["x"] / 1e3, y=base["y"] / 1e3 + dy, z=base["v"], i=i, j=j, k=k,
-                                    intensity=np.where(mask > -0.5, 1.0, 0.0), cmin=0, cmax=1,
-                                    colorscale=[[0, "#3a7bd5"], [1, "#c0392b"]], showscale=False,
-                                    name="base Zb (red grounded, blue floating)", opacity=1.0, showlegend=False,
-                                    hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>mask %{intensity}"
-                                                  "<extra></extra>"))
+                if BASE_COLOUR == "speed":
+                    col = dict(intensity=base["speed"], colorscale="Viridis", cmin=0, cmax=smax, showscale=False)
+                else:
+                    col = dict(intensity=np.where(mask > -0.5, 1.0, 0.0), cmin=0, cmax=1,
+                               colorscale=[[0, "#3a7bd5"], [1, "#c0392b"]], showscale=False)
+                tr.append(go.Mesh3d(x=base["x"] / 1e3, y=base["y"] / 1e3 + dy, z=base["v"], i=i, j=j, k=k, **col,
+                                    customdata=np.stack([base["speed"], mask], 1),
+                                    name="base Zb", opacity=1.0, showlegend=False,
+                                    hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>speed "
+                                                  "%{customdata[0]:.1f} m/yr<br>mask %{customdata[1]}<extra></extra>"))
                 if SHOW_BED and "bed" in base:
                     tr.append(go.Mesh3d(x=base["x"] / 1e3, y=base["y"] / 1e3 + dy, z=base["bed"] - 1.0, i=i, j=j,
                                         k=k, color="#999999", opacity=0.35, name="bedrock", hoverinfo="skip",
                                         showlegend=False))
+        if SIDES and top is not None and base is not None:
+            tr += walls(top, base)
         if base is not None and "mask" in base:
             # the grounding line through all copies (a jump at a seam: not periodic), on top of the surface, and a
             # curtain from the bed to the surface at each row
