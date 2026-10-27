@@ -32,10 +32,11 @@ REPO = os.path.dirname(HERE)
 sys.path.insert(0, REPO)
 CONFIG = os.path.join("configs", "test_periodic_gl.toml")
 WORK = os.path.join(REPO, "work", "test_periodic_gl")
-START_FROM = os.path.join("work", "marine_flowline", "run_cold_p268.15.npz")
+START_FROM = os.path.join("work", "marine_flowline", "run_temperate_p268.15.npz")
 MODES = ("elmerstreams", "fix", "none")
 # (name, chunks, fcoeff factor, aDIM factor): chunks of [map] n_steps x dt (100 yr)
-PHASES = [("spinup", 5, 1.0, 1.0), ("retreat", 5, 0.3, 1.0), ("advance", 5, 1.0, 3.0)]
+# accumulation only: a lower friction first advances the grounding line (more ice delivered), then retreats it
+PHASES = [("spinup", 5, 1.0, 1.0), ("retreat", 10, 1.0, 0.3), ("advance", 10, 1.0, 3.0)]
 
 
 def ess(*args):

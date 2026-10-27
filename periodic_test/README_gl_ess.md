@@ -13,9 +13,10 @@ back and forth:
 * The footprint is refined to 500 m within +- 20 km of the start state's grounding line (~739 km;
   `case/flowline_marine_gl.geo.in`, `gl_from_state`), so the grounding line can differ between rows.
 * Stokes and free surface only (`--stokes-only`), from a 2D marine state (`ess transfer`, default
-  `work/marine_flowline/run_cold_p268.15.npz`); three phases of 5 chunks of 100 yr (dt 5 yr): spin-up,
-  retreat (`fcoeff` x 0.3), advance (`fcoeff` back, `aDIM` x 3). `--no-remask`: only Elmer moves the grounding line. `--bed temperate`: the bed at T0, so sliding
-  is plain Weertman with `fcoeff` (on the cold start state's bed nothing moved in 1500 yr).
+  `work/marine_flowline/run_temperate_p268.15.npz`, the fully temperate bed); phases of 100-yr chunks (dt 5 yr):
+  spin-up (5), retreat (10: `aDIM` x 0.3), advance (10: `aDIM` x 3). `--no-remask`: only Elmer moves the grounding line. `--bed temperate`: the bed at T0, so sliding
+  is plain Weertman with `fcoeff` (on the cold start state's bed nothing moved in 1500 yr; made temperate, that state's grounding line ran
+  to the front: hence the temperate start state, and accumulation as the forcing).
 * `[elmer] periodic_gl` / `ess run --periodic-gl`: `elmerstreams` (ElmerStreams' contact.f90 on the raw loads,
   `Fw2` = Fw doubled on the master side), `fix` (SlidCoef_ContactPeriodic + the grounded mask made periodic after
   GroundedSolver), `none` (Elmer/Ice's SlidCoef_Contact).
