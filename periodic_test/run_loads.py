@@ -116,6 +116,7 @@ def prepare_mesh(c, elmergrid):
 
 def solvers(c):
     ess = os.path.join(REPO, "elmer", "SteadyStateIO")
+    LOADS_KW = loads_keywords()
     blocks, ice, surf = [], [], None
 
     def add(text, body="ice"):
@@ -161,17 +162,12 @@ def solvers(c):
   Loads Variable = String "Flow Solution Loads"
   Target Variable = String "{FIXED}"
 """)
-    LOADS_KW = loads_keywords()
     add(f"""  Exec Solver = "After All"
   Equation = "StateWrite"
   Procedure = "{ess}" "StateIO"
   State Mode = String "write"
   State File = File "out.bin"
   Write Coordinates = Logical True
-  State Variable 1 = String "Velocity 1"
-  State Variable 2 = String "Velocity 2"
-  State Variable 3 = String "Velocity 3"
-  State Variable 4 = String "Pressure"
 {state_vars(c)}""")
     if c["fs"]:
         add(f"""  Equation = "Free Surface Top"
