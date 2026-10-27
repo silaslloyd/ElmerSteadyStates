@@ -135,7 +135,8 @@ def analyse_state(path, width):
                t=float(s.meta.get("time", np.nan)))
     gl = []
     if gm is not None:
-        xm = np.array([dict(zip(gids.tolist(), X.tolist()))[g] for g in gm[0].tolist()])
+        Xd = dict(zip(gids.tolist(), X.tolist()))
+        xm = np.array([Xd[g] for g in gm[0].tolist()])
         ym = np.array([Y[g] for g in gm[0].tolist()])
         for yj in np.unique(np.round(ym, 0)):
             m = (np.abs(ym - yj) < 1) & (gm[1] > -0.5)
