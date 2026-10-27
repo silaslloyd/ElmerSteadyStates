@@ -323,6 +323,8 @@ def analyse_dir(d):
             return np.array([dd.get(k, np.nan) for k in gid])
         gm = field("GroundedMask")
         onbed = np.isfinite(gm)
+        if not onbed.any():
+            print(f"{st * DT:6.0f}  (no GroundedMask in this output; written: {', '.join(sorted(R))})")
         # pair every node on y = W with the node on y = 0 of the same footprint column and layer, by number:
         # extruded node = footprint node + layer * (footprint nodes); footprint node (i, j) = j (nx+1) + i + 1
         nx, ny = g["nx"], g["ny"]
@@ -377,16 +379,21 @@ def analyse_dir(d):
               f"{fmt(r['loads_raw']):>9s} {fmt(r['loads_fix']):>9s} {fmt(r['Fw'])} {fmt(r['normal'])}")
     if not rows:
         return
+    nrow = max(len(r["GL"]) for r in rows)
+    for r in rows:
+        r["GL"] = r["GL"] + [np.nan] * (nrow - len(r["GL"]))
     with open(os.path.join(d, "periodicity.csv"), "w", newline="") as f:
         w = csv.writer(f)
         keys = ["step", "t", "mask", "Zs", "Zb", "du", "loads_raw", "loads_fix", "Fw", "normal"]
-        w.writerow(keys + [f"GL_row{j}" for j in range(len(rows[0]["GL"]))])
+        w.writerow(keys + [f"GL_row{j}" for j in range(nrow)])
         for r in rows:
             w.writerow([r[k] for k in keys] + r["GL"])
-    gl0 = np.array([r["GL"][0] for r in rows])
+    gl0 = np.array([r["GL"][0] if r["GL"] else np.nan for r in rows])
     worst = {k: np.nanmax([r[k] for r in rows]) for k in ("mask", "Zs", "Zb", "du", "loads_fix")}
-    print(f"  grounding line at y = 0: {np.nanmin(gl0):.1f} .. {np.nanmax(gl0):.1f} km "
-          f"(start {gl0[0]:.1f}, end {gl0[-1]:.1f}); worst master/image mismatch over the run: "
+    if np.isfinite(gl0).any():
+        print(f"  grounding line at y = 0: {np.nanmin(gl0):.1f} .. {np.nanmax(gl0):.1f} km "
+              f"(start {gl0[0]:.1f}, end {gl0[-1]:.1f})")
+    print(f"  master/image mismatch over the run: "
           + ", ".join(f"{k} {v:.2g}" for k, v in worst.items()))
     print("  mask: largest |mask(y=0) - mask(y=W)| (0, 1 or 2); Zs, Zb in m; |du|/u: velocity / max speed;"
           " loads / max vertical load; Fw / max water load; normal: |n(y=0) - n(y=W)|")
