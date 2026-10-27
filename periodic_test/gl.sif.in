@@ -3,8 +3,7 @@
 !! bump across y (so the grounding line is not straight); Glen ice (n = 3), linear Weertman sliding through
 !! the contact sliding function (grounding line moves every step, as ElmerStreams), free top and bottom
 !! surfaces. Forcing in phases (sliding factor, accumulation) to move the grounding line back and forth.
-!! Bodies: 3 = ice (Buoyancy.F90 reads the gravity from Body 3), 4 = bottom surface (Zb, GroundedMask),
-!! 5 = top surface (Zs); 1, 2 unused. Filled in by run_gl.py.
+!! Bodies: 1 = ice, 2 = bottom surface (Zb, GroundedMask), 3 = top surface (Zs). Filled in by run_gl.py.
 
 !---LUA BEGIN
 ! assert(loadfile('params.lua'))()
@@ -35,29 +34,18 @@ Simulation
   max output level = __OUTPUT_LEVEL__
 End
 
-! Bodies 1 and 2 are empty placeholders: Buoyancy.F90 reads the gravity from Body 3 (the ice), and the boundary
-! bodies (Body Id on the bed and surface BCs) must come after the bulk body, as in ESS and ElmerStreams
+! Body 1 = ice (the footprint body, so the extruded bed and surface are boundaries 5 and 6), 2 = bottom surface,
+! 3 = top surface. Buoyancy.F90 reads the gravity from Body 3's body force (checking its number against the
+! number of materials, 1), so the top surface shares Body Force 1 with the ice.
 Body 1
-  Name = "unused 1"
-  Equation = 3
-  Material = 1
-End
-
-Body 2
-  Name = "unused 2"
-  Equation = 3
-  Material = 1
-End
-
-Body 3
   Name = "ice"
   Equation = 3
-  Body Force = 1          ! Buoyancy.F90 checks the ice body force number against the number of materials (1)
+  Body Force = 1
   Material = 1
   Initial Condition = 3
 End
 
-Body 4
+Body 2
   Name = "bottom surface"
   Equation = 1
   Body Force = 2
@@ -65,10 +53,10 @@ Body 4
   Initial Condition = 1
 End
 
-Body 5
+Body 3
   Name = "top surface"
   Equation = 2
-  Body Force = 3
+  Body Force = 1
   Material = 1
   Initial Condition = 2
 End
@@ -93,21 +81,17 @@ Initial Condition 3
 End
 
 Body Force 1
-  Name = "ice"
+  Name = "ice and top surface"
   Flow BodyForce 1 = Real 0.0
   Flow BodyForce 2 = Real 0.0
   Flow BodyForce 3 = Real #-gravity
+  Zs Accumulation = Variable Time
+    Real Lua "acc(tx[0])"
 End
 
 Body Force 2
   Name = "bottom surface"
   Zb Accumulation = Real 0.0
-End
-
-Body Force 3
-  Name = "top surface"
-  Zs Accumulation = Variable Time
-    Real Lua "acc(tx[0])"
 End
 
 Material 1
@@ -183,8 +167,8 @@ End
 
 Boundary Condition 5
   Name = "bed"
-  Target Boundaries(1) = __BED_BC__        ! extruded bottom: 4 + footprint body (Elmer's MeshExtrusion numbering)
-  Body Id = 4
+  Target Boundaries(1) = 5
+  Body Id = 2
   Bottom Surface = Equals Zb
 
   ! grounded (mask >= 0): Zb on the bed, no normal velocity; floating: free base, sea pressure
@@ -224,8 +208,8 @@ End
 
 Boundary Condition 6
   Name = "surface"
-  Target Boundaries(1) = __TOP_BC__        ! extruded top: 4 + 2 x footprint body
-  Body Id = 5
+  Target Boundaries(1) = 6
+  Body Id = 3
   Top Surface = Equals Zs
   ComputeNormal = Logical False
 End
