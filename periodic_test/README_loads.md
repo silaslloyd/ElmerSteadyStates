@@ -53,3 +53,29 @@ read, and says so. A failed run prints the error lines and the end of its `elmer
 what is written), to find what makes the partitioned runs crash, e.g.
 
     sbatch periodic_test/run_loads.cmd --only ny1_periodic_xcut --no-weights
+
+## FixPeriodicLoads (elmer/FixPeriodicLoads.F90)
+
+Why the raw loads are not periodic (Elmer `SetPeriodicBoundariesPass1`): the image node's row is added into the
+master's row of the matrix and RHS, and of the saved bulk copy that `Calculate Loads` uses; only the live image row
+is then replaced by the constraint. So the master holds the pair total and the image its own one-sided load,
+which includes the force across the seam. "Halving the master" (ElmerStreams) fixes the master but leaves that
+seam force on the image: zero in the uniform slab's vertical load, not zero with shear across the seam.
+
+The solver groups the nodes linked by the periodic projectors (`Model % BCs(k) % PMatrix`; corners chain through
+two BCs), takes the group total (the root's load), and gives every member total / members. It writes a new
+variable, so the raw loads stay for whatever expects them (e.g. the grounding-line contact):
+
+    Solver n                                    ! right after the Stokes solver
+      Equation = "FixPeriodicLoads"
+      Procedure = "<path>/elmer/FixPeriodicLoads" "FixPeriodicLoads"
+      Loads Variable = String "Flow Solution Loads"
+      Target Variable = String "Periodic Flow Solution Loads"
+    End
+
+Build: `make -C elmer FixPeriodicLoads.so` (not in `make all`). Parallel: both nodes of a pair must be on the same
+partition (ElmerGrid `-periodic`); otherwise the log warns and those nodes are left raw.
+
+The test prints three versions of every table: RAW (Elmer), HALF (masters / group size, images as they are: the
+ElmerStreams fix) and FIX. The `shear_*` cases (sliding varying across y) put shear across the seam; they are
+checked against the same run shifted by one cell, where the seam row is interior. `--no-fix` leaves the solver out.
