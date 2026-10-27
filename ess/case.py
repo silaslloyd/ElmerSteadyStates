@@ -232,8 +232,11 @@ def setup_case(cfg, mesh=True):
     if os.path.isdir(out):
         shutil.rmtree(out)
     cmd = [eg, "14", "2", "footprint.msh", "-autoclean", "-out", cfg["elmer"].get("mesh_db", "footprint")]
+    periodic = bool(c.get("periodic_sides", False))
+    if periodic:                              # side 2 the periodic image of side 1 (ElmerStreams flowline.cmd periodic)
+        cmd += ["-periodic", "0", "1", "0"]
     if n > 1:
-        cmd += ["-metiskway", str(n)]
+        cmd += ["-partition", str(n), "1", "1"] if periodic else ["-metiskway", str(n)]
     _run(cmd, case)
     log.info(f"setup: mesh in {out}" + (f" (partitioned for {n})" if n > 1 else ""))
     return g

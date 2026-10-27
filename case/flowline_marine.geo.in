@@ -1,4 +1,4 @@
-// Marine flowline footprint, one element wide, refined around the initial grounding line GLx
+// Marine flowline footprint, {YElements} element(s) wide ([case] y_elements, default 1), refined around the initial grounding line GLx
 // (from `ess setup`: GL - GL/6 .. GL + GL/16 at MarginRes, as ElmerStreams Marine_Term footprint.geo).
 // The physical-group order (inflow, front, side1, side2) gives Elmer boundaries 1-4, which the
 // extruded mesh and steady_template_marine.sif rely on.
@@ -17,7 +17,7 @@ Line(2) = {2, 3};
 Line(3) = {3, 4};
 Line(4) = {4, 5};
 Extrude {0, W, 0} {
-  Curve{1}; Curve{2}; Curve{3}; Curve{4}; Recombine; Layers{1};
+  Curve{1}; Curve{2}; Curve{3}; Curve{4}; Recombine; Layers{{YElements}};
 }
 Physical Surface(21) = {8, 12, 16, 20};
 Physical Curve(22) = {6};

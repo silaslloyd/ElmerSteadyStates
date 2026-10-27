@@ -155,6 +155,23 @@ class ElmerModel(Model):
         from .case import eval_lua_parameters
         P = eval_lua_parameters(self.params_file)
         self.rho_ratio = float(P["rhoi"] / P["rhow"]) if "rhoi" in P and "rhow" in P else 920 / 1003.27
+        # [case] periodic_sides (marine template): side 2 the periodic image of side 1 for the bedrock, filler and
+        # ice (as ElmerStreams' periodic template), no Velocity 2 = 0 on the ice sides; translation [case] width
+        # (else parameters.lua Wmesh). The mesh needs ElmerGrid -periodic 0 1 0 (`ess setup` adds it).
+        self.periodic_sides = bool(c.get("periodic_sides", False))
+        self.width = float(c.get("width", P.get("Wmesh", 1000.0)))
+        # [case] slide_ybump: the sliding coefficient times 1 + slide_ybump sin(2 pi y / width) (periodic), so the
+        # grounding line is not straight across the flow (tests of the periodic sides); 0: off
+        self.slide_ybump = float(c.get("slide_ybump", 0.0))
+        # [elmer] periodic_gl (contact grounding line with periodic sides; `ess run --periodic-gl`):
+        #   "none"          Elmer/Ice SlidCoef_Contact (hydrostatic loads Fw)
+        #   "elmerstreams"  ElmerStreams' contact.f90: the original test on the raw Stokes loads, with the
+        #                   hydrostatic loads doubled on the master side (Fw2, FixFw)
+        #   "fix"           SlidCoef_ContactPeriodic: periodic loads, hydrostatic loads, normals and grounded mask
+        #                   in the test, and the grounded mask made periodic after GroundedSolver
+        # (elmer/PeriodicGL.so: make -C elmer PeriodicGL.so)
+        self.periodic_gl = str(e.get("periodic_gl", "none"))
+        self.periodic_lib = cfg["_path"](e.get("periodic_lib", "elmer/PeriodicGL"))
         self._check_inputs()
 
     # ---------------------------------------------------------------- set-up checks
@@ -261,7 +278,41 @@ class ElmerModel(Model):
                                         '  Exported Variable 2 = -dofs 1 "ColdTempMask"',
                     "__GL_SOLVERS__": "",
                     "__GL_SLIDING__": weert.format(f="Sliding_Weertman")}
-        return {"__EQ4_SOLVERS__": "(4) = 8 12 15 16",
+        if self.periodic_gl not in ("none", "elmerstreams", "fix"):
+            raise ValueError(f"[elmer] periodic_gl must be 'none', 'elmerstreams' or 'fix', not {self.periodic_gl!r}")
+        extra, eq4, sliding = "", "(4) = 8 12 15 16", weert.format(f="SlidCoef_Contact")
+        if self.periodic_gl != "none":
+            lib = self.periodic_lib
+            sliding = (weert.format(f="SlidCoef_ContactPeriodic").replace('"ElmerIceUSF"', f'"{lib}"')
+                       + ("\n  Periodic Contact = Logical False\n  Hydrostatic Loads Variable = String \"Fw2\""
+                          if self.periodic_gl == "elmerstreams" else
+                          "\n  Periodic Contact = Logical True\n  Hydrostatic Loads Variable = String \"Fw\""))
+            eq4 = "(5) = 8 12 15 16 17"
+            if self.periodic_gl == "elmerstreams":
+                extra = f"""
+! ElmerStreams' FixFw: the hydrostatic loads doubled on the master side (the periodic root gets the pair sum)
+Solver 17
+  Exec Solver = "Before Timestep"
+  Equation = "Fw2"
+  Procedure = "{lib}" "FixPeriodicLoads"
+  Source Variable = String "Fw"
+  Target Variable = String "Fw2"
+  Periodic Mode = String "fold"
+End
+"""
+            else:
+                extra = f"""
+! the grounded mask the same on both periodic copies (GroundedSolver's grounding-line pass is one-sided)
+Solver 17
+  Exec Solver = "After Timestep"
+  Equation = "Periodic GroundedMask"
+  Procedure = "{lib}" "FixPeriodicLoads"
+  Source Variable = String "GroundedMask"
+  Target Variable = String "GroundedMask"
+  Periodic Mode = String "min"
+End
+"""
+        return {"__EQ4_SOLVERS__": eq4,
                 "__NOOP_EXPORTS__": '  Exported Variable 1 = -dofs 1 "ColdTempMask"',
                 "__GL_SOLVERS__": """! ElmerStreams grounding line (gl_mode = contact): hydrostatic loads for the contact test, and the
 ! grounded mask from Zb and the bed after every step (SlidCoef_Contact also ungrounds nodes in Stokes)
@@ -283,8 +334,8 @@ Solver 16
   Bedrock Variable = String "bedrock"
   Bubbles in global system = False
 End
-""",
-                "__GL_SLIDING__": weert.format(f="SlidCoef_Contact") + """
+""" + extra,
+                "__GL_SLIDING__": sliding + """
   Grounding Line Moves = Logical True
   Grounding Line Definition = String "Discontinuous"
   Test Contact Tolerance = Real 1.0E-3"""}
@@ -351,10 +402,47 @@ End
             text = text.replace(k, v)
         if self.cartesian_bed:
             text = self._cartesian_bed(text)
+        if self.periodic_sides:
+            text = self._periodic_sides(text)
+        if self.slide_ybump:
+            text = self._slide_ybump(text)
         left = sorted(set(PLACEHOLDER.findall(text)))
         if left:
             raise ValueError(f"unfilled placeholders in {self.template}: {', '.join(left)}")
         return text
+
+    def _periodic_sides(self, text):
+        """marine template: side 2 the periodic image of side 1 (bedrock, filler, ice), free ice sides"""
+        if not self.marine:
+            raise ValueError("[case] periodic_sides: marine template only")
+        per = lambda master, names: (f"  Periodic BC = {master}\n"
+                                     f"  Periodic BC Translate(3) = Real 0.0 {self.width!r} 0.0\n"
+                                     + "".join(f"  Periodic BC {n} = Logical True\n" for n in names))
+        ice = ["Velocity 1", "Velocity 2", "Velocity 3", "Pressure", "Temperature", "Zs", "Zb"]
+        rock = ["Temperature"]
+        for name, master, names in (("side2 bedrock", 7, rock), ("side2 filler", 11, rock), ("side2 ice", 15, ice)):
+            k = text.index(f'Name = "{name}"')
+            j = text.index("\nEnd", k)
+            text = text[:j + 1] + per(master, names) + text[j + 1:]
+        for name in ("side1 ice", "side2 ice"):
+            k = text.index(f'Name = "{name}"')
+            j = text.index("\nEnd", k)
+            block = text[k:j]
+            if "  Velocity 2 = 0.0\n" not in block:
+                raise ValueError(f"periodic_sides: no 'Velocity 2 = 0.0' in {name}")
+            text = text[:k] + block.replace("  Velocity 2 = 0.0\n", "", 1) + text[j:]
+        return text
+
+    def _slide_ybump(self, text):
+        """the sliding coefficient times 1 + slide_ybump sin(2 pi y / width)"""
+        a = ('  Weertman Friction Coefficient = Variable Temperature, Coordinate 1, GroundedMask\n'
+             '    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2])"')
+        if a not in text:
+            raise ValueError("slide_ybump: the Weertman Friction Coefficient lines of the template changed")
+        b = ('  Weertman Friction Coefficient = Variable Temperature, Coordinate 1, GroundedMask, Coordinate 2\n'
+             f'    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2]) * (1 + {self.slide_ybump!r} '
+             f'* math.sin(2 * math.pi * tx[3] / {self.width!r}))"')
+        return text.replace(a, b)
 
     def _cartesian_bed(self, text):
         """the bed boundary condition ("interface") in x/y/z components (see cartesian_bed)"""

@@ -284,6 +284,15 @@ def cmd_run(args):
         model.linear_stokes = args.linear_stokes
         log.info(f"run: Stokes linear solver {args.linear_stokes}"
                  + (f" ({model.stokes_block_file})" if args.linear_stokes == "block" else ""))
+    if args.periodic_gl:
+        model.periodic_gl = args.periodic_gl
+        log.info(f"run: periodic grounding line treatment: {args.periodic_gl}")
+    for kv in args.lua or []:               # Lua parameter overrides for this run (e.g. forcing phases)
+        k, _, v = kv.partition("=")
+        if not k or not v:
+            raise SystemExit(f"run: --lua expects NAME=VALUE, not {kv!r}")
+        model.lua_overrides[k.strip()] = v.strip()
+        log.info(f"run: Lua override {k.strip()} = {v.strip()}")
     if args.stokes_only and args.heat_only:
         raise SystemExit("run: --stokes-only and --heat-only exclude each other")
     if args.heat_only:
@@ -1061,6 +1070,11 @@ def main(argv=None):
                                                 "(default [elmer] stokes_block_file, elmer/stokes_block.sif.in)")
     s.add_argument("--stokes-element", choices=["P2/P1", "Stabilized"],
                    help="Stokes element for this run (default [elmer] stokes_element, P2/P1)")
+    s.add_argument("--periodic-gl", choices=["none", "elmerstreams", "fix"],
+                   help="contact grounding line with periodic sides: Elmer/Ice's, ElmerStreams' (Fw2) or the periodic "
+                        "one (elmer/PeriodicGL.so); default [elmer] periodic_gl")
+    s.add_argument("--lua", action="append", metavar="NAME=VALUE",
+                   help="override a parameters.lua assignment for this run (repeatable), e.g. --lua fcoeff=0.002")
     s.add_argument("--stokes-only", action="store_true",
                    help="Stokes and the free surface only: no heat solve or strain heating (the temperature stays as in "
                         "the start state); for a bed whose sliding does not depend on temperature (with --bed)")
