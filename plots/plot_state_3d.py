@@ -209,7 +209,7 @@ def main():
                 tr.append(go.Mesh3d(x=base["x"] / 1e3, y=base["y"] / 1e3 + dy, z=base["v"], i=i, j=j, k=k,
                                     intensity=np.where(mask > -0.5, 1.0, 0.0), cmin=0, cmax=1,
                                     colorscale=[[0, "#3a7bd5"], [1, "#c0392b"]], showscale=False,
-                                    name="base Zb (red grounded, blue floating)", opacity=0.9, showlegend=False,
+                                    name="base Zb (red grounded, blue floating)", opacity=1.0, showlegend=False,
                                     hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>mask %{intensity}"
                                                   "<extra></extra>"))
                 if SHOW_BED and "bed" in base:
