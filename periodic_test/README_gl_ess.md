@@ -8,8 +8,10 @@ back and forth:
 * `[case] width = 20 km`, `y_elements = 4`, `periodic_sides = true`: side 2 the periodic image of side 1 for the
   bedrock (BC 8 -> 7), filler (12 -> 11) and ice (16 -> 15), as in ElmerStreams' commented periodic lines; no
   `Velocity 2 = 0` on the ice sides; `ElmerGrid -periodic 0 1 0` (partitioned `-partition N 1 1`).
-* `[case] slide_ybump = 0.3`: the sliding coefficient times 1 + 0.3 sin(2 pi y / width), so the grounding line
-  is not straight and there is shear across the seam.
+* `[case] slide_ybump = 0.8`: the sliding coefficient times 1 + 0.8 sin(2 pi y / width) (0.2 .. 1.8), so the
+  grounding line is not straight and there is shear across the seam (0.3 left it straight).
+* The footprint is refined to 500 m within +- 20 km of the start state's grounding line (~739 km;
+  `case/flowline_marine_gl.geo.in`, `gl_from_state`), so the grounding line can differ between rows.
 * Stokes and free surface only (`--stokes-only`), from a 2D marine state (`ess transfer`, default
   `work/marine_flowline/run_cold_p268.15.npz`); three phases of 5 chunks of 100 yr (dt 5 yr): spin-up,
   retreat (`fcoeff` x 0.3), advance (`fcoeff` back, `aDIM` x 3). `--no-remask`: only Elmer moves the grounding line.

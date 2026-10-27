@@ -1,4 +1,4 @@
-// Marine flowline footprint, one element wide, refined in two bands around the grounding line GLx
+// Marine flowline footprint, {YElements} element(s) wide ([case] y_elements, default 1), refined in two bands around the grounding line GLx
 // ([case] gl_x_km, else the initial grounding line): FineRes within GLx +- FineHalf, MarginRes over
 // GL - GL/6 .. GL + GL/16 (as flowline_marine.geo.in), BoundaryRes at the divide and the calving front;
 // gmsh grades the element size linearly between the points. The physical-group order (inflow, front,
@@ -22,7 +22,7 @@ Line(3) = {3, 4};
 Line(4) = {4, 5};
 Line(5) = {5, 6};
 Extrude {0, W, 0} {
-  Curve{1}; Curve{2}; Curve{3}; Curve{4}; Curve{5}; Recombine; Layers{1};
+  Curve{1}; Curve{2}; Curve{3}; Curve{4}; Curve{5}; Recombine; Layers{{YElements}};
 }
 Physical Surface(21) = {9, 13, 17, 21, 25};
 Physical Curve(22) = {7};
