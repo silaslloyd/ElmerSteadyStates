@@ -32,6 +32,7 @@ Z_EXAGGERATION = 1.0     # extra vertical stretch on top of the automatic aspect
 ASPECT = dict(x=4.0, y=1.0, z=1.2)
 SHOW_BED = True
 BASE_COLOUR = "speed"    # "speed" (basal speed, the same colour scale as the surface) or "mask" (red grounded, blue floating)
+SHOW_MESH = True         # the element edges on the base
 SIDES = True             # side walls (base to surface) at the window ends and the two outer sides
 TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
 SHOW = True
@@ -191,6 +192,22 @@ def main():
 
     W = max(float(np.ptp(tp["y"])) for _, tp, _, _ in data if tp is not None)      # strip width (m)
 
+    def mesh_lines(base):
+        """the element edges of the base (rows along x, columns along y), just below it, for every copy"""
+        xr, yr = np.round(base["x"], 0), np.round(base["y"], 0)
+        lx, ly, lz = [], [], []
+        for c in range(TILE):
+            dy = c * W / 1e3
+            for key, other in ((yr, xr), (xr, yr)):        # lines of constant y (along x), then of constant x
+                for v in np.unique(key):
+                    m = np.where(key == v)[0]
+                    o = m[np.argsort(other[m])]
+                    lx += list(base["x"][o] / 1e3) + [None]
+                    ly += list(base["y"][o] / 1e3 + dy) + [None]
+                    lz += list(base["v"][o] - 3.0) + [None]
+        return go.Scatter3d(x=lx, y=ly, z=lz, mode="lines", line=dict(color="#222222", width=1),
+                            name="base mesh", hoverinfo="skip")
+
     def walls(top, base):
         """side walls between the base and the surface: the x-window ends of every copy and the two outer y sides,
         coloured by speed (surface speed at the top, basal speed at the bottom); not at the seams"""
@@ -256,6 +273,8 @@ def main():
                     tr.append(go.Mesh3d(x=base["x"] / 1e3, y=base["y"] / 1e3 + dy, z=base["bed"] - 1.0, i=i, j=j,
                                         k=k, color="#999999", opacity=0.35, name="bedrock", hoverinfo="skip",
                                         showlegend=False))
+        if SHOW_MESH and base is not None:
+            tr.append(mesh_lines(base))
         if SIDES and top is not None and base is not None:
             tr += walls(top, base)
         if base is not None and "mask" in base:
