@@ -32,11 +32,13 @@ REPO = os.path.dirname(HERE)
 sys.path.insert(0, REPO)
 CONFIG = os.path.join("configs", "test_periodic_gl.toml")
 WORK = os.path.join(REPO, "work", "test_periodic_gl")
-START_FROM = os.path.join("work", "marine_flowline", "run_temperate_p268.15.npz")
+START_FROM = os.path.join("work", "marine_flowline", "run_cold_p268.15.npz")
 MODES = ("elmerstreams", "fix", "none")
 # (name, chunks, fcoeff factor, aDIM factor): chunks of [map] n_steps x dt (100 yr)
-# accumulation only: a lower friction first advances the grounding line (more ice delivered), then retreats it
-PHASES = [("spinup", 5, 1.0, 1.0), ("retreat", 10, 1.0, 0.3), ("advance", 10, 1.0, 3.0)]
+# The bed is temperate (--bed temperate) and the sliding coefficient fcoeff x --fbase: with fbase 1 the grounding
+# line of the cold start state ran to the calving front; on the cold bed it did not move. Find an fbase that keeps it
+# inside the domain (run_gl_ess.sh SCAN="10 30 100"), then: more friction retreats it, less advances it.
+PHASES = [("spinup", 5, 1.0, 1.0), ("retreat", 10, 3.0, 1.0), ("advance", 10, 1.0 / 3.0, 1.0)]
 
 
 def ess(*args):
@@ -60,17 +62,19 @@ def cmd_prep(a):
 def cmd_run(a):
     fc, ad = base_params()
     state = os.path.join(WORK, "start.npz")
-    os.makedirs(os.path.join(WORK, a.mode), exist_ok=True)
-    for name, chunks, ff, af in PHASES:
-        out = os.path.join(WORK, a.mode, f"{name}.npz")
+    tag = a.tag or (a.mode if a.fbase == 1.0 else f"{a.mode}_f{a.fbase:g}")
+    os.makedirs(os.path.join(WORK, tag), exist_ok=True)
+    print(f"run {a.mode}: fcoeff x {a.fbase:g} (x the phase factors), results in {os.path.join(WORK, tag)}", flush=True)
+    for name, chunks, ff, af in (PHASES[:1] if a.spinup_only else PHASES):
+        out = os.path.join(WORK, tag, f"{name}.npz")
         args = ["run", CONFIG, "--state", state, "--out", out, "--stokes-only", "--gl", "contact",
                 "--periodic-gl", a.mode, "--chunks", str(a.chunks or chunks), "--save-every", "1",
                 "--no-remask",          # only Elmer moves the grounding line (ESS' remask is not periodic-aware)
                 "--bed", "temperate",   # sliding at T0 (the cold start state's bed barely slides: nothing moved)
-                "--lua", f"fcoeff={fc * ff!r}", "--lua", f"aDIM={ad * af!r}"]
+                "--lua", f"fcoeff={fc * a.fbase * ff!r}", "--lua", f"aDIM={ad * af!r}"]
         ess(*args)
         state = out
-    cmd_analyse(argparse.Namespace(modes=[a.mode]))      # the table at the end of the job
+    cmd_analyse(argparse.Namespace(modes=[tag]))         # the table at the end of the job
 
 
 # ---------------------------------------------------------------- analysis
@@ -151,10 +155,9 @@ def analyse_state(path, width):
 def cmd_analyse(a):
     from ess.config import load_config
     width = float(load_config(os.path.join(REPO, CONFIG))["case"]["width"])
-    bad = [m for m in a.modes if m not in MODES]
-    if bad:
-        raise SystemExit(f"unknown treatment(s) {bad}: {', '.join(MODES)}")
-    for mode in a.modes or MODES:
+    modes = a.modes or sorted(d for d in os.listdir(WORK) if os.path.isdir(os.path.join(WORK, d))
+                              and any(os.path.isdir(os.path.join(WORK, d, f"{p[0]}_chunks")) for p in PHASES))
+    for mode in modes:
         files = []
         for name, *_ in PHASES:
             files += [(name, f) for f in sorted(glob.glob(os.path.join(WORK, mode, f"{name}_chunks", "points",
@@ -200,9 +203,12 @@ def main():
     s.add_argument("mode", choices=MODES)
     s.add_argument("--chunks", type=int, help="chunks per phase (default per phase: "
                                               + ", ".join(f"{p[0]} {p[1]}" for p in PHASES) + ")")
+    s.add_argument("--fbase", type=float, default=1.0, help="sliding coefficient fcoeff times this in every phase")
+    s.add_argument("--spinup-only", action="store_true", help="only the spin-up phase (to choose --fbase)")
+    s.add_argument("--tag", help="results folder under the work dir (default MODE, or MODE_f<FBASE>)")
     s.set_defaults(fn=cmd_run)
     s = sub.add_parser("analyse")
-    s.add_argument("modes", nargs="*", help=f"treatments ({', '.join(MODES)}; default all)")
+    s.add_argument("modes", nargs="*", help="results folders (treatments, e.g. fix, fix_f30; default all)")
     s.set_defaults(fn=cmd_analyse)
     a = ap.parse_args()
     a.fn(a)

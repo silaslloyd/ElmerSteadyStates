@@ -12,19 +12,22 @@ back and forth:
   grounding line is not straight and there is shear across the seam (0.3 left it straight).
 * The footprint is refined to 500 m within +- 20 km of the start state's grounding line (~739 km;
   `case/flowline_marine_gl.geo.in`, `gl_from_state`), so the grounding line can differ between rows.
-* Stokes and free surface only (`--stokes-only`), from a 2D marine state (`ess transfer`, default
-  `work/marine_flowline/run_temperate_p268.15.npz`, the fully temperate bed); phases of 100-yr chunks (dt 5 yr):
-  spin-up (5), retreat (10: `aDIM` x 0.3), advance (10: `aDIM` x 3). `--no-remask`: only Elmer moves the grounding line. `--bed temperate`: the bed at T0, so sliding
-  is plain Weertman with `fcoeff` (on the cold start state's bed nothing moved in 1500 yr; made temperate, that state's grounding line ran
-  to the front: hence the temperate start state, and accumulation as the forcing).
+* Stokes and free surface only (`--stokes-only`), from the 2D cold marine state (`ess transfer`,
+  `work/marine_flowline/run_cold_p268.15.npz`, grounding line ~739 km) with the whole bed temperate
+  (`--bed temperate`) and the sliding coefficient `fcoeff` x `--fbase`. `--no-remask`: only Elmer moves the
+  grounding line. On the cold bed nothing moved in 1500 yr; with fbase 1 the grounding line ran to the calving
+  front within 300 yr. So first a scan of fbase (spin-ups only, `SCAN="10 30 100"`), then the full test with the
+  fbase that keeps the grounding line inside: spin-up (5 chunks of 100 yr, dt 5 yr), retreat (10: friction x 3),
+  advance (10: friction / 3).
 * `[elmer] periodic_gl` / `ess run --periodic-gl`: `elmerstreams` (ElmerStreams' contact.f90 on the raw loads,
   `Fw2` = Fw doubled on the master side), `fix` (SlidCoef_ContactPeriodic + the grounded mask made periodic after
   GroundedSolver), `none` (Elmer/Ice's SlidCoef_Contact).
 
 Run (login node, repository root):
 
-    git pull && bash periodic_test/run_gl_ess.sh               # prep job, then elmerstreams and fix in parallel
-    CHUNKS=1 bash periodic_test/run_gl_ess.sh                  # a short trial first
+    git pull && SCAN="10 30 100" bash periodic_test/run_gl_ess.sh   # spin-ups with fcoeff x 10, 30, 100 (fix)
+    FBASE=30 bash periodic_test/run_gl_ess.sh                  # then the full test (elmerstreams and fix)
+    CHUNKS=1 FBASE=30 bash periodic_test/run_gl_ess.sh         # a short trial
     sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd analyse   # the tables again (each run job prints its own)
 
 The table: after every chunk, the grounding line per row across y (y = 0 and y = W are the same physical row) and
