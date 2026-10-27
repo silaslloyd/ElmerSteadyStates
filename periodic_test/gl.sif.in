@@ -1,0 +1,214 @@
+!! Periodic grounding-line test (periodic_test/run_gl.py, README_gl.md): a marine slab, divide at x = 0, fixed
+!! calving front at x = L (sea pressure), sides y = 0 / y = W periodic. Bed sloping down to the front with a
+!! bump across y (so the grounding line is not straight); Glen ice (n = 3), linear Weertman sliding through
+!! the contact sliding function (grounding line moves every step, as ElmerStreams), free top and bottom
+!! surfaces. Forcing in phases (sliding factor, accumulation) to move the grounding line back and forth.
+!! Bodies: 1 = bottom surface (Zb, GroundedMask), 2 = top surface (Zs), 3 = ice (Buoyancy.F90 reads the
+!! gravity from Body 3). Filled in by run_gl.py.
+
+!---LUA BEGIN
+! assert(loadfile('params.lua'))()
+!---LUA END
+
+Header
+  Mesh DB "__MESH_DIR__" "footprint"
+End
+
+Constants
+  Water Density = Real #rhow
+  Ice Density = Real #rhoi
+  Gravity(4) = 0 0 -1 #gravity
+  Sea Level = Real 0.0
+End
+
+Simulation
+  Coordinate System = "Cartesian 3D"
+  Simulation Type = "Transient"
+  Timestepping Method = "bdf"
+  BDF Order = 1
+  Timestep Intervals = __NSTEPS__
+  Timestep Sizes = __DT__
+  Output Intervals = 0
+  Steady State Max Iterations = 1
+  Steady State Min Iterations = 1
+  Extruded Mesh Levels = Integer __NZ1__
+  max output level = __OUTPUT_LEVEL__
+End
+
+Body 1
+  Name = "bottom surface"
+  Equation = 1
+  Body Force = 1
+  Material = 1
+  Initial Condition = 1
+End
+
+Body 2
+  Name = "top surface"
+  Equation = 2
+  Body Force = 2
+  Material = 1
+  Initial Condition = 2
+End
+
+Body 3
+  Name = "ice"
+  Equation = 3
+  Body Force = 3
+  Material = 1
+  Initial Condition = 3
+End
+
+Initial Condition 1
+  Zb = Variable Coordinate 1, Coordinate 2
+    Real Lua "zb0(tx[0], tx[1])"
+  Bedrock = Variable Coordinate 1, Coordinate 2
+    Real Lua "bed(tx[0], tx[1])"
+End
+
+Initial Condition 2
+  Zs = Variable Coordinate 1, Coordinate 2
+    Real Lua "zs0(tx[0], tx[1])"
+End
+
+Initial Condition 3
+  Velocity 1 = Real 0.0
+  Velocity 2 = Real 0.0
+  Velocity 3 = Real 0.0
+  Pressure = Real 0.0
+End
+
+Body Force 1
+  Zb Accumulation = Real 0.0
+End
+
+Body Force 2
+  Zs Accumulation = Variable Time
+    Real Lua "acc(tx[0])"
+End
+
+Body Force 3
+  Flow BodyForce 1 = Real 0.0
+  Flow BodyForce 2 = Real 0.0
+  Flow BodyForce 3 = Real #-gravity
+End
+
+Material 1
+  Density = Real #rhoi
+  Viscosity Model = String "power law"
+  Viscosity = Real #eta
+  Viscosity Exponent = Real #1.0/3.0
+  Critical Shear Rate = Real 1.0e-10
+  Cauchy = Logical True
+  Sea Level = Real 0.0
+  Min Zb = Equals Bedrock
+  Min Zs = Real 10.0
+  Max Zs = Real 10000.0
+End
+
+Equation 1
+  Name = "bottom surface"
+  Active Solvers(__NBED__) = __BED__
+  Flow Solution Name = String "Flow Solution"
+  Convection = String "Computed"
+End
+
+Equation 2
+  Name = "top surface"
+  Active Solvers(__NTOP__) = __TOP__
+  Flow Solution Name = String "Flow Solution"
+  Convection = String "Computed"
+End
+
+Equation 3
+  Name = "ice"
+  Active Solvers(__NICE__) = __ICE__
+  Flow Solution Name = String "Flow Solution"
+End
+
+__SOLVERS__
+!---------------- boundary conditions ----------------
+
+Boundary Condition 1
+  Name = "divide x = 0"
+  Target Boundaries(1) = 1
+  Velocity 1 = Real 0.0
+End
+
+Boundary Condition 2
+  Name = "calving front x = L"
+  Target Boundaries(1) = 2
+  Velocity 2 = Real 0.0
+  Flow Force BC = Logical True
+  External Pressure = Variable Coordinate 3
+    Real Procedure "__BUOY__" "SeaPressure"
+  Compute Sea Pressure = Logical True
+  ComputeNormal = Logical False
+End
+
+Boundary Condition 3
+  Name = "y = 0 (master)"
+  Target Boundaries(1) = 3
+End
+
+Boundary Condition 4
+  Name = "y = W (periodic image of y = 0)"
+  Target Boundaries(1) = 4
+  Periodic BC = 3
+  Periodic BC Translate(3) = Real 0.0 __W__ 0.0
+  Periodic BC Velocity 1 = Logical True
+  Periodic BC Velocity 2 = Logical True
+  Periodic BC Velocity 3 = Logical True
+  Periodic BC Pressure = Logical True
+  Periodic BC Zs = Logical True
+  Periodic BC Zb = Logical True
+End
+
+Boundary Condition 5
+  Name = "bed"
+  Target Boundaries(1) = 5
+  Body Id = 1
+  Bottom Surface = Equals Zb
+
+  ! grounded (mask >= 0): Zb on the bed, no normal velocity; floating: free base, sea pressure
+  Zb = Equals Bedrock
+  Zb Condition = Variable GroundedMask
+    Real Lua "tx[0] + 0.5"
+  Normal-Tangential Velocity = Logical True
+  Velocity 1 = Real 0.0
+  Velocity 1 Condition = Variable GroundedMask
+    Real Lua "tx[0] + 0.5"
+  Flow Solution Name = String "Flow Solution"
+
+  External Pressure = Variable Coordinate 3
+    Real Procedure "__BUOY__" "SeaPressure"
+  Compute Sea Pressure = Logical True
+  Slip Coefficient 1 = Variable Coordinate 3
+    Real Procedure "__BUOY__" "SeaSpring"
+  Compute Sea Spring = Logical True
+
+  ! the contact grounding line (ElmerStreams): friction where grounded, retreat where the water pushes harder
+  Slip Coefficient 2 = Variable Coordinate 1
+    Real Procedure "__CONTACT_LIB__" "__CONTACT_FN__"
+  Slip Coefficient 3 = Variable Coordinate 1
+    Real Procedure "__CONTACT_LIB__" "__CONTACT_FN__"
+  Sliding Law = String "Weertman"
+  Weertman Exponent = Real 1.0
+  Weertman Friction Coefficient = Variable Time
+    Real Lua "Cw * slipfac(tx[0])"
+  Weertman Linear Velocity = Real 1.0e-3
+  Grounding Line Moves = Logical True
+  Grounding Line Definition = String "Discontinuous"
+  Test Contact Tolerance = Real 1.0e-3
+__CONTACT_KW__
+  ComputeNormal Condition = Variable GroundedMask
+    Real Lua "tx[0] + 0.5"
+End
+
+Boundary Condition 6
+  Name = "surface"
+  Target Boundaries(1) = 6
+  Body Id = 2
+  Top Surface = Equals Zs
+  ComputeNormal = Logical False
+End

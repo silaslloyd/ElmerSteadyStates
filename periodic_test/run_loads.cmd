@@ -17,9 +17,9 @@ module load elmerfem/2026-07-13
 build_libs() {
     local cur; cur=$(command -v ElmerSolver)
     if [ ! -f elmer/SteadyStateIO.so ] || [ elmer/SteadyStateIO.F90 -nt elmer/SteadyStateIO.so ] \
-       || [ ! -f elmer/FixPeriodicLoads.so ] || [ elmer/FixPeriodicLoads.F90 -nt elmer/FixPeriodicLoads.so ] \
+       || [ ! -f elmer/PeriodicGL.so ] || [ -n "$(find elmer -maxdepth 1 -name '*Periodic*.F90' -newer elmer/PeriodicGL.so)" ] \
        || [ "$(cat elmer/.built_with 2>/dev/null)" != "$cur" ]; then
-        make -C elmer clean && make -C elmer && make -C elmer FixPeriodicLoads.so && echo "$cur" > elmer/.built_with
+        make -C elmer clean && make -C elmer && make -C elmer PeriodicGL.so && echo "$cur" > elmer/.built_with
     fi
 }
 ( flock 9; build_libs ) 9> elmer/.build.lock

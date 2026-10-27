@@ -10,3 +10,4 @@ periodic_test/out/
 elmer/.built_with
 elmer/.build.lock
 periodic_test/out_loads/
+periodic_test/out_gl/

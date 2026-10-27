@@ -73,7 +73,7 @@ variable, so the raw loads stay for whatever expects them (e.g. the grounding-li
       Target Variable = String "Periodic Flow Solution Loads"
     End
 
-Build: `make -C elmer FixPeriodicLoads.so` (not in `make all`). Parallel: both nodes of a pair must be on the same
+Build: `make -C elmer PeriodicGL.so` (not in `make all`; with PeriodicUtils and the periodic contact). Parallel: both nodes of a pair must be on the same
 partition (ElmerGrid `-periodic`); otherwise the log warns and those nodes are left raw.
 
 The test prints three versions of every table: RAW (Elmer), HALF (masters / group size, images as they are: the

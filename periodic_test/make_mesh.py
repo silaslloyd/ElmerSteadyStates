@@ -10,7 +10,7 @@ import os
 import sys
 
 
-def write_footprint(out_dir, L, W, nx, ny):
+def write_footprint(out_dir, L, W, nx, ny, body=1):
     os.makedirs(out_dir, exist_ok=True)
     nid = lambda i, j: j * (nx + 1) + i + 1           # node (i, j), 1-based
     nodes = [(nid(i, j), L * i / nx, W * j / ny) for j in range(ny + 1) for i in range(nx + 1)]
@@ -31,7 +31,7 @@ def write_footprint(out_dir, L, W, nx, ny):
     with open(os.path.join(out_dir, "mesh.nodes"), "w") as f:
         f.writelines(f"{n} -1 {x:.6f} {y:.6f} 0.0\n" for n, x, y in nodes)
     with open(os.path.join(out_dir, "mesh.elements"), "w") as f:
-        f.writelines(f"{e} 1 404 {a} {b} {c} {d}\n" for e, a, b, c, d in elems)
+        f.writelines(f"{e} {body} 404 {a} {b} {c} {d}\n" for e, a, b, c, d in elems)
     with open(os.path.join(out_dir, "mesh.boundary"), "w") as f:
         f.writelines(f"{k + 1} {t} {p} 0 202 {a} {b}\n" for k, (t, p, a, b) in enumerate(bnd))
 

@@ -156,7 +156,7 @@ def solvers(c):
 {DIRECT}
 """)
     if OPTS["loads"] and OPTS["fix"]:
-        fix = os.path.join(REPO, "elmer", "FixPeriodicLoads")
+        fix = os.path.join(REPO, "elmer", "PeriodicGL")
         add(f"""  Equation = "FixPeriodicLoads"
   Procedure = "{fix}" "FixPeriodicLoads"
   Loads Variable = String "Flow Solution Loads"
@@ -571,8 +571,8 @@ def main():
         lib = os.path.join(REPO, "elmer", "SteadyStateIO.so")
         if not os.path.exists(lib):
             raise SystemExit(f"{lib} missing: build it with `make -C elmer` (module load elmerfem first)")
-        if OPTS["fix"] and not os.path.exists(os.path.join(REPO, "elmer", "FixPeriodicLoads.so")):
-            raise SystemExit("elmer/FixPeriodicLoads.so missing: `make -C elmer FixPeriodicLoads.so` (or --no-fix)")
+        if OPTS["fix"] and not os.path.exists(os.path.join(REPO, "elmer", "PeriodicGL.so")):
+            raise SystemExit("elmer/PeriodicGL.so missing: `make -C elmer PeriodicGL.so` (or --no-fix)")
         os.makedirs(OUT, exist_ok=True)
         print(f"footprint {GEOM['L'] / 1e3:g} km x ny * {GEOM['dy'] / 1e3:g} km, {GEOM['dx'] / 1e3:g} km cells, "
               f"{GEOM['nz_layers']} layers, H = {GEOM['H']:g} m; results in {OUT}", flush=True)
