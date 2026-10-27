@@ -8,6 +8,7 @@ slider through the states.
     python plots/plot_state_3d.py work/test_periodic_gl/fix                 # every chunk of every phase
     python plots/plot_state_3d.py work/test_periodic_gl/fix/retreat_chunks  # one phase
     python plots/plot_state_3d.py STATE.npz [STATE2.npz ...]                # given states
+    python plots/plot_state_3d.py work/test_periodic_gl/fix --x 700 820     # x window (km)
 A treatment folder is read phase by phase (spinup, retreat, advance: <phase>_chunks/points/state_*.npz).
 Writes <first input>_3d.html and opens it. Needs numpy and plotly.
 """
@@ -139,7 +140,14 @@ def gl_line(base, top=None):
 
 def main():
     import plotly.graph_objects as go
-    items = collect(sys.argv[1:] or ["work/test_periodic_gl/fix"])
+    global X_WINDOW
+    args = sys.argv[1:]
+    if "--x" in args:                             # --x XMIN XMAX (km)
+        k = args.index("--x")
+        X_WINDOW = (float(args[k + 1]), float(args[k + 2]))
+        args = args[:k] + args[k + 3:]
+    sys.argv = [sys.argv[0]] + args
+    items = collect(args or ["work/test_periodic_gl/fix"])
     print(f"{len(items)} states")
     data = []
     for label, f in items:
@@ -159,7 +167,8 @@ def main():
         xmax = max(float(np.max(top["x"])) for _, top, _, _ in data if top is not None) / 1e3
         x0 = (min(float(np.min(g)) for g in gls if len(g)) - 60.0) if gls else 0.0
         x1 = xmax
-    print(f"x window {x0:.0f} .. {x1:.0f} km")
+    xall = np.concatenate([tp["x"] for _, tp, _, _ in data if tp is not None]) / 1e3
+    print(f"x window {x0:.0f} .. {x1:.0f} km (domain {xall.min():.0f} .. {xall.max():.0f} km; --x XMIN XMAX to change)")
 
     def crop(d):
         if d is None:
