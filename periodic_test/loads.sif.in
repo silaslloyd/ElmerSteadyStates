@@ -1,0 +1,109 @@
+!! Periodic-sidewall loads test (periodic_test/run_loads.py): a parallel-sided slab on a flat bed, a flowline
+!! footprint L x W (periodic in x, so nothing depends on x; the sides y = 0 / y = W periodic or free-slip walls),
+!! driven along x by gravity tilted by the slope (z normal to the bed). Stokes (Newtonian, linear sliding), and
+!! optionally a free surface. No heat. The exact nodal loads are known (README_loads.md): at the bed
+!! (rho g cos(a) H, -, rho g sin(a) H) times the node's share of the bed, zero elsewhere.
+!! Filled in by run_loads.py.
+
+!---LUA BEGIN
+! assert(loadfile('params.lua'))()
+!---LUA END
+
+Header
+  Mesh DB "__MESH_DIR__" "footprint"
+End
+
+Constants
+  Gravity(4) = 0 0 -1 9.81
+End
+
+Simulation
+  Coordinate System = "Cartesian 3D"
+__SIM_TYPE__
+  Steady State Max Iterations = 1
+  Steady State Min Iterations = 1
+  Extruded Mesh Levels = Integer __NZ1__
+  Extruded Max Coordinate = Real __H__
+  Output Intervals = 1
+  max output level = 3
+End
+
+Body 1
+  Name = "ice"
+  Equation = 1
+  Material = 1
+  Body Force = 1
+  Initial Condition = 1
+End
+
+Initial Condition 1
+  Velocity 1 = Real 0.0
+  Velocity 2 = Real 0.0
+  Velocity 3 = Real 0.0
+  Pressure = Real 0.0
+End
+
+Body Force 1
+  Flow BodyForce 1 = Real #gravity*sina
+  Flow BodyForce 2 = Real 0.0
+  Flow BodyForce 3 = Real #-gravity*cosa
+End
+
+Material 1
+  Name = "ice"
+  Density = Real #rhoi
+  Viscosity = Real #eta
+  Cauchy = Logical True
+__FS_MATERIAL__
+End
+
+Equation 1
+  Name = "ice"
+  Active Solvers(__NACTIVE__) = __ACTIVE__
+  Flow Solution Name = String "Flow Solution"
+End
+__FS_BODIES__
+__SOLVERS__
+!---------------- boundary conditions ----------------
+! x = L is the periodic image of x = 0 (BC 2 -> 1); y = W the image of y = 0 (BC 4 -> 3), or both walls
+
+Boundary Condition 1
+  Name = "x = 0 (master)"
+  Target Boundaries(1) = 1
+End
+
+Boundary Condition 2
+  Name = "x = L (periodic image of x = 0)"
+  Target Boundaries(1) = 2
+  Periodic BC = 1
+  Periodic BC Translate(3) = Real __L__ 0.0 0.0
+__PERIODIC_VARS__
+End
+
+Boundary Condition 3
+  Name = "y = 0"
+  Target Boundaries(1) = 3
+__Y0__
+End
+
+Boundary Condition 4
+  Name = "y = W"
+  Target Boundaries(1) = 4
+__YW__
+End
+
+Boundary Condition 5
+  Name = "bed"
+  Target Boundaries(1) = 5
+  Normal-Tangential Velocity = Logical True
+  Velocity 1 = Real 0.0
+  Slip Coefficient 2 = Real #Cslip
+  Slip Coefficient 3 = Real #Cslip
+__FS_BED__
+End
+
+Boundary Condition 6
+  Name = "surface"
+  Target Boundaries(1) = 6
+__FS_TOP__
+End

@@ -9,3 +9,4 @@ __pycache__/
 periodic_test/out/
 elmer/.built_with
 elmer/.build.lock
+periodic_test/out_loads/
