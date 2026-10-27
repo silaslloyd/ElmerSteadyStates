@@ -65,6 +65,7 @@ def cmd_run(a):
         args = ["run", CONFIG, "--state", state, "--out", out, "--stokes-only", "--gl", "contact",
                 "--periodic-gl", a.mode, "--chunks", str(a.chunks or chunks), "--save-every", "1",
                 "--no-remask",          # only Elmer moves the grounding line (ESS' remask is not periodic-aware)
+                "--bed", "temperate",   # sliding at T0 (the cold start state's bed barely slides: nothing moved)
                 "--lua", f"fcoeff={fc * ff!r}", "--lua", f"aDIM={ad * af!r}"]
         ess(*args)
         state = out
