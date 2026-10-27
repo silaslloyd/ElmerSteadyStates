@@ -371,7 +371,7 @@ def cmd_run(args):
         # the state after this chunk, with the masks it ran with (before the remask)
         save_state(out, saved.layout, prob.unscale(y), p, dict(saved.frozen), prob.last_diag, time=t)
         if args.save_every and (c + 1) % args.save_every == 0:
-            save_state(os.path.join(sdir, f"state_{c + 1:04d}.npz"), saved.layout, prob.unscale(y), p,
+            save_state(os.path.join(sdir, f"state_{c + 1 + args.chunk_offset:04d}.npz"), saved.layout, prob.unscale(y), p,
                        dict(saved.frozen), prob.last_diag, time=t)
         t_end = t
         if args.until_tol and dy < args.until_tol:
@@ -1070,6 +1070,8 @@ def main(argv=None):
                                                 "(default [elmer] stokes_block_file, elmer/stokes_block.sif.in)")
     s.add_argument("--stokes-element", choices=["P2/P1", "Stabilized"],
                    help="Stokes element for this run (default [elmer] stokes_element, P2/P1)")
+    s.add_argument("--chunk-offset", type=int, default=0,
+                   help="number the --save-every states from this + 1 (continuing an interrupted run)")
     s.add_argument("--periodic-gl", choices=["none", "elmerstreams", "fix"],
                    help="contact grounding line with periodic sides: Elmer/Ice's, ElmerStreams' (Fw2) or the periodic "
                         "one (elmer/PeriodicGL.so); default [elmer] periodic_gl")

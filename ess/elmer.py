@@ -115,6 +115,10 @@ class ElmerModel(Model):
         # "block": the keywords of this file go into the Stokes solver section verbatim (block preconditioning)
         self.stokes_block_file = str(e.get("stokes_block_file", "elmer/stokes_block.sif.in"))
         self.linear_heat = str(e.get("linear_heat", "direct"))
+        # [elmer] mumps_workspace (percent): extra MUMPS workspace for the Stokes solve (Mumps Percentage Increase
+        # Working Space); MUMPS stops with INFO(1) = -9 when its estimate is too small, e.g. as the grounding line
+        # moves and the pivoting changes. Unset: MUMPS' default (the run inputs, and so the caches, unchanged)
+        self.mumps_workspace = int(e.get("mumps_workspace", 0))
         self.iterative_tol = float(e.get("iterative_tol", 1e-10))
         self.stokes_precond = str(e.get("stokes_preconditioner", "ILU2"))
         self.ilut_tol = float(e.get("ilut_tolerance", 1e-4))     # drop tolerance for ILUT
@@ -229,10 +233,12 @@ class ElmerModel(Model):
         difference perturbation (fd eps): their error is noise in the Jacobian products (check with
         `ess check`: the repeat difference rms(Phi_a - Phi_b) and the linearity plateau)."""
         if kind == "direct":
+            ws = (f'\n  Mumps Percentage Increase Working Space = Integer {self.mumps_workspace}'
+                  if self.mumps_workspace and which == "stokes" else "")
             return ('  Linear System Solver = Direct\n'
                     '  Linear System Direct Method = $directsolver\n'
                     '  Linear System Abort Not Converged = True\n'
-                    '  Linear System Convergence Tolerance = 1.0e-12')
+                    '  Linear System Convergence Tolerance = 1.0e-12' + ws)
         if kind == "block" and which == "stokes":
             path = self.stokes_block_file
             if not os.path.isabs(path):

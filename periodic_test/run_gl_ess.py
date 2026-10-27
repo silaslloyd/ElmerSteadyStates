@@ -74,12 +74,35 @@ def cmd_run(a):
     fc, ad = base_params()
     state = os.path.join(WORK, "start.npz")
     tag = a.tag or (a.mode if a.fbase == 1.0 else f"{a.mode}_f{a.fbase:g}")
+    resume = None
+    if a.resume:                                    # PHASE: from that phase's last saved chunk (or the phase before)
+        names = [p[0] for p in PHASES]
+        if a.resume not in names:
+            raise SystemExit(f"--resume: one of {names}")
+        k = names.index(a.resume)
+        done = sorted(glob.glob(os.path.join(WORK, tag, f"{a.resume}_chunks", "points", "state_*.npz")))
+        if done:
+            state, resume = done[-1], (a.resume, int(os.path.basename(done[-1])[6:10]))
+        elif k > 0:
+            state = os.path.join(WORK, tag, f"{names[k - 1]}.npz")
+        print(f"resume {a.resume}: from {state}" + (f" (after chunk {resume[1]})" if resume else ""), flush=True)
     os.makedirs(os.path.join(WORK, tag), exist_ok=True)
     print(f"run {a.mode}: fcoeff x {a.fbase:g} (x the phase factors), results in {os.path.join(WORK, tag)}", flush=True)
-    for name, chunks, ff, af in (PHASES[:1] if a.spinup_only else PHASES):
+    phases = PHASES[:1] if a.spinup_only else PHASES
+    if a.resume:
+        phases = phases[[p[0] for p in phases].index(a.resume):]
+    for name, chunks, ff, af in phases:
         out = os.path.join(WORK, tag, f"{name}.npz")
+        n = a.chunks or chunks
+        offset = 0
+        if resume and resume[0] == name:
+            offset = resume[1]
+            n -= offset
+            if n <= 0:
+                state = out
+                continue
         args = ["run", CONFIG, "--state", state, "--out", out, "--stokes-only", "--gl", "contact",
-                "--periodic-gl", a.mode, "--chunks", str(a.chunks or chunks), "--save-every", "1",
+                "--periodic-gl", a.mode, "--chunks", str(n), "--save-every", "1", "--chunk-offset", str(offset),
                 "--no-remask",          # only Elmer moves the grounding line (ESS' remask is not periodic-aware)
                 "--bed", "temperate",   # sliding at T0 (the cold start state's bed barely slides: nothing moved)
                 "--lua", f"fcoeff={fc * a.fbase * ff!r}", "--lua", f"aDIM={ad * af!r}"]
@@ -219,6 +242,7 @@ def main():
     s.add_argument("--fbase", type=float, default=1.0, help="sliding coefficient fcoeff times this in every phase")
     s.add_argument("--spinup-only", action="store_true", help="only the spin-up phase (to choose --fbase)")
     s.add_argument("--tag", help="results folder under the work dir (default MODE, or MODE_f<FBASE>)")
+    s.add_argument("--resume", metavar="PHASE", help="continue from PHASE's last saved chunk (then the later phases)")
     s.set_defaults(fn=cmd_run)
     s = sub.add_parser("analyse")
     s.add_argument("modes", nargs="*", help="results folders (treatments, e.g. fix, fix_f30; default all)")
