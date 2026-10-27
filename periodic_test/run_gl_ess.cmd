@@ -13,7 +13,8 @@ set -e
 ARGS=("$@")
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
-module load elmerfem/2026-07-13
+module load ${ELMER_MODULE:-elmerfem/2026-07-13}   # ELMER_MODULE=elmerfem sbatch ...: another build
+echo "Elmer: ${ELMER_MODULE:-elmerfem/2026-07-13} -> $(command -v ElmerSolver)"
 build_libs() {
     local cur; cur=$(command -v ElmerSolver)
     if [ ! -f elmer/SteadyStateIO.so ] || [ ! -f elmer/Buoyancy.so ] || [ elmer/SteadyStateIO.F90 -nt elmer/SteadyStateIO.so ] \
