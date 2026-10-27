@@ -453,12 +453,14 @@ def analyse_case(c):
 
 
 def analyse_shear(c0, c1):
-    """sheared slab: B (shifted one cell) at its seam against A one cell in, where it is an interior node.
-    B(y) = A(y + dy), so B's seam y = 0 (= W) is A's interior row y = dy, which owns twice the bed area of
-    each seam copy: the right load of each seam copy is half of A's interior load there."""
-    A_, B_ = load_nodes(c0), load_nodes(c1)
-    if A_ is None or B_ is None:
-        return None
+    """sheared slab, two runs: s0, and s1 shifted by one cell, s1(y) = s0(y + dy). Each run's seam row is an
+    interior row of the other: s0's seam (y = 0 = W) is s1's row y = W - dy; s1's seam is s0's row y = dy.
+    An interior row owns twice the bed area of each seam copy, so each seam copy's right load is half of it.
+    s0's seam sits where the sliding coefficient is at its mean, i.e. where du/dy (the shear across the seam)
+    is largest; s1's seam where it is extreme (no shear across the seam)."""
+    N0, N1 = load_nodes(c0), load_nodes(c1)
+    if N0 is None or N1 is None:
+        return []
     g = GEOM
     L, W, dy = g["L"], c0["ny"] * g["dy"], g["dy"]
 
@@ -466,17 +468,20 @@ def analyse_shear(c0, c1):
         m = N["bed"] & (np.abs(N["y"] - yv) < 1) & (np.abs(N["x"]) > 1) & (np.abs(N["x"] - L) > 1)
         o = np.argsort(N["x"][m])
         return {k: N[k][m][o] for k in variants(N)}
-    refA = at(A_, dy)["raw"] / 2.0                       # interior: raw is right
-    refA_int = at(A_, 2 * dy)["raw"]                     # interior vs interior: the noise floor
-    vz = np.abs(refA[:, 2])
-    out = dict(case=c1["name"][:-3], parts=c0["parts"],
-               shear_tau_over_N=float(np.max(np.abs(refA[:, 0])) / np.max(vz)))
-    out["floor_z"] = float(np.max(np.abs(at(B_, dy)["raw"][:, 2] - refA_int[:, 2]) / (2 * vz)))
-    for side, yv in (("master", 0.0), ("image", W)):
-        Bs = at(B_, yv)
-        for var, v in Bs.items():
-            for comp, j in (("z", 2), ("x", 0), ("y", 1)):
-                out[f"{var}_{side}_{comp}"] = float(np.max(np.abs(v[:, j] - refA[:, j]) / vz))
+    out = []
+    for label, Ns, Nr, yref in (("seam at max shear (s0)", N0, N1, W - dy), ("seam at no shear (s1)", N1, N0, dy)):
+        ref = at(Nr, yref)["raw"] / 2.0                  # interior row: the raw loads are right there
+        vz = np.abs(ref[:, 2])
+        # the across-seam shear here: the change of the along-flow load from one row to the next, / vertical
+        r = dict(case=f"{c0['name'][:-3]}: {label}", parts=c0["parts"],
+                 shear=float(np.max(np.abs(at(Nr, yref + dy)["raw"][:, 0] - at(Nr, yref - dy)["raw"][:, 0])
+                                    / (2 * vz))))
+        r["floor_z"] = float(np.max(np.abs(at(Ns, 2 * dy)["raw"][:, 2] - at(Nr, (2 * dy + (W - dy if Ns is N0 else dy)) % W)["raw"][:, 2]) / (2 * vz)))
+        for side, yv in (("master", 0.0), ("image", W)):
+            for var, v in at(Ns, yv).items():
+                for comp, j in (("z", 2), ("x", 0), ("y", 1)):
+                    r[f"{var}_{side}_{comp}"] = float(np.max(np.abs(v[:, j] - ref[:, j]) / vz))
+        out.append(r)
     return out
 
 
@@ -510,24 +515,25 @@ def analyse_all(cases):
                                                       for k in show))
         print(f"(all columns in {os.path.join(OUT, 'summary.csv')})")
     shear = {c["name"]: c for c in cases if c.get("shear")}
-    sres = [r for r in (analyse_shear(c, shear[c["name"][:-1] + "1"]) for c in shear.values()
-                        if c["shift"] == 0 and c["name"][:-1] + "1" in shear) if r]
+    sres = [r for c in shear.values() if c["shift"] == 0 and c["name"][:-1] + "1" in shear
+            for r in analyse_shear(c, shear[c["name"][:-1] + "1"])]
     if sres:
         print("\nSHEARED SLAB (sliding varies across y): seam loads against the reference (the same flow one cell"
               "\nin, where the seam row is interior). Worst |error| along the seam / the vertical load, for the"
               "\nmaster (y = 0) and image (y = W) copies; components z, x (along flow), y (cross flow)."
-              "\nfloor_z: interior against interior (numerical noise); tau/N: along-flow / vertical load there.")
+              "\nfloor_z: interior against interior (numerical noise); shear: change of the along-flow load"
+              "\nacross the seam row / vertical load (how much shear crosses the seam).")
         for var in ("raw", "half", "fix"):
             show = [f"{var}_{s}_{k}" for s in ("master", "image") for k in ("z", "x", "y")]
             show = [k for k in show if k in sres[0]]
             if not show:
                 continue
             print(f"\n{var.upper()}")
-            hdr = [k.replace(f"{var}_", "") for k in show] + ["floor_z", "tau/N"]
-            print(f"{'case':28s} " + " ".join(f"{h:>9s}" for h in hdr))
+            hdr = [k.replace(f"{var}_", "") for k in show] + ["floor_z", "shear"]
+            print(f"{'case':50s} " + " ".join(f"{h:>9s}" for h in hdr))
             for r in sres:
-                vals = [r.get(k) for k in show] + [r["floor_z"], r["shear_tau_over_N"]]
-                print(f"{r['case']:28s} " + " ".join(f"{v:9.3g}" if isinstance(v, float) else f"{'-':>9s}"
+                vals = [r.get(k) for k in show] + [r["floor_z"], r["shear"]]
+                print(f"{r['case']:50s} " + " ".join(f"{v:9.3g}" if isinstance(v, float) else f"{'-':>9s}"
                                                       for v in vals))
     if not res and not sres:
         print("no results yet")
