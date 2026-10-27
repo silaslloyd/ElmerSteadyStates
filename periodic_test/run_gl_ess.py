@@ -68,6 +68,7 @@ def cmd_run(a):
                 "--lua", f"fcoeff={fc * ff!r}", "--lua", f"aDIM={ad * af!r}"]
         ess(*args)
         state = out
+    cmd_analyse(argparse.Namespace(modes=[a.mode]))      # the table at the end of the job
 
 
 # ---------------------------------------------------------------- analysis

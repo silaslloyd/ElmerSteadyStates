@@ -21,7 +21,7 @@ Run (login node, repository root):
 
     git pull && bash periodic_test/run_gl_ess.sh               # prep job, then elmerstreams and fix in parallel
     CHUNKS=1 bash periodic_test/run_gl_ess.sh                  # a short trial first
-    python3 periodic_test/run_gl_ess.py analyse                # the tables
+    sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd analyse   # the tables again (each run job prints its own)
 
 The table: after every chunk, the grounding line per row across y (y = 0 and y = W are the same physical row) and
 the largest master (y = 0) / image (y = W) mismatch of the grounded mask, Zs, Zb, the velocities and the raw

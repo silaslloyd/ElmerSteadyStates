@@ -5,7 +5,8 @@
 #   MODES="elmerstreams fix none" bash periodic_test/run_gl_ess.sh
 #   FROM=work/marine_flowline/run_temperate_p268.15.npz bash periodic_test/run_gl_ess.sh
 #   CHUNKS=1 bash periodic_test/run_gl_ess.sh             # a short trial (1 chunk = 100 yr per phase)
-# Results: python3 periodic_test/run_gl_ess.py analyse
+# Results: at the end of each run job's log (slurms/pgless_<job>.out); again with
+#   sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd analyse
 set -e
 cd "$(dirname "$0")/.."
 FROM=${FROM:-work/marine_flowline/run_cold_p268.15.npz}
@@ -16,4 +17,4 @@ for m in ${MODES:-elmerstreams fix}; do
     J=$(sbatch --parsable --dependency=afterok:$P periodic_test/run_gl_ess.cmd run $m ${CHUNKS:+--chunks $CHUNKS})
     echo "$m: job $J"
 done
-echo "logs: slurms/pgless_<job>.out; results: python3 periodic_test/run_gl_ess.py analyse"
+echo "logs (each run job ends with its table): slurms/pgless_<job>.out"

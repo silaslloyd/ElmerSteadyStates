@@ -7,7 +7,8 @@
 #
 # One step of the periodic grounding-line test on the ElmerStreams setup (periodic_test/README_gl_ess.md):
 #   sbatch periodic_test/run_gl_ess.cmd prep [--from STATE]
-#   sbatch periodic_test/run_gl_ess.cmd run fix|elmerstreams|none [--chunks N]
+#   sbatch periodic_test/run_gl_ess.cmd run fix|elmerstreams|none [--chunks N]   (prints its table at the end)
+#   sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd analyse [MODE ...]
 # Normally submitted by periodic_test/run_gl_ess.sh.
 set -e
 ARGS=("$@")
