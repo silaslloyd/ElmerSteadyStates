@@ -27,6 +27,10 @@
 # time each prints. R GCR + ILU8 (the reference)   H G with the inner solve capped (30 iterations, tolerance 1e-2)
 #   I H + HMIS coarsening, extended interpolation, strong threshold 0.5   J I + strong threshold 0.25, 2 sweeps
 #                            sbatch --ntasks=128 --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,SET=RHIJ jobs/amg_tests.cmd
+# SET=RKLM (sbatch --ntasks=128): I with a pressure (Schur complement) preconditioner for block 22 (I alone stalls at
+# ~2e-4: the outer GCR hits 200 iterations). R GCR + ILU8 (reference)   K I + Create Schur Matrix Approximation
+# (SIMPLE: -B diag(A)^-1 B^T)   L I + pressure mass matrix x -1/viscosity   M I + pressure mass matrix x +1/viscosity
+#                            sbatch --ntasks=128 --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,SET=RKLM jobs/amg_tests.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
@@ -49,7 +53,27 @@ mkG() {   # G: block 11 as in Elmer's mgdyn_airgap2 (Hypre BiCGStab with BoomerA
     printf '%s\n' "  block 11: Linear System Solver = Iterative" "  block 11: Linear System Iterative Method = BiCGStab" \
         "  block 11: Linear System Preconditioning = BoomerAMG" >> $1
 }
-if [ "$SET" = RHIJ ]; then
+mkI() {   # I: G, inner solve capped, HMIS coarsening, extended interpolation, strong threshold 0.5
+    mkG $1.G
+    grep -v "block 11: Linear System Max Iterations\|block 11: Linear System Convergence Tolerance" $1.G > $1
+    printf '%s\n' "  block 11: Linear System Max Iterations = 30" "  block 11: Linear System Convergence Tolerance = 1.0e-2" \
+        "  block 11: BoomerAMG Coarsen Type = Integer 10" "  block 11: BoomerAMG Interpolation Type = Integer 6" \
+        "  block 11: BoomerAMG Strong Threshold = Real 0.5" >> $1
+}
+if [ "$SET" = RKLM ]; then
+    V=$WORK/amgtest_files; mkdir -p $V
+    IV=$(python3 -c "from ess.case import eval_lua_parameters as e; print(repr(1 / e('case/parameters.lua')['viscosity']))" 2>/dev/null | tail -1)
+    for t in K L M; do mkI $V/$t.sif.in; echo "! ESS amgtest $t" >> $V/$t.sif.in; done
+    echo "  Create Schur Matrix Approximation = Logical True" >> $V/K.sif.in
+    echo "  Prec Matrix Density 2 = Real -$IV" >> $V/L.sif.in
+    echo "  Prec Matrix Density 2 = Real $IV" >> $V/M.sif.in
+    python3 -u -m ess ${common% --linear-stokes block} --linear-stokes iterative --out $WORK/amgtest_R.npz --gl frozen \
+        > ${L}_R.log 2>&1 &
+    for t in K L M; do
+        python3 -u -m ess $common --out $WORK/amgtest_$t.npz --gl frozen --stokes-block-file $PWD/$V/$t.sif.in \
+            > ${L}_$t.log 2>&1 &
+    done
+elif [ "$SET" = RHIJ ]; then
     V=$WORK/amgtest_files; mkdir -p $V
     mkG $V/G.sif.in
     grep -v "block 11: Linear System Max Iterations\|block 11: Linear System Convergence Tolerance" $V/G.sif.in > $V/H.sif.in
@@ -96,9 +120,14 @@ for t in $(echo $SET | fold -w1); do
                G) what="block, block 11 = Hypre BiCGStab + BoomerAMG preconditioner (as Elmer's mgdyn_airgap2)";;
                R) what="GCR + ILU8, the reference";; H) what="G, inner solve capped at 30 iterations / 1e-2";;
                I) what="H + HMIS coarsening, extended interpolation, strong threshold 0.5";;
-               J) what="I + strong threshold 0.25, 2 sweeps";; esac
+               J) what="I + strong threshold 0.25, 2 sweeps";;
+               K) what="I + Schur approximation -B diag(A)^-1 B^T for the pressure";;
+               L) what="I + pressure mass matrix x -1/viscosity";; M) what="I + pressure mass matrix x +1/viscosity";; esac
     if grep -q "^.*wrote $WORK/amgtest_$t.npz" ${L}_$t.log; then
         echo "$t ($what): RAN   $(grep -o "Elmer [0-9]* s for .*" ${L}_$t.log | tail -1)"
+        f=$(grep -l "ESS amgtest $t\$" $WORK/runs/*/run.sif 2>/dev/null | tail -1)
+        [ -n "$f" ] && echo "      last outer GCR line of each Stokes solve:" && \
+            grep "gcr:" $(dirname $f)/elmer.log | awk '$2 < prev {print last} {prev=$2; last=$0} END {print last}' | sed 's/^/      /'
     else
         log=$(grep -o "see [^ ]*elmer.log" ${L}_$t.log | tail -1 | cut -c5-)
         echo "$t ($what): FAILED   $log"
