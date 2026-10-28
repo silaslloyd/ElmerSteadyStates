@@ -16,11 +16,14 @@ cd "$(dirname "$0")/.."
 FROM=${FROM:-work/marine_flowline/run_cold_p268.15.npz}
 [ -f "$FROM" ] || { echo "start state $FROM not found (FROM=...)"; exit 1; }
 SB="sbatch --parsable ${NTASKS:+--ntasks=$NTASKS --nodes=$(( (NTASKS + 127) / 128 ))} ${NTASKS:+--time=48:00:00}"
+# the Elmer libraries first, in one job (parallel jobs building at once break each other's builds)
+B=$(sbatch --parsable --ntasks=1 --time=00:20:00 periodic_test/run_gl_ess.cmd build)
+DEP="--dependency=afterok:$B"
+echo "build: job $B"
 if [ -n "$NOPREP" ]; then            # NOPREP=1: the mesh and start.npz are already there
-    DEP=""
     echo "no prep job (NOPREP): using the existing mesh and start state"
 else
-    P=$($SB periodic_test/run_gl_ess.cmd prep --from "$FROM")
+    P=$($SB $DEP periodic_test/run_gl_ess.cmd prep --from "$FROM")
     DEP="--dependency=afterok:$P"
     echo "prep: job $P (${GL_CONFIG:-configs/test_periodic_gl.toml}; setup, init, transfer from $FROM)"
 fi

@@ -6,6 +6,7 @@
 #SBATCH --time=12:00:00
 #
 # One step of the periodic grounding-line test on the ElmerStreams setup (periodic_test/README_gl_ess.md):
+#   sbatch --ntasks=1 --time=00:20:00 periodic_test/run_gl_ess.cmd build   (the Elmer libraries only)
 #   sbatch periodic_test/run_gl_ess.cmd prep [--from STATE]
 #   sbatch periodic_test/run_gl_ess.cmd run fix|elmerstreams|none [--chunks N]   (prints its table at the end)
 #   sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd analyse [MODE ...]
@@ -25,5 +26,8 @@ build_libs() {
         make -C elmer clean && make -C elmer && make -C elmer PeriodicGL.so thermal && echo "$cur" > elmer/.built_with
     fi
 }
+# run_gl_ess.sh builds once in its own job ("build") before the others: jobs on several nodes building at the
+# same time remove each other's module files (flock does not hold across nodes on /SCRATCH)
 ( flock 9; build_libs ) 9> elmer/.build.lock
+[ "${ARGS[0]}" = build ] && exit 0
 python3 -u periodic_test/run_gl_ess.py "${ARGS[@]}"
