@@ -211,12 +211,20 @@ def setup_case(cfg, mesh=True):
     P["FineHalf"] = float(c.get("fine_half_width", 10e3))
     geo_name = cfg.get("case", {}).get("geo", "case/flowline.geo.in")
     if "flowline_marine_gl" in geo_name:      # its points must stay in order along x, or gmsh folds the mesh
-        gl, df = P["GLx"], P["FineHalf"]
-        if not (0 < gl - gl / 6 < gl - df and gl + df < gl + gl / 16 < P["L"]):
-            raise SystemExit(f"setup: fine_half_width {df / 1e3:g} km does not fit {geo_name}: the fine band "
-                             f"{(gl - df) / 1e3:.1f} .. {(gl + df) / 1e3:.1f} km must lie inside "
-                             f"{(gl - gl / 6) / 1e3:.1f} .. {(gl + gl / 16) / 1e3:.1f} km (GL - GL/6 .. GL + GL/16, "
-                             f"GL = {gl / 1e3:.1f} km), or the points go out of order and the mesh folds over itself")
+        gl, df, res = P["GLx"], P["FineHalf"], P.get("MarginRes", 1000.0)
+        # the downstream ends pulled back from the calving front when they would reach it (a grounding line near
+        # the front: the fine band runs up to it); unchanged otherwise
+        P["Xa"], P["Xb"] = gl - gl / 6, gl - df
+        P["Xd"] = min(gl + gl / 16, P["L"] - res)
+        P["Xc"] = min(gl + df, P["Xd"] - res)
+        if not (0 < P["Xa"] < P["Xb"] < P["Xc"] < P["Xd"] < P["L"]):
+            raise SystemExit(f"setup: fine_half_width {df / 1e3:g} km does not fit {geo_name} around GL = "
+                             f"{gl / 1e3:.1f} km: the points {P['Xa'] / 1e3:.1f}, {P['Xb'] / 1e3:.1f}, "
+                             f"{P['Xc'] / 1e3:.1f}, {P['Xd'] / 1e3:.1f} km must increase (GL - GL/6, GL - df, GL + df, "
+                             f"GL + GL/16), or the mesh folds over itself")
+        if P["Xc"] < gl + df:
+            log.info(f"setup: the fine band ends at {P['Xc'] / 1e3:.1f} km, {(P['L'] - P['Xc']) / 1e3:.1f} km before "
+                     f"the calving front")
     if not mesh:
         return g
     geo = open(cfg["_path"](cfg.get("case", {}).get("geo", "case/flowline.geo.in"))).read()
@@ -225,7 +233,7 @@ def setup_case(cfg, mesh=True):
         P["Wmesh"] = float(c["width"])
     ny = int(c.get("y_elements", 1))          # elements across the flow
     geo = geo.replace("{YElements}", str(ny))
-    for k in ("L", "Lend", "Wmesh", "BoundaryRes", "MarginRes", "GLx", "FineRes", "FineHalf"):
+    for k in ("L", "Lend", "Wmesh", "BoundaryRes", "MarginRes", "GLx", "FineRes", "FineHalf", "Xa", "Xb", "Xc", "Xd"):
         if "{" + k + "}" in geo:
             geo = geo.replace("{" + k + "}", repr(float(P[k])))
     if ny > 1:

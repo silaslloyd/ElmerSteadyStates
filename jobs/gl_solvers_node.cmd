@@ -10,14 +10,15 @@
 # runs share the node. Submitted by jobs/gl_solvers.sh (which sets --ntasks); by hand:
 #   sbatch --ntasks=128 --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,SOLVERS="direct iterative block bubbles" \
 #       jobs/gl_solvers_node.cmd
-# Builds the libraries, makes the mesh and start state if work/test_gl_solvers/start.npz is missing (partitioned
+# GL_CONFIG: the config (default configs/test_gl_solvers.toml). Builds the libraries, makes the mesh and start
+# state if <work dir>/start.npz is missing (partitioned
 # for RANKS), runs the solvers in parallel (logs slurms/glsolvers_<job>_<solver>.log), then prints the comparison.
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
 SOLVERS=${SOLVERS:-direct iterative block}
 RANKS=${RANKS:-32}
-export GL_CONFIG=configs/test_gl_solvers.toml
+export GL_CONFIG=${GL_CONFIG:-configs/test_gl_solvers.toml}
 export ELMER_MODULE=${ELMER_MODULE:?ELMER_MODULE not set}
 FROM=${FROM:-work/marine_flowline/run_cold_p268.15.npz}
 L=slurms/glsolvers_${SLURM_JOB_ID:-local}
@@ -27,7 +28,9 @@ module load "$ELMER_MODULE"
 echo "Elmer: $ELMER_MODULE -> $(command -v ElmerSolver); $RANKS ranks per solver: $SOLVERS"
 export ESS_NPROCS=$RANKS                                    # every Elmer run (and the mesh partitioning) uses RANKS
 export ESS_MPIRUN="mpirun -np {n} --bind-to none"           # the runs share the node's cores
-if [ ! -f work/test_gl_solvers/start.npz ]; then
+WORK=$(python3 -c "import sys; sys.path.insert(0, 'periodic_test'); import run_gl_ess as r; print(r.WORK)" 2>/dev/null | tail -1)
+echo "config $GL_CONFIG, work dir $WORK"
+if [ ! -f "$WORK/start.npz" ]; then
     echo "$(date +%T) prep: mesh and start state (from $FROM), log ${L}_prep.log"
     python3 -u periodic_test/run_gl_ess.py prep --from "$FROM" > ${L}_prep.log 2>&1
 fi

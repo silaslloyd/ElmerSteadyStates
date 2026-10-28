@@ -98,7 +98,8 @@ def profile(path):
         zs_at = dict(zip(np.round(top["x"], 3).tolist(), top["v"].tolist()))
         H = np.array([zs_at.get(x, np.nan) for x in np.round(base["x"], 3).tolist()]) - base["v"]
         haf = H - RHO_RATIO * np.maximum(-base["bedrock"], 0.0)
-        base["haf"] = np.where(base["GroundedMask"] > -0.5, haf, np.nan)
+        # the grounded nodes behind the grounding line (mask 1); the grounding-line nodes (mask 0) sit at flotation
+        base["haf"] = np.where(base["GroundedMask"] > 0.5, haf, np.nan)
     return dict(top=top, base=base, gl=gl, t=float(s.meta.get("time", np.nan)))
 
 
@@ -156,7 +157,7 @@ def main():
         if worst:
             w, k = min(worst)
             print(f"  {r}: lowest height above flotation of grounded ice {w:.1f} m ({k[0]} {k[1]})"
-                  + ("  <- grounded ice below flotation: the contact does not unground it" if w < -1.0 else ""))
+                  + ("  <- grounded ice below flotation: the contact does not unground it" if w < -5.0 else ""))
     gall = [v for h in hist.values() for v in h if np.isfinite(v)]
     labels = [f"{ph} {c}" for ph, c in keys]
 

@@ -11,10 +11,12 @@ resgl = {MarginRes};
 resf = {FineRes};
 df = {FineHalf};
 Point(1) = {0, 0, 0, resb};
-Point(2) = {GL - GL/6, 0, 0, resgl};
-Point(3) = {GL - df, 0, 0, resf};
-Point(4) = {GL + df, 0, 0, resf};
-Point(5) = {GL + GL/16, 0, 0, resgl};
+// the band ends, set by ess setup: GL - GL/6, GL - df, GL + df, GL + GL/16, the downstream two pulled back
+// from the calving front when they would reach it (fine band up to the front)
+Point(2) = {{Xa}, 0, 0, resgl};
+Point(3) = {{Xb}, 0, 0, resf};
+Point(4) = {{Xc}, 0, 0, resf};
+Point(5) = {{Xd}, 0, 0, resgl};
 Point(6) = {L, 0, 0, resb};
 Line(1) = {1, 2};
 Line(2) = {2, 3};
