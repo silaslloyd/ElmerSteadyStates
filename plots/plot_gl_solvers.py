@@ -219,16 +219,17 @@ def main():
                                    yref="y3 domain", line=dict(color="#999999", dash="dot")))
     fig.update_layout(
         title=f"{work}: {', '.join(runs)} (solid surface, dotted base, dashed grounding line)",
-        xaxis=dict(domain=[0, 1], anchor="y", range=[x0, x1], title="x (km)"),
-        yaxis=dict(domain=[0.52, 1.0], title="z (m)", range=[min(zs) - 50, max(zs) + 50]),
-        xaxis2=dict(domain=[0, 1], anchor="y2", range=[x0, x1], matches="x"),
-        yaxis2=dict(domain=[0.30, 0.46], title="speed (m/yr)", range=[0, smax * 1.05]),
-        xaxis3=dict(domain=[0, 1], anchor="y3", title="chunk (100 yr each)", range=[-0.5, len(keys) - 0.5]),
-        yaxis3=dict(domain=[0.0, 0.22], title="grounding line (km)",
+        # left: the profile (geometry above, surface speed below); right: the grounding-line history
+        xaxis=dict(domain=[0, 0.62], anchor="y", range=[x0, x1], title="x (km)"),
+        yaxis=dict(domain=[0.40, 1.0], title="z (m)", range=[min(zs) - 50, max(zs) + 50]),
+        xaxis2=dict(domain=[0, 0.62], anchor="y2", range=[x0, x1], matches="x", title="x (km)"),
+        yaxis2=dict(domain=[0.0, 0.28], title="speed (m/yr)", range=[0, smax * 1.05]),
+        xaxis3=dict(domain=[0.72, 1.0], anchor="y3", title="chunk (100 yr each)", range=[-0.5, len(keys) - 0.5]),
+        yaxis3=dict(domain=[0.0, 1.0], title="grounding line (km)",
                     range=[min(gall) - 2, max(gall) + 2] if gall else None),
         shapes=shapes, annotations=ann,
         sliders=[dict(steps=steps, active=len(keys) - 1, currentvalue=dict(prefix="chunk: "), pad=dict(t=40))],
-        template="plotly_white", autosize=True, margin=dict(l=60, r=20, t=60, b=20), legend=dict(x=1.0, y=1.0,
+        template="plotly_white", autosize=True, margin=dict(l=60, r=20, t=60, b=20), legend=dict(x=0.62, y=1.0,
                                                                                                xanchor="right"))
     out = os.path.join(work, "gl_solvers_" + "_".join(runs) + ".html")     # named after its runs
     fig.write_html(out, include_plotlyjs="cdn", config=dict(responsive=True), default_width="100%",
