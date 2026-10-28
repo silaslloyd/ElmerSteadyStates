@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Slim copies of chunk states for plots/plot_state_3d.py: only the top and bottom surfaces (Zs, Zb, the grounded
-mask, the bedrock, and the coordinates and velocities of those nodes), a few % of a 3D state.
+mask, the bedrock, the temperature, and the coordinates and velocities of those nodes), a few % of a 3D state.
 
     python plots/slim_states.py work/test_periodic_gl_50km  [OUT]
 Copies every <folder>/<phase>_chunks/points/state_*.npz (and <phase>.npz) under the work dir to the same paths
@@ -33,6 +33,11 @@ def slim(src, dst):
     if not names:
         raise SystemExit(f"{src}: no Zs / Zb in the state")
     keep = np.unique(np.concatenate([rec[n][0] for n in names]))
+    for b in s.layout.blocks:                       # the temperature on those nodes (the temperature panel)
+        if b.name.lower() == "temperature":
+            m = np.isin(b.gids, keep)
+            rec[b.name] = (b.gids[m], blocks[b.name][m])
+            names.append(b.name)
 
     def cut(records, wanted):
         out = {}

@@ -11,6 +11,10 @@ slider through the states.
     python plots/plot_state_3d.py work/test_periodic_gl/fix --x 700 820     # x window (km)
     python plots/plot_state_3d.py work/test_periodic_gl/fix --tile 1        # one copy (default 2: side by side, so
                                                                             # anything not periodic shows at the seam)
+    python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --no-temp # the velocity panel only
+    python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --tmin 255  # temperature colour range from 255 K
+With a Temperature field: a second panel next to it, the same geometry coloured by temperature (surface, base and
+side walls; the base shows the bed temperature, where a seam stripe from wrong loads would show).
 A treatment folder is read phase by phase (spinup, retreat, advance: <phase>_chunks/points/state_*.npz).
 Writes <first input>_3d.html and opens it. Needs numpy and plotly.
 """
@@ -35,6 +39,8 @@ BASE_COLOUR = "speed"    # "speed" (basal speed, the same colour scale as the su
 SHOW_MESH = True         # the element edges on the base
 SIDES = True             # side walls (base to surface) at the window ends and the two outer sides
 TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
+TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
+T_RANGE = (None, None)   # temperature colour range (K); None: the bed temperature in the window (--tmin / --tmax)
 SHOW = True
 
 
@@ -77,6 +83,8 @@ def surfaces(path):
     Y = dict(zip(g1.tolist(), _rec(s, "coordinate 2")[1].tolist()))
     Xd = dict(zip(g1.tolist(), X.tolist()))
     u = [_rec(s, f"Velocity {k}") for k in (1, 2, 3)]
+    Tr = _rec(s, "Temperature")
+    Td = dict(zip(Tr[0].tolist(), Tr[1].tolist())) if Tr is not None else None
     sp = {}
     if all(r is not None for r in u):
         d = [dict(zip(r[0].tolist(), r[1].tolist())) for r in u]
@@ -103,6 +111,9 @@ def surfaces(path):
         base["speed"] = np.array([sp.get(g, np.nan) for g in base["g"].tolist()])
     if top is not None:
         top["speed"] = np.array([sp.get(g, np.nan) for g in top["g"].tolist()])
+    for d in (top, base):
+        if d is not None and Td is not None:
+            d["T"] = np.array([Td.get(g, np.nan) for g in d["g"].tolist()])
     return top, base, float(s.meta.get("time", np.nan))
 
 
@@ -146,8 +157,18 @@ def gl_line(base, top=None):
 
 def main():
     import plotly.graph_objects as go
-    global X_WINDOW, TILE
+    global X_WINDOW, TILE, TEMP, T_RANGE
     args = sys.argv[1:]
+    if "--no-temp" in args:
+        TEMP = False
+        args.remove("--no-temp")
+    for opt, i in (("--tmin", 0), ("--tmax", 1)):
+        if opt in args:
+            k = args.index(opt)
+            r = list(T_RANGE)
+            r[i] = float(args[k + 1])
+            T_RANGE = tuple(r)
+            args = args[:k] + args[k + 2:]
     if "--x" in args:                             # --x XMIN XMAX (km)
         k = args.index("--x")
         X_WINDOW = (float(args[k + 1]), float(args[k + 2]))
@@ -189,10 +210,22 @@ def main():
         return {k: (v[m] if isinstance(v, np.ndarray) and v.shape == d["x"].shape else v) for k, v in d.items()}
     data = [(l, crop(tp), crop(b), t) for l, tp, b, t in data]
     smax = max(float(np.nanmax(tp["speed"])) for _, tp, _, _ in data if tp is not None)
+    temp = TEMP and all(d is not None and "T" in d for _, tp, b, _ in data for d in (tp, b))
+    if TEMP and not temp:
+        print("no Temperature in the states (slimmed before it was kept? re-run plots/slim_states.py): velocity only")
+    if temp:
+        Tv = np.concatenate([b["T"] for _, tp, b, _ in data])      # the bed: the surface is colder (clipped blue)
+        tmin = T_RANGE[0] if T_RANGE[0] is not None else float(np.nanmin(Tv))
+        tmax = T_RANGE[1] if T_RANGE[1] is not None else float(np.nanmax(Tv))
+        print(f"temperature colours {tmin:.2f} .. {tmax:.2f} K: the bed range (--tmin / --tmax to change)")
+    # the panels: (field, colour range, colour scale, colour bar title, colour bar x, scene)
+    panels = [("speed", 0.0, smax, "Viridis", "speed (m/yr)", 0.47 if temp else 1.0, "scene")]
+    if temp:
+        panels.append(("T", tmin, tmax, "RdBu_r", "temperature (K)", 1.0, "scene2"))
 
     W = max(float(np.ptp(tp["y"])) for _, tp, _, _ in data if tp is not None)      # strip width (m)
 
-    def mesh_lines(base):
+    def mesh_lines(base, P):
         """the element edges of the base (rows along x, columns along y), just below it, for every copy"""
         xr, yr = np.round(base["x"], 0), np.round(base["y"], 0)
         lx, ly, lz = [], [], []
@@ -206,12 +239,13 @@ def main():
                     ly += list(base["y"][o] / 1e3 + dy) + [None]
                     lz += list(base["v"][o] - 3.0) + [None]
         return go.Scatter3d(x=lx, y=ly, z=lz, mode="lines", line=dict(color="#222222", width=1),
-                            name="base mesh", hoverinfo="skip")
+                            name="base mesh", hoverinfo="skip", scene=P[6], showlegend=P[6] == "scene")
 
-    def walls(top, base):
+    def walls(top, base, P):
         """side walls between the base and the surface: the x-window ends of every copy and the two outer y sides,
         coloured by speed (surface speed at the top, basal speed at the bottom); not at the seams"""
-        b = {(round(x, 0), round(y, 0)): (z, sp) for x, y, z, sp in zip(base["x"], base["y"], base["v"], base["speed"])}
+        f, lo, hi, cs = P[0], P[1], P[2], P[3]
+        b = {(round(x, 0), round(y, 0)): (z, sp) for x, y, z, sp in zip(base["x"], base["y"], base["v"], base[f])}
         out = []
 
         def wall(idx, dy, name):
@@ -223,13 +257,14 @@ def main():
             Y = np.r_[top["y"][idx], top["y"][idx]] / 1e3 + dy
             zb_, sb_ = zip(*[b[(round(top["x"][k], 0), round(top["y"][k], 0))] for k in idx])
             Z = np.r_[top["v"][idx], np.array(zb_)]
-            S = np.r_[top["speed"][idx], np.array(sb_)]
+            S = np.r_[top[f][idx], np.array(sb_)]
             # segment a: top a, a + 1 and bottom n + a, n + a + 1 -> triangles (a, a+1, n+a), (a+1, n+a+1, n+a)
             I = [v for a in range(n - 1) for v in (a, a + 1)]
             J = [v for a in range(n - 1) for v in (a + 1, n + a + 1)]
             K = [v for a in range(n - 1) for v in (n + a, n + a)]
-            out.append(go.Mesh3d(x=X, y=Y, z=Z, i=I, j=J, k=K, intensity=S, colorscale="Viridis", cmin=0, cmax=smax,
-                                 showscale=False, opacity=1.0, name=name, showlegend=False, hoverinfo="skip"))
+            out.append(go.Mesh3d(x=X, y=Y, z=Z, i=I, j=J, k=K, intensity=S, colorscale=cs, cmin=lo, cmax=hi,
+                                 showscale=False, opacity=1.0, name=name, showlegend=False, hoverinfo="skip",
+                                 scene=P[6]))
         xs, ys = top["x"], top["y"]
         for c in range(TILE):
             dy = c * W / 1e3
@@ -243,8 +278,14 @@ def main():
         return out
 
     def traces(top, base):
+        return [t for P in panels for t in panel_traces(top, base, P)]
+
+    def panel_traces(top, base, P):
         """TILE copies side by side, copy c shifted by c W in y: at each seam y = c W the image side (y = W) of
         one copy meets the master side (y = 0) of the next, so anything not periodic shows as a step there"""
+        f, lo, hi, cs, ctitle, cx, sc = P
+        unit = "m/yr" if f == "speed" else "K"
+        first_panel = sc == "scene"
         tr = []
         for c in range(TILE):
             dy = c * W / 1e3
@@ -252,31 +293,33 @@ def main():
             if top is not None:
                 i, j, k = triangles(top["x"], top["y"])
                 tr.append(go.Mesh3d(x=top["x"] / 1e3, y=top["y"] / 1e3 + dy, z=top["v"], i=i, j=j, k=k,
-                                    intensity=top["speed"], colorscale="Viridis", cmin=0, cmax=smax, showscale=leg,
-                                    colorbar=dict(title="surface speed (m/yr)", x=1.0), name="surface Zs",
-                                    showlegend=False,
-                                    hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zs %{z:.1f} m<extra></extra>"))
+                                    intensity=top[f], colorscale=cs, cmin=lo, cmax=hi, showscale=leg,
+                                    colorbar=dict(title=ctitle, x=cx, len=0.8), name="surface Zs",
+                                    showlegend=False, customdata=top[f], scene=sc,
+                                    hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zs %{z:.1f} m<br>"
+                                                  f"{f} %{{customdata:.2f}} {unit}<extra></extra>"))
             if base is not None:
                 i, j, k = triangles(base["x"], base["y"])
                 mask = base.get("mask", np.zeros_like(base["v"]))
-                if BASE_COLOUR == "speed":
-                    col = dict(intensity=base["speed"], colorscale="Viridis", cmin=0, cmax=smax, showscale=False)
+                if f == "T" or BASE_COLOUR == "speed":
+                    col = dict(intensity=base[f], colorscale=cs, cmin=lo, cmax=hi, showscale=False)
                 else:
                     col = dict(intensity=np.where(mask > -0.5, 1.0, 0.0), cmin=0, cmax=1,
                                colorscale=[[0, "#3a7bd5"], [1, "#c0392b"]], showscale=False)
                 tr.append(go.Mesh3d(x=base["x"] / 1e3, y=base["y"] / 1e3 + dy, z=base["v"], i=i, j=j, k=k, **col,
-                                    customdata=np.stack([base["speed"], mask], 1),
+                                    customdata=np.stack([base[f], mask], 1), scene=sc,
                                     name="base Zb", opacity=1.0, showlegend=False,
-                                    hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>speed "
-                                                  "%{customdata[0]:.1f} m/yr<br>mask %{customdata[1]}<extra></extra>"))
+                                    hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>"
+                                                  f"{'speed' if f == 'speed' else 'bed T'} %{{customdata[0]:.2f}} {unit}"
+                                                  "<br>mask %{customdata[1]}<extra></extra>"))
                 if SHOW_BED and "bed" in base:
                     tr.append(go.Mesh3d(x=base["x"] / 1e3, y=base["y"] / 1e3 + dy, z=base["bed"] - 1.0, i=i, j=j,
                                         k=k, color="#999999", opacity=0.35, name="bedrock", hoverinfo="skip",
-                                        showlegend=False))
+                                        showlegend=False, scene=sc))
         if SHOW_MESH and base is not None:
-            tr.append(mesh_lines(base))
+            tr.append(mesh_lines(base, P))
         if SIDES and top is not None and base is not None:
-            tr += walls(top, base)
+            tr += walls(top, base, P)
         if base is not None and "mask" in base:
             # the grounding line through all copies (a jump at a seam: not periodic), in red on the surface and on
             # the base (just outside each, so neither surface hides it)
@@ -289,7 +332,7 @@ def main():
                 ab += list(gzb - 5.0)
             for z_, nm in ((at, "grounding line (surface)"), (ab, "grounding line (base)")):
                 tr.append(go.Scatter3d(x=ax, y=ay, z=z_, mode="lines+markers", line=dict(color="red", width=8),
-                                       marker=dict(size=3, color="red"), name=nm,
+                                       marker=dict(size=3, color="red"), name=nm, scene=sc, showlegend=first_panel,
                                        hovertemplate="GL x %{x:.2f} km at y %{y:.2f} km<extra></extra>"))
         if top is not None and TILE > 1:
             m = np.abs(top["y"] - W) < 1
@@ -300,8 +343,10 @@ def main():
                 qx += list(sx) + [None]
                 qy += [c * W / 1e3] * len(sx) + [None]
                 qz += list(sz) + [None]
-            tr.append(go.Scatter3d(x=qx, y=qy, z=qz, mode="lines", line=dict(color="white", width=3, dash="dash"),
-                                   name="periodic seam (y = W of one copy = y = 0 of the next)", hoverinfo="skip"))
+            tr.append(go.Scatter3d(x=qx, y=qy, z=qz, mode="lines",
+                                   line=dict(color="white" if f == "speed" else "black", width=3, dash="dash"),
+                                   name="periodic seam (y = W of one copy = y = 0 of the next)", hoverinfo="skip",
+                                   scene=sc, showlegend=first_panel))
         return tr
     first = traces(data[0][1], data[0][2])
     frames = [go.Frame(data=traces(tp, b), name=str(n)) for n, (_, tp, b, _) in enumerate(data)]
@@ -314,15 +359,30 @@ def main():
     asp["z"] = ASPECT["z"] * Z_EXAGGERATION
     asp["y"] = ASPECT["y"] * TILE
     fig = go.Figure(data=first, frames=frames)
+    scene = dict(xaxis=dict(title="x (km)", range=[x0, x1]), yaxis=dict(title="y (km)"),
+                 zaxis=dict(title="z (m)", range=[min(zs) - 20, max(zs) + 20]),
+                 aspectmode="manual", aspectratio=asp)
+    scenes = {"scene": dict(scene, domain=dict(x=[0.0, 0.46] if temp else [0.0, 1.0], y=[0.0, 1.0]))}
+    if temp:
+        scenes["scene2"] = dict(scene, domain=dict(x=[0.52, 0.98], y=[0.0, 1.0]))
+    ann = ([dict(text="velocity", x=0.23, y=1.0, xref="paper", yref="paper", showarrow=False, font=dict(size=16)),
+            dict(text="temperature", x=0.75, y=1.0, xref="paper", yref="paper", showarrow=False, font=dict(size=16))]
+           if temp else [])
     fig.update_layout(
-        title=f"{sys.argv[1] if len(sys.argv) > 1 else ''}: {data[0][0]}",
-        scene=dict(xaxis=dict(title="x (km)", range=[x0, x1]), yaxis=dict(title="y (km)"),
-                   zaxis=dict(title="z (m)", range=[min(zs) - 20, max(zs) + 20]),
-                   aspectmode="manual", aspectratio=asp),
+        title=f"{sys.argv[1] if len(sys.argv) > 1 else ''}: {data[0][0]}", **scenes, annotations=ann,
         sliders=[dict(steps=steps, currentvalue=dict(prefix="state: "), pad=dict(t=30))],
-        height=850, template="plotly_white", legend=dict(x=0, y=1))
+        height=850, width=2000 if temp else None, template="plotly_white", legend=dict(x=0, y=1))
     out = os.path.splitext(sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "plot_state_3d")[0] + "_3d.html"
-    fig.write_html(out, include_plotlyjs="cdn")
+    sync = ("""
+var gd = document.getElementsByClassName('plotly-graph-div')[0], busy = false;
+gd.on('plotly_relayout', function (e) {
+  if (busy) return;
+  var u = {};
+  if (e['scene.camera']) u['scene2.camera'] = e['scene.camera'];
+  if (e['scene2.camera']) u['scene.camera'] = e['scene2.camera'];
+  if (Object.keys(u).length) { busy = true; Plotly.relayout(gd, u).then(function () { busy = false; }); }
+});""" if temp else None)
+    fig.write_html(out, include_plotlyjs="cdn", post_script=sync)
     print(f"wrote {out}")
     if SHOW:
         webbrowser.open("file://" + os.path.abspath(out))
