@@ -39,6 +39,7 @@ timeout = 21600                         # seconds per Elmer run
 keep_runs = true                        # the Elmer logs (iterations, timings) of every chunk
 cache = false                           # timing test: every run really runs
 gl_mode = "contact"                     # the grounding line moves every step (ess run --gl contact)
+contact_function = "elmerstreams"       # ElmerStreams contact.f90: ungrounding tested after the first Stokes iteration
 sliding = "temperate"                   # Weertman with fcoeff everywhere (no temperature dependence)
 stokes_element = "Stabilized"           # P1/P1 + pressure stabilisation, for all solvers (the block setups need it)
 linear_stokes = "direct"                # per run: ess run --linear-stokes direct | iterative | block

@@ -65,6 +65,11 @@ class ElmerModel(Model):
         # With one iteration the base never leaves the bed and the grounding line cannot retreat (it still
         # advances: grounding is geometric). ElmerStreams Marine_Term: Nonlinear System Max Iterations = 2.
         self.contact_stokes_iters = int(e.get("contact_stokes_iterations", 2))
+        # the contact sliding function without periodic sides: "elmerice" (Elmer/Ice's SlidCoef_Contact: the
+        # ungrounding test only once Stokes has converged to Test Contact Tolerance) or "elmerstreams" (ElmerStreams'
+        # contact.f90, here elmer/ContactPeriodic.F90 with Periodic Contact = False: the test after the first
+        # iteration; needs PeriodicGL.so). Either tests from the second Stokes iteration of a step only.
+        self.contact_function = str(e.get("contact_function", "elmerice"))
         self.mesh_db = e.get("mesh_db", "footprint")
         self.ess_lib = cfg["_path"](e.get("ess_lib", "elmer/SteadyStateIO"))
         self.ess_utils = cfg["_path"](e.get("ess_utils", "elmer/ess_utils.lua"))
@@ -323,6 +328,11 @@ class ElmerModel(Model):
         if self.periodic_gl not in ("none", "elmerstreams", "fix"):
             raise ValueError(f"[elmer] periodic_gl must be 'none', 'elmerstreams' or 'fix', not {self.periodic_gl!r}")
         extra, eq4, sliding = "", "(4) = 8 12 15 16", weert.format(f="SlidCoef_Contact")
+        if self.contact_function not in ("elmerice", "elmerstreams"):
+            raise ValueError(f"[elmer] contact_function must be 'elmerice' or 'elmerstreams', not {self.contact_function!r}")
+        if self.periodic_gl == "none" and self.contact_function == "elmerstreams":
+            sliding = (weert.format(f="SlidCoef_ContactPeriodic").replace('"ElmerIceUSF"', f'"{self.periodic_lib}"')
+                       + '\n  Periodic Contact = Logical False\n  Hydrostatic Loads Variable = String "Fw"')
         if self.periodic_gl != "none":
             lib = self.periodic_lib
             sliding = (weert.format(f="SlidCoef_ContactPeriodic").replace('"ElmerIceUSF"', f'"{lib}"')
