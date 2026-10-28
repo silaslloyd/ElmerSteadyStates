@@ -103,6 +103,11 @@ class ElmerModel(Model):
         self.surface_temp = str(e.get("surface_temp", "constant"))
         # surface Robin condition k dT/dn = h (T_ext - T): h ("Heat transfer coefficient", ElmerStreams: 1)
         self.surface_transfer = float(e.get("surface_transfer", 1.0))
+        # the kind of surface condition: "dirichlet" (T = the surface temperature) or "robin" (the transfer
+        # condition above). Default: dirichlet on the marine template, robin on the land one
+        self.surface_bc = str(e.get("surface_bc", "dirichlet" if self.marine else "robin"))
+        if self.surface_bc not in ("dirichlet", "robin"):
+            raise ValueError(f"[elmer] surface_bc must be 'dirichlet' or 'robin', not {self.surface_bc!r}")
         # bed under the unglaciated 30 m layer beyond the margin (GroundedMask 0): "flux" (geothermal +
         # friction, like the glaciated bed) or "melting" (T = T0, as ElmerStreams' tempbc)
         self.unglaciated_bed = str(e.get("unglaciated_bed", "flux"))
@@ -440,6 +445,8 @@ End
             text = self._periodic_sides(text)
         if self.linear_free_surface == "iterative":
             text = self._fs_iterative(text)
+        if self.surface_bc == "dirichlet":
+            text = self._surface_dirichlet(text)
         if self.slide_ybump:
             text = self._slide_ybump(text)
         if self.thermal == "elmerstreams":
@@ -523,6 +530,17 @@ End
         old = m.group(2).split()
         new = old + [str(i) for i in ids]
         return text[:m.start()] + f"Active Solvers({len(new)}) = {' '.join(new)}" + text[m.end():]
+
+    def _surface_dirichlet(self, text):
+        """the upper surface: T = the surface temperature (Tsurf, or the warm snout ramp) instead of the transfer
+        condition"""
+        a = (f'  Heat Flux BC = Logical True\n  Heat transfer coefficient = Real {self.surface_transfer:g}\n')
+        k = text.find('Name = "free surface"')
+        if k < 0 or a not in text[k:k + 1500]:
+            raise ValueError("surface_bc = dirichlet: the surface heat condition of the template changed")
+        i = text.index(a, k)
+        j = text.index("External Temperature =", i)
+        return text[:i] + text[i + len(a):j] + "Temperature =" + text[j + len("External Temperature ="):]
 
     def _sliding_temperate(self, text):
         """Weertman friction as at the melting point everywhere: TDepSliding(fcoeff, T, dT, x) -> fcoeff"""
