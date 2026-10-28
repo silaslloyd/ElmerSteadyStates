@@ -102,6 +102,7 @@ def cmd_run(a):
             tol = a.spinup_tol if a.spinup_tol is not None else tol
         out = os.path.join(WORK, tag, f"{name}.npz")
         n = a.chunks or chunks
+        every = a.save_every or every
         offset = 0
         if resume and resume[0] == name:
             offset = resume[1]
@@ -117,6 +118,8 @@ def cmd_run(a):
         # Elmer moves the grounding line (contact) and, with [elmer] thermal = "elmerstreams", the cold/temperate
         # mask and the water sheet every step: no ESS remask between chunks
         args += ["--stokes-preconditioner", a.precond] if a.precond else []
+        args += ["--linear-stokes", a.linear_stokes] if a.linear_stokes else []
+        args += ["--stokes-block-file", a.stokes_block_file] if a.stokes_block_file else []
         args += ["--no-remask", "--friction-heat", a.heat] + (["--stokes-only"] if a.stokes_only else [])
         if a.bed != "none":
             args += ["--bed", a.bed]
@@ -256,7 +259,7 @@ def seam_stripe(br):
 
 def cmd_analyse(a):
     from ess.config import load_config
-    width = float(load_config(os.path.join(REPO, CONFIG))["case"]["width"])
+    width = _width()
     modes = a.modes or sorted(d for d in os.listdir(WORK) if os.path.isdir(os.path.join(WORK, d))
                               and any(os.path.isdir(os.path.join(WORK, d, f"{p[0]}_chunks")) for p in PHASES))
     for mode in modes:
@@ -309,13 +312,107 @@ def cmd_analyse(a):
               "as Tb seam >> Tb mid\n  Zs seam / Zs mid: the same for the surface elevation (m): a ridge or trough along the seam")
 
 
+def _width():
+    """the strip width across the flow: [case] width, else the mesh default Wmesh of parameters.lua"""
+    from ess.config import load_config
+    from ess.case import eval_lua_parameters
+    c = load_config(os.path.join(REPO, CONFIG))["case"]
+    if "width" in c:
+        return float(c["width"])
+    return float(eval_lua_parameters(os.path.join(REPO, "case", "parameters.lua")).get("Wmesh", 1000.0))
+
+
+def cmd_solvers(a):
+    """the same run with different Stokes linear solvers (jobs/gl_solvers.sh): Elmer time per phase and per step,
+    and how far each run's grounding line and surface are from the reference (the first) run's"""
+    from ess.statefile import load_state
+    tags = a.tags or [t for t in ("direct", "iterative", "block", "amg") if os.path.isdir(os.path.join(WORK, t))]
+    if not tags:
+        raise SystemExit(f"no solver results in {WORK}")
+    ref = tags[0]
+    rev = sorted(glob.glob(os.path.join(WORK, "runs", "*", "elmer.log")))
+    if rev:
+        with open(rev[-1], errors="replace") as fh:
+            for line in fh:
+                if "Version" in line or "Rev:" in line or "Compiled" in line:
+                    print("Elmer: " + line.strip())
+                    break
+    # time per phase (the phase outputs record the Elmer wall time of their ess run; resumed phases only the rest)
+    print(f"\nElmer wall time (s) and per time step; speed-up = reference time / this run's time (reference {ref})")
+    print(f"{'phase':8s} " + " ".join(f"{t:>22s}" for t in tags))
+    tot = {t: [0.0, 0] for t in tags}
+    for name, *_ in PHASES:
+        cells = []
+        for t in tags:
+            f = os.path.join(WORK, t, f"{name}.npz")
+            if not os.path.exists(f):
+                cells.append(f"{'-':>22s}")
+                continue
+            m = dict(load_state(f).meta)
+            sec, st = float(m.get("elmer_seconds", np.nan)), int(m.get("steps", 0))
+            tot[t][0] += sec
+            tot[t][1] += st
+            cells.append(f"{sec:9.0f} {sec / max(st, 1):7.2f}/st x{st:<4d}")
+        print(f"{name:8s} " + " ".join(cells))
+    r0 = tot[ref][0] / max(tot[ref][1], 1)
+    print(f"{'total':8s} " + " ".join(f"{v[0]:9.0f} {v[0] / max(v[1], 1):7.2f}/st x{v[1]:<4d}" for v in tot.values()))
+    print(f"{'speed-up':8s} " + " ".join(f"{r0 / (v[0] / v[1]) if v[1] and v[0] else np.nan:22.2f}" for v in tot.values()))
+
+    # grounding line and surface along the way, against the reference
+    def chunks(t):
+        out = {}
+        for name, *_ in PHASES:
+            for f in sorted(glob.glob(os.path.join(WORK, t, f"{name}_chunks", "points", "state_*.npz"))):
+                out[(name, int(os.path.basename(f)[6:10]))] = f
+        return out
+
+    def gl_zs(f):
+        s = load_state(f)
+        allf = dict(s.diag)
+        allf.update(s.frozen)
+        blocks = s.layout.split(s.x)
+        for b in s.layout.blocks:
+            allf[b.name] = (b.gids, blocks[b.name])
+        g, X = _field(allf, "coordinate 1")
+        Xd = dict(zip(g.tolist(), X.tolist()))
+        gm = _field(allf, "GroundedMask")
+        xg = np.array([Xd[i] for i in gm[0].tolist()])
+        gl = float(xg[gm[1] > -0.5].max()) / 1e3
+        zs = _field(allf, "Zs")
+        return gl, dict(zip(zs[0].tolist(), zs[1].tolist()))
+    C = {t: chunks(t) for t in tags}
+    keys = [k for k in C[ref] if all(k in C[t] for t in tags)]
+    order = {n: i for i, (n, *_) in enumerate(PHASES)}
+    keys.sort(key=lambda k: (order[k[0]], k[1]))
+    if not keys:
+        print("\nno chunk states common to all runs yet")
+        return
+    print(f"\ngrounding line (km, last grounded x) after each saved chunk; dZs: largest |Zs - Zs({ref})| (m)")
+    print(f"{'phase':8s} {'chunk':>5s} " + " ".join(f"{t:>10s}" for t in tags) + " "
+          + " ".join(f"{'dZs ' + t:>14s}" for t in tags[1:]))
+    worst = {t: [0.0, 0.0] for t in tags[1:]}
+    for k in keys:
+        R = {t: gl_zs(C[t][k]) for t in tags}
+        dz = []
+        for t in tags[1:]:
+            common = R[ref][1].keys() & R[t][1].keys()
+            d = max(abs(R[ref][1][g] - R[t][1][g]) for g in common)
+            dz.append(d)
+            worst[t][0] = max(worst[t][0], abs(R[t][0] - R[ref][0]))
+            worst[t][1] = max(worst[t][1], d)
+        print(f"{k[0]:8s} {k[1]:5d} " + " ".join(f"{R[t][0]:10.2f}" for t in tags) + " "
+              + " ".join(f"{d:14.3g}" for d in dz))
+    print("largest difference from " + ref + ": "
+          + "; ".join(f"{t}: grounding line {w[0]:.2f} km, Zs {w[1]:.3g} m" for t, w in worst.items()))
+
+
 def cmd_compare(a):
     """bed temperature of run A minus run B (same mesh), per phase end and saved chunk: on the seam row and on the
     other rows. Loads vs flux heating: the same physics, so A - B is the discretisation difference, smooth across y;
     wrong loads on the seam show as a seam-row difference larger than on the other rows."""
     from ess.config import load_config
     from ess.statefile import load_state
-    width = float(load_config(os.path.join(REPO, CONFIG))["case"]["width"])
+    width = _width()
 
     def bed(path):
         s = load_state(path)
@@ -366,6 +463,10 @@ def main():
                                                     f"(default {PHASES[0][5]:g}; 0: all chunks)")
     s.add_argument("--spinup-max", type=int, help=f"at most this many spin-up chunks (default {PHASES[0][1]})")
     s.add_argument("--precond", help="Stokes preconditioner (e.g. ILU0); results in MODE_HEAT_<precond>")
+    s.add_argument("--linear-stokes", choices=["direct", "iterative", "block"], help="Stokes linear solver (ess run)")
+    s.add_argument("--stokes-block-file", help="block-preconditioner keywords (ess run; e.g. "
+                                               "elmer/stokes_block_amg.sif.in)")
+    s.add_argument("--save-every", type=int, help="save a state every N chunks in every phase (default per phase)")
     s.add_argument("--spinup-only", action="store_true", help="only the spin-up phase (to choose --fbase)")
     s.add_argument("--tag", help="results folder under the work dir (default MODE_HEAT, or MODE_HEAT_f<FBASE>)")
     s.add_argument("--resume", metavar="PHASE", help="continue from PHASE's last saved chunk (then the later phases)")
@@ -374,6 +475,10 @@ def main():
     s = sub.add_parser("analyse")
     s.add_argument("modes", nargs="*", help="results folders (treatments, e.g. fix, fix_f30; default all)")
     s.set_defaults(fn=cmd_analyse)
+    s = sub.add_parser("solvers")
+    s.add_argument("tags", nargs="*", help="results folders, the first the reference (default: direct iterative block "
+                                           "amg, those present)")
+    s.set_defaults(fn=cmd_solvers)
     s = sub.add_parser("compare")
     s.add_argument("a", nargs="?", default="fix_loads")
     s.add_argument("b", nargs="?", default="fix_flux")

@@ -92,3 +92,18 @@ The treatments differ in the loads:
 * `none`: raw loads, nothing halved.
 
 Needs a new prep (the water sheet is a new frozen field): `bash periodic_test/run_gl_ess.sh` (no NOPREP).
+
+## Stokes solvers with a moving grounding line
+
+`configs/test_gl_solvers.toml`, `jobs/gl_solvers.sh`: the marine flowline (one element across, not periodic), the
+contact grounding line, the same phases (spin-up to steady, retreat with accumulation x 0.3, advance with x 3),
+Stokes + free surface only, temperate sliding (fcoeff x 10), the stabilized P1/P1 element for all solvers (the
+block setups need it), 500 m within +- 50 km of the start grounding line. The same run once per Stokes linear
+solver, each on its own exclusive node (32 ranks): `direct` (MUMPS), `iterative` (GCR + ILU8), `block`
+(elmer/stokes_block.sif.in), optionally `amg` (elmer/stokes_block_amg.sif.in, Hypre). A state every chunk.
+
+    ELMER_MODULE=elmerfem/<version with the block fix> bash jobs/gl_solvers.sh
+    sbatch --ntasks=1 --time=00:30:00 --export=ALL,GL_CONFIG=configs/test_gl_solvers.toml periodic_test/run_gl_ess.cmd solvers
+
+`solvers`: Elmer wall time per phase and per step, the speed-up against the first run (direct), and the grounding
+line and largest Zs difference from it after every chunk (all solvers should give the same path).
