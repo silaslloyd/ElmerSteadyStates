@@ -69,6 +69,12 @@ def _setup(args, need_state=True):
         saved = load_state(args.state) if getattr(args, "state", None) else _toy_saved(model, cfg)
         return cfg, model, saved
     saved = _saved(cfg, getattr(args, "state", None)) if need_state else None
+    if saved is not None and saved.frozen:          # frozen fields the config no longer lists: Elmer's StateRead
+        keep = {n.lower() for n in cfg["state"].get("frozen", [])}  # stops on fields the model does not have
+        drop = [k for k in saved.frozen if k.lower() not in keep]
+        if drop:
+            log.info(f"state: frozen fields not in [state] frozen, dropped: {', '.join(drop)}")
+            saved.frozen = {k: v for k, v in saved.frozen.items() if k.lower() in keep}
     return cfg, build_model(cfg, saved), saved
 
 
