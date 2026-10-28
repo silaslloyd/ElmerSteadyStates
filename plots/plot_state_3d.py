@@ -371,7 +371,8 @@ def main():
     fig.update_layout(
         title=f"{sys.argv[1] if len(sys.argv) > 1 else ''}: {data[0][0]}", **scenes, annotations=ann,
         sliders=[dict(steps=steps, currentvalue=dict(prefix="state: "), pad=dict(t=30))],
-        height=850, width=2000 if temp else None, template="plotly_white", legend=dict(x=0, y=1))
+        autosize=True, template="plotly_white", legend=dict(x=0, y=1),
+        margin=dict(l=10, r=10, t=60, b=10))
     out = os.path.splitext(sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "plot_state_3d")[0] + "_3d.html"
     sync = ("""
 var gd = document.getElementsByClassName('plotly-graph-div')[0], busy = false;
@@ -382,7 +383,9 @@ gd.on('plotly_relayout', function (e) {
   if (e['scene2.camera']) u['scene.camera'] = e['scene2.camera'];
   if (Object.keys(u).length) { busy = true; Plotly.relayout(gd, u).then(function () { busy = false; }); }
 });""" if temp else None)
-    fig.write_html(out, include_plotlyjs="cdn", post_script=sync)
+    # the page width and height (no fixed size: no sideways scrolling; resizes with the window)
+    fig.write_html(out, include_plotlyjs="cdn", post_script=sync, config=dict(responsive=True),
+                   default_width="100%", default_height="95vh")
     print(f"wrote {out}")
     if SHOW:
         webbrowser.open("file://" + os.path.abspath(out))
