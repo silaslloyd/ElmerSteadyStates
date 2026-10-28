@@ -102,6 +102,10 @@ def main():
     if not keys:
         raise SystemExit(f"no chunk states in {work}/<run>/<phase>_chunks/points")
     print(f"{len(runs)} runs ({', '.join(runs)}), {len(keys)} chunks")
+    extra = ["#ff7f0e", "#8c564b", "#e377c2", "#17becf", "#bcbd22", "#7f7f7f"]
+    for r in runs:                                   # one colour per run, also for runs not named after a solver
+        if r not in COLOURS:
+            COLOURS[r] = extra[len([q for q in COLOURS if q not in SOLVERS]) % len(extra)]
     P = {}
     for (r, ph, c), f in files.items():
         P[(r, ph, c)] = profile(f)
@@ -188,7 +192,7 @@ def main():
         title=f"{work}: {', '.join(runs)} (solid surface, dotted base, dashed grounding line)",
         xaxis=dict(domain=[0, 1], anchor="y", range=[x0, x1], title="x (km)"),
         yaxis=dict(domain=[0.52, 1.0], title="z (m)", range=[min(zs) - 50, max(zs) + 50]),
-        xaxis2=dict(domain=[0, 1], anchor="y2", range=[x0, x1], matches="x", title="x (km)"),
+        xaxis2=dict(domain=[0, 1], anchor="y2", range=[x0, x1], matches="x"),
         yaxis2=dict(domain=[0.30, 0.46], title="surface speed (m/yr)", range=[0, smax * 1.05]),
         xaxis3=dict(domain=[0, 1], anchor="y3", title="chunk (100 yr each)", range=[-0.5, len(keys) - 0.5]),
         yaxis3=dict(domain=[0.0, 0.22], title="grounding line (km)",
