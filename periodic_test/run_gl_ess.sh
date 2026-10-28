@@ -1,8 +1,8 @@
 #!/bin/bash
 # Periodic grounding-line test on the ElmerStreams setup: one preparation job (mesh, start state), then one job per
 # treatment and friction heating (one node each, 32 ranks), in parallel. Run on the login node from the repository root:
-#   bash periodic_test/run_gl_ess.sh                       # fix, friction heating from the loads and as a flux
-#   MODES="elmerstreams fix" HEATS=loads bash periodic_test/run_gl_ess.sh   # treatments x heatings
+#   bash periodic_test/run_gl_ess.sh                       # elmerstreams_loads, fix_loads, fix_flux
+#   RUNS="fix_loads none_loads" bash periodic_test/run_gl_ess.sh   # others (MODE_HEAT)
 #   SCAN="10 30 100" bash periodic_test/run_gl_ess.sh      # spin-ups (fix) with fcoeff x 10, 30, 100: pick FBASE
 #   FBASE=30 bash periodic_test/run_gl_ess.sh             # another base friction (default 10)
 #   NOPREP=1 bash periodic_test/run_gl_ess.sh             # reuse the existing mesh and start state
@@ -30,12 +30,14 @@ if [ -n "$SCAN" ]; then
         echo "spin-up, fcoeff x $f: job $J (results in work/test_periodic_gl/fix_f$f)"
     done
 else
-    for m in ${MODES:-fix}; do
-        for h in ${HEATS:-loads flux}; do
-            J=$($SB $DEP periodic_test/run_gl_ess.cmd run $m --heat $h --fbase ${FBASE:-10} ${CHUNKS:+--chunks $CHUNKS})
-            echo "$m, friction heating $h (fcoeff x ${FBASE:-10}): job $J (results in ${m}_$h)"
-        done
+    # RUNS: MODE_HEAT; default the three of the loads test: ElmerStreams as it is (halved raw loads, contact with
+    # Fw2), the fix with the loads heating, the fix with the flux heating (the reference)
+    for r in ${RUNS:-elmerstreams_loads fix_loads fix_flux}; do
+        m=${r%_*}; h=${r##*_}
+        J=$($SB $DEP periodic_test/run_gl_ess.cmd run $m --heat $h --fbase ${FBASE:-10} ${CHUNKS:+--chunks $CHUNKS})
+        echo "$m, friction heating $h (fcoeff x ${FBASE:-10}): job $J (results in ${m}_$h)"
     done
     echo "then: sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd compare fix_loads fix_flux"
+    echo "      sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd compare elmerstreams_loads fix_flux"
 fi
 echo "logs (each run job ends with its table): slurms/pgless_<job>.out"

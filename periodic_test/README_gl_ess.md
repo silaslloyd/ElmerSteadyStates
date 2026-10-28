@@ -59,16 +59,18 @@ friction heating (`--heat`, `ess run --friction-heat`):
 * `fix_loads`: frictionloads(loads, u) as nodal heat loads, from the periodic copy of the Stokes loads
   (`FixPeriodicLoads`, folded; run by the heat solver first as its Pre Solver, so this step's loads);
 * `fix_flux`: C |u_b|^2 as a heat flux (per area, integrated by Elmer; no loads involved): the reference.
+* `elmerstreams_loads`: none of the fix, ElmerStreams as it is: the raw loads halved at y < 1 in frictionloads,
+  ElmerStreams' contact with Fw doubled on the master side (Fw2).
 
 The same physics, so their bed temperatures should differ smoothly; a difference on the seam row larger than on the
 middle row (y = W/2, where the bump is zero as on the seam) means the loads are wrong on the seam. Each run's table
 adds `Tb seam` / `Tb mid` (the bed temperature's second difference across y on the seam / middle row: a seam stripe)
-and `ploads z` (master/image mismatch of the periodic copy: 0). `MODES="elmerstreams fix"` adds the halved raw
-loads (`elmerstreams_loads`, y < 1 halved) for contrast. The periodic copy and a `Friction Loads` export from it are
+and `ploads z` (master/image mismatch of the periodic copy: 0). Other runs: `RUNS="MODE_HEAT ..."`. The periodic copy and a `Friction Loads` export from it are
 made in every run (periodic_gl = fix).
 
-    git pull && NOPREP=1 bash periodic_test/run_gl_ess.sh            # fix_loads and fix_flux (20 km)
+    git pull && NOPREP=1 bash periodic_test/run_gl_ess.sh            # the three runs (20 km)
     sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd compare fix_loads fix_flux
+    sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd compare elmerstreams_loads fix_flux
 
 ## ElmerStreams thermal chain (not used now)
 
