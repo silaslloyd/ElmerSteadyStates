@@ -11,7 +11,7 @@ panel 3 did not converge.
     python plots/plot_gl_solvers.py                                   # work/test_gl_solvers/{direct,iterative,block,amg}
     python plots/plot_gl_solvers.py work/test_gl_solvers --x 650 820  # x window (km)
     python plots/plot_gl_solvers.py WORK_DIR direct block             # given runs only
-Writes <work dir>/gl_solvers.html and opens it. Needs numpy and plotly.
+Writes <work dir>/gl_solvers_<runs>.html and opens it. Needs numpy and plotly.
 """
 import glob
 import os
@@ -197,7 +197,7 @@ def main():
         sliders=[dict(steps=steps, active=len(keys) - 1, currentvalue=dict(prefix="chunk: "), pad=dict(t=40))],
         template="plotly_white", autosize=True, margin=dict(l=60, r=20, t=60, b=20), legend=dict(x=1.0, y=1.0,
                                                                                                xanchor="right"))
-    out = os.path.join(work, "gl_solvers.html")
+    out = os.path.join(work, "gl_solvers_" + "_".join(runs) + ".html")     # named after its runs
     fig.write_html(out, include_plotlyjs="cdn", config=dict(responsive=True), default_width="100%",
                    default_height="95vh")
     print(f"wrote {out}")
