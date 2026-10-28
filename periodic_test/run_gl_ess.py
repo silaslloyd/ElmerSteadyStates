@@ -72,7 +72,8 @@ def cmd_prep(a):
 def cmd_run(a):
     fc, ad = base_params()
     state = os.path.join(WORK, "start.npz")
-    tag = a.tag or f"{a.mode}_{a.heat}" + ("" if a.fbase == 10.0 else f"_f{a.fbase:g}")
+    tag = a.tag or (f"{a.mode}_{a.heat}" + ("" if a.fbase == 10.0 else f"_f{a.fbase:g}")
+                    + (f"_{a.precond.lower()}" if a.precond else ""))
     resume = None
     if a.resume:                                    # PHASE: from that phase's last saved chunk (or the phase before)
         names = [p[0] for p in PHASES]
@@ -113,6 +114,7 @@ def cmd_run(a):
             args += ["--until-tol", repr(tol)]
         # Elmer moves the grounding line (contact) and, with [elmer] thermal = "elmerstreams", the cold/temperate
         # mask and the water sheet every step: no ESS remask between chunks
+        args += ["--stokes-preconditioner", a.precond] if a.precond else []
         args += ["--no-remask", "--friction-heat", a.heat] + (["--stokes-only"] if a.stokes_only else [])
         if a.bed != "none":
             args += ["--bed", a.bed]
@@ -344,6 +346,7 @@ def main():
     s.add_argument("--spinup-tol", type=float, help=f"spin-up until the rms change per chunk is below this "
                                                     f"(default {PHASES[0][5]:g}; 0: all chunks)")
     s.add_argument("--spinup-max", type=int, help=f"at most this many spin-up chunks (default {PHASES[0][1]})")
+    s.add_argument("--precond", help="Stokes preconditioner (e.g. ILU0); results in MODE_HEAT_<precond>")
     s.add_argument("--spinup-only", action="store_true", help="only the spin-up phase (to choose --fbase)")
     s.add_argument("--tag", help="results folder under the work dir (default MODE_HEAT, or MODE_HEAT_f<FBASE>)")
     s.add_argument("--resume", metavar="PHASE", help="continue from PHASE's last saved chunk (then the later phases)")

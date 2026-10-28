@@ -7,6 +7,8 @@
 #   FBASE=30 bash periodic_test/run_gl_ess.sh             # another base friction (default 10)
 #   NOPREP=1 bash periodic_test/run_gl_ess.sh             # reuse the existing mesh and start state
 #   CHUNKS=1 bash periodic_test/run_gl_ess.sh             # a short trial (1 chunk = 100 yr per phase)
+#   PRECOND=ILU0 RUNS=fix_flux CHUNKS=1 SPINUP_ONLY=1 NOPREP=1 bash periodic_test/run_gl_ess.sh   # timing trial of
+#                                                         # another Stokes preconditioner (results in fix_flux_ilu0)
 #   RESUME=spinup SPINUP_MAX=200 NOPREP=1 bash periodic_test/run_gl_ess.sh   # continue the runs from their last saved
 #                                                         # spin-up chunk (then retreat, advance); SPINUP_MAX: chunk cap
 #   GL_CONFIG=configs/test_periodic_gl_50km.toml NTASKS=256 FBASE=10 bash periodic_test/run_gl_ess.sh
@@ -40,8 +42,9 @@ else
     for r in ${RUNS:-elmerstreams_loads fix_loads fix_flux}; do
         m=${r%_*}; h=${r##*_}
         J=$($SB $DEP periodic_test/run_gl_ess.cmd run $m --heat $h --fbase ${FBASE:-10} ${CHUNKS:+--chunks $CHUNKS} \
-              ${RESUME:+--resume $RESUME} ${SPINUP_MAX:+--spinup-max $SPINUP_MAX})
-        echo "$m, friction heating $h (fcoeff x ${FBASE:-10}): job $J (results in ${m}_$h)"
+              ${RESUME:+--resume $RESUME} ${SPINUP_MAX:+--spinup-max $SPINUP_MAX} \
+              ${PRECOND:+--precond $PRECOND} ${SPINUP_ONLY:+--spinup-only})
+        echo "$m, friction heating $h (fcoeff x ${FBASE:-10}${PRECOND:+, Stokes $PRECOND}): job $J"
     done
     echo "then: sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd compare fix_loads fix_flux"
     echo "      sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd compare elmerstreams_loads fix_flux"

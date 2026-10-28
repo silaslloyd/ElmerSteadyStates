@@ -283,6 +283,9 @@ def cmd_run(args):
         log.info("run: --cartesian-bed: the bed condition in x/y/z components (no normal-tangential velocities)")
     if args.stokes_block_file:
         model.stokes_block_file = args.stokes_block_file
+    if args.stokes_preconditioner:
+        model.stokes_precond = args.stokes_preconditioner
+        log.info(f"run: Stokes preconditioner {args.stokes_preconditioner}")
     if args.stokes_element:
         model.stokes_element = args.stokes_element
         log.info(f"run: Stokes element {args.stokes_element}")
@@ -1096,6 +1099,8 @@ def main(argv=None):
                         "marine: with --gl frozen)")
     s.add_argument("--stokes-block-file", help="block-preconditioner keywords for --linear-stokes block "
                                                 "(default [elmer] stokes_block_file, elmer/stokes_block.sif.in)")
+    s.add_argument("--stokes-preconditioner", help="iterative Stokes preconditioner (e.g. ILU0, ILU8); "
+                                                   "default [elmer] stokes_preconditioner")
     s.add_argument("--stokes-element", choices=["P2/P1", "Stabilized", "Bubbles"],
                    help="Stokes element for this run (default [elmer] stokes_element, P2/P1)")
     s.add_argument("--friction-heat", choices=["loads", "flux"],
