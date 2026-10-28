@@ -1,0 +1,21 @@
+#!/bin/bash
+# elmerf90, and if it fails because one of its -I/-L directories is not readable (elmerfem/2026-10-28: its
+# dependencies/local/include is not readable by users), the same compile command again without those directories.
+# This elmerf90 prints the command it runs (the line of quoted words starting with "); that line is rerun, minus
+# -I<dir> / -L<dir> entries that cannot be read.
+out=$(elmerf90 "$@" 2>&1); rc=$?
+echo "$out"
+[ $rc -eq 0 ] && exit 0
+grep -q "Permission denied" <<<"$out" || exit $rc
+line=$(grep -m1 '^"' <<<"$out")
+[ -n "$line" ] || { echo "elmerf90_safe: no compile command in the elmerf90 output to rerun"; exit $rc; }
+eval "cmd=($line)"
+keep=()
+for a in "${cmd[@]}"; do
+    case $a in
+        -I*|-L*) d=${a:2}; if [ -d "$d" ] && [ ! -r "$d" -o ! -x "$d" ]; then echo "elmerf90_safe: dropped $a (not readable)"; continue; fi;;
+    esac
+    keep+=("$a")
+done
+echo "elmerf90_safe: rerun without the unreadable directories"
+"${keep[@]}"

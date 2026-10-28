@@ -1,6 +1,7 @@
 # Build the state I/O solver and the marine sea-pressure functions (needs Elmer's elmerf90 on the PATH,
 # e.g. after `module load elmerfem`).
-ELMERF90 ?= elmerf90
+# elmerf90_safe: elmerf90, rerun without unreadable -I/-L directories if it fails on them (elmerfem/2026-10-28)
+ELMERF90 ?= ./elmerf90_safe
 
 all: SteadyStateIO.so Buoyancy.so
 
