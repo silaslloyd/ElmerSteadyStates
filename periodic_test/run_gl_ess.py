@@ -94,6 +94,19 @@ def cmd_run(a):
     print(f"run {a.mode}, friction heating {a.heat}: fcoeff x {a.fbase:g} (x the phase factors), bed {a.bed}, "
           f"results in {os.path.join(WORK, tag)}", flush=True)
     phases = PHASES[:1] if a.spinup_only else PHASES
+    if a.phase:                                     # --phase NAME=CHUNKS,FRICTION,ACCUMULATION
+        table = {p[0]: list(p) for p in phases}
+        for spec in a.phase:
+            try:
+                name, vals = spec.split("=")
+                n_, f_, ac_ = vals.split(",")
+                table[name][1:4] = [int(n_), float(f_), float(ac_)]
+            except (ValueError, KeyError):
+                raise SystemExit(f"--phase {spec!r}: NAME=CHUNKS,FRICTION,ACCUMULATION with NAME one of "
+                                 f"{', '.join(table)}")
+        phases = [tuple(table[p[0]]) for p in phases]
+        for p_ in phases:
+            print(f"  phase {p_[0]}: {p_[1]} chunks, fcoeff x {p_[2]:g}, accumulation x {p_[3]:g}", flush=True)
     if a.resume:
         phases = phases[[p[0] for p in phases].index(a.resume):]
     for name, chunks, ff, af, every, tol in phases:
@@ -484,6 +497,9 @@ def main():
                                                "elmer/stokes_block_amg.sif.in)")
     s.add_argument("--stokes-element", choices=["P2/P1", "Stabilized", "Bubbles"],
                    help="Stokes element (ess run; default [elmer] stokes_element)")
+    s.add_argument("--phase", action="append", metavar="NAME=CHUNKS,FRIC,ACC",
+                   help="override a phase: chunks, friction factor, accumulation factor (e.g. retreat=50,1,0); "
+                        "repeatable. Defaults: " + "; ".join(f"{p[0]}={p[1]},{p[2]:g},{p[3]:g}" for p in PHASES))
     s.add_argument("--save-every", type=int, help="save a state every N chunks in every phase (default per phase)")
     s.add_argument("--spinup-only", action="store_true", help="only the spin-up phase (to choose --fbase)")
     s.add_argument("--tag", help="results folder under the work dir (default MODE_HEAT, or MODE_HEAT_f<FBASE>)")

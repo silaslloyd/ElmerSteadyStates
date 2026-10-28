@@ -31,6 +31,10 @@ if [ ! -f work/test_gl_solvers/start.npz ]; then
     echo "$(date +%T) prep: mesh and start state (from $FROM), log ${L}_prep.log"
     python3 -u periodic_test/run_gl_ess.py prep --from "$FROM" > ${L}_prep.log 2>&1
 fi
+# RESUME=retreat: continue each run from its finished spin-up (its last saved state) with the later phases
+# PHASES="retreat=50,1,0 advance=50,1,3": phase overrides NAME=CHUNKS,FRICTION,ACCUMULATION (run_gl_ess.py --phase)
+PHASE_ARGS=""
+for ph in ${PHASES:-}; do PHASE_ARGS="$PHASE_ARGS --phase $ph"; done
 for s in $SOLVERS; do
     case $s in
         direct|iterative|block) OPT="--linear-stokes $s";;
@@ -39,7 +43,7 @@ for s in $SOLVERS; do
         *) echo "unknown solver $s"; exit 1;;
     esac
     python3 -u periodic_test/run_gl_ess.py run none --heat flux --stokes-only $OPT --tag $s --save-every 1 \
-        --fbase ${FBASE:-10} ${CHUNKS:+--chunks $CHUNKS} > ${L}_$s.log 2>&1 &
+        --fbase ${FBASE:-10} ${CHUNKS:+--chunks $CHUNKS} $PHASE_ARGS ${RESUME:+--resume $RESUME} > ${L}_$s.log 2>&1 &
     echo "$(date +%T) started $s (log ${L}_$s.log)"
 done
 FAIL=0
