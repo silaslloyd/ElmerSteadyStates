@@ -67,13 +67,16 @@ def base_params():
 
 def cmd_prep(a):
     ess("setup", CONFIG)
+    if a.source == "none":                          # the initial state of the config's own tables is the start
+        ess("init", CONFIG, "--out", os.path.join(WORK, "start.npz"))
+        return
     ess("init", CONFIG)
     ess("transfer", CONFIG, "--from", a.source, "--out", os.path.join(WORK, "start.npz"))
 
 
 def cmd_run(a):
     fc, ad = base_params()
-    state = os.path.join(WORK, "start.npz")
+    state = a.start or os.path.join(WORK, "start.npz")
     tag = a.tag or (f"{a.mode}_{a.heat}" + ("" if a.fbase == 10.0 else f"_f{a.fbase:g}")
                     + (f"_{a.precond.lower()}" if a.precond else ""))
     resume = None
@@ -474,12 +477,14 @@ def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("prep")
-    s.add_argument("--from", dest="source", default=START_FROM, help=f"2D marine state (default {START_FROM})")
+    s.add_argument("--from", dest="source", default=START_FROM, help=f"2D marine state (default {START_FROM}); "
+                                                                       "none: the config's own initial state")
     s.set_defaults(fn=cmd_prep)
     s = sub.add_parser("run")
     s.add_argument("mode", choices=MODES)
     s.add_argument("--chunks", type=int, help="chunks per phase (default per phase: "
                                               + ", ".join(f"{p[0]} {p[1]}" for p in PHASES) + ")")
+    s.add_argument("--start", help="start state (default <work dir>/start.npz)")
     s.add_argument("--heat", choices=["loads", "flux"], default="loads",
                    help="frictional heating: from the Stokes loads (nodal, the periodic copy with fix) or as a flux")
     s.add_argument("--fbase", type=float, default=10.0, help="sliding coefficient fcoeff times this in every phase "

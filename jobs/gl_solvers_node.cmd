@@ -34,6 +34,8 @@ if [ ! -f "$WORK/start.npz" ]; then
     echo "$(date +%T) prep: mesh and start state (from $FROM), log ${L}_prep.log"
     python3 -u periodic_test/run_gl_ess.py prep --from "$FROM" > ${L}_prep.log 2>&1
 fi
+# START=<state>: start every run from it (not <work dir>/start.npz); TAG_PREFIX: results in <prefix><solver>;
+# SPINUP_TOL / SPINUP_MAX / SPINUP_ONLY=1: the spin-up's tolerance, chunk cap, and spin-up only
 # RESUME=retreat: continue each run from its finished spin-up (its last saved state) with the later phases
 # PHASES="retreat=50,1,0 advance=50,1,3": phase overrides NAME=CHUNKS,FRICTION,ACCUMULATION (run_gl_ess.py --phase)
 PHASE_ARGS=""
@@ -45,11 +47,13 @@ for s in $SOLVERS; do
         amg) OPT="--linear-stokes block --stokes-block-file elmer/stokes_block_amg.sif.in";;
         *) echo "unknown solver $s"; exit 1;;
     esac
-    python3 -u periodic_test/run_gl_ess.py run none --heat flux --stokes-only $OPT --tag $s --save-every 1 \
-        --fbase ${FBASE:-10} ${CHUNKS:+--chunks $CHUNKS} $PHASE_ARGS ${RESUME:+--resume $RESUME} > ${L}_$s.log 2>&1 &
+    python3 -u periodic_test/run_gl_ess.py run none --heat flux --stokes-only $OPT --tag ${TAG_PREFIX}$s --save-every 1 \
+        --fbase ${FBASE:-10} ${CHUNKS:+--chunks $CHUNKS} $PHASE_ARGS ${RESUME:+--resume $RESUME} \
+        ${START:+--start $START} ${SPINUP_TOL:+--spinup-tol $SPINUP_TOL} ${SPINUP_MAX:+--spinup-max $SPINUP_MAX} \
+        ${SPINUP_ONLY:+--spinup-only} > ${L}_${TAG_PREFIX}$s.log 2>&1 &
     echo "$(date +%T) started $s (log ${L}_$s.log)"
 done
 FAIL=0
 for p in $(jobs -p); do wait $p || FAIL=1; done
 echo "$(date +%T) all runs done$([ $FAIL = 1 ] && echo ' (at least one failed: see its log)')"
-python3 -u periodic_test/run_gl_ess.py solvers $SOLVERS || true
+python3 -u periodic_test/run_gl_ess.py solvers $(for s in $SOLVERS; do echo ${TAG_PREFIX}$s; done) || true

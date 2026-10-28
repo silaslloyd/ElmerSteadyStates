@@ -113,6 +113,66 @@ def marine_geometry(P, icdir, n=8001, rho_tol=0.5):
     return dict(x=x, bed=bed, zs=zs, zb=zb, H=H, gm=gm, ct=ct, Tb=Tb, Ts_surf=np.full_like(x, P["Tsurf"]))
 
 
+def schoof_gl(P, bed, x, friction=10.0, flux_factor=1.7):
+    """the stable grounding-line position (m) where the accumulation upstream, a x, equals the grounding-line flux
+    of Schoof (2007) for linear viscosity and linear Weertman sliding (n = m = 1),
+    q_g = flux_factor sqrt(A (rho_i g)^2 (1 - rho_i/rho_w) / (4 C)) h_g^(5/2), h_g the flotation thickness,
+    A = 1 / (2 viscosity), C = friction * fcoeff. flux_factor: the model's flux / Schoof's (~1.7 from the
+    ElmerStreams flowline runs: 1 .. 2.4)."""
+    rg, r = P["rhoi"] * P["gravity"], P["rhoi"] / P["rhow"]
+    K = flux_factor * np.sqrt(1 / (2 * P["viscosity"]) * rg ** 2 * (1 - r) / (4 * friction * P["fcoeff"]))
+    f = K * (np.maximum(-bed, 0.0) / r) ** 2.5 - P["aDIM"] * x
+    i = np.where((f[:-1] < 0) & (f[1:] >= 0))[0]
+    if not len(i):
+        raise SystemExit("setup: this bed has no stable grounding line in the domain (Schoof's flux never catches up "
+                         "with the accumulation): a steeper bed, or one higher at the divide")
+    return float(x[i[0]])
+
+
+def linear_bed_geometry(P, top, slope, n=8001, friction=10.0, flux_factor=1.7, front_thinning=0.6):
+    """marine flowline on the linear bed b(x) = top - slope x (MISMIP-like: above sea level at the divide, deepening
+    to the calving front), with a near-steady first guess: the grounding line at Schoof's position (schoof_gl), the
+    grounded ice from basal drag = driving stress for the flux a x (sliding only, C = friction * fcoeff), integrated
+    upstream from the flotation thickness at the grounding line; the shelf thinning linearly to front_thinning of
+    that thickness at the front. All cold (the runs fix the bed mask anyway)."""
+    L = P["L"]
+    x = np.linspace(0, L, n)
+    bed = top - slope * x
+    r = P["rhoi"] / P["rhow"]
+    rg = P["rhoi"] * P["gravity"]
+    C = friction * P["fcoeff"]
+    a = P["aDIM"]
+    xg = schoof_gl(P, bed, x, friction, flux_factor)
+    hg = -np.interp(xg, x, bed) / r
+    # dzs/dx = -C a x / (rho g H^2), H = zs - b(x): from (xg, b + hg) to the divide
+    xs = np.linspace(xg, 0.0, 20001)
+    h = xs[1] - xs[0]
+    zs = np.empty(len(xs))
+    zs[0] = top - slope * xg + hg
+    fz = lambda s_, z_: -C * a * s_ / (rg * max(z_ - (top - slope * s_), 1.0) ** 2)
+    for i in range(len(xs) - 1):
+        s_, z_ = xs[i], zs[i]
+        k1 = fz(s_, z_)
+        k2 = fz(s_ + h / 2, z_ + h / 2 * k1)
+        k3 = fz(s_ + h / 2, z_ + h / 2 * k2)
+        k4 = fz(s_ + h, z_ + h * k3)
+        zs[i + 1] = z_ + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+    grounded = x <= xg
+    zs_g = np.interp(x, xs[::-1], zs[::-1])
+    Hs = hg * (1 - (1 - front_thinning) * (x - xg) / (L - xg))          # shelf thickness
+    H = np.where(grounded, zs_g - bed, Hs)
+    zb = np.where(grounded, bed, -r * H)
+    zs_all = zb + H
+    gm = np.where(grounded, 1.0, -1.0)
+    Ts = P["Tsurf"]
+    Tb = np.where(grounded, np.minimum(Ts + P["gthf"] / P["heatconductivity"] * H, P["T0"]), P["T0"])
+    ct = -np.ones_like(x)
+    log.info(f"setup: linear bed {top:g} m - {slope:g} x (sea level at {top / slope / 1e3:.0f} km, {-bed[-1]:.0f} m "
+             f"deep at the front); first guess: grounding line {xg / 1e3:.1f} km (Schoof, flux x {flux_factor:g}, "
+             f"fcoeff x {friction:g}), {hg:.0f} m thick there, {H.max():.0f} m at the divide")
+    return dict(x=x, bed=bed, zs=zs_all, zb=zb, H=H, gm=gm, ct=ct, Tb=Tb, Ts_surf=np.full_like(x, Ts))
+
+
 def _lua_array(name, a):
     return f"{name} = {{" + ", ".join(f"{v:.10g}" for v in a) + "}\n"
 
@@ -184,7 +244,11 @@ def setup_case(cfg, mesh=True):
     c = cfg.get("case", {})
     x_end = float(c.get("x_end", 1.0))
     marine = c.get("geometry", "land") == "marine"
-    if marine:
+    if marine and "bed_slope" in c:           # a linear bed of its own (MISMIP-like) instead of ElmerStreams' tables
+        g = linear_bed_geometry(P, float(c.get("bed_top", 0.0)), float(c["bed_slope"]),
+                                friction=float(c.get("ic_friction", 10.0)),
+                                flux_factor=float(c.get("ic_flux_factor", 1.7)))
+    elif marine:
         g = marine_geometry(P, cfg["_path"](c.get("marine_ics", "case/marine_ics")))
     else:
         g = initial_geometry(P, x_end=x_end, edge=float(c.get("edge_thickness", 30.0)))
@@ -217,6 +281,11 @@ def setup_case(cfg, mesh=True):
         P["Xa"], P["Xb"] = gl - gl / 6, gl - df
         P["Xd"] = min(gl + gl / 16, P["L"] - res)
         P["Xc"] = min(gl + df, P["Xd"] - res)
+        if "fine_band_km" in c:              # [case] fine_band_km = [x0, x1]: the fine band given directly
+            b0, b1 = (float(v) * 1e3 for v in c["fine_band_km"])
+            P["Xb"], P["Xc"] = b0, b1
+            P["Xa"] = min(gl - gl / 6, b0 - 20e3)
+            P["Xd"] = min(max(gl + gl / 16, b1 + 20e3), P["L"] - res)
         if not (0 < P["Xa"] < P["Xb"] < P["Xc"] < P["Xd"] < P["L"]):
             raise SystemExit(f"setup: fine_half_width {df / 1e3:g} km does not fit {geo_name} around GL = "
                              f"{gl / 1e3:.1f} km: the points {P['Xa'] / 1e3:.1f}, {P['Xb'] / 1e3:.1f}, "
