@@ -36,7 +36,7 @@ Z_EXAGGERATION = 1.0     # extra vertical stretch on top of the automatic aspect
 ASPECT = dict(x=4.0, y=1.0, z=1.2)
 SHOW_BED = True
 BASE_COLOUR = "speed"    # "speed" (basal speed, the same colour scale as the surface) or "mask" (red grounded, blue floating)
-SHOW_MESH = True         # the element edges on the base
+SHOW_MESH = False        # the element edges on the base (--mesh to show)
 SIDES = True             # side walls (base to surface) at the window ends and the two outer sides
 TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
@@ -157,8 +157,11 @@ def gl_line(base, top=None):
 
 def main():
     import plotly.graph_objects as go
-    global X_WINDOW, TILE, TEMP, T_RANGE
+    global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH
     args = sys.argv[1:]
+    if "--mesh" in args:
+        SHOW_MESH = True
+        args.remove("--mesh")
     if "--no-temp" in args:
         TEMP = False
         args.remove("--no-temp")
