@@ -23,6 +23,10 @@
 # SET=G: block 11 as in Elmer's own test fem/tests/mgdyn_airgap2 (Hypre BiCGStab preconditioned by BoomerAMG,
 # instead of BoomerAMG as the solver with HYPRE Block Diagonal as in MLB), frozen GL, rotated bed
 #                            sbatch --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,SET=G jobs/amg_tests.cmd
+# SET=RHIJ (4 runs: sbatch --ntasks=128): tuning G against plain GCR + ILU8, all frozen GL, 2 steps; compare the Elmer
+# time each prints. R GCR + ILU8 (the reference)   H G with the inner solve capped (30 iterations, tolerance 1e-2)
+#   I H + HMIS coarsening, extended interpolation, strong threshold 0.5   J I + strong threshold 0.25, 2 sweeps
+#                            sbatch --ntasks=128 --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,SET=RHIJ jobs/amg_tests.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
@@ -39,12 +43,31 @@ echo "Elmer: $ELMER_MODULE -> $(command -v ElmerSolver); ldd: $(ldd $(command -v
 export ESS_NPROCS=32 ESS_MPIRUN="mpirun -np {n} --bind-to none"
 common="run $CONFIG --state $START --stokes-only --chunks 1 --steps 2 --no-remask --bed cold --linear-stokes block"
 SET=${SET:-ABC}
-if [ "$SET" = G ]; then
-    V=$WORK/amgtest_files; mkdir -p $V
+mkG() {   # G: block 11 as in Elmer's mgdyn_airgap2 (Hypre BiCGStab with BoomerAMG as preconditioner)
     grep -v "block 11: Linear System Iterative Method\|block 11: HYPRE Block Diagonal\|block 11: Linear System Preconditioning" \
-        elmer/stokes_block_amg.sif.in > $V/G.sif.in
+        elmer/stokes_block_amg.sif.in > $1
     printf '%s\n' "  block 11: Linear System Solver = Iterative" "  block 11: Linear System Iterative Method = BiCGStab" \
-        "  block 11: Linear System Preconditioning = BoomerAMG" >> $V/G.sif.in
+        "  block 11: Linear System Preconditioning = BoomerAMG" >> $1
+}
+if [ "$SET" = RHIJ ]; then
+    V=$WORK/amgtest_files; mkdir -p $V
+    mkG $V/G.sif.in
+    grep -v "block 11: Linear System Max Iterations\|block 11: Linear System Convergence Tolerance" $V/G.sif.in > $V/H.sif.in
+    printf '%s\n' "  block 11: Linear System Max Iterations = 30" "  block 11: Linear System Convergence Tolerance = 1.0e-2" >> $V/H.sif.in
+    cp $V/H.sif.in $V/I.sif.in
+    printf '%s\n' "  block 11: BoomerAMG Coarsen Type = Integer 10" "  block 11: BoomerAMG Interpolation Type = Integer 6" \
+        "  block 11: BoomerAMG Strong Threshold = Real 0.5" >> $V/I.sif.in
+    grep -v "block 11: BoomerAMG Strong Threshold" $V/I.sif.in > $V/J.sif.in
+    printf '%s\n' "  block 11: BoomerAMG Strong Threshold = Real 0.25" "  block 11: BoomerAMG Num Sweeps = Integer 2" >> $V/J.sif.in
+    python3 -u -m ess ${common% --linear-stokes block} --linear-stokes iterative --out $WORK/amgtest_R.npz --gl frozen \
+        > ${L}_R.log 2>&1 &
+    for t in H I J; do
+        python3 -u -m ess $common --out $WORK/amgtest_$t.npz --gl frozen --stokes-block-file $PWD/$V/$t.sif.in \
+            > ${L}_$t.log 2>&1 &
+    done
+elif [ "$SET" = G ]; then
+    V=$WORK/amgtest_files; mkdir -p $V
+    mkG $V/G.sif.in
     python3 -u -m ess $common --out $WORK/amgtest_G.npz --gl frozen --stokes-block-file $PWD/$V/G.sif.in \
         > ${L}_G.log 2>&1 &
 elif [ "$SET" = DEF ]; then
@@ -70,9 +93,12 @@ for t in $(echo $SET | fold -w1); do
     case $t in A) what="block + BoomerAMG, frozen GL, rotated bed";; B) what="block + BoomerAMG, frozen GL, x/y/z bed";;
                C) what="plain Hypre BoomerAMG, contact";; D) what="block + BoomerAMG without HYPRE Block Diagonal";;
                E) what="block + BoomerAMG without BoomerAMG Num Functions";; F) what="block + BoomerAMG without both";;
-               G) what="block, block 11 = Hypre BiCGStab + BoomerAMG preconditioner (as Elmer's mgdyn_airgap2)";; esac
+               G) what="block, block 11 = Hypre BiCGStab + BoomerAMG preconditioner (as Elmer's mgdyn_airgap2)";;
+               R) what="GCR + ILU8, the reference";; H) what="G, inner solve capped at 30 iterations / 1e-2";;
+               I) what="H + HMIS coarsening, extended interpolation, strong threshold 0.5";;
+               J) what="I + strong threshold 0.25, 2 sweeps";; esac
     if grep -q "^.*wrote $WORK/amgtest_$t.npz" ${L}_$t.log; then
-        echo "$t ($what): RAN"
+        echo "$t ($what): RAN   $(grep -o "Elmer [0-9]* s for .*" ${L}_$t.log | tail -1)"
     else
         log=$(grep -o "see [^ ]*elmer.log" ${L}_$t.log | tail -1 | cut -c5-)
         echo "$t ($what): FAILED   $log"
