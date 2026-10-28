@@ -31,6 +31,14 @@
 # ~2e-4: the outer GCR hits 200 iterations). R GCR + ILU8 (reference)   K I + Create Schur Matrix Approximation
 # (SIMPLE: -B diag(A)^-1 B^T)   L I + pressure mass matrix x -1/viscosity   M I + pressure mass matrix x +1/viscosity
 #                            sbatch --ntasks=128 --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,SET=RKLM jobs/amg_tests.cmd
+# SET=NOPQ (sbatch --ntasks=128): solvers that couple the partitions (ILU8 degrades with many partitions)
+#   N  I with the bubbles element (no stabilisation term in the pressure block; the -1/viscosity pressure
+#      preconditioner Stokes-Vec builds is then the textbook one)
+#   O  I with the velocity block solved tightly (1e-6, up to 300 iterations): is the outer stall from the inexact
+#      inner solve?
+#   P  Hypre FlexGMRES + Hypre ILU type 30 (restricted additive Schwarz ILU(0), overlapping partitions), whole system
+#   Q  Hypre FlexGMRES + Hypre ILU type 10 (GMRES-ILU(0): partition coupling through a Schur complement)
+#                            sbatch --ntasks=128 --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,SET=NOPQ jobs/amg_tests.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
@@ -60,7 +68,29 @@ mkI() {   # I: G, inner solve capped, HMIS coarsening, extended interpolation, s
         "  block 11: BoomerAMG Coarsen Type = Integer 10" "  block 11: BoomerAMG Interpolation Type = Integer 6" \
         "  block 11: BoomerAMG Strong Threshold = Real 0.5" >> $1
 }
-if [ "$SET" = RKLM ]; then
+mkHILU() {   # Hypre FlexGMRES + Hypre ILU of type $2 on the whole Stokes system
+    printf '%s\n' "  Linear System Solver = Iterative" "  Linear System Use Hypre = Logical True" \
+        "  Linear System Iterative Method = FlexGMRES" "  Linear System Preconditioning = ILU$2" \
+        "  Hypre GMRES Dimension = Integer 200" "  Linear System Max Iterations = 2000" \
+        "  Linear System Convergence Tolerance = 1.0e-8" "  Linear System Abort Not Converged = Logical False" \
+        "  Linear System Residual Output = 50" > $1
+}
+if [ "$SET" = NOPQ ]; then
+    V=$WORK/amgtest_files; mkdir -p $V
+    mkI $V/N.sif.in; echo "! ESS amgtest N" >> $V/N.sif.in
+    mkI $V/O.sif.in.tmp
+    grep -v "block 11: Linear System Max Iterations\|block 11: Linear System Convergence Tolerance" $V/O.sif.in.tmp > $V/O.sif.in
+    printf '%s\n' "  block 11: Linear System Max Iterations = 300" "  block 11: Linear System Convergence Tolerance = 1.0e-6" \
+        "! ESS amgtest O" >> $V/O.sif.in
+    mkHILU $V/P.sif.in 30; echo "! ESS amgtest P" >> $V/P.sif.in
+    mkHILU $V/Q.sif.in 10; echo "! ESS amgtest Q" >> $V/Q.sif.in
+    python3 -u -m ess $common --out $WORK/amgtest_N.npz --gl frozen --stokes-element Bubbles \
+        --stokes-block-file $PWD/$V/N.sif.in > ${L}_N.log 2>&1 &
+    for t in O P Q; do
+        python3 -u -m ess $common --out $WORK/amgtest_$t.npz --gl frozen --stokes-block-file $PWD/$V/$t.sif.in \
+            > ${L}_$t.log 2>&1 &
+    done
+elif [ "$SET" = RKLM ]; then
     V=$WORK/amgtest_files; mkdir -p $V
     IV=$(python3 -c "from ess.case import eval_lua_parameters as e; print(repr(1 / e('case/parameters.lua')['viscosity']))" 2>/dev/null | tail -1)
     for t in K L M; do mkI $V/$t.sif.in; echo "! ESS amgtest $t" >> $V/$t.sif.in; done
@@ -122,11 +152,15 @@ for t in $(echo $SET | fold -w1); do
                I) what="H + HMIS coarsening, extended interpolation, strong threshold 0.5";;
                J) what="I + strong threshold 0.25, 2 sweeps";;
                K) what="I + Schur approximation -B diag(A)^-1 B^T for the pressure";;
-               L) what="I + pressure mass matrix x -1/viscosity";; M) what="I + pressure mass matrix x +1/viscosity";; esac
+               L) what="I + pressure mass matrix x -1/viscosity";; M) what="I + pressure mass matrix x +1/viscosity";;
+               N) what="I with the bubbles element";; O) what="I with the velocity block solved to 1e-6";;
+               P) what="Hypre FlexGMRES + RAS-ILU(0) (overlapping partitions)";;
+               Q) what="Hypre FlexGMRES + GMRES-ILU(0) (Schur coupling of partitions)";; esac
     if grep -q "^.*wrote $WORK/amgtest_$t.npz" ${L}_$t.log; then
         echo "$t ($what): RAN   $(grep -o "Elmer [0-9]* s for .*" ${L}_$t.log | tail -1)"
         f=$(grep -l "ESS amgtest $t\$" $WORK/runs/*/run.sif 2>/dev/null | tail -1)
-        [ -n "$f" ] && echo "      last outer GCR line of each Stokes solve:" && \
+        [ -n "$f" ] && echo "      Hypre 'did not converge' messages: $(grep -c "did not converge" $(dirname $f)/elmer.log)"
+        [ -n "$f" ] && grep -q "gcr:" $(dirname $f)/elmer.log && echo "      last outer GCR line of each Stokes solve:" && \
             grep "gcr:" $(dirname $f)/elmer.log | awk '$2 < prev {print last} {prev=$2; last=$0} END {print last}' | sed 's/^/      /'
     else
         log=$(grep -o "see [^ ]*elmer.log" ${L}_$t.log | tail -1 | cut -c5-)
