@@ -564,14 +564,14 @@ End
         n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M))
         a, b = n + 1, n + 2
         lib = self.periodic_lib
-        fpl = lambda num, ex: (f'Solver {num}\n  Exec Solver = "{ex}"\n  Equation = "Periodic Flow Solution Loads"\n'
+        fpl = lambda num, ex, eq: (f'Solver {num}\n  Exec Solver = "{ex}"\n  Equation = "{eq}"\n'
                                f'  Procedure = "{lib}" "FixPeriodicLoads"\n  Source Variable = String "Flow Solution Loads"\n'
                                f'  Target Variable = String "Periodic Flow Solution Loads"\n'
                                f'  Periodic Mode = String "folded"\nEnd\n')
         k = text.index("!---------------- BOUNDARY CONDITIONS")
         k = text.rindex("\n", 0, k - 1)
         text = (text[:k] + "\n! periodic copy of the Stokes loads (friction heating): created before all, then run by "
-                "the heat solver first (Pre Solvers)\n" + fpl(a, "Before All") + "\n" + fpl(b, "Never") + text[k:])
+                "the heat solver first (Pre Solvers)\n" + fpl(a, "Before All", "Periodic Flow Solution Loads Init") + "\n" + fpl(b, "Never", "Periodic Flow Solution Loads") + text[k:])
         text = self._add_active(text, "ice equations", [a, b])
         return self._insert_in(text, 'Equation = String "Homologous Temperature Equation"', f"  Pre Solvers(1) = {b}")
 
@@ -623,8 +623,8 @@ Solver {stress}
 {it}End
 """]
         if fix:
-            fpl = lambda num, ex, src, tgt, mode: (
-                f'Solver {num}\n  Exec Solver = "{ex}"\n  Equation = "Periodic {src}"\n'
+            fpl = lambda num, ex, src, tgt, mode, sfx="": (
+                f'Solver {num}\n  Exec Solver = "{ex}"\n  Equation = "Periodic {src}{sfx}"\n'
                 f'  Procedure = "{lib}" "FixPeriodicLoads"\n  Source Variable = String "{src}"\n'
                 f'  Target Variable = String "{tgt}"\n  Periodic Mode = String "{mode}"\nEnd\n')
             blocks.append("\n! periodic copies of the loads (FixPeriodicLoads): the melt (after the heat solve, before the "
@@ -632,7 +632,7 @@ Solver {stress}
                           + "\n" + fpl(fixW, "After Timestep", "Strain Heating Boundary Weights",
                                         "Periodic Strain Heating Boundary Weights", "split")
                           + "\n! the friction heating: created before all, then run by the heat solver first (Pre Solvers)\n"
-                          + fpl(fixU0, "Before All", "Flow Solution Loads", "Periodic Flow Solution Loads", "folded")
+                          + fpl(fixU0, "Before All", "Flow Solution Loads", "Periodic Flow Solution Loads", "folded", " Init")
                           + "\n" + fpl(fixU, "Never", "Flow Solution Loads", "Periodic Flow Solution Loads", "folded"))
         blocks.append(f"""
 Solver {sheet}
