@@ -70,6 +70,9 @@ class ElmerModel(Model):
         # contact.f90, here elmer/ContactPeriodic.F90 with Periodic Contact = False: the test after the first
         # iteration; needs PeriodicGL.so). Either tests from the second Stokes iteration of a step only.
         self.contact_function = str(e.get("contact_function", "elmerice"))
+        # [elmer] sea_level_param = true: sea level is the Lua parameter ess_sl (m, default 0; e.g. --lua ess_sl=50)
+        # in the constants (hydrostatic loads of the contact) and every material (sea pressure), not a fixed 0
+        self.sea_level_param = bool(e.get("sea_level_param", False))
         self.mesh_db = e.get("mesh_db", "footprint")
         self.ess_lib = cfg["_path"](e.get("ess_lib", "elmer/SteadyStateIO"))
         self.ess_utils = cfg["_path"](e.get("ess_utils", "elmer/ess_utils.lua"))
@@ -244,6 +247,8 @@ class ElmerModel(Model):
             else:
                 extra[k] = v
         txt = override_lua_assignment(txt, self.param_name, p)
+        if getattr(self, "sea_level_param", False) and "ess_sl" not in self.lua_overrides:
+            extra["ess_sl"] = "0.0"                     # sea level (m) of sea_level_param, unless overridden
         if extra:
             txt += "\n-- [lua] overrides from the ess config\n" + "".join(f"{k} = {v}\n" for k, v in extra.items())
         return txt
@@ -462,6 +467,8 @@ End
             text = self._fs_iterative(text)
         if self.surface_bc == "dirichlet":
             text = self._surface_dirichlet(text)
+        if self.marine and self.sea_level_param:
+            text = self._sea_level_param(text)
         if self.marine and self.gl_mode == "contact" and self.contact_stokes_iters > 1:
             text = self._stokes_iterations(text, self.contact_stokes_iters)
         if self.slide_ybump:
@@ -547,6 +554,17 @@ End
         old = m.group(2).split()
         new = old + [str(i) for i in ids]
         return text[:m.start()] + f"Active Solvers({len(new)}) = {' '.join(new)}" + text[m.end():]
+
+    def _sea_level_param(self, text):
+        """sea level = the Lua parameter ess_sl in the constants and in every material (see sea_level_param)"""
+        a = "  Sea Level = Real 0.0"
+        if text.count(a) != 2:
+            raise ValueError("sea_level_param: the sea level lines of the template changed")
+        text = text.replace(a, "  Sea Level = Real #ess_sl")
+        for m in ("Material 1", "Material 2"):              # the parent material of a bed element may be either
+            k = text.index("\n" + m + "\n") + len(m) + 2
+            text = text[:k] + "  Sea Level = Real #ess_sl\n" + text[k:]
+        return text
 
     def _stokes_iterations(self, text, n):
         """the Stokes solver: exactly n nonlinear iterations (contact grounding line, see contact_stokes_iters)"""
