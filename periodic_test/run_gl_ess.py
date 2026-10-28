@@ -481,6 +481,55 @@ def cmd_compare(a):
                   f"{np.max(np.abs(D[:, 1:])):8.3f} {np.mean(D):8.3f} {len(xs):5d}")
 
 
+def _state_fields(path):
+    from ess.statefile import load_state
+    s = load_state(path)
+    allf = dict(s.diag)
+    allf.update(s.frozen)
+    blocks = s.layout.split(s.x)
+    for b in s.layout.blocks:
+        allf[b.name] = (b.gids, blocks[b.name])
+    return allf
+
+
+def cmd_glpos(a):
+    """the grounding line of a state (km, the y = 0 row), for scripts"""
+    allf = _state_fields(a.state)
+    g, X = _field(allf, "coordinate 1")
+    Xd = dict(zip(g.tolist(), X.tolist()))
+    gm = _field(allf, "GroundedMask")
+    Yd = dict(zip(*_field(allf, "coordinate 2")))
+    row = np.array([abs(Yd[i]) < 1.0 for i in gm[0].tolist()])
+    xg = np.array([Xd[i] for i in gm[0].tolist()])
+    print(f"{gl_upstream(xg[row], gm[1][row]) / 1e3:.3f}")
+
+
+def cmd_cutcheck(a):
+    """a shelf-cut run (ess run --shelf-cut) against the same run on the whole shelf: velocity differences upstream
+    of the cut (the accuracy of the cut) and beyond it (large: the cut worked, the shelf there was passive)"""
+    def vel(path):
+        allf = _state_fields(path)
+        g, X = _field(allf, "coordinate 1")
+        Xd = dict(zip(g.tolist(), X.tolist()))
+        u = _field(allf, "Velocity 1")
+        if u is None:
+            raise SystemExit(f"{path}: no Velocity 1 in the diagnostics")
+        return {i: (Xd[i], v) for i, v in zip(u[0].tolist(), u[1].tolist()) if i in Xd}
+    r, c = vel(a.ref), vel(a.cut)
+    cut = a.cut_km * 1e3
+    common = [i for i in r if i in c]
+    x = np.array([r[i][0] for i in common])
+    ur = np.array([r[i][1] for i in common])
+    uc = np.array([c[i][1] for i in common])
+    up = x < cut - 1.0
+    gl = (x > a.gl_km * 1e3 - 5e3) & (x < a.gl_km * 1e3 + 5e3)
+    far = x > cut + 5e3
+    rel = lambda m: np.max(np.abs(uc[m] - ur[m])) / max(np.max(np.abs(ur[m])), 1e-30) if m.any() else np.nan
+    print(f"      velocity vs the whole shelf: max |du|/max|u| upstream of the cut {rel(up):.2e}, "
+          f"within 5 km of the grounding line {rel(gl):.2e}; beyond the cut {rel(far):.2e} "
+          f"(~0 there: the cut did NOT take effect)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -527,6 +576,15 @@ def main():
     s.add_argument("tags", nargs="*", help="results folders, the first the reference (default: direct iterative block "
                                            "amg, those present)")
     s.set_defaults(fn=cmd_solvers)
+    s = sub.add_parser("glpos")
+    s.add_argument("state")
+    s.set_defaults(fn=cmd_glpos)
+    s = sub.add_parser("cutcheck")
+    s.add_argument("ref")
+    s.add_argument("cut")
+    s.add_argument("cut_km", type=float)
+    s.add_argument("gl_km", type=float)
+    s.set_defaults(fn=cmd_cutcheck)
     s = sub.add_parser("compare")
     s.add_argument("a", nargs="?", default="fix_loads")
     s.add_argument("b", nargs="?", default="fix_flux")

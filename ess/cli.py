@@ -291,6 +291,10 @@ def cmd_run(args):
     if args.stokes_element:
         model.stokes_element = args.stokes_element
         log.info(f"run: Stokes element {args.stokes_element}")
+    if args.shelf_cut is not None:
+        model.shelf_cut_x = args.shelf_cut * 1e3
+        log.info(f"run: Stokes only up to x = {args.shelf_cut:g} km (the shelf beyond is passive, free-floating stress "
+                 f"on the cut)")
     if args.linear_stokes:
         model.linear_stokes = args.linear_stokes
         log.info(f"run: Stokes linear solver {args.linear_stokes}"
@@ -1105,6 +1109,9 @@ def main(argv=None):
                                                    "default [elmer] stokes_preconditioner")
     s.add_argument("--stokes-element", choices=["P2/P1", "Stabilized", "Bubbles"],
                    help="Stokes element for this run (default [elmer] stokes_element, P2/P1)")
+    s.add_argument("--shelf-cut", type=float, metavar="KM",
+                   help="marine: solve Stokes only up to x = KM (downstream of the grounding line); the shelf beyond is "
+                        "passive and the cut carries a free-floating shelf's stress ([elmer] shelf_cut_km)")
     s.add_argument("--friction-heat", choices=["loads", "flux"],
                    help="frictional heating from the Stokes loads (nodal) or as a basal flux; default [elmer] friction_heat")
     s.add_argument("--chunk-offset", type=int, default=0,
