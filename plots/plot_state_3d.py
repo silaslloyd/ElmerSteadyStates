@@ -34,7 +34,7 @@ PHASES = ("spinup", "retreat", "advance")
 X_WINDOW = None          # (xmin, xmax) km; None: from 60 km behind the most inland grounding line to the front
 Z_EXAGGERATION = 1.0     # extra vertical stretch on top of the automatic aspect ratio
 ASPECT = dict(x=4.0, y=1.0, z=1.2)
-SHOW_BED = True
+SHOW_BED = False         # the bedrock surface under the ice (--bed to show)
 BASE_COLOUR = "speed"    # "speed" (basal speed, the same colour scale as the surface) or "mask" (red grounded, blue floating)
 SHOW_MESH = False        # the element edges on the base (--mesh to show)
 SIDES = True             # side walls (base to surface) at the window ends and the two outer sides
@@ -157,8 +157,11 @@ def gl_line(base, top=None):
 
 def main():
     import plotly.graph_objects as go
-    global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH
+    global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED
     args = sys.argv[1:]
+    if "--bed" in args:
+        SHOW_BED = True
+        args.remove("--bed")
     if "--mesh" in args:
         SHOW_MESH = True
         args.remove("--mesh")
