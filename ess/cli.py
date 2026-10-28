@@ -284,6 +284,9 @@ def cmd_run(args):
         model.linear_stokes = args.linear_stokes
         log.info(f"run: Stokes linear solver {args.linear_stokes}"
                  + (f" ({model.stokes_block_file})" if args.linear_stokes == "block" else ""))
+    if args.friction_heat:
+        model.friction_heat = args.friction_heat
+        log.info(f"run: friction heating {args.friction_heat}")
     if args.periodic_gl:
         model.periodic_gl = args.periodic_gl
         log.info(f"run: periodic grounding line treatment: {args.periodic_gl}")
@@ -330,7 +333,7 @@ def cmd_run(args):
             cap = float(cfg.get("lua", {}).get("ess_slide_maxfactor", 0) or 0)
             Tw = 273.15 - (dTs * np.log(cap) if cap > 0 else 0.0)
             warm = ok & (gm > -0.5) & (Tbed[np.clip(j, 0, len(Tbed) - 1)] > Tw)
-            if warm.any():
+            if warm.any() and model.sliding != "temperate":
                 log.warning(f"run: {int(warm.sum())} grounded bed nodes are warmer than {Tw:.2f} K, where the sliding "
                             f"factor still depends on temperature" + (" (--stokes-only keeps their temperature fixed)"
                                                                        if args.stokes_only else ""))
@@ -1089,6 +1092,8 @@ def main(argv=None):
                                                 "(default [elmer] stokes_block_file, elmer/stokes_block.sif.in)")
     s.add_argument("--stokes-element", choices=["P2/P1", "Stabilized", "Bubbles"],
                    help="Stokes element for this run (default [elmer] stokes_element, P2/P1)")
+    s.add_argument("--friction-heat", choices=["loads", "flux"],
+                   help="frictional heating from the Stokes loads (nodal) or as a basal flux; default [elmer] friction_heat")
     s.add_argument("--chunk-offset", type=int, default=0,
                    help="number the --save-every states from this + 1 (continuing an interrupted run)")
     s.add_argument("--periodic-gl", choices=["none", "elmerstreams", "fix"],

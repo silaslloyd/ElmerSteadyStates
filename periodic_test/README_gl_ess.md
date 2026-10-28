@@ -37,7 +37,7 @@ vertical Stokes load. With `fix` everything but the raw load should match exactl
 
 All these options are off by default; the template renders byte-identically without them (cached runs stay valid).
 
-## Thermomechanical version (current)
+## Thermomechanical version
 
 Heat on (the cold/temperate mask moved between chunks, the y = W copies following y = 0; the grounding line by
 contact only), iterative solvers throughout (Stokes as ElmerStreams: P1 + bubbles, GCR + ILU8, tolerance 1e-8, no
@@ -48,7 +48,29 @@ The Stokes-only runs never reached a steady state before the forcing, and MUMPS 
     NOPREP=1 bash periodic_test/run_gl_ess.sh                                            # 20 km (mesh exists)
     GL_CONFIG=configs/test_periodic_gl_50km.toml NTASKS=256 NOPREP=1 bash periodic_test/run_gl_ess.sh   # 50 km
 
-## ElmerStreams thermal chain (current)
+## Loads test: friction heating from the loads vs as a flux (current)
+
+Both test configs: `[elmer] thermal = "loads"`, `sliding = "temperate"`. No cold/temperate mask (all cold and frozen,
+`--bed cold`, the default of `run_gl_ess.py run`): the grounded bed temperature is free, no cap on T; the shelf base
+at T0. Sliding as at the melting point everywhere (C = fcoeff (1 + 0.8 sin(2 pi y / W)), grounded), so the
+dynamics are those of the temperate-bed scan: `--fbase 10` (the default now). Two runs, the same but for the
+friction heating (`--heat`, `ess run --friction-heat`):
+
+* `fix_loads`: frictionloads(loads, u) as nodal heat loads, from the periodic copy of the Stokes loads
+  (`FixPeriodicLoads`, folded; run by the heat solver first as its Pre Solver, so this step's loads);
+* `fix_flux`: C |u_b|^2 as a heat flux (per area, integrated by Elmer; no loads involved): the reference.
+
+The same physics, so their bed temperatures should differ smoothly; a difference on the seam row larger than on the
+middle row (y = W/2, where the bump is zero as on the seam) means the loads are wrong on the seam. Each run's table
+adds `Tb seam` / `Tb mid` (the bed temperature's second difference across y on the seam / middle row: a seam stripe)
+and `ploads z` (master/image mismatch of the periodic copy: 0). `MODES="elmerstreams fix"` adds the halved raw
+loads (`elmerstreams_loads`, y < 1 halved) for contrast. The periodic copy and a `Friction Loads` export from it are
+made in every run (periodic_gl = fix).
+
+    git pull && NOPREP=1 bash periodic_test/run_gl_ess.sh            # fix_loads and fix_flux (20 km)
+    sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd compare fix_loads fix_flux
+
+## ElmerStreams thermal chain (not used now)
 
 `[elmer] thermal = "elmerstreams"` (both test configs) puts ElmerStreams Marine_Term's thermal treatment into the
 ESS marine template (applied to the rendered input file; other configs unchanged):

@@ -194,6 +194,11 @@ class ElmerModel(Model):
         self.thermal_libs = {k: cfg["_path"](e.get(f"{k}_lib", f"elmer/{v}")) for k, v in
                              (("coldtemp", "ColdTempMask"), ("sheet", "SheetSolverhw"))}
         self.hydro_lua = cfg["_path"](e.get("hydro_lua", "elmer/ess_hydro.lua"))
+        # thermal = "loads": only the friction heating from the Stokes loads made periodic-aware (fix: from the
+        # periodic copy, run by the heat solver first; elmerstreams: halved at y < 1; none: raw), the frozen
+        # cold/temperate mask as it is (e.g. all cold: the grounded bed free, no temperature cap)
+        # [elmer] sliding: "subtemperate" (TDepSliding, the default) or "temperate" (fcoeff everywhere, as at T0)
+        self.sliding = str(e.get("sliding", "subtemperate"))
         self.periodic_lib = cfg["_path"](e.get("periodic_lib", "elmer/PeriodicGL"))
         self._check_inputs()
 
@@ -439,8 +444,14 @@ End
             text = self._slide_ybump(text)
         if self.thermal == "elmerstreams":
             text = self._thermal_elmerstreams(text)
+        elif self.thermal == "loads":
+            text = self._thermal_loads(text)
         elif self.thermal != "frozen":
-            raise ValueError(f"[elmer] thermal must be 'frozen' or 'elmerstreams', not {self.thermal!r}")
+            raise ValueError(f"[elmer] thermal must be 'frozen', 'loads' or 'elmerstreams', not {self.thermal!r}")
+        if self.sliding == "temperate":
+            text = self._sliding_temperate(text)
+        elif self.sliding != "subtemperate":
+            raise ValueError(f"[elmer] sliding must be 'subtemperate' or 'temperate', not {self.sliding!r}")
         left = sorted(set(PLACEHOLDER.findall(text)))
         if left:
             raise ValueError(f"unfilled placeholders in {self.template}: {', '.join(left)}")
@@ -512,6 +523,57 @@ End
         old = m.group(2).split()
         new = old + [str(i) for i in ids]
         return text[:m.start()] + f"Active Solvers({len(new)}) = {' '.join(new)}" + text[m.end():]
+
+    def _sliding_temperate(self, text):
+        """Weertman friction as at the melting point everywhere: TDepSliding(fcoeff, T, dT, x) -> fcoeff"""
+        a = "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2])"
+        if a not in text:
+            raise ValueError("sliding = temperate: the Weertman Friction Coefficient expression of the template changed")
+        text = text.replace(a, "fcoeff * ess_grounded(tx[2])")
+        # flux friction heating: the same coefficient (C = fcoeff, the y bump, grounded) times |u_b|^2
+        f = ('  Heat Flux = Variable Temperature, Velocity 1, Velocity 2, Velocity 3, Coordinate 1\n'
+             '    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * (tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
+        if f in text:
+            bump = (f" * (1 + {self.slide_ybump!r} * math.sin(2 * math.pi * tx[3] / {self.width!r}))"
+                    if self.slide_ybump else "")
+            text = text.replace(f, '  Heat Flux = Variable Velocity 1, Velocity 2, Velocity 3, Coordinate 2, GroundedMask\n'
+                                   f'    Real Lua "fcoeff * ess_grounded(tx[4]){bump} * (tx[0]*tx[0] + tx[1]*tx[1] + tx[2]*tx[2])"')
+        return text
+
+    def _thermal_loads(self, text):
+        """friction heating from the Stokes loads, periodic-aware (see [elmer] thermal = loads). With periodic sides
+        a periodic copy of the loads ("Periodic Flow Solution Loads", FixPeriodicLoads folded) is always made (run
+        by the heat solver first, so it holds this step's loads); periodic_gl = fix: the heat load and the Friction
+        Loads export use it; elmerstreams: the raw loads halved at y < 1; none: the raw loads."""
+        if self.stokes_only:
+            return text
+        if not self.marine or self.gl_mode != "contact":
+            raise ValueError("[elmer] thermal = 'loads': marine template with the contact grounding line only")
+        old = ('Variable Flow Solution Loads 1, Flow Solution Loads 2, '
+               'Flow Solution Loads 3, Velocity 1, Velocity 2, Velocity 3, Coordinate 2\n'
+               '    Real Lua "frictionloads(tx[0],tx[1],tx[2],tx[3],tx[4],tx[5], W, W)"')
+        n_old = 2 if self.friction_heat == "loads" else 1           # the heat load (loads only) and the export
+        if text.count(old) != n_old:
+            raise ValueError("thermal = loads: the loads friction-heating lines of the template changed")
+        if self.periodic_gl == "elmerstreams":
+            text = text.replace(old, old.replace("tx[5], W, W)", "tx[5], tx[6], W)"))
+        elif self.periodic_gl == "fix":
+            text = text.replace(old, old.replace("Flow Solution Loads ", "Periodic Flow Solution Loads "))
+        if not self.periodic_sides:
+            return text
+        n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M))
+        a, b = n + 1, n + 2
+        lib = self.periodic_lib
+        fpl = lambda num, ex: (f'Solver {num}\n  Exec Solver = "{ex}"\n  Equation = "Periodic Flow Solution Loads"\n'
+                               f'  Procedure = "{lib}" "FixPeriodicLoads"\n  Source Variable = String "Flow Solution Loads"\n'
+                               f'  Target Variable = String "Periodic Flow Solution Loads"\n'
+                               f'  Periodic Mode = String "folded"\nEnd\n')
+        k = text.index("!---------------- BOUNDARY CONDITIONS")
+        k = text.rindex("\n", 0, k - 1)
+        text = (text[:k] + "\n! periodic copy of the Stokes loads (friction heating): created before all, then run by "
+                "the heat solver first (Pre Solvers)\n" + fpl(a, "Before All") + "\n" + fpl(b, "Never") + text[k:])
+        text = self._add_active(text, "ice equations", [a, b])
+        return self._insert_in(text, 'Equation = String "Homologous Temperature Equation"', f"  Pre Solvers(1) = {b}")
 
     def _thermal_elmerstreams(self, text):
         """ElmerStreams Marine_Term's thermal chain (see [elmer] thermal)"""

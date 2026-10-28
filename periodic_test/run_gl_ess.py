@@ -72,7 +72,7 @@ def cmd_prep(a):
 def cmd_run(a):
     fc, ad = base_params()
     state = os.path.join(WORK, "start.npz")
-    tag = a.tag or (a.mode if a.fbase == 1.0 else f"{a.mode}_f{a.fbase:g}")
+    tag = a.tag or f"{a.mode}_{a.heat}" + ("" if a.fbase == 10.0 else f"_f{a.fbase:g}")
     resume = None
     if a.resume:                                    # PHASE: from that phase's last saved chunk (or the phase before)
         names = [p[0] for p in PHASES]
@@ -88,7 +88,8 @@ def cmd_run(a):
             state = os.path.join(WORK, tag, f"{names[k - 1]}.npz")
         print(f"resume {a.resume}: from {state}" + (f" (after chunk {resume[1]})" if resume else ""), flush=True)
     os.makedirs(os.path.join(WORK, tag), exist_ok=True)
-    print(f"run {a.mode}: fcoeff x {a.fbase:g} (x the phase factors), results in {os.path.join(WORK, tag)}", flush=True)
+    print(f"run {a.mode}, friction heating {a.heat}: fcoeff x {a.fbase:g} (x the phase factors), bed {a.bed}, "
+          f"results in {os.path.join(WORK, tag)}", flush=True)
     phases = PHASES[:1] if a.spinup_only else PHASES
     if a.resume:
         phases = phases[[p[0] for p in phases].index(a.resume):]
@@ -112,8 +113,8 @@ def cmd_run(a):
             args += ["--until-tol", repr(tol)]
         # Elmer moves the grounding line (contact) and, with [elmer] thermal = "elmerstreams", the cold/temperate
         # mask and the water sheet every step: no ESS remask between chunks
-        args += ["--no-remask"] + (["--stokes-only"] if a.stokes_only else [])
-        if a.bed:
+        args += ["--no-remask", "--friction-heat", a.heat] + (["--stokes-only"] if a.stokes_only else [])
+        if a.bed != "none":
             args += ["--bed", a.bed]
         ess(*args)
         state = out
@@ -179,10 +180,10 @@ def analyse_state(path, width):
     umax = max(float(np.max(np.abs(r[1]))) for r in u if r is not None) if any(r is not None for r in u) else 1.0
     gm = _field(allf, "GroundedMask")
     lz = _field(allf, "Flow Solution Loads 3")
-    hw = _field(allf, "Water Sheet Thickness")
+    plz = _field(allf, "Periodic Flow Solution Loads 3")
     out = dict(mask=mism("GroundedMask"), Zs=mism("Zs"), Zb=mism("Zb"),
                ctmask=mism("ColdTempMask"),
-               hw=mism("Water Sheet Thickness", scale=float(np.max(np.abs(hw[1]))) if hw is not None else 1.0),
+               hw=mism("Periodic Flow Solution Loads 3", scale=float(np.max(np.abs(plz[1]))) if plz is not None else 1.0),
                T=mism("Temperature"),
                du=mism("Velocity", (1, 2, 3), umax),
                loads_z=mism("Flow Solution Loads 3", scale=float(np.max(np.abs(lz[1]))) if lz is not None else 1.0),
@@ -196,7 +197,41 @@ def analyse_state(path, width):
             m = (np.abs(ym - yj) < 1) & (gm[1] > -0.5)
             gl.append(float(xm[m].max()) / 1e3 if m.any() else np.nan)
     out["GL"] = gl
+    out["Tseam"], out["Tint"] = seam_stripe(bed_rows(allf, gids, X, Y, width))
     return out
+
+
+def bed_rows(allf, gids, X, Y, width):
+    """bed temperature on the grounded bed: {x: [T per row, y = 0 .. the last row before W]} (y = W is y = 0)"""
+    gm, T = _field(allf, "GroundedMask"), _field(allf, "Temperature")
+    if gm is None or T is None:
+        return {}, []
+    Td = dict(zip(*T))
+    Xd = dict(zip(gids.tolist(), X.tolist()))
+    ys = sorted({round(Y[g], 0) for g in gm[0].tolist() if Y[g] < width - 1})
+    rows = {}
+    for g, m in zip(gm[0].tolist(), gm[1].tolist()):
+        if Y[g] > width - 1 or g not in Td:
+            continue
+        rows.setdefault(round(Xd[g], 1), {})[round(Y[g], 0)] = (Td[g], m)
+    out = {}
+    for x, d in rows.items():
+        if len(d) == len(ys) and all(m > -0.5 for _, m in d.values()):
+            out[x] = [d[y][0] for y in ys]
+    return out, ys
+
+
+def seam_stripe(br):
+    """largest |T_j - (T_j-1 + T_j+1) / 2| over the grounded bed on the seam row (j = 0, wrapping) and on the middle
+    row (y = W/2: like the seam, where the sliding bump sin(2 pi y / W) is zero; the other rows if no middle row)"""
+    rows, ys = br
+    if not rows or len(ys) < 3:
+        return np.nan, np.nan
+    A = np.array(list(rows.values()))                    # (x, row)
+    d2 = A - 0.5 * (np.roll(A, 1, axis=1) + np.roll(A, -1, axis=1))
+    n = len(ys)
+    ref = d2[:, n // 2] if n % 2 == 0 else d2[:, 1:]
+    return float(np.max(np.abs(d2[:, 0]))), float(np.max(np.abs(ref)))
 
 
 def cmd_analyse(a):
@@ -215,7 +250,7 @@ def cmd_analyse(a):
         print(f"\n{mode}: grounding line (last grounded x, km) per row across y (y = 0 and y = W are the same row),"
               f" and the largest master (y = 0) / image (y = W) mismatch after each chunk")
         print(f"{'phase':8s} {'chunk':>5s} {'GL rows y = 0 .. W (km)':>44s} {'mask':>5s} {'ct':>3s} {'Zs (m)':>9s} "
-              f"{'Zb (m)':>9s} {'|du|/u':>9s} {'T (K)':>9s} {'hw/max':>9s} {'loads z':>9s}")
+              f"{'Zb (m)':>9s} {'|du|/u':>9s} {'T (K)':>9s} {'ploads z':>9s} {'loads z':>9s} {'Tb seam':>9s} {'Tb mid':>9s}")
         rows = []
         for name, f in files:
             r = analyse_state(f, width)
@@ -227,11 +262,13 @@ def cmd_analyse(a):
                    f"min {np.nanmin(g_):7.2f} mean {np.nanmean(g_):7.2f} max {np.nanmax(g_):7.2f}")
             ct = f"{r['ctmask']:3.0f}" if np.isfinite(r["ctmask"]) else "  -"
             print(f"{name:8s} {r['chunk']:5d} {gls:>44s} {r['mask']:5.0f} {ct} {fmt(r['Zs'])} {fmt(r['Zb'])} "
-                  f"{fmt(r['du'])} {fmt(r['T'])} {fmt(r['hw'])} {fmt(r['loads_z'])}")
+                  f"{fmt(r['du'])} {fmt(r['T'])} {fmt(r['hw'])} {fmt(r['loads_z'])} {fmt(r['Tseam'])} {fmt(r['Tint'])}")
         with open(os.path.join(WORK, mode, "periodicity.csv"), "w", newline="") as fh:
             w = csv.writer(fh)
             n = max(len(r["GL"]) for r in rows)
-            keys = ("phase", "chunk", "mask", "ctmask", "Zs", "Zb", "du", "T", "hw", "loads_z")
+            keys = ("phase", "chunk", "mask", "ctmask", "Zs", "Zb", "du", "T", "ploads_z", "loads_z", "Tseam", "Tint")
+            for r in rows:
+                r["ploads_z"] = r["hw"]
             w.writerow(list(keys) + [f"GL_row{j}" for j in range(n)])
             for r in rows:
                 w.writerow([r[k] for k in keys]
@@ -239,12 +276,51 @@ def cmd_analyse(a):
         gl0 = np.array([r["GL"][0] if r["GL"] else np.nan for r in rows])
         with np.errstate(all="ignore"), __import__("warnings").catch_warnings():
             __import__("warnings").simplefilter("ignore")
-            worst = {k: np.nanmax([r[k] for r in rows]) for k in ("mask", "ctmask", "Zs", "Zb", "du", "T", "hw")}
+            worst = {k: np.nanmax([r[k] for r in rows]) for k in ("mask", "ctmask", "Zs", "Zb", "du", "T", "ploads_z",
+                                                                  "Tseam", "Tint")}
         if np.isfinite(gl0).any():
             print(f"  grounding line at y = 0: {np.nanmin(gl0):.2f} .. {np.nanmax(gl0):.2f} km")
         print("  worst master/image mismatch: " + ", ".join(f"{k} {v:.2g}" for k, v in worst.items())
               + "   (mask / ct: grounded / cold-temperate mask, 0, 1 or 2; |du|/u: velocity / max speed; hw: water sheet"
-              " / max; loads z: raw Stokes loads, not periodic)")
+              " / max; ploads z / loads z: the periodic copy / the raw Stokes loads (not periodic), / max)\n"
+              "  Tb seam / Tb mid: largest |T_j - (T_j-1 + T_j+1)/2| of the grounded bed temperature across y (K) on the "
+              "seam row / on the middle row y = W/2 (where the sliding bump is zero too): a seam stripe (wrong seam heating) shows "
+              "as Tb seam >> Tb mid")
+
+
+def cmd_compare(a):
+    """bed temperature of run A minus run B (same mesh), per phase end and saved chunk: on the seam row and on the
+    other rows. Loads vs flux heating: the same physics, so A - B is the discretisation difference, smooth across y;
+    wrong loads on the seam show as a seam-row difference larger than on the other rows."""
+    from ess.config import load_config
+    from ess.statefile import load_state
+    width = float(load_config(os.path.join(REPO, CONFIG))["case"]["width"])
+
+    def bed(path):
+        s = load_state(path)
+        allf = dict(s.diag)
+        allf.update(s.frozen)
+        blocks = s.layout.split(s.x)
+        for b in s.layout.blocks:
+            allf[b.name] = (b.gids, blocks[b.name])
+        gx, gy = _field(allf, "coordinate 1"), _field(allf, "coordinate 2")
+        return bed_rows(allf, gx[0], gx[1], dict(zip(*gy)), width)
+    print(f"bed temperature {a.a} - {a.b} (K) on the grounded bed (where grounded in both), largest |difference| on "
+          f"the seam row (y = 0 = W), the middle row (y = W/2) and all other rows, and the mean")
+    print(f"{'phase':8s} {'chunk':>5s} {'seam':>8s} {'mid':>8s} {'others':>8s} {'mean':>8s} {'nx':>5s}")
+    for name, *_ in PHASES:
+        for fa in sorted(glob.glob(os.path.join(WORK, a.a, f"{name}_chunks", "points", "state_*.npz"))):
+            fb = os.path.join(WORK, a.b, os.path.relpath(fa, os.path.join(WORK, a.a)))
+            if not os.path.exists(fb):
+                continue
+            (ra, ya), (rb, yb) = bed(fa), bed(fb)
+            xs = sorted(ra.keys() & rb.keys())
+            if not xs or ya != yb:
+                continue
+            D = np.array([ra[x] for x in xs]) - np.array([rb[x] for x in xs])
+            mid = np.max(np.abs(D[:, len(ya) // 2])) if len(ya) % 2 == 0 else np.nan
+            print(f"{name:8s} {int(os.path.basename(fa)[6:10]):5d} {np.max(np.abs(D[:, 0])):8.3f} {mid:8.3f} "
+                  f"{np.max(np.abs(D[:, 1:])):8.3f} {np.mean(D):8.3f} {len(xs):5d}")
 
 
 def main():
@@ -257,20 +333,29 @@ def main():
     s.add_argument("mode", choices=MODES)
     s.add_argument("--chunks", type=int, help="chunks per phase (default per phase: "
                                               + ", ".join(f"{p[0]} {p[1]}" for p in PHASES) + ")")
-    s.add_argument("--fbase", type=float, default=1.0, help="sliding coefficient fcoeff times this in every phase")
+    s.add_argument("--heat", choices=["loads", "flux"], default="loads",
+                   help="frictional heating: from the Stokes loads (nodal, the periodic copy with fix) or as a flux")
+    s.add_argument("--fbase", type=float, default=10.0, help="sliding coefficient fcoeff times this in every phase "
+                                                             "(default 10: keeps the grounding line inside)")
     s.add_argument("--stokes-only", action="store_true", help="no heat solve (temperature frozen, no remask)")
-    s.add_argument("--bed", choices=["temperate", "cold"], help="the whole bed temperate or cold (ess run --bed)")
+    s.add_argument("--bed", choices=["temperate", "cold", "none"], default="cold",
+                   help="the cold/temperate mask over the whole bed (ess run --bed; default cold: the grounded bed "
+                        "temperature free, no cap); none: the mask of the start state")
     s.add_argument("--spinup-tol", type=float, help=f"spin-up until the rms change per chunk is below this "
                                                     f"(default {PHASES[0][5]:g}; 0: all chunks)")
     s.add_argument("--spinup-max", type=int, help=f"at most this many spin-up chunks (default {PHASES[0][1]})")
     s.add_argument("--spinup-only", action="store_true", help="only the spin-up phase (to choose --fbase)")
-    s.add_argument("--tag", help="results folder under the work dir (default MODE, or MODE_f<FBASE>)")
+    s.add_argument("--tag", help="results folder under the work dir (default MODE_HEAT, or MODE_HEAT_f<FBASE>)")
     s.add_argument("--resume", metavar="PHASE", help="continue from PHASE's last saved chunk (then the later phases)")
     s.add_argument("--resume-at", type=int, metavar="N", help="with --resume: from chunk N of that phase, not the last")
     s.set_defaults(fn=cmd_run)
     s = sub.add_parser("analyse")
     s.add_argument("modes", nargs="*", help="results folders (treatments, e.g. fix, fix_f30; default all)")
     s.set_defaults(fn=cmd_analyse)
+    s = sub.add_parser("compare")
+    s.add_argument("a", nargs="?", default="fix_loads")
+    s.add_argument("b", nargs="?", default="fix_flux")
+    s.set_defaults(fn=cmd_compare)
     a = ap.parse_args()
     a.fn(a)
 

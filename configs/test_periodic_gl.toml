@@ -42,9 +42,11 @@ keep_runs = true                        # keep every run directory (sif, log, st
 cache = false                           # every run fresh
 periodic_gl = "fix"                     # none | elmerstreams | fix (ess run --periodic-gl)
 gl_mode = "contact"                     # the grounding line moves every step (ess run --gl contact)
-# ElmerStreams Marine_Term thermal chain: ColdTempMaskSolver every step, SheetSolverhw water sheet fed by the melt
-# from the heat loads, loads friction heating, strain heating (make -C elmer thermal)
-thermal = "elmerstreams"
+# heat on, the loads test: friction heating from the Stokes loads (periodic-aware, [elmer] thermal = loads) or as a
+# flux (ess run --friction-heat flux); the cold/temperate mask all cold and frozen (run_gl_ess passes --bed cold): the
+# grounded bed free (no cap on T), T0 under the shelf; sliding as at the melting point everywhere
+thermal = "loads"
+sliding = "temperate"
 strain_heat = true
 # MUMPS segfaulted in the heat solve on the partitioned periodic mesh (Elmer bcc2c52); ElmerStreams solves heat
 # (and Stokes) iteratively. Stokes stays direct until shown otherwise (ess run --linear-stokes iterative).
@@ -61,13 +63,12 @@ vtu = false                             # true: every run also writes a VTU at i
 friction_heat = "loads"                 # nodal friction heating from the Stokes loads (ElmerStreams)
 # written with every run besides the state, used for the mask checks and plots
 diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "ColdTempMask", "GroundedMask", "Flow Solution Loads 3",
-               "Temperature Loads", "Water Sheet Thickness", "Melt rate", "Effective Pressure Output",
-               "Periodic Flow Solution Loads 3", "Periodic Temperature Loads"]
+               "Temperature Loads", "Periodic Flow Solution Loads 3"]
 
 [state]
 variables = ["Temperature", "Zs", "Zb"] # the state vector (velocity is slaved to it); Zb: the shelf base
 scales = { Temperature = 5.0, Zs = 50.0, Zb = 50.0 }   # K and m per scaled unit (norms, tolerances, FD steps)
-frozen = ["ColdTempMask", "GroundedMask", "bedrock", "Water Sheet Thickness"]   # mask and sheet: carried between chunks
+frozen = ["ColdTempMask", "GroundedMask", "bedrock"]
 
 # Frozen masks (ess/masks.py): after Newton converges, the cold/temperate mask (cold above T0 ->
 # temperate, refreezing temperate -> cold) and the grounded mask (floating base on the bed -> grounded,
