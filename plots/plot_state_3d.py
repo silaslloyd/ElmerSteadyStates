@@ -40,7 +40,7 @@ SHOW_MESH = True         # the element edges on the base
 SIDES = True             # side walls (base to surface) at the window ends and the two outer sides
 TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
-T_RANGE = (None, None)   # temperature colour range (K); None: the bed temperature in the window (--tmin / --tmax)
+T_RANGE = (None, None)   # temperature colour range (K); None: all temperatures in the window (--tmin / --tmax)
 SHOW = True
 
 
@@ -214,10 +214,10 @@ def main():
     if TEMP and not temp:
         print("no Temperature in the states (slimmed before it was kept? re-run plots/slim_states.py): velocity only")
     if temp:
-        Tv = np.concatenate([b["T"] for _, tp, b, _ in data])      # the bed: the surface is colder (clipped blue)
+        Tv = np.concatenate([d["T"] for _, tp, b, _ in data for d in (tp, b)])   # the full range, surface and base
         tmin = T_RANGE[0] if T_RANGE[0] is not None else float(np.nanmin(Tv))
         tmax = T_RANGE[1] if T_RANGE[1] is not None else float(np.nanmax(Tv))
-        print(f"temperature colours {tmin:.2f} .. {tmax:.2f} K: the bed range (--tmin / --tmax to change)")
+        print(f"temperature colours {tmin:.2f} .. {tmax:.2f} K: all temperatures (--tmin / --tmax to narrow)")
     # the panels: (field, colour range, colour scale, colour bar title, colour bar x, scene)
     panels = [("speed", 0.0, smax, "Viridis", "speed (m/yr)", 0.47 if temp else 1.0, "scene")]
     if temp:
