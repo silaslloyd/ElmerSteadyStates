@@ -4,7 +4,7 @@ The moving-grounding-line solver test (configs/test_gl_solvers.toml, jobs/gl_sol
 profile of every solver run overlaid, with a slider through the chunks (spin-up, retreat, advance). Panels:
   1. geometry along the flow: surface Zs and ice base Zb of each run, the bed (grey), the grounding lines
   2. surface speed of each run
-  3. the grounding line of each run against chunk (the whole history), with the current chunk marked
+  3. the grounding line (the upstream edge of the shelf) of each run against chunk, the current chunk marked
 All solvers solve the same problem, so the runs should lie on top of each other; a run that drifts apart in
 panel 3 did not converge.
 
@@ -73,8 +73,11 @@ def profile(path):
     base = row("Zb", ("bedrock", "GroundedMask"))
     gl = np.nan
     if base is not None and np.isfinite(base["GroundedMask"]).any():
-        m = base["GroundedMask"] > -0.5
-        gl = float(base["x"][m].max()) if m.any() else np.nan
+        # the upstream edge of the shelf: the last grounded node before the first floating one (grounded patches
+        # under the shelf do not count)
+        fl = np.where(base["GroundedMask"] < -0.5)[0]
+        gl = float(base["x"][fl[0] - 1]) if len(fl) and fl[0] > 0 else (float(base["x"][-1]) if not len(fl) else np.nan)
+        base["patches"] = int(np.sum(base["GroundedMask"][fl[0]:] > -0.5)) if len(fl) else 0
     return dict(top=top, base=base, gl=gl, t=float(s.meta.get("time", np.nan)))
 
 
@@ -107,7 +110,9 @@ def main():
     for r in runs:
         g = np.array(hist[r], float)
         if np.isfinite(g).any():
-            print(f"  {r}: grounding line {np.nanmin(g):.2f} .. {np.nanmax(g):.2f} km")
+            pt = [P[(r, *k)]["base"].get("patches", 0) for k in keys if (r, *k) in P and P[(r, *k)]["base"] is not None]
+            print(f"  {r}: grounding line {np.nanmin(g):.2f} .. {np.nanmax(g):.2f} km; grounded nodes under the shelf "
+                  f"(downstream of the grounding line): up to {max(pt) if pt else 0}")
     if X_WINDOW:
         x0, x1 = X_WINDOW
     else:

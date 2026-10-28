@@ -119,6 +119,7 @@ def cmd_run(a):
         # mask and the water sheet every step: no ESS remask between chunks
         args += ["--stokes-preconditioner", a.precond] if a.precond else []
         args += ["--linear-stokes", a.linear_stokes] if a.linear_stokes else []
+        args += ["--stokes-element", a.stokes_element] if a.stokes_element else []
         args += ["--stokes-block-file", a.stokes_block_file] if a.stokes_block_file else []
         args += ["--no-remask", "--friction-heat", a.heat] + (["--stokes-only"] if a.stokes_only else [])
         if a.bed != "none":
@@ -201,8 +202,8 @@ def analyse_state(path, width):
         xm = np.array([Xd[g] for g in gm[0].tolist()])
         ym = np.array([Y[g] for g in gm[0].tolist()])
         for yj in np.unique(np.round(ym, 0)):
-            m = (np.abs(ym - yj) < 1) & (gm[1] > -0.5)
-            gl.append(float(xm[m].max()) / 1e3 if m.any() else np.nan)
+            m = np.abs(ym - yj) < 1
+            gl.append(gl_upstream(xm[m], gm[1][m]) / 1e3 if m.any() else np.nan)
     out["GL"] = gl
     out["Tseam"], out["Tint"] = seam_stripe(bed_rows(allf, gids, X, Y, width))
     out["Zseam"], out["Zint"] = seam_stripe(field_rows(allf, "Zs", gids, X, Y, width))
@@ -222,6 +223,19 @@ def field_rows(allf, name, gids, X, Y, width):
         rows.setdefault(round(Xd[g], 1), {})[round(Y[g], 0)] = v
     ys = sorted({y for d in rows.values() for y in d})
     return {x: [d[y] for y in ys] for x, d in rows.items() if len(d) == len(ys)}, ys
+
+
+def gl_upstream(x, mask):
+    """the grounding line as the upstream edge of the shelf: the last grounded node (mask >= 0) before the first
+    floating one (mask -1) going downstream, so grounded patches under the shelf do not count (all grounded: the
+    last node)"""
+    o = np.argsort(x)
+    x, m = np.asarray(x)[o], np.asarray(mask)[o]
+    fl = np.where(m < -0.5)[0]
+    if len(fl) == 0:
+        return float(x[-1])
+    k = fl[0] - 1
+    return float(x[k]) if k >= 0 else np.nan
 
 
 def bed_rows(allf, gids, X, Y, width):
@@ -270,7 +284,7 @@ def cmd_analyse(a):
         if not files:
             print(f"\n{mode}: no chunk states yet ({os.path.join(WORK, mode)})")
             continue
-        print(f"\n{mode}: grounding line (last grounded x, km) per row across y (y = 0 and y = W are the same row),"
+        print(f"\n{mode}: grounding line (km, upstream edge of the shelf) per row across y (y = 0 and y = W are the same row),"
               f" and the largest master (y = 0) / image (y = W) mismatch after each chunk")
         print(f"{'phase':8s} {'chunk':>5s} {'GL rows y = 0 .. W (km)':>44s} {'mask':>5s} {'ct':>3s} {'Zs (m)':>9s} "
               f"{'Zb (m)':>9s} {'|du|/u':>9s} {'T (K)':>9s} {'ploads z':>9s} {'loads z':>9s} {'Tb seam':>9s} {'Tb mid':>9s} {'Zs seam':>9s} {'Zs mid':>9s}")
@@ -376,8 +390,10 @@ def cmd_solvers(a):
         g, X = _field(allf, "coordinate 1")
         Xd = dict(zip(g.tolist(), X.tolist()))
         gm = _field(allf, "GroundedMask")
+        Yd = dict(zip(*_field(allf, "coordinate 2")))
+        row = np.array([abs(Yd[i]) < 1.0 for i in gm[0].tolist()])
         xg = np.array([Xd[i] for i in gm[0].tolist()])
-        gl = float(xg[gm[1] > -0.5].max()) / 1e3
+        gl = gl_upstream(xg[row], gm[1][row]) / 1e3
         zs = _field(allf, "Zs")
         return gl, dict(zip(zs[0].tolist(), zs[1].tolist()))
     C = {t: chunks(t) for t in tags}
@@ -387,7 +403,7 @@ def cmd_solvers(a):
     if not keys:
         print("\nno chunk states common to all runs yet")
         return
-    print(f"\ngrounding line (km, last grounded x) after each saved chunk; dZs: largest |Zs - Zs({ref})| (m)")
+    print(f"\ngrounding line (km, upstream edge of the shelf, y = 0) after each saved chunk; dZs: largest |Zs - Zs({ref})| (m)")
     print(f"{'phase':8s} {'chunk':>5s} " + " ".join(f"{t:>10s}" for t in tags) + " "
           + " ".join(f"{'dZs ' + t:>14s}" for t in tags[1:]))
     worst = {t: [0.0, 0.0] for t in tags[1:]}
@@ -466,6 +482,8 @@ def main():
     s.add_argument("--linear-stokes", choices=["direct", "iterative", "block"], help="Stokes linear solver (ess run)")
     s.add_argument("--stokes-block-file", help="block-preconditioner keywords (ess run; e.g. "
                                                "elmer/stokes_block_amg.sif.in)")
+    s.add_argument("--stokes-element", choices=["P2/P1", "Stabilized", "Bubbles"],
+                   help="Stokes element (ess run; default [elmer] stokes_element)")
     s.add_argument("--save-every", type=int, help="save a state every N chunks in every phase (default per phase)")
     s.add_argument("--spinup-only", action="store_true", help="only the spin-up phase (to choose --fbase)")
     s.add_argument("--tag", help="results folder under the work dir (default MODE_HEAT, or MODE_HEAT_f<FBASE>)")
