@@ -13,7 +13,8 @@ eval "cmd=($line)"
 keep=()
 for a in "${cmd[@]}"; do
     case $a in
-        -I*|-L*) d=${a:2}; if [ -d "$d" ] && [ ! -r "$d" -o ! -x "$d" ]; then echo "elmerf90_safe: dropped $a (not readable)"; continue; fi;;
+        # not readable or not even visible (a parent directory closed): drop it
+        -I*|-L*) d=${a:2}; if [ ! -r "$d" ] || [ ! -x "$d" ]; then echo "elmerf90_safe: dropped $a (not readable)"; continue; fi;;
     esac
     keep+=("$a")
 done
