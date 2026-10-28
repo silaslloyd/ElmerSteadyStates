@@ -20,6 +20,9 @@
 #   D  without "HYPRE Block Diagonal"   E  without "BoomerAMG Num Functions"   F  without both
 # From the repository root:  sbatch --export=ALL,ELMER_MODULE=elmerfem/2026-10-28 jobs/amg_tests.cmd
 #                            sbatch --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,SET=DEF jobs/amg_tests.cmd
+# SET=G: block 11 as in Elmer's own test fem/tests/mgdyn_airgap2 (Hypre BiCGStab preconditioned by BoomerAMG,
+# instead of BoomerAMG as the solver with HYPRE Block Diagonal as in MLB), frozen GL, rotated bed
+#                            sbatch --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,SET=G jobs/amg_tests.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
@@ -36,7 +39,15 @@ echo "Elmer: $ELMER_MODULE -> $(command -v ElmerSolver); ldd: $(ldd $(command -v
 export ESS_NPROCS=32 ESS_MPIRUN="mpirun -np {n} --bind-to none"
 common="run $CONFIG --state $START --stokes-only --chunks 1 --steps 2 --no-remask --bed cold --linear-stokes block"
 SET=${SET:-ABC}
-if [ "$SET" = DEF ]; then
+if [ "$SET" = G ]; then
+    V=$WORK/amgtest_files; mkdir -p $V
+    grep -v "block 11: Linear System Iterative Method\|block 11: HYPRE Block Diagonal\|block 11: Linear System Preconditioning" \
+        elmer/stokes_block_amg.sif.in > $V/G.sif.in
+    printf '%s\n' "  block 11: Linear System Solver = Iterative" "  block 11: Linear System Iterative Method = BiCGStab" \
+        "  block 11: Linear System Preconditioning = BoomerAMG" >> $V/G.sif.in
+    python3 -u -m ess $common --out $WORK/amgtest_G.npz --gl frozen --stokes-block-file $PWD/$V/G.sif.in \
+        > ${L}_G.log 2>&1 &
+elif [ "$SET" = DEF ]; then
     V=$WORK/amgtest_files; mkdir -p $V
     grep -v "HYPRE Block Diagonal" elmer/stokes_block_amg.sif.in > $V/D.sif.in
     grep -v "BoomerAMG Num Functions" elmer/stokes_block_amg.sif.in > $V/E.sif.in
@@ -58,7 +69,8 @@ echo
 for t in $(echo $SET | fold -w1); do
     case $t in A) what="block + BoomerAMG, frozen GL, rotated bed";; B) what="block + BoomerAMG, frozen GL, x/y/z bed";;
                C) what="plain Hypre BoomerAMG, contact";; D) what="block + BoomerAMG without HYPRE Block Diagonal";;
-               E) what="block + BoomerAMG without BoomerAMG Num Functions";; F) what="block + BoomerAMG without both";; esac
+               E) what="block + BoomerAMG without BoomerAMG Num Functions";; F) what="block + BoomerAMG without both";;
+               G) what="block, block 11 = Hypre BiCGStab + BoomerAMG preconditioner (as Elmer's mgdyn_airgap2)";; esac
     if grep -q "^.*wrote $WORK/amgtest_$t.npz" ${L}_$t.log; then
         echo "$t ($what): RAN"
     else
