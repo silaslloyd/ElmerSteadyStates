@@ -22,7 +22,7 @@
 #     SPINUP_TOL=1e-4 SPINUP_MAX=600 ELMER_MODULE=... bash jobs/gl_solvers.sh
 #   GL_CONFIG=configs/test_gl_bed.toml START=work/test_gl_bed/ref_iterative/spinup.npz \
 #     SOLVERS="direct iterative block bubbles" PHASES="spinup=1,1,1 retreat=100,1,0.7 advance=100,1,1.5" \
-#     ELMER_MODULE=... bash jobs/gl_solvers.sh
+#     ELMER_MODULE=... AFTER=<spin-up job> bash jobs/gl_solvers.sh      (AFTER: queued now, starts after the spin-up)
 # SOLVERS x RANKS must fit the node (128 cores). The mesh and start state are made in the job if missing
 # (work/test_gl_solvers/start.npz). Results: at the end of slurms/glsolvers_<job>.out; again with
 #   GL_CONFIG=configs/test_gl_solvers.toml python3 periodic_test/run_gl_ess.py solvers
@@ -37,6 +37,7 @@ export START TAG_PREFIX SPINUP_TOL SPINUP_MAX SPINUP_ONLY
 export FROM
 N=$(( $(wc -w <<<"$SOLVERS") * RANKS ))
 [ $N -le 128 ] || { echo "$SOLVERS x $RANKS ranks = $N > 128 cores of a node: fewer SOLVERS or RANKS"; exit 1; }
-J=$(sbatch --parsable --export=ALL --ntasks=$N jobs/gl_solvers_node.cmd)
+# AFTER=<job id>: start only once that job has finished successfully (e.g. the spin-up)
+J=$(sbatch --parsable --export=ALL --ntasks=$N ${AFTER:+--dependency=afterok:$AFTER} jobs/gl_solvers_node.cmd)
 echo "job $J: $SOLVERS at the same time on one node, $RANKS ranks each ($N tasks, $ELMER_MODULE, $GL_CONFIG)"
 echo "logs: slurms/glsolvers_$J.out, slurms/glsolvers_${J}_<solver>.log; results in work/test_gl_solvers/<solver>"

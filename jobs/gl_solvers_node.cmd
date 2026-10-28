@@ -57,3 +57,4 @@ FAIL=0
 for p in $(jobs -p); do wait $p || FAIL=1; done
 echo "$(date +%T) all runs done$([ $FAIL = 1 ] && echo ' (at least one failed: see its log)')"
 python3 -u periodic_test/run_gl_ess.py solvers $(for s in $SOLVERS; do echo ${TAG_PREFIX}$s; done) || true
+exit $FAIL                                                  # a failed run fails the job (jobs waiting on it do not start)
