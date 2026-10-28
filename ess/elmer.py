@@ -60,6 +60,11 @@ class ElmerModel(Model):
         # grounding line: "frozen" (mask from the state, smooth map: Newton, continuation) or "contact"
         # (ElmerStreams: moves every step; `ess run` uses it for spin-ups unless --gl frozen)
         self.gl_mode = str(e.get("gl_mode", "frozen"))
+        # Stokes nonlinear iterations with the contact grounding line: SlidCoef_Contact ungrounds a node during the
+        # Stokes solve (mask -1), and only a second iteration solves again without the zero normal velocity there.
+        # With one iteration the base never leaves the bed and the grounding line cannot retreat (it still
+        # advances: grounding is geometric). ElmerStreams Marine_Term: Nonlinear System Max Iterations = 2.
+        self.contact_stokes_iters = int(e.get("contact_stokes_iterations", 2))
         self.mesh_db = e.get("mesh_db", "footprint")
         self.ess_lib = cfg["_path"](e.get("ess_lib", "elmer/SteadyStateIO"))
         self.ess_utils = cfg["_path"](e.get("ess_utils", "elmer/ess_utils.lua"))
@@ -447,6 +452,8 @@ End
             text = self._fs_iterative(text)
         if self.surface_bc == "dirichlet":
             text = self._surface_dirichlet(text)
+        if self.marine and self.gl_mode == "contact" and self.contact_stokes_iters > 1:
+            text = self._stokes_iterations(text, self.contact_stokes_iters)
         if self.slide_ybump:
             text = self._slide_ybump(text)
         if self.thermal == "elmerstreams":
@@ -530,6 +537,19 @@ End
         old = m.group(2).split()
         new = old + [str(i) for i in ids]
         return text[:m.start()] + f"Active Solvers({len(new)}) = {' '.join(new)}" + text[m.end():]
+
+    def _stokes_iterations(self, text, n):
+        """the Stokes solver: exactly n nonlinear iterations (contact grounding line, see contact_stokes_iters)"""
+        k = text.index('Equation = "Stokes-Vec"')
+        i = text.rindex("\nSolver ", 0, k)
+        j = text.index("\nEnd", k)
+        sec = text[i:j]
+        a = "  Nonlinear System Min Iterations = 1\n  Nonlinear System Max Iterations = 1"
+        if a not in sec:
+            raise ValueError("contact_stokes_iterations: the Stokes nonlinear iteration lines of the template changed")
+        sec = sec.replace(a, f"  ! contact grounding line: a second iteration applies the nodes SlidCoef_Contact ungrounded\n"
+                             f"  Nonlinear System Min Iterations = {n}\n  Nonlinear System Max Iterations = {n}")
+        return text[:i] + sec + text[j:]
 
     def _surface_dirichlet(self, text):
         """the upper surface: T = the surface temperature (Tsurf, or the warm snout ramp) instead of the transfer
