@@ -2,11 +2,13 @@
 # the keywords below go verbatim into the Stokes solver section of the template (lines starting with # or // and
 # blank lines are dropped; ! comments are kept).
 #
-# Taken unchanged from the Elmer/Ice MLB test case, https://github.com/ElmerCSC/MLB, linsys/block2_idrs.sif
+# Taken from the Elmer/Ice MLB test case, https://github.com/ElmerCSC/MLB, linsys/block2_idrs.sif
 # (commit ad6db46): Elmer's block mode (Linear System Solver = "Block"), two blocks (velocity u, v, w | pressure),
 # outer GCR, IDR(s) + ILU inside each block. Like MLB it needs the STABILIZED Stokes element
 # ([elmer] stokes_element = "Stabilized", equal-order P1/P1 with pressure stabilisation): with P2/P1 the pressure
 # block is zero and ILU on it fails. The BoomerAMG variant (Hypre) is elmer/stokes_block_amg.sif.in.
+! ESS change: the inner solves (block 11, block 22) do not abort the run when they stop short of their tolerance
+! ("IterSolve: Too many iterations" on the 250 m linear-bed mesh); the outer GCR still converges to 1e-8.
   Linear System Solver = "Block"
   Block Gauss-Seidel = Logical True
   Block Matrix Reuse = Logical False
@@ -38,6 +40,7 @@
   block 11: Linear System Residual Output = 100
   block 11: Linear System Max Iterations = 500
   block 11: Linear System Iterative Method = idrs
+  block 11: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
 
 
   block 22: Linear System Convergence Tolerance = $blocktol
@@ -47,3 +50,4 @@
   block 22: Linear System Residual Output = 100
   block 22: Linear System Max Iterations = 500
   block 22: Linear System Iterative Method = idrs
+  block 22: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step

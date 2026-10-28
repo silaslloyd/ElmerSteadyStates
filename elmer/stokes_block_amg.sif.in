@@ -2,6 +2,8 @@
 # test case, https://github.com/ElmerCSC/MLB, linsys/block2_boomeramg.sif (commit ad6db46). Needs an Elmer built
 # with Hypre, and the STABILIZED Stokes element. Use with `ess run --linear-stokes block --stokes-block-file
 # elmer/stokes_block_amg.sif.in` (or [elmer] stokes_block_file).
+! ESS change: the inner solves (block 11, block 22) do not abort the run when they stop short of their tolerance
+! ("IterSolve: Too many iterations" on the 250 m linear-bed mesh); the outer GCR still converges to 1e-8.
   Linear System Solver = "Block"
   Block Gauss-Seidel = Logical True
   Block Matrix Reuse = Logical False
@@ -39,6 +41,7 @@
   block 11: Linear System Convergence Tolerance = $blocktol
 !  block 11: Linear System Preconditioning = boomeramg
   block 11: HYPRE Block Diagonal = Logical True
+  block 11: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
 
   BoomerAMG Relax Type = Integer 3
   BoomerAMG Coarsen Type = Integer 0
@@ -57,3 +60,4 @@
   block 22: Linear System Residual Output = 1
   block 22: Linear System Max Iterations = 500
   block 22: Linear System Iterative Method = idrs
+  block 22: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
