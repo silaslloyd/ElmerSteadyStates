@@ -4,6 +4,8 @@ The moving-grounding-line solver test (configs/test_gl_solvers.toml, jobs/gl_sol
 profile of every solver run overlaid, with a slider through the chunks (spin-up, retreat, advance). Panels:
   1. geometry along the flow: surface Zs and ice base Zb of each run, the bed (grey), the grounding lines
   2. surface speed of each run
+  2b. height above flotation of the grounded ice, H - (rho_w/rho_i) * bed depth: below 0 = grounded ice that should
+      float (the contact does not unground it); above 0 everywhere = the ice at the grounding line is still too thick
   3. the grounding line (the upstream edge of the shelf) of each run against chunk, the current chunk marked
 All solvers solve the same problem, so the runs should lie on top of each other; a run that drifts apart in
 panel 3 did not converge.
@@ -27,6 +29,17 @@ from ess.statefile import find_name, load_state  # noqa: E402
 PHASES = ("spinup", "retreat", "advance")
 SOLVERS = ("direct", "iterative", "block", "amg")
 COLOURS = {"direct": "#1f77b4", "iterative": "#d62728", "block": "#2ca02c", "amg": "#9467bd"}
+def _rho_ratio():
+    """rho_water / rho_ice of case/parameters.lua"""
+    try:
+        from ess.case import eval_lua_parameters
+        P = eval_lua_parameters(os.path.join(os.path.dirname(HERE), "case", "parameters.lua"))
+        return float(P["rhow"] / P["rhoi"])
+    except Exception:
+        return 1003.27 / 920.0
+
+
+RHO_RATIO = _rho_ratio()
 X_WINDOW = None          # (xmin, xmax) km; None: 80 km behind the most inland grounding line to the front
 SHOW = True
 
@@ -78,6 +91,14 @@ def profile(path):
         fl = np.where(base["GroundedMask"] < -0.5)[0]
         gl = float(base["x"][fl[0] - 1]) if len(fl) and fl[0] > 0 else (float(base["x"][-1]) if not len(fl) else np.nan)
         base["patches"] = int(np.sum(base["GroundedMask"][fl[0]:] > -0.5)) if len(fl) else 0
+    # height above flotation of the grounded ice: H - (rho_w / rho_i) * depth of the bed below sea level (z = 0).
+    # Negative where the mask says grounded = ice that should float but is held on the bed (a contact problem);
+    # positive everywhere grounded = the ice is still too thick to float, however much it thinned
+    if top is not None and base is not None:
+        zs_at = dict(zip(np.round(top["x"], 3).tolist(), top["v"].tolist()))
+        H = np.array([zs_at.get(x, np.nan) for x in np.round(base["x"], 3).tolist()]) - base["v"]
+        haf = H - RHO_RATIO * np.maximum(-base["bedrock"], 0.0)
+        base["haf"] = np.where(base["GroundedMask"] > -0.5, haf, np.nan)
     return dict(top=top, base=base, gl=gl, t=float(s.meta.get("time", np.nan)))
 
 
@@ -127,6 +148,15 @@ def main():
           for v in (np.nanmin(d["v"]), np.nanmax(d["v"]))]
     zs += [np.nanmin(p["base"]["bedrock"]) for p in P.values() if p["base"] is not None]
     smax = max(float(np.nanmax(p["top"]["speed"])) for p in P.values() if p["top"] is not None)
+    # grounded but below flotation (a contact problem), per run: the worst case over the chunks
+    for r in runs:
+        worst = [(float(np.nanmin(P[(r, *k)]["base"]["haf"])), k) for k in keys
+                 if (r, *k) in P and P[(r, *k)]["base"] is not None and "haf" in P[(r, *k)]["base"]
+                 and np.isfinite(P[(r, *k)]["base"]["haf"]).any()]
+        if worst:
+            w, k = min(worst)
+            print(f"  {r}: lowest height above flotation of grounded ice {w:.1f} m ({k[0]} {k[1]})"
+                  + ("  <- grounded ice below flotation: the contact does not unground it" if w < -1.0 else ""))
     gall = [v for h in hist.values() for v in h if np.isfinite(v)]
     labels = [f"{ph} {c}" for ph, c in keys]
 
@@ -165,6 +195,10 @@ def main():
                                  line=dict(color=col, width=2), legendgroup=r, showlegend=False, xaxis="x2",
                                  yaxis="y2", name=f"{r} speed",
                                  hovertemplate=f"{r} %{{y:.1f}} m/yr at %{{x:.2f}} km<extra></extra>"))
+            tr.append(go.Scatter(x=base["x"] if base else [], y=base["haf"] if base and "haf" in base else [],
+                                 mode="lines+markers", marker=dict(size=3), line=dict(color=col, width=1.5),
+                                 legendgroup=r, showlegend=False, xaxis="x4", yaxis="y4", name=f"{r} height above flotation",
+                                 hovertemplate=f"{r} %{{y:.1f}} m above flotation at %{{x:.2f}} km<extra></extra>"))
             tr.append(go.Scatter(x=list(range(len(keys))), y=hist[r], mode="lines", line=dict(color=col, width=2),
                                  legendgroup=r, showlegend=False, xaxis="x3", yaxis="y3", name=f"{r} GL history",
                                  customdata=labels,
@@ -191,11 +225,14 @@ def main():
     fig.update_layout(
         title=f"{work}: {', '.join(runs)} (solid surface, dotted base, dashed grounding line)",
         xaxis=dict(domain=[0, 1], anchor="y", range=[x0, x1], title="x (km)"),
-        yaxis=dict(domain=[0.52, 1.0], title="z (m)", range=[min(zs) - 50, max(zs) + 50]),
+        yaxis=dict(domain=[0.62, 1.0], title="z (m)", range=[min(zs) - 50, max(zs) + 50]),
         xaxis2=dict(domain=[0, 1], anchor="y2", range=[x0, x1], matches="x"),
-        yaxis2=dict(domain=[0.30, 0.46], title="surface speed (m/yr)", range=[0, smax * 1.05]),
+        yaxis2=dict(domain=[0.45, 0.57], title="speed (m/yr)", range=[0, smax * 1.05]),
+        xaxis4=dict(domain=[0, 1], anchor="y4", range=[x0, x1], matches="x"),
+        yaxis4=dict(domain=[0.27, 0.40], title="H above flotation (m)", range=[-50, 300], zeroline=True,
+                    zerolinecolor="black", zerolinewidth=2),
         xaxis3=dict(domain=[0, 1], anchor="y3", title="chunk (100 yr each)", range=[-0.5, len(keys) - 0.5]),
-        yaxis3=dict(domain=[0.0, 0.22], title="grounding line (km)",
+        yaxis3=dict(domain=[0.0, 0.18], title="grounding line (km)",
                     range=[min(gall) - 2, max(gall) + 2] if gall else None),
         shapes=shapes, annotations=ann,
         sliders=[dict(steps=steps, active=len(keys) - 1, currentvalue=dict(prefix="chunk: "), pad=dict(t=40))],
