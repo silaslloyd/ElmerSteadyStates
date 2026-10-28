@@ -7,6 +7,8 @@
 #   FBASE=30 bash periodic_test/run_gl_ess.sh             # another base friction (default 10)
 #   NOPREP=1 bash periodic_test/run_gl_ess.sh             # reuse the existing mesh and start state
 #   CHUNKS=1 bash periodic_test/run_gl_ess.sh             # a short trial (1 chunk = 100 yr per phase)
+#   RESUME=spinup SPINUP_MAX=200 NOPREP=1 bash periodic_test/run_gl_ess.sh   # continue the runs from their last saved
+#                                                         # spin-up chunk (then retreat, advance); SPINUP_MAX: chunk cap
 #   GL_CONFIG=configs/test_periodic_gl_50km.toml NTASKS=256 FBASE=10 bash periodic_test/run_gl_ess.sh
 #                                                         # 50 km / 1 km across, 256 ranks (GL_CONFIG: config; NTASKS: ranks)
 # Results: at the end of each run job's log (slurms/pgless_<job>.out); again with
@@ -37,7 +39,8 @@ else
     # Fw2), the fix with the loads heating, the fix with the flux heating (the reference)
     for r in ${RUNS:-elmerstreams_loads fix_loads fix_flux}; do
         m=${r%_*}; h=${r##*_}
-        J=$($SB $DEP periodic_test/run_gl_ess.cmd run $m --heat $h --fbase ${FBASE:-10} ${CHUNKS:+--chunks $CHUNKS})
+        J=$($SB $DEP periodic_test/run_gl_ess.cmd run $m --heat $h --fbase ${FBASE:-10} ${CHUNKS:+--chunks $CHUNKS} \
+              ${RESUME:+--resume $RESUME} ${SPINUP_MAX:+--spinup-max $SPINUP_MAX})
         echo "$m, friction heating $h (fcoeff x ${FBASE:-10}): job $J (results in ${m}_$h)"
     done
     echo "then: sbatch --ntasks=1 --time=00:30:00 periodic_test/run_gl_ess.cmd compare fix_loads fix_flux"
