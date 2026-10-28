@@ -273,6 +273,8 @@ def cmd_run(args):
     contact = _marine(model) and args.gl == "contact"
     if contact:
         model.gl_mode = "contact"          # ElmerStreams: the grounding line moves every step
+    elif _marine(model):
+        model.gl_mode = "frozen"           # --gl frozen also when the config says contact
     prob = _problem(cfg, model)
     log.info(f"run: dt = {prob.spec.dt:g}, {prob.spec.n_steps} steps per chunk, "
              f"rock heat capacity x {prob.spec.rock_heat_capacity:g}"
