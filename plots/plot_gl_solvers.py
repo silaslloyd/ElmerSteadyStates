@@ -4,8 +4,6 @@ The moving-grounding-line solver test (configs/test_gl_solvers.toml, jobs/gl_sol
 profile of every solver run overlaid, with a slider through the chunks (spin-up, retreat, advance). Panels:
   1. geometry along the flow: surface Zs and ice base Zb of each run, the bed (grey), the grounding lines
   2. surface speed of each run
-  2b. height above flotation of the grounded ice, H - (rho_w/rho_i) * bed depth: below 0 = grounded ice that should
-      float (the contact does not unground it); above 0 everywhere = the ice at the grounding line is still too thick
   3. the grounding line (the upstream edge of the shelf) of each run against chunk, the current chunk marked
 All solvers solve the same problem, so the runs should lie on top of each other; a run that drifts apart in
 panel 3 did not converge.
@@ -196,10 +194,6 @@ def main():
                                  line=dict(color=col, width=2), legendgroup=r, showlegend=False, xaxis="x2",
                                  yaxis="y2", name=f"{r} speed",
                                  hovertemplate=f"{r} %{{y:.1f}} m/yr at %{{x:.2f}} km<extra></extra>"))
-            tr.append(go.Scatter(x=base["x"] if base else [], y=base["haf"] if base and "haf" in base else [],
-                                 mode="lines+markers", marker=dict(size=3), line=dict(color=col, width=1.5),
-                                 legendgroup=r, showlegend=False, xaxis="x4", yaxis="y4", name=f"{r} height above flotation",
-                                 hovertemplate=f"{r} %{{y:.1f}} m above flotation at %{{x:.2f}} km<extra></extra>"))
             tr.append(go.Scatter(x=list(range(len(keys))), y=hist[r], mode="lines", line=dict(color=col, width=2),
                                  legendgroup=r, showlegend=False, xaxis="x3", yaxis="y3", name=f"{r} GL history",
                                  customdata=labels,
@@ -226,14 +220,11 @@ def main():
     fig.update_layout(
         title=f"{work}: {', '.join(runs)} (solid surface, dotted base, dashed grounding line)",
         xaxis=dict(domain=[0, 1], anchor="y", range=[x0, x1], title="x (km)"),
-        yaxis=dict(domain=[0.62, 1.0], title="z (m)", range=[min(zs) - 50, max(zs) + 50]),
+        yaxis=dict(domain=[0.52, 1.0], title="z (m)", range=[min(zs) - 50, max(zs) + 50]),
         xaxis2=dict(domain=[0, 1], anchor="y2", range=[x0, x1], matches="x"),
-        yaxis2=dict(domain=[0.45, 0.57], title="speed (m/yr)", range=[0, smax * 1.05]),
-        xaxis4=dict(domain=[0, 1], anchor="y4", range=[x0, x1], matches="x"),
-        yaxis4=dict(domain=[0.27, 0.40], title="H above flotation (m)", range=[-50, 300], zeroline=True,
-                    zerolinecolor="black", zerolinewidth=2),
+        yaxis2=dict(domain=[0.30, 0.46], title="speed (m/yr)", range=[0, smax * 1.05]),
         xaxis3=dict(domain=[0, 1], anchor="y3", title="chunk (100 yr each)", range=[-0.5, len(keys) - 0.5]),
-        yaxis3=dict(domain=[0.0, 0.18], title="grounding line (km)",
+        yaxis3=dict(domain=[0.0, 0.22], title="grounding line (km)",
                     range=[min(gall) - 2, max(gall) + 2] if gall else None),
         shapes=shapes, annotations=ann,
         sliders=[dict(steps=steps, active=len(keys) - 1, currentvalue=dict(prefix="chunk: "), pad=dict(t=40))],
