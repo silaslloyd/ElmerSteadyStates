@@ -286,6 +286,17 @@ def main():
     def traces(top, base):
         return [t for P in panels for t in panel_traces(top, base, P)]
 
+    def tiled(d):
+        """TILE copies of a surface, copy c shifted by c W in y, as one node set: each seam row (y = W of one copy,
+        y = 0 of the next: the same values on a periodic solution) once, so the copies share it"""
+        if d is None:
+            return None
+        keys = [k for k, v in d.items() if isinstance(v, np.ndarray) and v.shape == d["x"].shape]
+        out = {k: np.concatenate([d[k] + (c * W if k == "y" else 0) for c in range(TILE)]) for k in keys}
+        _, first = np.unique(np.c_[np.round(out["x"], 0), np.round(out["y"], 0)], axis=0, return_index=True)
+        first = np.sort(first)
+        return {k: v[first] for k, v in out.items()}
+
     def panel_traces(top, base, P):
         """TILE copies side by side, copy c shifted by c W in y: at each seam y = c W the image side (y = W) of
         one copy meets the master side (y = 0) of the next, so anything not periodic shows as a step there"""
@@ -293,35 +304,35 @@ def main():
         unit = "m/yr" if f == "speed" else "K"
         first_panel = sc == "scene"
         tr = []
-        for c in range(TILE):
-            dy = c * W / 1e3
-            leg = c == 0
-            if top is not None:
-                i, j, k = triangles(top["x"], top["y"])
-                tr.append(go.Mesh3d(x=top["x"] / 1e3, y=top["y"] / 1e3 + dy, z=top["v"], i=i, j=j, k=k,
-                                    intensity=top[f], colorscale=cs, cmin=lo, cmax=hi, showscale=leg,
-                                    colorbar=dict(title=ctitle, x=cx, len=0.8), name="surface Zs",
-                                    showlegend=False, customdata=top[f], scene=sc,
-                                    hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zs %{z:.1f} m<br>"
-                                                  f"{f} %{{customdata:.2f}} {unit}<extra></extra>"))
-            if base is not None:
-                i, j, k = triangles(base["x"], base["y"])
-                mask = base.get("mask", np.zeros_like(base["v"]))
-                if f == "T" or BASE_COLOUR == "speed":
-                    col = dict(intensity=base[f], colorscale=cs, cmin=lo, cmax=hi, showscale=False)
-                else:
-                    col = dict(intensity=np.where(mask > -0.5, 1.0, 0.0), cmin=0, cmax=1,
-                               colorscale=[[0, "#3a7bd5"], [1, "#c0392b"]], showscale=False)
-                tr.append(go.Mesh3d(x=base["x"] / 1e3, y=base["y"] / 1e3 + dy, z=base["v"], i=i, j=j, k=k, **col,
-                                    customdata=np.stack([base[f], mask], 1), scene=sc,
-                                    name="base Zb", opacity=1.0, showlegend=False,
-                                    hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>"
-                                                  f"{'speed' if f == 'speed' else 'bed T'} %{{customdata[0]:.2f}} {unit}"
-                                                  "<br>mask %{customdata[1]}<extra></extra>"))
-                if SHOW_BED and "bed" in base:
-                    tr.append(go.Mesh3d(x=base["x"] / 1e3, y=base["y"] / 1e3 + dy, z=base["bed"] - 1.0, i=i, j=j,
-                                        k=k, color="#999999", opacity=0.35, name="bedrock", hoverinfo="skip",
-                                        showlegend=False, scene=sc))
+        # all copies as ONE surface each (the seam rows shared): separate surfaces are lit with one-sided normals at
+        # their edges, which draws a faint line along a seam even where the values match exactly
+        T_, B_ = tiled(top), tiled(base)
+        if T_ is not None:
+            i, j, k = triangles(T_["x"], T_["y"])
+            tr.append(go.Mesh3d(x=T_["x"] / 1e3, y=T_["y"] / 1e3, z=T_["v"], i=i, j=j, k=k,
+                                intensity=T_[f], colorscale=cs, cmin=lo, cmax=hi, showscale=True,
+                                colorbar=dict(title=ctitle, x=cx, len=0.8), name="surface Zs",
+                                showlegend=False, customdata=T_[f], scene=sc,
+                                hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zs %{z:.1f} m<br>"
+                                              f"{f} %{{customdata:.2f}} {unit}<extra></extra>"))
+        if B_ is not None:
+            i, j, k = triangles(B_["x"], B_["y"])
+            mask = B_.get("mask", np.zeros_like(B_["v"]))
+            if f == "T" or BASE_COLOUR == "speed":
+                col = dict(intensity=B_[f], colorscale=cs, cmin=lo, cmax=hi, showscale=False)
+            else:
+                col = dict(intensity=np.where(mask > -0.5, 1.0, 0.0), cmin=0, cmax=1,
+                           colorscale=[[0, "#3a7bd5"], [1, "#c0392b"]], showscale=False)
+            tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["v"], i=i, j=j, k=k, **col,
+                                customdata=np.stack([B_[f], mask], 1), scene=sc,
+                                name="base Zb", opacity=1.0, showlegend=False,
+                                hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>"
+                                              f"{'speed' if f == 'speed' else 'bed T'} %{{customdata[0]:.2f}} {unit}"
+                                              "<br>mask %{customdata[1]}<extra></extra>"))
+            if SHOW_BED and "bed" in B_:
+                tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["bed"] - 1.0, i=i, j=j,
+                                    k=k, color="#999999", opacity=0.35, name="bedrock", hoverinfo="skip",
+                                    showlegend=False, scene=sc))
         if SHOW_MESH and base is not None:
             tr.append(mesh_lines(base, P))
         if SIDES and top is not None and base is not None:

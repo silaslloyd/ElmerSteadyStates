@@ -35,6 +35,8 @@ CONFIG = os.environ.get("GL_CONFIG", os.path.join("configs", "test_periodic_gl.t
 
 
 def _work():
+    if os.environ.get("GL_WORK"):           # GL_WORK=DIR: results somewhere else (e.g. slimmed copies, for analyse)
+        return os.path.abspath(os.environ["GL_WORK"])
     from ess.config import load_config
     return load_config(os.path.join(REPO, CONFIG))["_work"]
 
@@ -200,7 +202,23 @@ def analyse_state(path, width):
             gl.append(float(xm[m].max()) / 1e3 if m.any() else np.nan)
     out["GL"] = gl
     out["Tseam"], out["Tint"] = seam_stripe(bed_rows(allf, gids, X, Y, width))
+    out["Zseam"], out["Zint"] = seam_stripe(field_rows(allf, "Zs", gids, X, Y, width))
     return out
+
+
+def field_rows(allf, name, gids, X, Y, width):
+    """a surface field: {x: [value per row, y = 0 .. the last row before W]} where every row has a node"""
+    F = _field(allf, name)
+    if F is None:
+        return {}, []
+    Xd = dict(zip(gids.tolist(), X.tolist()))
+    rows = {}
+    for g, v in zip(F[0].tolist(), F[1].tolist()):
+        if Y[g] > width - 1:
+            continue
+        rows.setdefault(round(Xd[g], 1), {})[round(Y[g], 0)] = v
+    ys = sorted({y for d in rows.values() for y in d})
+    return {x: [d[y] for y in ys] for x, d in rows.items() if len(d) == len(ys)}, ys
 
 
 def bed_rows(allf, gids, X, Y, width):
@@ -252,7 +270,7 @@ def cmd_analyse(a):
         print(f"\n{mode}: grounding line (last grounded x, km) per row across y (y = 0 and y = W are the same row),"
               f" and the largest master (y = 0) / image (y = W) mismatch after each chunk")
         print(f"{'phase':8s} {'chunk':>5s} {'GL rows y = 0 .. W (km)':>44s} {'mask':>5s} {'ct':>3s} {'Zs (m)':>9s} "
-              f"{'Zb (m)':>9s} {'|du|/u':>9s} {'T (K)':>9s} {'ploads z':>9s} {'loads z':>9s} {'Tb seam':>9s} {'Tb mid':>9s}")
+              f"{'Zb (m)':>9s} {'|du|/u':>9s} {'T (K)':>9s} {'ploads z':>9s} {'loads z':>9s} {'Tb seam':>9s} {'Tb mid':>9s} {'Zs seam':>9s} {'Zs mid':>9s}")
         rows = []
         for name, f in files:
             r = analyse_state(f, width)
@@ -264,11 +282,12 @@ def cmd_analyse(a):
                    f"min {np.nanmin(g_):7.2f} mean {np.nanmean(g_):7.2f} max {np.nanmax(g_):7.2f}")
             ct = f"{r['ctmask']:3.0f}" if np.isfinite(r["ctmask"]) else "  -"
             print(f"{name:8s} {r['chunk']:5d} {gls:>44s} {r['mask']:5.0f} {ct} {fmt(r['Zs'])} {fmt(r['Zb'])} "
-                  f"{fmt(r['du'])} {fmt(r['T'])} {fmt(r['hw'])} {fmt(r['loads_z'])} {fmt(r['Tseam'])} {fmt(r['Tint'])}")
+                  f"{fmt(r['du'])} {fmt(r['T'])} {fmt(r['hw'])} {fmt(r['loads_z'])} {fmt(r['Tseam'])} {fmt(r['Tint'])} {fmt(r['Zseam'])} {fmt(r['Zint'])}")
         with open(os.path.join(WORK, mode, "periodicity.csv"), "w", newline="") as fh:
             w = csv.writer(fh)
             n = max(len(r["GL"]) for r in rows)
-            keys = ("phase", "chunk", "mask", "ctmask", "Zs", "Zb", "du", "T", "ploads_z", "loads_z", "Tseam", "Tint")
+            keys = ("phase", "chunk", "mask", "ctmask", "Zs", "Zb", "du", "T", "ploads_z", "loads_z", "Tseam", "Tint", "Zseam",
+                    "Zint")
             for r in rows:
                 r["ploads_z"] = r["hw"]
             w.writerow(list(keys) + [f"GL_row{j}" for j in range(n)])
@@ -279,7 +298,7 @@ def cmd_analyse(a):
         with np.errstate(all="ignore"), __import__("warnings").catch_warnings():
             __import__("warnings").simplefilter("ignore")
             worst = {k: np.nanmax([r[k] for r in rows]) for k in ("mask", "ctmask", "Zs", "Zb", "du", "T", "ploads_z",
-                                                                  "Tseam", "Tint")}
+                                                                  "Tseam", "Tint", "Zseam", "Zint")}
         if np.isfinite(gl0).any():
             print(f"  grounding line at y = 0: {np.nanmin(gl0):.2f} .. {np.nanmax(gl0):.2f} km")
         print("  worst master/image mismatch: " + ", ".join(f"{k} {v:.2g}" for k, v in worst.items())
@@ -287,7 +306,7 @@ def cmd_analyse(a):
               " / max; ploads z / loads z: the periodic copy / the raw Stokes loads (not periodic), / max)\n"
               "  Tb seam / Tb mid: largest |T_j - (T_j-1 + T_j+1)/2| of the grounded bed temperature across y (K) on the "
               "seam row / on the middle row y = W/2 (where the sliding bump is zero too): a seam stripe (wrong seam heating) shows "
-              "as Tb seam >> Tb mid")
+              "as Tb seam >> Tb mid\n  Zs seam / Zs mid: the same for the surface elevation (m): a ridge or trough along the seam")
 
 
 def cmd_compare(a):
