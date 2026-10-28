@@ -209,6 +209,14 @@ def setup_case(cfg, mesh=True):
         log.info(f"setup: mesh refined around x = {P['GLx'] / 1e3:.2f} km ([case] gl_x_km)")
     P["FineRes"] = float(c.get("fine_res", P.get("MarginRes", 1000.0)))       # flowline_marine_gl.geo.in
     P["FineHalf"] = float(c.get("fine_half_width", 10e3))
+    geo_name = cfg.get("case", {}).get("geo", "case/flowline.geo.in")
+    if "flowline_marine_gl" in geo_name:      # its points must stay in order along x, or gmsh folds the mesh
+        gl, df = P["GLx"], P["FineHalf"]
+        if not (0 < gl - gl / 6 < gl - df and gl + df < gl + gl / 16 < P["L"]):
+            raise SystemExit(f"setup: fine_half_width {df / 1e3:g} km does not fit {geo_name}: the fine band "
+                             f"{(gl - df) / 1e3:.1f} .. {(gl + df) / 1e3:.1f} km must lie inside "
+                             f"{(gl - gl / 6) / 1e3:.1f} .. {(gl + gl / 16) / 1e3:.1f} km (GL - GL/6 .. GL + GL/16, "
+                             f"GL = {gl / 1e3:.1f} km), or the points go out of order and the mesh folds over itself")
     if not mesh:
         return g
     geo = open(cfg["_path"](cfg.get("case", {}).get("geo", "case/flowline.geo.in"))).read()

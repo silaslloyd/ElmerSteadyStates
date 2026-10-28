@@ -18,7 +18,8 @@ parameters = "case/parameters.lua"      # physical parameters (the same as Marin
 geo = "case/flowline_marine_gl.geo.in"  # footprint: fine_res within the start state's grounding line +- fine_half_width
 gl_from_state = "work/marine_flowline/run_cold_p268.15.npz"   # the start state (refined around its grounding line, ~739 km)
 fine_res = 500.0                        # m, element size in the band around the grounding line
-fine_half_width = 50000.0               # m, half width of that band (the grounding line moves ~30 km)
+fine_half_width = 40000.0               # m, half width of that band (must stay inside GL - GL/6 .. GL + GL/16,
+                                        # ~616 .. 785 km here; 50 km folded the mesh at 785..789 km)
 gmsh = "gmsh"
 elmergrid = "ElmerGrid"
 
