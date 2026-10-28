@@ -119,6 +119,8 @@ class ElmerModel(Model):
         # Working Space); MUMPS stops with INFO(1) = -9 when its estimate is too small, e.g. as the grounding line
         # moves and the pivoting changes. Unset: MUMPS' default (the run inputs, and so the caches, unchanged)
         self.mumps_workspace = int(e.get("mumps_workspace", 0))
+        # [elmer] linear_free_surface: "direct" (the template, default) or "iterative" (BiCGStab + ILU1)
+        self.linear_free_surface = str(e.get("linear_free_surface", "direct"))
         self.iterative_tol = float(e.get("iterative_tol", 1e-10))
         self.stokes_precond = str(e.get("stokes_preconditioner", "ILU2"))
         self.ilut_tol = float(e.get("ilut_tolerance", 1e-4))     # drop tolerance for ILUT
@@ -418,6 +420,8 @@ End
             text = self._cartesian_bed(text)
         if self.periodic_sides:
             text = self._periodic_sides(text)
+        if self.linear_free_surface == "iterative":
+            text = self._fs_iterative(text)
         if self.slide_ybump:
             text = self._slide_ybump(text)
         left = sorted(set(PLACEHOLDER.findall(text)))
@@ -445,6 +449,29 @@ End
             if "  Velocity 2 = 0.0\n" not in block:
                 raise ValueError(f"periodic_sides: no 'Velocity 2 = 0.0' in {name}")
             text = text[:k] + block.replace("  Velocity 2 = 0.0\n", "", 1) + text[j:]
+        return text
+
+    def _fs_iterative(self, text):
+        """the free-surface solvers (Zb, Zs) with BiCGStab + ILU1 instead of the direct solver"""
+        a = ('  Linear System Solver = Direct\n'
+             '  Linear System Direct Method = $directsolver\n'
+             '  Linear System Abort Not Converged = True\n'
+             '  Linear System Convergence Tolerance = 1.0e-12')
+        b = ('  Linear System Solver = Iterative\n'
+             '  Linear System Iterative Method = BiCGStab\n'
+             '  Linear System Preconditioning = ILU1\n'
+             '  Linear System Max Iterations = 2000\n'
+             '  Linear System Abort Not Converged = True\n'
+             '  Linear System Convergence Tolerance = 1.0e-12')
+        for name in ('Equation = "Free Surface Sea/Shelf"', 'Equation = "Free Surface Top"'):
+            k = text.find(name)
+            if k < 0:
+                continue
+            j = text.index("\nEnd", k)
+            block = text[k:j]
+            if a not in block:
+                raise ValueError(f"linear_free_surface: no direct-solver lines in {name}")
+            text = text[:k] + block.replace(a, b) + text[j:]
         return text
 
     def _slide_ybump(self, text):

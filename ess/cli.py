@@ -381,7 +381,9 @@ def cmd_run(args):
         if remask:
             xn, frozen, rep = update_masks(saved.layout, prob.unscale(y), saved.frozen, prob.last_diag,
                                            marine=_marine(model), rho_ratio=getattr(model, "rho_ratio", None),
-                                           grounding=not contact)
+                                           grounding=not contact,
+                                           periodic_width=(model.width if getattr(model, "periodic_sides", False)
+                                                           else None))
             if n_changes(rep):
                 log.info(f"run: remask after chunk {c + 1}: {describe(rep) if not contact else describe({k_: v_ for k_, v_ in rep.items() if not k_.startswith(('x_gl', 'to_gr', 'to_fl'))})}")
                 saved.frozen.clear()

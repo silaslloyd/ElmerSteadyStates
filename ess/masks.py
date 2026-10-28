@@ -66,11 +66,14 @@ def grounded_of(gm, marine):
 
 
 def update_masks(layout: StateLayout, x, frozen: Records, diag: Records, *, marine=False, rho_ratio=None,
-                 tol=0.1, apply=True, grounding=True):
+                 tol=0.1, apply=True, grounding=True, periodic_width=None):
     """Check the frozen masks against the state x (and its diagnostics: Temperature Loads, coordinates).
     Returns (x_new, frozen_new, report). With apply=False nothing changes and only the report is made.
     report: counts of nodes per switch, and summary numbers (n_cold, n_temperate, n_grounded, GL position).
     grounding=False: leave the grounded mask alone (contact runs: Elmer moves it), still report on it.
+    periodic_width: periodic sides y = 0 / y = W: the cold/temperate decision of each y = 0 node is copied to its
+    y = W copy (the refreezing test reads the heat loads, which Elmer folds onto the y = 0 side: there the total,
+    on the y = W side only a one-sided part, so the two copies could disagree).
     The grounded zone is kept contiguous from the divide: columns are scanned along the flow and the
     grounding line is the first column that is (or becomes) afloat; everything seaward of it floats."""
     x = np.asarray(x, float).copy()
@@ -160,6 +163,16 @@ def update_masks(layout: StateLayout, x, frozen: Records, diag: Records, *, mari
         if L is not None:
             freeze = (new > 0) & bed & ~newly_grounded & (_on(*L, g_ct, fill=-1.0) > 0)
             new[freeze] = -1.0
+        if periodic_width:
+            cx, cy = _get(diag, "coordinate 1"), _get(diag, "coordinate 2")
+            if cx is not None and cy is not None:
+                X, Y = _on(*cx, g_ct), _on(*cy, g_ct)
+                master = {round(float(x_), 0): v for x_, y_, v in zip(X, Y, new) if abs(y_) < 1.0}
+                im = np.where(np.abs(Y - periodic_width) < 1.0)[0]
+                for i in im:
+                    v = master.get(round(float(X[i]), 0))
+                    if v is not None:
+                        new[i] = v
         rep["to_temperate"] = int(warm.sum())
         rep["to_cold"] = int(freeze.sum())
         cold, temp = (ct < 0) & bed, (ct > 0) & bed

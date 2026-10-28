@@ -36,3 +36,14 @@ vertical Stokes load. With `fix` everything but the raw load should match exactl
 (and through it Zb and the velocities) may not.
 
 All these options are off by default; the template renders byte-identically without them (cached runs stay valid).
+
+## Thermomechanical version (current)
+
+Heat on (the cold/temperate mask moved between chunks, the y = W copies following y = 0; the grounding line by
+contact only), iterative solvers throughout (Stokes as ElmerStreams: P1 + bubbles, GCR + ILU8, tolerance 1e-8, no
+abort; heat BiCGStabL + ILU; free surfaces BiCGStab + ILU1). Phases: spin-up until the rms change per chunk < 2e-3
+(at most 100 chunks = 10 kyr, every 5th chunk saved), retreat (accumulation x 0.3, 10 chunks), advance (x 3, 10).
+The Stokes-only runs never reached a steady state before the forcing, and MUMPS ran out of workspace at 50 km.
+
+    NOPREP=1 bash periodic_test/run_gl_ess.sh                                            # 20 km (mesh exists)
+    GL_CONFIG=configs/test_periodic_gl_50km.toml NTASKS=256 NOPREP=1 bash periodic_test/run_gl_ess.sh   # 50 km

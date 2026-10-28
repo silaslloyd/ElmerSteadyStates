@@ -3,10 +3,10 @@
 Periodic grounding-line test on the ElmerStreams Marine_Term setup (README_gl_ess.md, configs/test_periodic_gl.toml).
 
 The ESS marine flowline (bedrock, filler, ice, bed interface and surface bodies, the contact grounding line
-moving every step) made 20 km wide with 4 elements across, side 2 the periodic image of side 1, the sliding
-coefficient varied periodically across y so the grounding line is not straight; Stokes and free surface only.
-Started from a 2D marine state (ess transfer), then three phases: spin-up, retreat (sliding coefficient
-fcoeff lowered), advance (fcoeff back, accumulation aDIM raised). Each phase is `ess run --chunks N --save-every 1`,
+moving every step) made several elements wide (configs/test_periodic_gl*.toml), side 2 the periodic image of
+side 1, the sliding coefficient varied periodically across y so the grounding line is not straight; thermomechanical
+(heat on, the cold/temperate mask moved between chunks). Started from a 2D marine state (ess transfer), then three
+phases: spin-up until steady, retreat (accumulation x 0.3), advance (accumulation x 3) (PHASES). Each phase is `ess run --chunks N --save-every 1`,
 so there is a state after every chunk. For each periodic_gl treatment:
     elmerstreams   ElmerStreams' contact.f90 (raw loads, Fw doubled on the master side: Fw2)
     fix            SlidCoef_ContactPeriodic + the grounded mask made periodic after GroundedSolver
@@ -43,13 +43,12 @@ WORK = _work()
 START_FROM = os.path.join("work", "marine_flowline", "run_cold_p268.15.npz")
 MODES = ("elmerstreams", "fix", "none")
 # (name, chunks, fcoeff factor, aDIM factor): chunks of [map] n_steps x dt (100 yr)
-# The bed is temperate (--bed temperate) and the sliding coefficient fcoeff x --fbase: with fbase 1 the grounding
-# line of the cold start state ran to the calving front; on the cold bed it did not move. Find an fbase that keeps it
-# inside the domain (run_gl_ess.sh SCAN="10 30 100"), then: more friction retreats it, less advances it.
-# scan (spin-ups, 500 yr): fbase 10, 30, 100 all advanced the grounding line (~3, 2, 1.5 km per 100 yr at the end),
-# still adjusting from the cold-state geometry; fbase 10 gave the wavier grounding line (5 km across the rows).
-# Retreat: friction x 30 more and accumulation x 0.3; advance: back to the base friction.
-PHASES = [("spinup", 5, 1.0, 1.0), ("retreat", 10, 30.0, 0.3), ("advance", 10, 1.0, 1.0)]
+# Thermomechanical (heat on, cold/temperate mask moved between chunks, made periodic; the grounding line by contact).
+# (name, chunks, fcoeff factor, aDIM factor, save every N chunks, stop when the rms change per chunk < tol (None:
+# run all chunks)). The spin-up runs until steady (the Stokes-only runs never got there in 500 yr), then the forcing:
+# accumulation x 0.3 (retreat), x 3 (advance). Friction factors did nothing on a cold bed; --fbase is still there.
+# Earlier (Stokes only, --bed temperate): fbase 1 ran the grounding line to the calving front, 10..100 advanced it.
+PHASES = [("spinup", 100, 1.0, 1.0, 5, 2e-3), ("retreat", 10, 1.0, 0.3, 1, None), ("advance", 10, 1.0, 3.0, 1, None)]
 
 
 def ess(*args):
@@ -93,7 +92,10 @@ def cmd_run(a):
     phases = PHASES[:1] if a.spinup_only else PHASES
     if a.resume:
         phases = phases[[p[0] for p in phases].index(a.resume):]
-    for name, chunks, ff, af in phases:
+    for name, chunks, ff, af, every, tol in phases:
+        if name == "spinup":
+            chunks = a.spinup_max or chunks
+            tol = a.spinup_tol if a.spinup_tol is not None else tol
         out = os.path.join(WORK, tag, f"{name}.npz")
         n = a.chunks or chunks
         offset = 0
@@ -103,11 +105,17 @@ def cmd_run(a):
             if n <= 0:
                 state = out
                 continue
-        args = ["run", CONFIG, "--state", state, "--out", out, "--stokes-only", "--gl", "contact",
-                "--periodic-gl", a.mode, "--chunks", str(n), "--save-every", "1", "--chunk-offset", str(offset),
-                "--no-remask",          # only Elmer moves the grounding line (ESS' remask is not periodic-aware)
-                "--bed", "temperate",   # sliding at T0 (the cold start state's bed barely slides: nothing moved)
+        args = ["run", CONFIG, "--state", state, "--out", out, "--gl", "contact",
+                "--periodic-gl", a.mode, "--chunks", str(n), "--save-every", str(every), "--chunk-offset", str(offset),
                 "--lua", f"fcoeff={fc * a.fbase * ff!r}", "--lua", f"aDIM={ad * af!r}"]
+        if tol:
+            args += ["--until-tol", repr(tol)]
+        if a.stokes_only:       # no heat: Stokes and free surface, and no remask (temperature frozen)
+            args += ["--stokes-only", "--no-remask"]
+        else:                   # the cold/temperate mask follows the temperature (periodic); Elmer moves the grounding line
+            args += ["--remask"]
+        if a.bed:
+            args += ["--bed", a.bed]
         ess(*args)
         state = out
     cmd_analyse(argparse.Namespace(modes=[tag]))         # the table at the end of the job
@@ -242,6 +250,11 @@ def main():
     s.add_argument("--chunks", type=int, help="chunks per phase (default per phase: "
                                               + ", ".join(f"{p[0]} {p[1]}" for p in PHASES) + ")")
     s.add_argument("--fbase", type=float, default=1.0, help="sliding coefficient fcoeff times this in every phase")
+    s.add_argument("--stokes-only", action="store_true", help="no heat solve (temperature frozen, no remask)")
+    s.add_argument("--bed", choices=["temperate", "cold"], help="the whole bed temperate or cold (ess run --bed)")
+    s.add_argument("--spinup-tol", type=float, help=f"spin-up until the rms change per chunk is below this "
+                                                    f"(default {PHASES[0][5]:g}; 0: all chunks)")
+    s.add_argument("--spinup-max", type=int, help=f"at most this many spin-up chunks (default {PHASES[0][1]})")
     s.add_argument("--spinup-only", action="store_true", help="only the spin-up phase (to choose --fbase)")
     s.add_argument("--tag", help="results folder under the work dir (default MODE, or MODE_f<FBASE>)")
     s.add_argument("--resume", metavar="PHASE", help="continue from PHASE's last saved chunk (then the later phases)")

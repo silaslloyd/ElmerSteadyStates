@@ -44,10 +44,19 @@ periodic_gl = "fix"                     # none | elmerstreams | fix (ess run --p
 # MUMPS segfaulted in the heat solve on the partitioned periodic mesh (Elmer bcc2c52); ElmerStreams solves heat
 # (and Stokes) iteratively. Stokes stays direct until shown otherwise (ess run --linear-stokes iterative).
 linear_heat = "iterative"
+# iterative throughout (much faster than MUMPS on these meshes): Stokes as ElmerStreams (P1 + bubbles, GCR + ILU8,
+# tolerance 1e-8, no abort when not converged; linsys/gcr.sif), the free surfaces BiCGStab + ILU1
+linear_stokes = "iterative"
+stokes_element = "Bubbles"
+stokes_preconditioner = "ILU8"
+stokes_iterative_tol = 1.0e-8
+stokes_abort_not_converged = false
+linear_free_surface = "iterative"
 vtu = false                             # true: every run also writes a VTU at its end
 friction_heat = "flux"                  # C(T) |u_b|^2 as a basal heat flux
 # written with every run besides the state, used for the mask checks and plots
-diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "ColdTempMask", "GroundedMask", "Flow Solution Loads 3"]
+diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "ColdTempMask", "GroundedMask", "Flow Solution Loads 3",
+               "Temperature Loads"]          # Temperature Loads: the refreezing test of the cold/temperate remask
 
 [state]
 variables = ["Temperature", "Zs", "Zb"] # the state vector (velocity is slaved to it); Zb: the shelf base
