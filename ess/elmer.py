@@ -181,6 +181,19 @@ class ElmerModel(Model):
         #                   in the test, and the grounded mask made periodic after GroundedSolver
         # (elmer/PeriodicGL.so: make -C elmer PeriodicGL.so)
         self.periodic_gl = str(e.get("periodic_gl", "none"))
+        # [elmer] thermal = "elmerstreams" (marine template, contact grounding line): ElmerStreams Marine_Term's
+        # thermal chain in place of the frozen cold/temperate mask: the mask set every time step by its
+        # ColdTempMaskSolver (cold -> temperate above the melting point, temperate -> cold when the water sheet
+        # is gone), the SheetSolverhw water sheet fed by the melt from the heat solver's loads (getmeltrate,
+        # effective pressure from Stress 3: ComputeDevStress), loads-based friction heating and strain heating.
+        # With periodic_gl "fix" the loads are periodic copies (FixPeriodicLoads) and nothing is halved; with
+        # "elmerstreams" the friction heating and melt are halved on the y < 1 side. Needs elmer/ColdTempMask
+        # and elmer/SheetSolverhw (make -C elmer thermal), friction_heat = "loads", strain_heat = true, and
+        # "Water Sheet Thickness" among the [state] frozen fields (carried from chunk to chunk).
+        self.thermal = str(e.get("thermal", "frozen"))
+        self.thermal_libs = {k: cfg["_path"](e.get(f"{k}_lib", f"elmer/{v}")) for k, v in
+                             (("coldtemp", "ColdTempMask"), ("sheet", "SheetSolverhw"))}
+        self.hydro_lua = cfg["_path"](e.get("hydro_lua", "elmer/ess_hydro.lua"))
         self.periodic_lib = cfg["_path"](e.get("periodic_lib", "elmer/PeriodicGL"))
         self._check_inputs()
 
@@ -424,6 +437,10 @@ End
             text = self._fs_iterative(text)
         if self.slide_ybump:
             text = self._slide_ybump(text)
+        if self.thermal == "elmerstreams":
+            text = self._thermal_elmerstreams(text)
+        elif self.thermal != "frozen":
+            raise ValueError(f"[elmer] thermal must be 'frozen' or 'elmerstreams', not {self.thermal!r}")
         left = sorted(set(PLACEHOLDER.findall(text)))
         if left:
             raise ValueError(f"unfilled placeholders in {self.template}: {', '.join(left)}")
@@ -437,6 +454,8 @@ End
                                      f"  Periodic BC Translate(3) = Real 0.0 {self.width!r} 0.0\n"
                                      + "".join(f"  Periodic BC {n} = Logical True\n" for n in names))
         ice = ["Velocity 1", "Velocity 2", "Velocity 3", "Pressure", "Temperature", "Zs", "Zb"]
+        if self.thermal == "elmerstreams":
+            ice.append("Water Sheet Thickness")
         rock = ["Temperature"]
         for name, master, names in (("side2 bedrock", 7, rock), ("side2 filler", 11, rock), ("side2 ice", 15, ice)):
             k = text.index(f'Name = "{name}"')
@@ -472,6 +491,187 @@ End
             if a not in block:
                 raise ValueError(f"linear_free_surface: no direct-solver lines in {name}")
             text = text[:k] + block.replace(a, b) + text[j:]
+        return text
+
+    @staticmethod
+    def _section_end(text, marker):
+        """index of the "\nEnd" closing the section that contains marker"""
+        k = text.index(marker)
+        return text.index("\nEnd", k)
+
+    def _insert_in(self, text, marker, lines):
+        """lines (str) added at the end of the section containing marker"""
+        j = self._section_end(text, marker)
+        return text[:j] + "\n" + lines.rstrip("\n") + text[j:]
+
+    @staticmethod
+    def _add_active(text, eq_name, ids):
+        """append solver numbers to the Active Solvers list of the equation named eq_name"""
+        k = text.index(f'Name = "{eq_name}"')
+        m = re.compile(r"Active Solvers\s*\((\d+)\)\s*=\s*([\d ]+)").search(text, k)
+        old = m.group(2).split()
+        new = old + [str(i) for i in ids]
+        return text[:m.start()] + f"Active Solvers({len(new)}) = {' '.join(new)}" + text[m.end():]
+
+    def _thermal_elmerstreams(self, text):
+        """ElmerStreams Marine_Term's thermal chain (see [elmer] thermal)"""
+        if not self.marine or self.gl_mode != "contact":
+            raise ValueError("[elmer] thermal = 'elmerstreams': marine template with the contact grounding line only")
+        if self.friction_heat != "loads":
+            raise ValueError("[elmer] thermal = 'elmerstreams' needs friction_heat = 'loads' (as ElmerStreams)")
+        if not self.strain_heat or self.stokes_only:
+            raise ValueError("[elmer] thermal = 'elmerstreams' needs strain_heat = true and the heat solve")
+        fix, halve = self.periodic_gl == "fix", self.periodic_gl == "elmerstreams"
+        n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M))
+        ids = iter(range(n + 1, n + 20))
+        # numbers in execution order within a step: the periodic copies of the heat loads before the sheet solver
+        ct, stress = next(ids), next(ids)
+        fixT = fixW = fixU0 = fixU = None
+        if fix:
+            fixT, fixW = next(ids), next(ids)
+        sheet = next(ids)
+        if fix:
+            fixU0, fixU = next(ids), next(ids)
+        it = ('  Linear System Solver = "Iterative"\n  Linear System Iterative Method = "BiCGStab"\n'
+              '  Linear System Max Iterations = 300\n  Linear System Convergence Tolerance = 1.0E-09\n'
+              '  Linear System Abort Not Converged = False\n  Linear System Preconditioning = "ILU0"\n'
+              '  Linear System Residual Output = 100\n')
+        lib = self.periodic_lib
+        blocks = [f"""
+! ---- ElmerStreams thermal chain ([elmer] thermal = "elmerstreams")
+Solver {ct}
+  Exec Solver = "Before Timestep"
+  Equation = "ColdTempMask"
+  Procedure = "{self.thermal_libs['coldtemp']}" "ColdTempMaskSolver"
+  Variable = "ColdTempMask"
+  Variable DOFs = 1
+  Toler = Real 1e-3
+End
+
+Solver {stress}
+  Equation = String "StressSolver"
+  Exec Solver = "after timestep"
+  Procedure = File "ElmerIceSolvers" "ComputeDevStress"
+  Variable = -nooutput "Sij"
+  Variable DOFs = 1
+  Flow Solver Name = String "Flow Solution"
+  Stress Variable Name = String "Stress"
+  Exported Variable 1 = "Stress"
+  Exported Variable 1 DOFs = 6
+{it}End
+"""]
+        if fix:
+            fpl = lambda num, ex, src, tgt, mode: (
+                f'Solver {num}\n  Exec Solver = "{ex}"\n  Equation = "Periodic {src}"\n'
+                f'  Procedure = "{lib}" "FixPeriodicLoads"\n  Source Variable = String "{src}"\n'
+                f'  Target Variable = String "{tgt}"\n  Periodic Mode = String "{mode}"\nEnd\n')
+            blocks.append("\n! periodic copies of the loads (FixPeriodicLoads): the melt (after the heat solve, before the "
+                          "sheet)\n" + fpl(fixT, "After Timestep", "Temperature Loads", "Periodic Temperature Loads", "folded")
+                          + "\n" + fpl(fixW, "After Timestep", "Strain Heating Boundary Weights",
+                                        "Periodic Strain Heating Boundary Weights", "split")
+                          + "\n! the friction heating: created before all, then run by the heat solver first (Pre Solvers)\n"
+                          + fpl(fixU0, "Before All", "Flow Solution Loads", "Periodic Flow Solution Loads", "folded")
+                          + "\n" + fpl(fixU, "Never", "Flow Solution Loads", "Periodic Flow Solution Loads", "folded"))
+        blocks.append(f"""
+Solver {sheet}
+  Exec Solver = "After Timestep"
+  Equation = String "Sheet solver water sheet thickness"
+  Variable = String "Water Sheet Thickness"
+  Procedure = "{self.thermal_libs['sheet']}" "SheetSolverhw"
+  Linear System Solver = "Iterative"
+  Linear System Iterative Method = "GCR"
+  Linear System GCR Restart = Integer 200
+  Linear System Max Iterations = 1500
+  Linear System Convergence Tolerance = 1.0e-8
+  Linear System Abort Not Converged = False
+  Linear System Preconditioning = "ILU8"
+  Linear System Residual Output = 100
+  Nonlinear System Convergence Tolerance = 1.0e-6
+  Nonlinear System Max Iterations = 200
+  Nonlinear System Min Iterations = 1
+  Nonlinear System Relaxation Factor = Real 0.5
+  Nonlinear System Convergence Measure = "solution"
+  Nonlinear System Reset Newton = Logical True
+  Nonlinear System Newton After Iterations = 20
+  Nonlinear System Newton After Tolerance = 1.0e-2
+  Steady State Convergence Tolerance = 1.0E-05
+  Exported Variable 1 = -dofs 1 "Melt rate"
+  Exported Variable 2 = -dofs 1 "Effective Pressure Output"
+  Exported Variable 3 = -dofs 3 "Water Flux"
+  Exported Variable 4 = -dofs 1 "Hydraulic Conductivity Output"
+  Nonlinear Update Exported Variables = Logical True
+  Update Exported Variables = Logical True
+End
+""")
+        k = text.index("!---------------- BOUNDARY CONDITIONS")
+        k = text.rindex("\n", 0, k - 1)
+        text = text[:k] + "\n" + "".join(blocks) + text[k:]
+        # the mask now belongs to its solver: not exported by the frozen-field owner any more
+        j = self._section_end(text, '"ESSNoOp"')
+        i = text.rindex("Solver ", 0, j)
+        text = text[:i] + text[i:j].replace('  Exported Variable 1 = -dofs 1 "ColdTempMask"\n', "")\
+            .replace('  Exported Variable 1 = -dofs 1 "ColdTempMask"', "") + text[j:]
+        text = self._add_active(text, "ice equations", [stress] + ([fixT, fixW, fixU0, fixU] if fix else []))
+        text = self._add_active(text, "interface equations", [ct, sheet])
+        # heat solver: the nodal coordinates (sheet solver), and the periodic friction loads first
+        heat = 'Equation = String "Homologous Temperature Equation"'
+        text = self._insert_in(text, heat, '  Exported Variable 4 = -dofs 3 "NodalCoords"'
+                               + (f"\n  Pre Solvers(1) = {fixU}" if fix else ""))
+        for bf in ("bodyforce bedrock", "bodyforce filler", "bodyforce ice"):
+            text = self._insert_in(text, f'Name = "{bf}"', "\n".join(f"  NodalCoords {c} = Equals Coordinate {c}"
+                                                                     for c in (1, 2, 3)))
+        loads = "Periodic Temperature Loads" if fix else "Temperature Loads"
+        weights = "Periodic Strain Heating Boundary Weights" if fix else "Strain Heating Boundary Weights"
+        yarg = "tx[5]" if halve else "W"
+        melt = (f'Variable "{loads}", "{weights}", "Friction Loads", "GroundedMask", "Time", "Coordinate 2"\n'
+                f'    Real LUA "getmeltrate(tx[0],tx[1],tx[2],tx[3],tx[4],{yarg}, W) + Source*tx[2]"')
+        text = self._insert_in(text, 'Name = "bodyforce interface"', f"""  ! water sheet (ElmerStreams)
+  Melt Source = {melt}
+  Melt Rate = {melt}
+  Effective Pressure Output = Variable "Water Sheet Thickness", "Stress 3"
+    Real Lua "N(tx[0], tx[1], N0, hr)"
+  Hydraulic Conductivity Output = Variable "Effective Pressure Output"
+    Real LUA "conductivity(tx[0])"
+  Basal Velocity 2 = Equals Velocity 2
+  Basal Velocity 3 = Equals Velocity 3""")
+        text = self._insert_in(text, 'Name = "ice material"', """  ! Hydrology model (ElmerStreams)
+  Density Water = Real #rhow
+  Diffusion coefficient = Real #k
+  Bedrock bump height = Real #hr
+  Cavity spacing = Real #lr
+  Phi0 = Variable "Stress 3", "zb"
+    Real LUA "-tx[0] + rhow*gravity*tx[1]"
+  Effective Pressure = Variable "Water Sheet Thickness", "Stress 3"
+    Real Lua "N(tx[0], tx[1], N0, hr)"
+  Hydraulic Conductivity = Variable "Effective Pressure"
+    Real LUA "conductivity(tx[0])"
+  Effective Pressure First Derivative = Variable "Water Sheet Thickness", "Stress 3"
+    Real LUA "dNdh(tx[0],tx[1], N0, hr)"
+  Effective Pressure Second Derivative = Variable "Water Sheet Thickness"
+     Real LUA "2*N0*(hr + eps)/((tx[0] + eps)^3)"
+  Hydraulic Conductivity First Derivative = Variable "Effective Pressure"
+    Real LUA "dkappadN(tx[0])"\n""")
+        text = self._insert_in(text, "Initial Condition 4", '  Water Sheet Thickness = Variable "Coordinate 1"\n'
+                               '    Real Lua "InitialSheet(tx[0])"')
+        # bed: the sheet at hr under floating ice; friction heating from the (periodic) loads
+        text = self._insert_in(text, 'Name = "interface"\n  Body ID = 4',
+                               '  Water Sheet Thickness = Real #hr\n'
+                               '  Water Sheet Thickness Condition = Variable "Time","GroundedMask"\n'
+                               '    Real LUA "IfThenElse(tx[0]>1E-5, -tx[1], -1)"')
+        old = ('  Temperature Load = Variable Flow Solution Loads 1, Flow Solution Loads 2, '
+               'Flow Solution Loads 3, Velocity 1, Velocity 2, Velocity 3, Coordinate 2\n'
+               '    Real Lua "frictionloads(tx[0],tx[1],tx[2],tx[3],tx[4],tx[5], W, W)"')
+        if old not in text:
+            raise ValueError("thermal: the loads friction-heating lines of the template changed")
+        new = old
+        if fix:
+            new = old.replace("Flow Solution Loads ", "Periodic Flow Solution Loads ")
+        elif halve:
+            new = old.replace("tx[5], W, W)", "tx[5], tx[6], W)")
+        text = text.replace(old, new)
+        # Lua: the hydrology functions and parameters after parameters.lua
+        k = text.index("Header")
+        text = text[:k] + f"!---LUA BEGIN\n! assert(loadfile('{self.hydro_lua}'))()\n!---LUA END\n\n" + text[k:]
         return text
 
     def _slide_ybump(self, text):

@@ -47,3 +47,24 @@ The Stokes-only runs never reached a steady state before the forcing, and MUMPS 
 
     NOPREP=1 bash periodic_test/run_gl_ess.sh                                            # 20 km (mesh exists)
     GL_CONFIG=configs/test_periodic_gl_50km.toml NTASKS=256 NOPREP=1 bash periodic_test/run_gl_ess.sh   # 50 km
+
+## ElmerStreams thermal chain (current)
+
+`[elmer] thermal = "elmerstreams"` (both test configs) puts ElmerStreams Marine_Term's thermal treatment into the
+ESS marine template (applied to the rendered input file; other configs unchanged):
+
+* the cold/temperate mask set every time step by ElmerStreams' `ColdTempMaskSolver` (elmer/ColdTempMaskSolver.F90,
+  copied unchanged): cold -> temperate when T - Tm >= 1e-3, temperate -> cold when the water sheet is gone;
+* the water sheet `SheetSolverhw` (elmer/SheetSolverhw.F90, copied from SRC/sheetsolverhw.f90) with Marine_Term's
+  hydrology material functions and parameters (elmer/ess_hydro.lua, copied from utils.lua / parameters.lua), fed by
+  the melt from the heat solver's loads (`getmeltrate`), effective pressure from `Stress 3` (`ComputeDevStress`);
+* friction heating from the Stokes nodal loads (`frictionloads`) and strain heating;
+* the mask and the water sheet are carried from chunk to chunk (frozen fields updated from Elmer's end values).
+
+The treatments differ in the loads:
+* `elmerstreams`: raw loads, friction heating and melt halved on the y < 1 side (Coordinate 2 passed as y);
+* `fix`: periodic copies (`FixPeriodicLoads`): the Stokes loads run by the heat solver first (`Pre Solvers`), the
+  temperature loads (folded) and the strain-heating boundary weights (split) before the sheet solver; no halving;
+* `none`: raw loads, nothing halved.
+
+Needs a new prep (the water sheet is a new frozen field): `bash periodic_test/run_gl_ess.sh` (no NOPREP).

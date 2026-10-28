@@ -22,5 +22,14 @@ PeriodicGL.so: PeriodicUtils.F90 FixPeriodicLoads.F90 ContactPeriodic.F90
 	@[ -n "$(ELMERICE_USF)" ] || echo "warning: ElmerIceUSF.so not found; SlidCoef_ContactPeriodic needs it loaded"
 	$(ELMERF90) -o $@ $^ $(ELMERICE_USF)
 
+# ElmerStreams' thermal chain ([elmer] thermal = "elmerstreams"): make -C elmer thermal
+thermal: ColdTempMask.so SheetSolverhw.so
+
+ColdTempMask.so: ColdTempMaskSolver.F90
+	$(ELMERF90) -o $@ $<
+
+SheetSolverhw.so: SheetSolverhw.F90
+	$(ELMERF90) -o $@ $<
+
 clean:
-	rm -f SteadyStateIO.so Buoyancy.so PeriodicGL.so FixPeriodicLoads.so *.mod
+	rm -f SteadyStateIO.so Buoyancy.so PeriodicGL.so FixPeriodicLoads.so ColdTempMask.so SheetSolverhw.so *.mod

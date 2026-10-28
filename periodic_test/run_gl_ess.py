@@ -110,10 +110,9 @@ def cmd_run(a):
                 "--lua", f"fcoeff={fc * a.fbase * ff!r}", "--lua", f"aDIM={ad * af!r}"]
         if tol:
             args += ["--until-tol", repr(tol)]
-        if a.stokes_only:       # no heat: Stokes and free surface, and no remask (temperature frozen)
-            args += ["--stokes-only", "--no-remask"]
-        else:                   # the cold/temperate mask follows the temperature (periodic); Elmer moves the grounding line
-            args += ["--remask"]
+        # Elmer moves the grounding line (contact) and, with [elmer] thermal = "elmerstreams", the cold/temperate
+        # mask and the water sheet every step: no ESS remask between chunks
+        args += ["--no-remask"] + (["--stokes-only"] if a.stokes_only else [])
         if a.bed:
             args += ["--bed", a.bed]
         ess(*args)
@@ -180,7 +179,11 @@ def analyse_state(path, width):
     umax = max(float(np.max(np.abs(r[1]))) for r in u if r is not None) if any(r is not None for r in u) else 1.0
     gm = _field(allf, "GroundedMask")
     lz = _field(allf, "Flow Solution Loads 3")
+    hw = _field(allf, "Water Sheet Thickness")
     out = dict(mask=mism("GroundedMask"), Zs=mism("Zs"), Zb=mism("Zb"),
+               ctmask=mism("ColdTempMask"),
+               hw=mism("Water Sheet Thickness", scale=float(np.max(np.abs(hw[1]))) if hw is not None else 1.0),
+               T=mism("Temperature"),
                du=mism("Velocity", (1, 2, 3), umax),
                loads_z=mism("Flow Solution Loads 3", scale=float(np.max(np.abs(lz[1]))) if lz is not None else 1.0),
                t=float(s.meta.get("time", np.nan)))
@@ -211,8 +214,8 @@ def cmd_analyse(a):
             continue
         print(f"\n{mode}: grounding line (last grounded x, km) per row across y (y = 0 and y = W are the same row),"
               f" and the largest master (y = 0) / image (y = W) mismatch after each chunk")
-        print(f"{'phase':8s} {'chunk':>5s} {'GL rows y = 0 .. W (km)':>44s} {'mask':>5s} {'Zs (m)':>9s} "
-              f"{'Zb (m)':>9s} {'|du|/u':>9s} {'loads z':>9s}")
+        print(f"{'phase':8s} {'chunk':>5s} {'GL rows y = 0 .. W (km)':>44s} {'mask':>5s} {'ct':>3s} {'Zs (m)':>9s} "
+              f"{'Zb (m)':>9s} {'|du|/u':>9s} {'T (K)':>9s} {'hw/max':>9s} {'loads z':>9s}")
         rows = []
         for name, f in files:
             r = analyse_state(f, width)
@@ -222,21 +225,26 @@ def cmd_analyse(a):
             g_ = np.array(r["GL"], float)
             gls = (" ".join(f"{v:7.2f}" for v in g_) if len(g_) <= 6 else
                    f"min {np.nanmin(g_):7.2f} mean {np.nanmean(g_):7.2f} max {np.nanmax(g_):7.2f}")
-            print(f"{name:8s} {r['chunk']:5d} {gls:>44s} {r['mask']:5.0f} {fmt(r['Zs'])} {fmt(r['Zb'])} "
-                  f"{fmt(r['du'])} {fmt(r['loads_z'])}")
+            ct = f"{r['ctmask']:3.0f}" if np.isfinite(r["ctmask"]) else "  -"
+            print(f"{name:8s} {r['chunk']:5d} {gls:>44s} {r['mask']:5.0f} {ct} {fmt(r['Zs'])} {fmt(r['Zb'])} "
+                  f"{fmt(r['du'])} {fmt(r['T'])} {fmt(r['hw'])} {fmt(r['loads_z'])}")
         with open(os.path.join(WORK, mode, "periodicity.csv"), "w", newline="") as fh:
             w = csv.writer(fh)
             n = max(len(r["GL"]) for r in rows)
-            w.writerow(["phase", "chunk", "mask", "Zs", "Zb", "du", "loads_z"] + [f"GL_row{j}" for j in range(n)])
+            keys = ("phase", "chunk", "mask", "ctmask", "Zs", "Zb", "du", "T", "hw", "loads_z")
+            w.writerow(list(keys) + [f"GL_row{j}" for j in range(n)])
             for r in rows:
-                w.writerow([r[k] for k in ("phase", "chunk", "mask", "Zs", "Zb", "du", "loads_z")]
+                w.writerow([r[k] for k in keys]
                            + r["GL"] + [np.nan] * (n - len(r["GL"])))
         gl0 = np.array([r["GL"][0] if r["GL"] else np.nan for r in rows])
-        worst = {k: np.nanmax([r[k] for r in rows]) for k in ("mask", "Zs", "Zb", "du")}
+        with np.errstate(all="ignore"), __import__("warnings").catch_warnings():
+            __import__("warnings").simplefilter("ignore")
+            worst = {k: np.nanmax([r[k] for r in rows]) for k in ("mask", "ctmask", "Zs", "Zb", "du", "T", "hw")}
         if np.isfinite(gl0).any():
             print(f"  grounding line at y = 0: {np.nanmin(gl0):.2f} .. {np.nanmax(gl0):.2f} km")
         print("  worst master/image mismatch: " + ", ".join(f"{k} {v:.2g}" for k, v in worst.items())
-              + "   (mask: 0, 1 or 2; |du|/u: velocity / max speed; loads z: raw Stokes loads, not periodic)")
+              + "   (mask / ct: grounded / cold-temperate mask, 0, 1 or 2; |du|/u: velocity / max speed; hw: water sheet"
+              " / max; loads z: raw Stokes loads, not periodic)")
 
 
 def main():

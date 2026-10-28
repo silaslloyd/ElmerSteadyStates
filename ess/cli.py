@@ -368,6 +368,23 @@ def cmd_run(args):
             if np.any((gm_new > -0.5) != (gm_old > -0.5)):
                 log.info(f"run: contact grounding line {xg[gm_old > -0.5].max() / 1e3:.2f} -> "
                          f"{xg[gm_new > -0.5].max() / 1e3:.2f} km")
+        if getattr(model, "thermal", "frozen") == "elmerstreams":
+            # ElmerStreams thermal chain: Elmer moves the cold/temperate mask and the water sheet every step;
+            # carry what it ended the chunk with into the next chunk (as the grounded mask above)
+            from .masks import _on
+            for nm in ("ColdTempMask", "Water Sheet Thickness"):
+                try:
+                    kf, kd = find_name(saved.frozen, nm), find_name(prob.last_diag, nm)
+                except KeyError:
+                    log.warning(f"run: thermal = elmerstreams: {nm} not in the frozen fields / diagnostics: not carried")
+                    continue
+                g, old = saved.frozen[kf]
+                new = _on(*prob.last_diag[kd], g, fill=np.nan)
+                miss = np.isnan(new)
+                if miss.any():                  # nodes Elmer did not write: keep their old values
+                    log.warning(f"run: {nm}: {int(miss.sum())} nodes without an Elmer value, old values kept")
+                    new[miss] = old[miss]
+                saved.frozen[kf] = (g, new)
         # the state after this chunk, with the masks it ran with (before the remask)
         save_state(out, saved.layout, prob.unscale(y), p, dict(saved.frozen), prob.last_diag, time=t)
         if args.save_every and (c + 1) % args.save_every == 0:
