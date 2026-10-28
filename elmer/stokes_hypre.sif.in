@@ -1,0 +1,21 @@
+# Stokes linear solve with Hypre directly (no block preconditioning): Hypre's BiCGStab preconditioned by BoomerAMG on
+# the whole Stokes system. Not a good Stokes solver (AMG on a saddle-point system); used only by jobs/amg_tests.cmd to
+# see whether Elmer's Hypre interface works at all in a given build. Use with
+#   ess run --linear-stokes block --stokes-block-file elmer/stokes_hypre.sif.in
+# (the "block" option puts the keywords below into the Stokes solver as they are).
+  Linear System Solver = Iterative
+  Linear System Use Hypre = Logical True
+  Linear System Iterative Method = BiCGStab
+  Linear System Preconditioning = BoomerAMG
+  Linear System Max Iterations = 200
+  Linear System Convergence Tolerance = 1.0e-6
+  Linear System Abort Not Converged = Logical False
+  Linear System Residual Output = 20
+  BoomerAMG Relax Type = Integer 3
+  BoomerAMG Coarsen Type = Integer 0
+  BoomerAMG Num Sweeps = Integer 1
+  BoomerAMG Max Levels = Integer 25
+  BoomerAMG Interpolation Type = Integer 0
+  BoomerAMG Smooth Type = Integer 6
+  BoomerAMG Cycle Type = Integer 1
+  BoomerAMG Num Functions = Integer 4
