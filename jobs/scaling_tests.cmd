@@ -153,6 +153,7 @@ opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --bed cold --gl f
 # Stabilized? (the flowline tests, where ILU0/ILU1 converged, were Stabilized; the 50 km config is Bubbles, where
 # they did not reduce the residual at all)
 [ -n "$STOKES_ELEMENT" ] && opts="$opts --stokes-element $STOKES_ELEMENT"
+# MAXIT: the GCR iteration cap of the GCR runs (default 2000)
 # FRIC=F: the sliding coefficient fcoeff times F (the periodic GL runs used 10, run_gl_ess.py --fbase; plain ess
 # run, as here by default: 1)
 if [ -n "$FRIC" ]; then
@@ -165,7 +166,7 @@ echo "Stokes element: ${STOKES_ELEMENT:-$CFG_ELEMENT, from the config}"
 V=$WORK/scaling_files_${SLURM_JOB_ID:-local}; mkdir -p $V
 mkGCR() {   # $1 file, $2 ILU level: GCR + ILU on the whole Stokes system, every iteration printed (counts)
     printf '%s\n' "  Linear System Solver = Iterative" "  Linear System Iterative Method = GCR" \
-        "  Linear System GCR Restart = Integer 250" "  Linear System Max Iterations = 2000" \
+        "  Linear System GCR Restart = Integer 250" "  Linear System Max Iterations = ${MAXIT:-2000}" \
         "  Linear System Preconditioning = ILU$2" "  Linear System Convergence Tolerance = 1.0e-8" \
         "  Linear System Abort Not Converged = Logical False" "  Linear System Residual Output = 1" > $1
 }
