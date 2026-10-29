@@ -242,6 +242,7 @@ mkAMGvar() {   # $1 file, $2 variant letter
         g) sed -i '/BoomerAMG Smooth Type/d' $1;;
         h) sed -i '/^ *BoomerAMG /d; /^ *Boomeramg /d' $1;;
         d) echo "  block 11: Linear System Preconditioning = None" >> $1;;
+        f) sed -i 's/Block Matrix Reuse = Logical False/Block Matrix Reuse = Logical True/' $1;;
         e) sed -i '/block 22:/d' $1
            printf '%s\n' "  block 22: Linear System Solver = Direct" "  block 22: Linear System Direct Method = MUMPS" >> $1;;
     esac
@@ -263,7 +264,7 @@ for t in $(echo $SET | fold -w1); do
         M) mkGCR $V/M.sif.in 0; echo "  Linear System ILU Factor = Real 0.01" >> $V/M.sif.in;;
         N) mkGCR $V/N.sif.in 0; echo "  Linear System ILU Factor = Real 0.001" >> $V/N.sif.in;;
         O) mkGCR $V/O.sif.in 1; echo "  Linear System ILU Factor = Real 0.01" >> $V/O.sif.in;;
-        a|b|c|d|e|g|h) mkAMGvar $V/$t.sif.in $t;;
+        a|b|c|d|e|f|g|h) mkAMGvar $V/$t.sif.in $t;;
         k) grep -v "^#" elmer/stokes_block.sif.in > $V/k.sif.in;;
         A) mkMG $V/A.sif.in;;  B) mkBlockMG $V/B.sif.in;;
         Y) mkHILU $V/Y.sif.in 30;;  Z) mkHILU $V/Z.sif.in 10;;  V) mkHILU $V/V.sif.in 31;;  I) mkHILU $V/I.sif.in 11;;
@@ -320,6 +321,7 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
                c) what="a without the block preconditioner (no pressure Schur solver)";;
                d) what="a with block 11 preconditioning explicitly None";;
                e) what="a with the pressure block (22) solved directly by MUMPS";;
+               f) what="a with Block Matrix Reuse = True (as Elmer's passing BoomerAMG test)";;
                g) what="a without BoomerAMG Smooth Type (Schwarz smoothers)";;
                h) what="a with all BoomerAMG parameters at Hypre's defaults";;
                A) what="GCR + Elmer's cluster multigrid (one cycle, SGS smoothing) on the whole system";;
