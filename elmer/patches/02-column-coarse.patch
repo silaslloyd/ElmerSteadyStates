@@ -29,7 +29,7 @@ index dc9c82555..28ab42b54 100644
      IF ( .NOT. ComplexSystem ) THEN
        SELECT CASE ( IterType )
 diff --git a/fem/src/SParIterSolver.F90 b/fem/src/SParIterSolver.F90
-index 57850f0db..bca2428eb 100644
+index 57850f0db..735818464 100644
 --- a/fem/src/SParIterSolver.F90
 +++ b/fem/src/SParIterSolver.F90
 @@ -59,6 +59,19 @@ MODULE SParIterSolve
@@ -81,7 +81,7 @@ index 57850f0db..bca2428eb 100644
  
    IF (ASSOCIATED(CM)) THEN
      DEALLOCATE(CM % Cols)
-@@ -4059,6 +4087,575 @@ SUBROUTINE RenumberDOFs( SourceMatrix, SplittedMatrix, ParallelInfo )
+@@ -4059,6 +4087,581 @@ SUBROUTINE RenumberDOFs( SourceMatrix, SplittedMatrix, ParallelInfo )
  END SUBROUTINE RenumberDOFs
  !********************************************************************
  
@@ -270,11 +270,11 @@ index 57850f0db..bca2428eb 100644
 +        END IF
 +        j = 0
 +        DO d = 1, nvd
-+          IF ( ABS(vec(d)) <= 1.0e-12_dp ) CYCLE
++          IF ( ABS(vec(d)) <= 1.0e-6_dp ) CYCLE     ! e.g. a wall's tangents' tiny component along its normal
 +          DO kk = 0, CC_order
 +            wv = vec(d)
 +            IF ( kk > 0 ) wv = wv * zeta**kk
-+            IF ( ABS(wv) <= 1.0e-12_dp ) CYCLE
++            IF ( ABS(wv) <= 1.0e-6_dp ) CYCLE
 +            j = j + 1
 +            rwI(j,r) = M*(lcol-1) + (d-1)*(CC_order+1) + kk + 1; rwW(j,r) = wv
 +          END DO
@@ -306,7 +306,7 @@ index 57850f0db..bca2428eb 100644
 +    IF ( rowLcol(r) == 0 ) CYCLE
 +    j = 0
 +    DO mode = 1, M
-+      IF ( ABS(Wm(r,mode)) > 1.0e-12_dp ) THEN
++      IF ( ABS(Wm(r,mode)) > 1.0e-6_dp ) THEN
 +        j = j + 1
 +        IF ( j > CC_ns ) CALL Fatal(Caller, 'more coarse modes on one dof than expected')
 +        rwI(j,r) = M*(rowLcol(r)-1) + mode; rwW(j,r) = Wm(r,mode)
@@ -433,10 +433,16 @@ index 57850f0db..bca2428eb 100644
 +    CC_id % ICNTL(18) = 0    ! centralised matrix
 +    CC_id % ICNTL(21) = 0    ! centralised solution
 +    CC_id % ICNTL(14) = 60
++    ! coarse modes without stiffness (e.g. a mode no dof really carries) give null pivots: detect them and
++    ! return the solution with those components zero instead of failing
++    CC_id % ICNTL(24) = 1
++    CC_id % CNTL(3) = 1.0e-10_dp
 +    CC_id % JOB = 4          ! analysis + factorisation
 +    CALL DMUMPS( CC_id )
 +    IF ( CC_id % INFOG(1) < 0 ) CALL Fatal(Caller, 'MUMPS factorisation of the coarse matrix failed, INFOG(1) = '// &
 +        I2S(CC_id % INFOG(1))//', INFOG(2) = '//I2S(CC_id % INFOG(2)))
++    IF ( CC_myrank == 0 .AND. CC_id % INFOG(28) > 0 ) CALL Info(Caller, 'null pivots in the coarse matrix: '// &
++        I2S(CC_id % INFOG(28))//' (those coarse components are left out)', Level=3)
 +  END IF
 +#else
 +  CALL Fatal(Caller, 'needs Elmer built with MUMPS')
