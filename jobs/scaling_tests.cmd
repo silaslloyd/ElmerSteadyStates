@@ -27,6 +27,7 @@
 #   K, L  ILU0 with Elmer's diagonal relaxation (Linear System ILU Factor 0.1, 1.0: the diagonal is multiplied by
 #      1.1, 2 before factorising, the standard cure for ILU breakdown)
 #   M, N  ILU0 with ILU Factor 0.01, 0.001     O  ILU1 with ILU Factor 0.01
+#   P, Q, W, X  GCR + ILU2, ILU3, ILU4, ILU6 (the lowest fill that avoids the breakdown?)
 #   J  GCR with only the diagonal (Jacobi) as preconditioner: if it reduces the residual where ILU0 does not at
 #      all, the ILU0 factors are broken somewhere (not merely weak)
 # From the repository root, one job per partition count. No node limit: give --ntasks (default 128) and Slurm takes
@@ -193,6 +194,7 @@ for t in $(echo $SET | fold -w1); do
         M) mkGCR $V/M.sif.in 0; echo "  Linear System ILU Factor = Real 0.01" >> $V/M.sif.in;;
         N) mkGCR $V/N.sif.in 0; echo "  Linear System ILU Factor = Real 0.001" >> $V/N.sif.in;;
         O) mkGCR $V/O.sif.in 1; echo "  Linear System ILU Factor = Real 0.01" >> $V/O.sif.in;;
+        P) mkGCR $V/P.sif.in 2;;  Q) mkGCR $V/Q.sif.in 3;;  W) mkGCR $V/W.sif.in 4;;  X) mkGCR $V/X.sif.in 6;;
         J) mkGCR $V/J.sif.in 0; sed -i 's/Linear System Preconditioning = ILU0/Linear System Preconditioning = Diagonal/' $V/J.sif.in;;
         C) mkGCR $V/C.sif.in 8;;  D) mkGCR $V/D.sif.in 0;;  E) mkGCR $V/E.sif.in 1;;
         S) mkBlock $V/S.sif.in ParaSails;;
@@ -238,6 +240,7 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
                L) what="GCR + ILU0, diagonal x 2 before factorising (ILU Factor 1.0)";;
                M) what="GCR + ILU0, ILU Factor 0.01";; N) what="GCR + ILU0, ILU Factor 0.001";;
                O) what="GCR + ILU1, ILU Factor 0.01";;
+               P) what="GCR + ILU2";; Q) what="GCR + ILU3";; W) what="GCR + ILU4";; X) what="GCR + ILU6";;
                J) what="GCR + Jacobi (diagonal), whole shelf: progress where ILU0 makes none = ILU0 broken";;
                S) what="block, velocity block BiCGStab + ParaSails";; T) what="block, velocity block BiCGStab + FSAI";;
                U) what="block, velocity block BiCGStab + BoomerAMG on uncoupled components";;
