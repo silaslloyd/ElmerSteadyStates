@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --output=./slurms/scaling_%j.out
 #SBATCH --job-name=scaling
-#SBATCH --nodes=1
 #SBATCH --ntasks=128
 #SBATCH --exclusive
 #SBATCH --time=08:00:00
@@ -23,7 +22,10 @@
 #      SSA shelf solved exactly). The first job makes the mesh (work/test_gl_bed_cut<km>) and carries the start
 #      state onto it (ess transfer).
 #   D  the cut with GCR + ILU0      E  the cut with GCR + ILU1
-# From the repository root, one job per partition count (each uses one node; the runs of a job share it):
+# From the repository root, one job per partition count. No node limit: give --ntasks (default 128) and Slurm takes
+# as many nodes as that needs; with --ntasks=RANKS the runs go one after another (more tasks than RANKS: several at
+# once, but keep that within one node, as each mpirun starts on the first node). E.g. 512 ranks:
+#   sbatch --ntasks=512 --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,RANKS=512 jobs/scaling_tests.cmd
 #   sbatch --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,RANKS=32 jobs/scaling_tests.cmd
 #   sbatch --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,RANKS=128 jobs/scaling_tests.cmd
 # 3D sheet: GL_CONFIG=configs/test_periodic_gl_50km.toml (its work dir's start.npz, START= for another state);
