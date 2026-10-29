@@ -28,6 +28,8 @@
 #      1.1, 2 before factorising, the standard cure for ILU breakdown)
 #   M, N  ILU0 with ILU Factor 0.01, 0.001     O  ILU1 with ILU Factor 0.01
 #   P, Q, W, X  GCR + ILU2, ILU3, ILU4, ILU6 (the lowest fill that avoids the breakdown?)
+#   Y, Z  Hypre FlexGMRES + Hypre ILU(0) coupling the partitions: RAS (overlapping, type 30), GMRES-ILU (Schur
+#      complement on the interfaces, type 10)     V, I  the same with ILUT (types 31, 11; Hypre's default threshold)
 #   J  GCR with only the diagonal (Jacobi) as preconditioner: if it reduces the residual where ILU0 does not at
 #      all, the ILU0 factors are broken somewhere (not merely weak)
 # From the repository root, one job per partition count. No node limit: give --ntasks (default 128) and Slurm takes
@@ -180,6 +182,13 @@ mkGCR() {   # $1 file, $2 ILU level: GCR + ILU on the whole Stokes system, every
         "  Linear System Preconditioning = ILU$2" "  Linear System Convergence Tolerance = 1.0e-8" \
         "  Linear System Abort Not Converged = Logical False" "  Linear System Residual Output = 1" > $1
 }
+mkHILU() {   # $1 file, $2 Hypre ILU type: Hypre FlexGMRES + Hypre ILU on the whole Stokes system (fill level and drop
+    # threshold at Hypre's defaults: Elmer's SolveHypre.c does not pass them)
+    printf '%s\n' "  Linear System Solver = Iterative" "  Linear System Use Hypre = Logical True" \
+        "  Linear System Iterative Method = FlexGMRES" "  Linear System Preconditioning = ILU$2" \
+        "  Hypre GMRES Dimension = Integer 250" "  Linear System Max Iterations = ${MAXIT:-2000}" \
+        "  Linear System Convergence Tolerance = 1.0e-8" "  Linear System Abort Not Converged = Logical False" > $1
+}
 mkBlock() {   # $1 file, $2 velocity-block preconditioner: block solver, velocity block Hypre BiCGStab + $2 capped
     grep -v "block 11: Linear System Iterative Method\|block 11: HYPRE Block Diagonal\|block 11: Linear System Preconditioning\|block 11: Linear System Max Iterations\|block 11: Linear System Convergence Tolerance" \
         elmer/stokes_block_amg.sif.in > $1
@@ -197,6 +206,7 @@ for t in $(echo $SET | fold -w1); do
         M) mkGCR $V/M.sif.in 0; echo "  Linear System ILU Factor = Real 0.01" >> $V/M.sif.in;;
         N) mkGCR $V/N.sif.in 0; echo "  Linear System ILU Factor = Real 0.001" >> $V/N.sif.in;;
         O) mkGCR $V/O.sif.in 1; echo "  Linear System ILU Factor = Real 0.01" >> $V/O.sif.in;;
+        Y) mkHILU $V/Y.sif.in 30;;  Z) mkHILU $V/Z.sif.in 10;;  V) mkHILU $V/V.sif.in 31;;  I) mkHILU $V/I.sif.in 11;;
         P) mkGCR $V/P.sif.in 2;;  Q) mkGCR $V/Q.sif.in 3;;  W) mkGCR $V/W.sif.in 4;;  X) mkGCR $V/X.sif.in 6;;
         J) mkGCR $V/J.sif.in 0; sed -i 's/Linear System Preconditioning = ILU0/Linear System Preconditioning = Diagonal/' $V/J.sif.in;;
         C) mkGCR $V/C.sif.in 8;;  D) mkGCR $V/D.sif.in 0;;  E) mkGCR $V/E.sif.in 1;;
@@ -226,6 +236,7 @@ running=0
 for t in $(echo $SET | fold -w1); do
     c="run $GL_CONFIG --state $RSTART $opts $WARMOPT"; o=$WORK/scaling_${RANKS}_$t.npz
     case $t in C|D|E) c="run $CUTCFG --state $CW/start.npz $opts"; o=$CW/scaling_${RANKS}_$t.npz;; esac
+    case $t in Y|Z|V|I) c="$c --output-level 6";; esac          # Hypre reports its iterations from level 6
     if [ $running -ge $SLOTS ]; then wait -n || true; running=$((running - 1)); fi
     echo "$(date +%T) start $t"
     python3 -u -m ess $c --out $o --stokes-block-file $PWD/$V/$t.sif.in > ${L}_$t.log 2>&1 &
@@ -243,6 +254,9 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
                L) what="GCR + ILU0, diagonal x 2 before factorising (ILU Factor 1.0)";;
                M) what="GCR + ILU0, ILU Factor 0.01";; N) what="GCR + ILU0, ILU Factor 0.001";;
                O) what="GCR + ILU1, ILU Factor 0.01";;
+               Y) what="Hypre FlexGMRES + RAS-ILU(0) (overlapping partitions)";;
+               Z) what="Hypre FlexGMRES + GMRES-ILU(0) (partitions coupled through a Schur complement)";;
+               V) what="Hypre FlexGMRES + RAS-ILUT";; I) what="Hypre FlexGMRES + GMRES-ILUT";;
                P) what="GCR + ILU2";; Q) what="GCR + ILU3";; W) what="GCR + ILU4";; X) what="GCR + ILU6";;
                J) what="GCR + Jacobi (diagonal), whole shelf: progress where ILU0 makes none = ILU0 broken";;
                S) what="block, velocity block BiCGStab + ParaSails";; T) what="block, velocity block BiCGStab + FSAI";;
@@ -259,6 +273,7 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
             grep "gcr:" $el | awk '$2 < prev {n++; printf "      solve %d: %4d iterations, residual %s\n", n, prev, res}
                                   {prev=$2; res=$3} END {n++; printf "      solve %d: %4d iterations, residual %s\n", n, prev, res}'
             hc=$(grep -c "did not converge" $el || true); [ "$hc" -gt 0 ] && echo "      Hypre 'did not converge' messages: $hc"
+            grep "SolveHypre: Required iterations" $el | head -4 | sed 's/^/      /'
         fi
         case $t in C|D|E) [ -f $WORK/scaling_${RANKS}_R.npz ] && \
             python3 periodic_test/run_gl_ess.py cutcheck $WORK/scaling_${RANKS}_R.npz $CW/scaling_${RANKS}_$t.npz $CUT $GL | tail -1;; esac
