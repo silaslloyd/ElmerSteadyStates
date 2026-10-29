@@ -26,6 +26,11 @@
 # From the repository root, one job per partition count (each uses one node; the runs of a job share it):
 #   sbatch --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,RANKS=32 jobs/scaling_tests.cmd
 #   sbatch --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,RANKS=128 jobs/scaling_tests.cmd
+# 3D sheet: GL_CONFIG=configs/test_periodic_gl_50km.toml (its work dir's start.npz, START= for another state);
+# periodic sides are partitioned in boxes RANKS/4 x 4 (as the production 64 x 4). More ranks than a node:
+#   sbatch --nodes=2 --ntasks=256 --export=ALL,...,GL_CONFIG=configs/test_periodic_gl_50km.toml,RANKS=256 ...
+# With y_elements > 1 the cut's start state is laterally averaged (ess transfer works on columns along x), so
+# the whole-shelf runs (R, F, S, T, U) start from the same average, carried onto the full mesh.
 # SET=CDE (any letters): only those runs (C, D, E also run R for their velocity comparison if R is not in SET).
 # Run the two jobs one after the other or at the same time (the mesh steps are locked).
 # Summary at the end of slurms/scaling_<job>.out; per-run logs slurms/scaling_<job>_<letter>.log.
@@ -34,8 +39,12 @@ cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
 export ELMER_MODULE=${ELMER_MODULE:?ELMER_MODULE not set}
 export GL_CONFIG=${GL_CONFIG:-configs/test_gl_bed.toml}
-WORK=work/test_gl_bed
-START=${START:-$(ls $WORK/ref_iterative/spinup_chunks/points/state_*.npz 2>/dev/null | tail -1)}
+WORK=$(python3 -c "import sys, os; sys.path.insert(0, '.'); from ess.config import load_config; print(os.path.relpath(load_config('$GL_CONFIG')['_work']))" | tail -1)
+CNAME=$(basename $GL_CONFIG .toml)
+if [ -z "$START" ]; then
+    if [ "$CNAME" = test_gl_bed ]; then START=$(ls $WORK/ref_iterative/spinup_chunks/points/state_*.npz 2>/dev/null | tail -1)
+    else START=$WORK/start.npz; fi
+fi
 [ -f "$START" ] || { echo "no start state (START=...)"; exit 1; }
 RANKS=${RANKS:-32}
 SET=${SET:-RFSTUCDE}
@@ -51,37 +60,43 @@ partition() {   # $1 case dir (with footprint.msh), $2 config: add footprint/par
     # The 2D footprint: Elmer extrudes it, so every rank gets whole columns.
     [ -d $1/footprint/partitioning.$RANKS ] && return 0
     echo "$(date +%T) partitioning $1/footprint for $RANKS ranks"
-    local per=""; grep -q "^periodic_sides *= *true" $2 && per="-periodic 0 1 0"
+    local per="" part="-metiskway $RANKS"
+    if grep -q "^periodic_sides *= *true" $2; then per="-periodic 0 1 0"; part="-partition $PX $PY 1"; fi
     rm -rf $1/fp_part$RANKS
-    ( cd $1 && ElmerGrid 14 2 footprint.msh -autoclean -out fp_part$RANKS $per -metiskway $RANKS ) \
+    ( cd $1 && ElmerGrid 14 2 footprint.msh -autoclean -out fp_part$RANKS $per $part ) \
         > ${L}_partition.log 2>&1 || { cat ${L}_partition.log; return 1; }
     [ -d $1/fp_part$RANKS/partitioning.$RANKS ] || { echo "ElmerGrid made no partitioning.$RANKS:"; tail -20 ${L}_partition.log; return 1; }
     mv $1/fp_part$RANKS/partitioning.$RANKS $1/footprint/ && rm -rf $1/fp_part$RANKS
 }
+PY=1; [ $((RANKS % 4)) = 0 ] && PY=4; PX=$((RANKS / PY))     # box partitions for periodic sides (as 64 x 4)
+YEL=$(grep -o "^y_elements *= *[0-9]*" $GL_CONFIG | grep -o "[0-9]*$" || echo 1)
 ( flock 9; partition $WORK/case $GL_CONFIG ) 9> $WORK/case/.lock
 GL=$(python3 periodic_test/run_gl_ess.py glpos $START | tail -1)
 CUT=$(python3 -c "print($GL + $DIST)")
 echo "start grounding line $GL km; shelf cut (C, D, E) at $CUT km"
 export ESS_NPROCS=$RANKS ESS_MPIRUN="mpirun -np {n} --bind-to none"
 case $SET in *[CDE]*)
-    CW=work/test_gl_bed_cut$(python3 -c "print(f'{$CUT:g}')")
+    CW=work/${CNAME}_cut$(python3 -c "print(f'{$CUT:g}')")
     CUTCFG=$CW/cut.toml
     mkdir -p $CW
     (
     flock 9
     if [ ! -f $CW/start.npz ]; then
         echo "$(date +%T) the cut mesh: front at $CUT km ($CW, log ${L}_cutprep.log)"
-        python3 - "$GL_CONFIG" "$CUTCFG" "$CW" "$CUT" <<'PY'
+        python3 - "$GL_CONFIG" "$CUTCFG" "$CW" "$CUT" "$PX" "$PY" <<'PYEND'
 import re, sys
-src, dst, work, cut = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
+src, dst, work, cut, px, py = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4]), sys.argv[5], sys.argv[6]
 s = open(src).read()
 s, n1 = re.subn(r'^work_dir = .*$', f'work_dir = "{work}"', s, flags=re.M)
-s, n2 = re.subn(r'^fine_band_km = \[\s*([0-9.]+)\s*,\s*[0-9.]+\s*\].*$',
-                lambda m: f'fine_band_km = [{m.group(1)}, {cut - 2.5}]\nfront_km = {cut}', s, flags=re.M)
+s, n2 = re.subn(r'^\[case\]\s*$', f'[case]\nfront_km = {cut}', s, flags=re.M)
 if n1 != 1 or n2 != 1:
-    sys.exit("cut config: work_dir / fine_band_km lines not found in " + src)
+    sys.exit("cut config: work_dir / [case] lines not found in " + src)
+# a fine band given directly ends just before the front; box partitions for this rank count
+s = re.sub(r'^fine_band_km = \[\s*([0-9.]+)\s*,\s*[0-9.]+\s*\]',
+           lambda m: f'fine_band_km = [{m.group(1)}, {cut - 2.5}]', s, flags=re.M)
+s = re.sub(r'^partition = \[.*?\]', f'partition = [{px}, {py}]', s, flags=re.M)
 open(dst, "w").write(s)
-PY
+PYEND
         { python3 -u -m ess setup $CUTCFG && python3 -u -m ess init $CUTCFG --out $CW/state0.npz && \
           python3 -u -m ess transfer $CUTCFG --state $CW/state0.npz --from $START --out $CW/start.npz; } \
             > ${L}_cutprep.log 2>&1 || { echo "cut mesh preparation failed:"; tail -30 ${L}_cutprep.log; exit 1; }
@@ -90,7 +105,16 @@ PY
     ) 9> $CW.lock || exit 1
     echo "cut mesh $CW, start $CW/start.npz"
 ;; esac
-SLOTS=$(( ${SLURM_NTASKS:-128} / RANKS )); [ $SLOTS -ge 1 ] || SLOTS=1
+RSTART=$START
+if [ "${YEL:-1}" -gt 1 ]; then          # 3D: the whole-shelf runs from the same laterally averaged state as the cut
+    RSTART=$WORK/scaling_start_avg.npz
+    ( flock 9
+      [ -f $RSTART ] || python3 -u -m ess transfer $GL_CONFIG --state $START --from $START --out $RSTART \
+          > ${L}_avgprep.log 2>&1 || { echo "averaged start failed:"; tail -30 ${L}_avgprep.log; exit 1; }
+    ) 9> $WORK/case/.lock || exit 1
+    echo "whole-shelf runs start from $RSTART (laterally averaged, as the cut's)"
+fi
+SLOTS=${SLOTS:-$(( ${SLURM_NTASKS:-128} / RANKS ))}; [ $SLOTS -ge 1 ] || SLOTS=1   # runs at a time (SLOTS=1: one by one)
 opts="--stokes-only --chunks 1 --steps 2 --no-remask --bed cold --gl frozen --linear-stokes block"
 
 V=$WORK/scaling_files_${SLURM_JOB_ID:-local}; mkdir -p $V
@@ -123,7 +147,7 @@ done
 
 running=0
 for t in $(echo $SET | fold -w1); do
-    c="run $GL_CONFIG --state $START $opts"; o=$WORK/scaling_${RANKS}_$t.npz
+    c="run $GL_CONFIG --state $RSTART $opts"; o=$WORK/scaling_${RANKS}_$t.npz
     case $t in C|D|E) c="run $CUTCFG --state $CW/start.npz $opts"; o=$CW/scaling_${RANKS}_$t.npz;; esac
     if [ $running -ge $SLOTS ]; then wait -n || true; running=$((running - 1)); fi
     echo "$(date +%T) start $t"
