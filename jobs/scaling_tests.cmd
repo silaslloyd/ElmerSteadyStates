@@ -89,6 +89,14 @@ echo "solver libraries linked to ElmerSolver: $(ldd $(command -v ElmerSolver) 2>
 partition() {   # $1 case dir (with footprint.msh), $2 config: add footprint/partitioning.$RANKS, converted from
     # footprint.msh exactly as `ess setup` does (same node numbering; the mesh dir only holds partitioned copies).
     # The 2D footprint: Elmer extrudes it, so every rank gets whole columns.
+    if [ "$RANKS" = 1 ]; then          # serial: the unpartitioned mesh files next to the partitionings
+        [ -f $1/footprint/mesh.header ] && return 0
+        local per1=""; grep -q "^periodic_sides *= *true" $2 && per1="-periodic 0 1 0"
+        rm -rf $1/fp_serial
+        ( cd $1 && ElmerGrid 14 2 footprint.msh -autoclean -out fp_serial $per1 ) > ${L}_partition.log 2>&1 \
+            && cp $1/fp_serial/mesh.* $1/footprint/ && rm -rf $1/fp_serial && return 0
+        cat ${L}_partition.log; return 1
+    fi
     [ -d $1/footprint/partitioning.$RANKS ] && return 0
     echo "$(date +%T) partitioning $1/footprint for $RANKS ranks"
     local per="" part="-metiskway $RANKS"
@@ -216,6 +224,22 @@ mkBlockMG() {   # $1 file: the block preconditioner, velocity block solved by El
     for k in "${MGKEYS[@]}"; do echo "  block 11: $k" >> $1; done
     sed -i 's/block 11: MG Max Iterations = Integer 1/block 11: MG Max Iterations = Integer 20/' $1
 }
+# Narrowing the BoomerAMG-as-solver crash (lowercase runs): a = the MLB block setup as it is (elmer/stokes_block_amg.sif.in,
+# the crashing one); c = a without Stokes-Vec's block preconditioner (no pressure Schur solver); b = a with scalar
+# blocks (Block Structure 1 2 3 4: u, v, w each BoomerAMG, pressure as before, no block preconditioner);
+# g = a without "BoomerAMG Smooth Type" (6: Schwarz smoothers); h = a with all BoomerAMG parameters at Hypre's
+# defaults (only HYPRE Block Diagonal kept)
+mkAMGvar() {   # $1 file, $2 variant letter
+    cp elmer/stokes_block_amg.sif.in $1
+    case $2 in
+        c) sed -i 's/Block Preconditioner = Logical True/Block Preconditioner = Logical False/' $1;;
+        b) sed -i 's/Block Preconditioner = Logical True/Block Preconditioner = Logical False/; s/Block Structure(4) = Integer 1 1 1 2/Block Structure(4) = Integer 1 2 3 4/; s/block 22:/block 44:/' $1
+           for k in 22 33; do grep "block 11:" elmer/stokes_block_amg.sif.in | grep -v "Num Functions\|Block Diagonal" | sed "s/block 11:/block $k:/" >> $1; done
+           sed -i '/block 11: HYPRE Block Diagonal/d; /BoomerAMG Num Functions/d' $1;;
+        g) sed -i '/BoomerAMG Smooth Type/d' $1;;
+        h) sed -i '/^ *BoomerAMG /d; /^ *Boomeramg /d' $1;;
+    esac
+}
 mkBlock() {   # $1 file, $2 velocity-block preconditioner: block solver, velocity block Hypre BiCGStab + $2 capped
     grep -v "block 11: Linear System Iterative Method\|block 11: HYPRE Block Diagonal\|block 11: Linear System Preconditioning\|block 11: Linear System Max Iterations\|block 11: Linear System Convergence Tolerance" \
         elmer/stokes_block_amg.sif.in > $1
@@ -233,6 +257,7 @@ for t in $(echo $SET | fold -w1); do
         M) mkGCR $V/M.sif.in 0; echo "  Linear System ILU Factor = Real 0.01" >> $V/M.sif.in;;
         N) mkGCR $V/N.sif.in 0; echo "  Linear System ILU Factor = Real 0.001" >> $V/N.sif.in;;
         O) mkGCR $V/O.sif.in 1; echo "  Linear System ILU Factor = Real 0.01" >> $V/O.sif.in;;
+        a|b|c|g|h) mkAMGvar $V/$t.sif.in $t;;
         A) mkMG $V/A.sif.in;;  B) mkBlockMG $V/B.sif.in;;
         Y) mkHILU $V/Y.sif.in 30;;  Z) mkHILU $V/Z.sif.in 10;;  V) mkHILU $V/V.sif.in 31;;  I) mkHILU $V/I.sif.in 11;;
         P) mkGCR $V/P.sif.in 2;;  Q) mkGCR $V/Q.sif.in 3;;  W) mkGCR $V/W.sif.in 4;;  X) mkGCR $V/X.sif.in 6;;
@@ -282,6 +307,11 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
                L) what="GCR + ILU0, diagonal x 2 before factorising (ILU Factor 1.0)";;
                M) what="GCR + ILU0, ILU Factor 0.01";; N) what="GCR + ILU0, ILU Factor 0.001";;
                O) what="GCR + ILU1, ILU Factor 0.01";;
+               a) what="MLB block + BoomerAMG as the velocity block's solver, as is (crashed)";;
+               b) what="a with scalar velocity blocks (1 2 3 4), no block preconditioner";;
+               c) what="a without the block preconditioner (no pressure Schur solver)";;
+               g) what="a without BoomerAMG Smooth Type (Schwarz smoothers)";;
+               h) what="a with all BoomerAMG parameters at Hypre's defaults";;
                A) what="GCR + Elmer's cluster multigrid (one cycle, SGS smoothing) on the whole system";;
                B) what="block, velocity block by Elmer's cluster multigrid";;
                Y) what="Hypre FlexGMRES + RAS-ILU(0) (overlapping partitions)";;
