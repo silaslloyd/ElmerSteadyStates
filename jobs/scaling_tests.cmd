@@ -152,7 +152,7 @@ if [ "${YEL:-1}" -gt 1 ]; then          # 3D: the whole-shelf runs from the same
     echo "whole-shelf runs start from $RSTART (laterally averaged, as the cut's)"
 fi
 SLOTS=${SLOTS:-$(( ${SLURM_NTASKS:-128} / RANKS ))}; [ $SLOTS -ge 1 ] || SLOTS=1   # runs at a time (SLOTS=1: one by one)
-opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --bed cold --gl frozen --linear-stokes block"
+opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --bed ${BED:-cold} --gl frozen --linear-stokes block"   # BED=temperate: sliding everywhere
 # STOKES_ELEMENT=Stabilized|Bubbles|P2/P1: the element for every run (default the config's). Low ILU needs
 # Stabilized? (the flowline tests, where ILU0/ILU1 converged, were Stabilized; the 50 km config is Bubbles, where
 # they did not reduce the residual at all)
