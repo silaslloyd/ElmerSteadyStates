@@ -83,7 +83,10 @@ partition() {   # $1 case dir (with footprint.msh), $2 config: add footprint/par
     [ -d $1/fp_part$RANKS/partitioning.$RANKS ] || { echo "ElmerGrid made no partitioning.$RANKS:"; tail -20 ${L}_partition.log; return 1; }
     mv $1/fp_part$RANKS/partitioning.$RANKS $1/footprint/ && rm -rf $1/fp_part$RANKS
 }
-PY=1; [ $((RANKS % 4)) = 0 ] && PY=4; PX=$((RANKS / PY))     # box partitions for periodic sides (as 64 x 4)
+# box partitions for periodic sides: RANKS/PY x PY (PY default 4, as the production 64 x 4; PY=1: strips across the
+# whole width, so every periodic node pair is in one partition). Partitionings are kept per rank count, so a
+# different PY for a rank count already partitioned needs its partitioning.<ranks> directories removed first.
+if [ -z "$PY" ]; then PY=1; [ $((RANKS % 4)) = 0 ] && PY=4; fi; PX=$((RANKS / PY))
 YEL=$(grep -o "^y_elements *= *[0-9]*" $GL_CONFIG | grep -o "[0-9]*$" || echo 1)
 ( flock 9; partition $WORK/case $GL_CONFIG ) 9> $WORK/case/.lock
 GL=$(python3 periodic_test/run_gl_ess.py glpos $START | tail -1)
