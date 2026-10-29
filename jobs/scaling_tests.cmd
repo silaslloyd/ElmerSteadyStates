@@ -277,7 +277,9 @@ mkHILUk() {   # $1 file, $2 Hypre ILU type, $3 fill level
 # "Linear System Column Coarse": a coarse level of vertically uniform modes per mesh column (u, v and a pressure
 # mode: the plug flow, roughly SSA), solved by MUMPS on rank 0, then the usual partition-local ILU/diagonal on the
 # remaining residual. x = ILU0 + coarse; y = x without the pressure mode; z = Diagonal + coarse; l = ILU4 + coarse;
-# m = ILU0 + ILU Factor 0.01 + coarse. CC_RANKS: MUMPS ranks for the coarse problem (default 1)
+# m = ILU0 + ILU Factor 0.01 + coarse; i = the coarse level alone (no local preconditioner: tests the coarse
+# step by itself). The Elmer log reports for the first 3 applications per solve what fraction of the residual the
+# coarse step leaves (|r - A x1|/|r|) and the sizes of the coarse and local corrections. CC_RANKS: MUMPS ranks for the coarse problem (default 1)
 mkCC() {   # $1 file, $2 preconditioner (ILU0, Diagonal, ...), $3 pressure mode True/False
     mkGCR $1 0
     sed -i "s/Linear System Preconditioning = ILU0/Linear System Preconditioning = $2/" $1
@@ -316,7 +318,7 @@ for t in $(echo $SET | fold -w1); do
            esac;;
         A) mkMG $V/A.sif.in;;  B) mkBlockMG $V/B.sif.in;;
         x) mkCC $V/x.sif.in ILU0 True;;  y) mkCC $V/y.sif.in ILU0 False;;  z) mkCC $V/z.sif.in Diagonal True;;
-        l) mkCC $V/l.sif.in ILU4 True;;
+        l) mkCC $V/l.sif.in ILU4 True;;  i) mkCC $V/i.sif.in None True;;
         m) mkCC $V/m.sif.in ILU0 True; echo "  Linear System ILU Factor = Real 0.01" >> $V/m.sif.in;;
         Y) mkHILU $V/Y.sif.in 30;;  Z) mkHILU $V/Z.sif.in 10;;  V) mkHILU $V/V.sif.in 31;;  I) mkHILU $V/I.sif.in 11;;
         P) mkGCR $V/P.sif.in 2;;  Q) mkGCR $V/Q.sif.in 3;;  W) mkGCR $V/W.sif.in 4;;  X) mkGCR $V/X.sif.in 6;;
@@ -389,6 +391,7 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
                y) what="x without the coarse pressure mode (velocity only)";;
                z) what="GCR + column coarse level + Diagonal";;
                l) what="GCR + column coarse level + ILU4";;
+               i) what="GCR + column coarse level alone (no local preconditioner)";;
                m) what="x with ILU Factor 0.01";;
                A) what="GCR + Elmer's cluster multigrid (one cycle, SGS smoothing) on the whole system";;
                B) what="block, velocity block by Elmer's cluster multigrid";;
@@ -412,7 +415,7 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
                                   {prev=$2; res=$3} END {n++; printf "      solve %d: %4d iterations, residual %s\n", n, prev, res}'
             hc=$(grep -c "did not converge" $el || true); [ "$hc" -gt 0 ] && echo "      Hypre 'did not converge' messages: $hc"
             grep "SolveHypre: Required iterations" $el | head -4 | sed 's/^/      /'
-            grep "ColumnCoarse:" $el | head -4 | sed 's/^/      /'
+            grep "ColumnCoarse:" $el | head -5 | sed 's/^/      /'
         fi
         case $t in C|D|E) [ -f $WORK/scaling_${RANKS}_R.npz ] && \
             python3 periodic_test/run_gl_ess.py cutcheck $WORK/scaling_${RANKS}_R.npz $CW/scaling_${RANKS}_$t.npz $CUT $GL | tail -1;; esac

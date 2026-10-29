@@ -29,7 +29,7 @@ index dc9c82555..28ab42b54 100644
      IF ( .NOT. ComplexSystem ) THEN
        SELECT CASE ( IterType )
 diff --git a/fem/src/SParIterSolver.F90 b/fem/src/SParIterSolver.F90
-index 57850f0db..cd357180d 100644
+index 57850f0db..31b180b9c 100644
 --- a/fem/src/SParIterSolver.F90
 +++ b/fem/src/SParIterSolver.F90
 @@ -59,6 +59,19 @@ MODULE SParIterSolve
@@ -38,7 +38,7 @@ index 57850f0db..cd357180d 100644
  
 +  ! ESS patch 02: state of the column coarse space ("Linear System Column Coarse", see ColumnCoarseSetup).
 +  INTEGER, PRIVATE, SAVE :: CC_nin = 0, CC_ncoarse = 0, CC_inner = 0, CC_comm = 0, CC_subcomm = 0, &
-+      CC_myrank = 0, CC_napply = 0, CC_nsub = 0
++      CC_myrank = 0, CC_napply = 0, CC_nsub = 0, CC_ndiag = 3
 +  INTEGER, ALLOCATABLE, PRIVATE, SAVE :: CC_ci(:,:)
 +  REAL(KIND=dp), ALLOCATABLE, PRIVATE, SAVE :: CC_w(:,:), CC_x1(:), CC_r1(:), CC_z1(:)
 +  REAL(KIND=dp), POINTER, PRIVATE, SAVE :: CC_rhs(:) => NULL()
@@ -81,7 +81,7 @@ index 57850f0db..cd357180d 100644
  
    IF (ASSOCIATED(CM)) THEN
      DEALLOCATE(CM % Cols)
-@@ -4059,6 +4087,414 @@ SUBROUTINE RenumberDOFs( SourceMatrix, SplittedMatrix, ParallelInfo )
+@@ -4059,6 +4087,434 @@ SUBROUTINE RenumberDOFs( SourceMatrix, SplittedMatrix, ParallelInfo )
  END SUBROUTINE RenumberDOFs
  !********************************************************************
  
@@ -164,6 +164,8 @@ index 57850f0db..cd357180d 100644
 +    CC_nsub = ListGetInteger( Params, 'Linear System Column Coarse Ranks', Found )
 +    IF ( .NOT. Found ) CC_nsub = 1
 +    CC_nsub = MAX( 1, MIN( CC_nsub, nranks ) )
++    CC_ndiag = ListGetInteger( Params, 'Linear System Column Coarse Diagnostics', Found )
++    IF ( .NOT. Found ) CC_ndiag = 3
 +    CC_member = ( CC_myrank < CC_nsub )
 +    color = MPI_UNDEFINED
 +    IF ( CC_member ) color = 1
@@ -430,7 +432,7 @@ index 57850f0db..cd357180d 100644
 +  INTEGER, DIMENSION(*) :: ipar
 +  REAL(KIND=dp), DIMENSION(*) :: u, v
 +  INTEGER :: n, j, m, i, ierr
-+  REAL(KIND=dp) :: t0
++  REAL(KIND=dp) :: t0, sq(4)
 +!------------------------------------------------------------------------------
 +  n = HUTI_NDIM
 +  IF ( n /= CC_nin ) CALL Fatal('ColumnCoarse', 'vector size '//I2S(n)//' /= setup size '//I2S(CC_nin))
@@ -487,6 +489,24 @@ index 57850f0db..cd357180d 100644
 +  DO j = 1, n
 +    u(j) = CC_x1(j) + CC_z1(j)
 +  END DO
++  ! diagnostics for the first applications of every solve: how much of the residual the coarse step removes,
++  ! and how large the coarse and the local corrections are
++  IF ( CC_napply < CC_ndiag ) THEN
++    sq = 0.0_dp
++    DO j = 1, n
++      sq(1) = sq(1) + v(j)**2
++      sq(2) = sq(2) + CC_r1(j)**2
++      sq(3) = sq(3) + CC_x1(j)**2
++      sq(4) = sq(4) + CC_z1(j)**2
++    END DO
++    CALL MPI_Allreduce( MPI_IN_PLACE, sq, 4, MPI_DOUBLE_PRECISION, MPI_SUM, CC_comm, ierr )
++    sq = SQRT( sq )
++    IF ( sq(1) > 0.0_dp ) THEN
++      WRITE( Message, '(A,I0,A,ES10.3,A,ES10.3,A,ES10.3,A,ES10.3)' ) 'apply ', CC_napply+1, ': |r| ', sq(1), &
++          '  |r - A x1|/|r| ', sq(2)/sq(1), '  |x1| (coarse) ', sq(3), '  |M^-1 (r - A x1)| (local) ', sq(4)
++      CALL Info('ColumnCoarse', Message, Level=3)
++    END IF
++  END IF
 +  CC_napply = CC_napply + 1
 +!------------------------------------------------------------------------------
 +END SUBROUTINE ColumnCoarsePrec
