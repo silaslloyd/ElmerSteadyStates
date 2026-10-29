@@ -26,6 +26,8 @@ fine_half_width = 20000.0               # m, half width of that band
 width = 50000.0                         # m across the flow (the periodic translation, and the bump wavelength)
 y_elements = 50                         # elements across (1 km)
 periodic_sides = false                  # walls (free-slip sides), not periodic
+partition = [32, 4]                     # boxes as the periodic runs' 32 x 4 at 128 ranks (for `ess setup` at 128;
+                                        # jobs/scaling_tests.cmd BOXES=1 PY=... for other counts)
 slide_ybump = 0.8                       # sliding coefficient x (1 + 0.8 sin(2 pi y / width)): 0.2 .. 1.8
 gmsh = "gmsh"
 elmergrid = "ElmerGrid"

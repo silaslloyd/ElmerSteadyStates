@@ -78,7 +78,9 @@ partition() {   # $1 case dir (with footprint.msh), $2 config: add footprint/par
     [ -d $1/footprint/partitioning.$RANKS ] && return 0
     echo "$(date +%T) partitioning $1/footprint for $RANKS ranks"
     local per="" part="-metiskway $RANKS"
-    if grep -q "^periodic_sides *= *true" $2; then per="-periodic 0 1 0"; part="-partition $PX $PY 1"; fi
+    grep -q "^periodic_sides *= *true" $2 && per="-periodic 0 1 0"
+    # box partitions RANKS/PY x PY for periodic sides, or with BOXES=1 (else METIS)
+    if [ -n "$per" ] || [ "$BOXES" = 1 ]; then part="-partition $PX $PY 1"; fi
     rm -rf $1/fp_part$RANKS
     ( cd $1 && ElmerGrid 14 2 footprint.msh -autoclean -out fp_part$RANKS $per $part ) \
         > ${L}_partition.log 2>&1 || { cat ${L}_partition.log; return 1; }
