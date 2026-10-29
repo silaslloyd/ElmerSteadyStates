@@ -75,6 +75,10 @@ L=slurms/scaling_${SLURM_JOB_ID:-local}
 
 bash periodic_test/run_gl_ess.cmd build
 module load "$ELMER_MODULE"
+if [ -n "$ELMER_PREFIX" ]; then        # a self-built Elmer (jobs/build_elmer.cmd) in front of the module's
+    export PATH=$ELMER_PREFIX/bin:$PATH ELMER_HOME=$ELMER_PREFIX
+    export LD_LIBRARY_PATH=$ELMER_PREFIX/lib:$ELMER_PREFIX/lib/elmersolver:$LD_LIBRARY_PATH
+fi
 if [ ! -f "$START" ]; then
     echo "$(date +%T) setting up $GL_CONFIG for $RANKS ranks, start from $FROM (log ${L}_setup.log)"
     { ESS_NPROCS=$RANKS ESS_MPIRUN="mpirun -np {n} --bind-to none" python3 -u -m ess setup $GL_CONFIG && \

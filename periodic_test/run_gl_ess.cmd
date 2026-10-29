@@ -16,6 +16,10 @@ ARGS=("$@")
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
 module load ${ELMER_MODULE:-elmerfem/2026-07-13}   # ELMER_MODULE=elmerfem sbatch ...: another build
+if [ -n "$ELMER_PREFIX" ]; then        # a self-built Elmer (jobs/build_elmer.cmd) in front of the module's
+    export PATH=$ELMER_PREFIX/bin:$PATH ELMER_HOME=$ELMER_PREFIX
+    export LD_LIBRARY_PATH=$ELMER_PREFIX/lib:$ELMER_PREFIX/lib/elmersolver:$LD_LIBRARY_PATH
+fi
 echo "Elmer: ${ELMER_MODULE:-elmerfem/2026-07-13} -> $(command -v ElmerSolver)"
 build_libs() {
     local cur; cur=$(command -v ElmerSolver)
