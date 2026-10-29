@@ -43,9 +43,12 @@ WORK=$(python3 -c "import sys, os; sys.path.insert(0, '.'); from ess.config impo
 CNAME=$(basename $GL_CONFIG .toml)
 if [ -z "$START" ]; then
     if [ "$CNAME" = test_gl_bed ]; then START=$(ls $WORK/ref_iterative/spinup_chunks/points/state_*.npz 2>/dev/null | tail -1)
-    else START=$WORK/start.npz; fi
+    else      # the newest saved chunk of any run in the work dir (spun up), else <work dir>/start.npz
+        START=$(ls -t $WORK/*/*_chunks/points/state_*.npz 2>/dev/null | head -1)
+        [ -n "$START" ] || START=$WORK/start.npz
+    fi
 fi
-[ -f "$START" ] || { echo "no start state (START=...)"; exit 1; }
+[ -f "$START" ] || { echo "no start state in $WORK (START=...): $(ls $WORK 2>&1 | head -20 | tr '\n' ' ')"; exit 1; }
 RANKS=${RANKS:-32}
 SET=${SET:-RFSTUCDE}
 DIST=${DIST:-30}
