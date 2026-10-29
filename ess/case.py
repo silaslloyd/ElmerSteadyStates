@@ -274,25 +274,30 @@ def setup_case(cfg, mesh=True):
     P["FineRes"] = float(c.get("fine_res", P.get("MarginRes", 1000.0)))       # flowline_marine_gl.geo.in
     P["FineHalf"] = float(c.get("fine_half_width", 10e3))
     geo_name = cfg.get("case", {}).get("geo", "case/flowline.geo.in")
+    # [case] front_km (marine): the mesh ends at this x (a calving front with sea pressure there) instead of at L;
+    # the geometry and initial conditions are the full domain's, so states carry over (`ess transfer`)
+    Lgeo = float(c["front_km"]) * 1e3 if "front_km" in c else P["L"]
+    if Lgeo != P["L"]:
+        log.info(f"setup: the mesh ends at {Lgeo / 1e3:g} km ([case] front_km; L = {P['L'] / 1e3:g} km)")
     if "flowline_marine_gl" in geo_name:      # its points must stay in order along x, or gmsh folds the mesh
         gl, df, res = P["GLx"], P["FineHalf"], P.get("MarginRes", 1000.0)
         # the downstream ends pulled back from the calving front when they would reach it (a grounding line near
         # the front: the fine band runs up to it); unchanged otherwise
         P["Xa"], P["Xb"] = gl - gl / 6, gl - df
-        P["Xd"] = min(gl + gl / 16, P["L"] - res)
+        P["Xd"] = min(gl + gl / 16, Lgeo - res)
         P["Xc"] = min(gl + df, P["Xd"] - res)
         if "fine_band_km" in c:              # [case] fine_band_km = [x0, x1]: the fine band given directly
             b0, b1 = (float(v) * 1e3 for v in c["fine_band_km"])
             P["Xb"], P["Xc"] = b0, b1
             P["Xa"] = min(gl - gl / 6, b0 - 20e3)
-            P["Xd"] = min(max(gl + gl / 16, b1 + 20e3), P["L"] - res)
-        if not (0 < P["Xa"] < P["Xb"] < P["Xc"] < P["Xd"] < P["L"]):
+            P["Xd"] = min(max(gl + gl / 16, b1 + 20e3), Lgeo - res)
+        if not (0 < P["Xa"] < P["Xb"] < P["Xc"] < P["Xd"] < Lgeo):
             raise SystemExit(f"setup: fine_half_width {df / 1e3:g} km does not fit {geo_name} around GL = "
                              f"{gl / 1e3:.1f} km: the points {P['Xa'] / 1e3:.1f}, {P['Xb'] / 1e3:.1f}, "
                              f"{P['Xc'] / 1e3:.1f}, {P['Xd'] / 1e3:.1f} km must increase (GL - GL/6, GL - df, GL + df, "
                              f"GL + GL/16), or the mesh folds over itself")
         if P["Xc"] < gl + df:
-            log.info(f"setup: the fine band ends at {P['Xc'] / 1e3:.1f} km, {(P['L'] - P['Xc']) / 1e3:.1f} km before "
+            log.info(f"setup: the fine band ends at {P['Xc'] / 1e3:.1f} km, {(Lgeo - P['Xc']) / 1e3:.1f} km before "
                      f"the calving front")
     if not mesh:
         return g
@@ -304,7 +309,7 @@ def setup_case(cfg, mesh=True):
     geo = geo.replace("{YElements}", str(ny))
     for k in ("L", "Lend", "Wmesh", "BoundaryRes", "MarginRes", "GLx", "FineRes", "FineHalf", "Xa", "Xb", "Xc", "Xd"):
         if "{" + k + "}" in geo:
-            geo = geo.replace("{" + k + "}", repr(float(P[k])))
+            geo = geo.replace("{" + k + "}", repr(float(Lgeo if k == "L" else P[k])))
     if ny > 1:
         log.info(f"setup: {ny} elements across a width of {P['Wmesh'] / 1e3:g} km")
     with open(os.path.join(case, "footprint.geo"), "w") as f:

@@ -505,29 +505,35 @@ def cmd_glpos(a):
 
 
 def cmd_cutcheck(a):
-    """a shelf-cut run (ess run --shelf-cut) against the same run on the whole shelf: velocity differences upstream
-    of the cut (the accuracy of the cut) and beyond it (large: the cut worked, the shelf there was passive)"""
-    def vel(path):
+    """a run on the shortened mesh ([case] front_km) against the same run on the whole domain: the surface speed
+    along the y = 0 row, compared at the same x (the meshes have different node numbers)"""
+    def surf(path):
         allf = _state_fields(path)
         g, X = _field(allf, "coordinate 1")
-        Xd = dict(zip(g.tolist(), X.tolist()))
+        Y = dict(zip(*_field(allf, "coordinate 2")))
+        Z = dict(zip(*_field(allf, "coordinate 3")))
         u = _field(allf, "Velocity 1")
         if u is None:
             raise SystemExit(f"{path}: no Velocity 1 in the diagnostics")
-        return {i: (Xd[i], v) for i, v in zip(u[0].tolist(), u[1].tolist()) if i in Xd}
-    r, c = vel(a.ref), vel(a.cut)
-    cut = a.cut_km * 1e3
-    common = [i for i in r if i in c]
-    x = np.array([r[i][0] for i in common])
-    ur = np.array([r[i][1] for i in common])
-    uc = np.array([c[i][1] for i in common])
-    up = x < cut - 1.0
-    gl = (x > a.gl_km * 1e3 - 5e3) & (x < a.gl_km * 1e3 + 5e3)
-    far = x > cut + 5e3
-    rel = lambda m: np.max(np.abs(uc[m] - ur[m])) / max(np.max(np.abs(ur[m])), 1e-30) if m.any() else np.nan
-    print(f"      velocity vs the whole shelf: max |du|/max|u| upstream of the cut {rel(up):.2e}, "
-          f"within 5 km of the grounding line {rel(gl):.2e}; beyond the cut {rel(far):.2e} "
-          f"(~0 there: the cut did NOT take effect)")
+        Xd = dict(zip(g.tolist(), X.tolist()))
+        top = {}
+        for i, v in zip(u[0].tolist(), u[1].tolist()):
+            if i in Xd and abs(Y[i]) < 1.0:
+                xr = round(Xd[i], 1)
+                if xr not in top or Z[i] > top[xr][0]:
+                    top[xr] = (Z[i], v)
+        xs = np.array(sorted(top))
+        return xs, np.array([top[x][1] for x in xs])
+    xr, ur = surf(a.ref)
+    xc, uc = surf(a.cut)
+    m = xc < a.cut_km * 1e3 - 1.0
+    d = np.abs(uc[m] - np.interp(xc[m], xr, ur))
+    up = xc[m] < a.gl_km * 1e3
+    near = np.abs(xc[m] - a.gl_km * 1e3) < 5e3
+    ugl = np.interp(a.gl_km * 1e3, xr, ur)
+    print(f"      surface speed vs the whole domain: grounded ice max |du| {d[up].max():.3g} m/a "
+          f"(max speed {np.abs(ur[xr < a.gl_km * 1e3]).max():.4g}), within 5 km of the grounding line max |du| "
+          f"{d[near].max():.3g} m/a (speed there {ugl:.4g}), whole cut domain {d.max():.3g} m/a")
 
 
 def main():
