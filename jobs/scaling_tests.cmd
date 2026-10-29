@@ -294,6 +294,15 @@ for t in $(echo $SET | fold -w1); do
         k) grep -v "^#" elmer/stokes_block.sif.in > $V/k.sif.in;;
         n) mkNodal $V/n.sif.in 4 0.5;;  o) mkNodal $V/o.sif.in 4 0.5 solver;;  p) mkNodal $V/p.sif.in 1 0.8;;
         q) mkHILUk $V/q.sif.in 30 2;;  r) mkHILUk $V/r.sif.in 10 2;;
+        s|t|u|v|w) mkNodal $V/$t.sif.in 1 0.8
+           case $t in
+             s) sed -i 's/BoomerAMG Strong Threshold = Real 0.8/BoomerAMG Strong Threshold = Real 0.9/' $V/s.sif.in;;
+             t) sed -i 's/BoomerAMG Relax Type = Integer 6/BoomerAMG Relax Type = Integer 8/' $V/t.sif.in
+                echo "  BoomerAMG Num Sweeps = Integer 2" >> $V/t.sif.in;;
+             u) sed -i 's/block 11: Linear System Max Iterations = 30/block 11: Linear System Max Iterations = 100/; s/block 11: Linear System Convergence Tolerance = 1.0e-2/block 11: Linear System Convergence Tolerance = 1.0e-4/' $V/u.sif.in;;
+             v) sed -i 's/block 11: Linear System Max Iterations = 30/block 11: Linear System Max Iterations = 300/; s/block 11: Linear System Convergence Tolerance = 1.0e-2/block 11: Linear System Convergence Tolerance = 1.0e-6/' $V/v.sif.in;;
+             w) sed -i 's/BoomerAMG Strong Threshold = Real 0.8/BoomerAMG Strong Threshold = Real 0.9/; s/block 11: Linear System Max Iterations = 30/block 11: Linear System Max Iterations = 100/; s/block 11: Linear System Convergence Tolerance = 1.0e-2/block 11: Linear System Convergence Tolerance = 1.0e-4/' $V/w.sif.in;;
+           esac;;
         A) mkMG $V/A.sif.in;;  B) mkBlockMG $V/B.sif.in;;
         Y) mkHILU $V/Y.sif.in 30;;  Z) mkHILU $V/Z.sif.in 10;;  V) mkHILU $V/V.sif.in 31;;  I) mkHILU $V/I.sif.in 11;;
         P) mkGCR $V/P.sif.in 2;;  Q) mkGCR $V/Q.sif.in 3;;  W) mkGCR $V/W.sif.in 4;;  X) mkGCR $V/X.sif.in 6;;
@@ -349,6 +358,11 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
                p) what="n with nodal 1, strong threshold 0.8";;
                q) what="Hypre FlexGMRES + RAS-ILU(2) (patched Elmer: fill level)";;
                r) what="Hypre FlexGMRES + GMRES-ILU(2) (patched Elmer: fill level)";;
+               s) what="p with strong threshold 0.9";;
+               t) what="p with l1-symmetric Gauss-Seidel (relax 8), 2 sweeps";;
+               u) what="p with the velocity solves to 1e-4 (100 its)";;
+               v) what="p with the velocity solves to 1e-6 (300 its): is the outer stall from the inexact inner solve?";;
+               w) what="p with threshold 0.9 and velocity solves to 1e-4";;
                a) what="MLB block + BoomerAMG as the velocity block's solver, as is (crashed)";;
                b) what="a with scalar velocity blocks (1 2 3 4), no block preconditioner";;
                c) what="a without the block preconditioner (no pressure Schur solver)";;
