@@ -12,7 +12,7 @@
 #   3. use it in ESS jobs: ELMER_PREFIX=/SCRATCH/$USER/elmer/install (with ELMER_MODULE for the MPI environment),
 #      e.g. sbatch --export=ALL,ELMER_MODULE=elmerfem/2026-10-28,ELMER_PREFIX=/SCRATCH/$USER/elmer/install,... job
 # ELMER_SRC / ELMER_BUILD / ELMER_PREFIX / ELMER_REV override the locations and the revision. Patches: every
-# elmer/patches/*.patch of this repository is applied to the source before building (none yet: a vanilla build).
+# elmer/patches/*.patch of this repository is applied to the source before building, in name order (elmer/patches/README.md).
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 REPO=$PWD

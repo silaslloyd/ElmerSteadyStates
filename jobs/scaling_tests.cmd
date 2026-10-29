@@ -273,6 +273,17 @@ mkNodal() {   # $1 file, $2 nodal norm, $3 strong threshold, $4 "solver" for Boo
 mkHILUk() {   # $1 file, $2 Hypre ILU type, $3 fill level
     mkHILU $1 $2; echo "  ILU Fill Level = Integer $3" >> $1
 }
+# With the patched Elmer (elmer/patches/02-column-coarse.patch, ELMER_PREFIX): GCR with the two-level preconditioner
+# "Linear System Column Coarse": a coarse level of vertically uniform modes per mesh column (u, v and a pressure
+# mode: the plug flow, roughly SSA), solved by MUMPS on rank 0, then the usual partition-local ILU/diagonal on the
+# remaining residual. x = ILU0 + coarse; y = x without the pressure mode; z = Diagonal + coarse; l = ILU4 + coarse;
+# m = ILU0 + ILU Factor 0.01 + coarse. CC_RANKS: MUMPS ranks for the coarse problem (default 1)
+mkCC() {   # $1 file, $2 preconditioner (ILU0, Diagonal, ...), $3 pressure mode True/False
+    mkGCR $1 0
+    sed -i "s/Linear System Preconditioning = ILU0/Linear System Preconditioning = $2/" $1
+    printf '%s\n' "  Linear System Column Coarse = Logical True" "  Linear System Column Coarse Pressure = Logical $3" \
+        "  Linear System Column Coarse Ranks = Integer ${CC_RANKS:-1}" >> $1
+}
 mkBlock() {   # $1 file, $2 velocity-block preconditioner: block solver, velocity block Hypre BiCGStab + $2 capped
     grep -v "block 11: Linear System Iterative Method\|block 11: HYPRE Block Diagonal\|block 11: Linear System Preconditioning\|block 11: Linear System Max Iterations\|block 11: Linear System Convergence Tolerance" \
         elmer/stokes_block_amg.sif.in > $1
@@ -304,6 +315,9 @@ for t in $(echo $SET | fold -w1); do
              w) sed -i 's/BoomerAMG Strong Threshold = Real 0.8/BoomerAMG Strong Threshold = Real 0.9/; s/block 11: Linear System Max Iterations = 30/block 11: Linear System Max Iterations = 100/; s/block 11: Linear System Convergence Tolerance = 1.0e-2/block 11: Linear System Convergence Tolerance = 1.0e-4/' $V/w.sif.in;;
            esac;;
         A) mkMG $V/A.sif.in;;  B) mkBlockMG $V/B.sif.in;;
+        x) mkCC $V/x.sif.in ILU0 True;;  y) mkCC $V/y.sif.in ILU0 False;;  z) mkCC $V/z.sif.in Diagonal True;;
+        l) mkCC $V/l.sif.in ILU4 True;;
+        m) mkCC $V/m.sif.in ILU0 True; echo "  Linear System ILU Factor = Real 0.01" >> $V/m.sif.in;;
         Y) mkHILU $V/Y.sif.in 30;;  Z) mkHILU $V/Z.sif.in 10;;  V) mkHILU $V/V.sif.in 31;;  I) mkHILU $V/I.sif.in 11;;
         P) mkGCR $V/P.sif.in 2;;  Q) mkGCR $V/Q.sif.in 3;;  W) mkGCR $V/W.sif.in 4;;  X) mkGCR $V/X.sif.in 6;;
         J) mkGCR $V/J.sif.in 0; sed -i 's/Linear System Preconditioning = ILU0/Linear System Preconditioning = Diagonal/' $V/J.sif.in;;
@@ -371,6 +385,11 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
                f) what="a with Block Matrix Reuse = True (as Elmer's passing BoomerAMG test)";;
                g) what="a without BoomerAMG Smooth Type (Schwarz smoothers)";;
                h) what="a with all BoomerAMG parameters at Hypre's defaults";;
+               x) what="GCR + column coarse level + ILU0 (patched Elmer)";;
+               y) what="x without the coarse pressure mode (velocity only)";;
+               z) what="GCR + column coarse level + Diagonal";;
+               l) what="GCR + column coarse level + ILU4";;
+               m) what="x with ILU Factor 0.01";;
                A) what="GCR + Elmer's cluster multigrid (one cycle, SGS smoothing) on the whole system";;
                B) what="block, velocity block by Elmer's cluster multigrid";;
                Y) what="Hypre FlexGMRES + RAS-ILU(0) (overlapping partitions)";;
@@ -393,6 +412,7 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
                                   {prev=$2; res=$3} END {n++; printf "      solve %d: %4d iterations, residual %s\n", n, prev, res}'
             hc=$(grep -c "did not converge" $el || true); [ "$hc" -gt 0 ] && echo "      Hypre 'did not converge' messages: $hc"
             grep "SolveHypre: Required iterations" $el | head -4 | sed 's/^/      /'
+            grep "ColumnCoarse:" $el | head -4 | sed 's/^/      /'
         fi
         case $t in C|D|E) [ -f $WORK/scaling_${RANKS}_R.npz ] && \
             python3 periodic_test/run_gl_ess.py cutcheck $WORK/scaling_${RANKS}_R.npz $CW/scaling_${RANKS}_$t.npz $CUT $GL | tail -1;; esac

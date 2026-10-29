@@ -1,0 +1,498 @@
+diff --git a/fem/src/IterSolve.F90 b/fem/src/IterSolve.F90
+index dc9c82555..28ab42b54 100644
+--- a/fem/src/IterSolve.F90
++++ b/fem/src/IterSolve.F90
+@@ -93,6 +93,12 @@ MODULE IterSolve
+ 
+    REAL(KIND=dp), POINTER :: fm_Diag(:), fm_G(:,:)
+ 
++   !> ESS patch 02: a caller (SParIterSolve, "Linear System Column Coarse") may set this to the address of a
++   !> preconditioner that wraps the one IterSolver sets up (ILU, diagonal or none). The next IterSolver call
++   !> still builds its own preconditioner as usual, then applies this one instead, and resets it to zero, so
++   !> the wrapper sees GlobalMatrix with its factors ready and nested solves are unaffected.
++   INTEGER(KIND=AddrInt) :: IterSolverPrecWrap = 0
++
+ CONTAINS
+ 
+ 
+@@ -1408,6 +1414,12 @@ END FUNCTION MaskedNorm
+       END SELECT
+     END IF
+ 
++    ! ESS patch 02: one-shot wrapping preconditioner (see IterSolverPrecWrap)
++    IF ( IterSolverPrecWrap /= 0 ) THEN
++      IF ( .NOT. ComplexSystem ) pcondProc = IterSolverPrecWrap
++      IterSolverPrecWrap = 0
++    END IF
++
+ 
+     IF ( .NOT. ComplexSystem ) THEN
+       SELECT CASE ( IterType )
+diff --git a/fem/src/SParIterSolver.F90 b/fem/src/SParIterSolver.F90
+index 57850f0db..cd357180d 100644
+--- a/fem/src/SParIterSolver.F90
++++ b/fem/src/SParIterSolver.F90
+@@ -59,6 +59,19 @@ MODULE SParIterSolve
+   END TYPE
+   TYPE(OrderList_t), ALLOCATABLE :: OrderList(:)
+ 
++  ! ESS patch 02: state of the column coarse space ("Linear System Column Coarse", see ColumnCoarseSetup).
++  INTEGER, PRIVATE, SAVE :: CC_nin = 0, CC_ncoarse = 0, CC_inner = 0, CC_comm = 0, CC_subcomm = 0, &
++      CC_myrank = 0, CC_napply = 0, CC_nsub = 0
++  INTEGER, ALLOCATABLE, PRIVATE, SAVE :: CC_ci(:,:)
++  REAL(KIND=dp), ALLOCATABLE, PRIVATE, SAVE :: CC_w(:,:), CC_x1(:), CC_r1(:), CC_z1(:)
++  REAL(KIND=dp), POINTER, PRIVATE, SAVE :: CC_rhs(:) => NULL()
++  REAL(KIND=dp), PRIVATE, SAVE :: CC_tcoarse = 0.0_dp, CC_dummy(1)
++  LOGICAL, PRIVATE, SAVE :: CC_member = .FALSE., CC_commset = .FALSE., CC_mumpsinit = .FALSE., &
++      CC_havemat = .FALSE.
++#ifdef HAVE_MUMPS
++  TYPE(dmumps_struc), PRIVATE, SAVE :: CC_id
++#endif
++
+ 
+ CONTAINS
+ 
+@@ -2670,6 +2683,14 @@ RECURSIVE SUBROUTINE SolveHutiter( SourceMatrix, SplittedMatrix, ParallelInfo, &
+     CALL SParMatVecCommSetup( SplittedMatrix )
+   END IF
+ 
++  ! ESS patch 02: two-level preconditioner with a column coarse space (see ColumnCoarseSetup)
++  IF ( .NOT. SourceMatrix % COMPLEX .AND. ListGetLogical( Solver % Values, &
++      'Linear System Column Coarse', GotIt ) ) THEN
++    CALL ColumnCoarseSetup( SourceMatrix, ParallelInfo, Solver, &
++        SplittedMatrix % InsideMatrix % NumberOfRows )
++    IterSolverPrecWrap = AddrFunc( ColumnCoarsePrec )
++  END IF
++
+   IF ( .NOT. SourceMatrix % COMPLEX ) THEN
+     IF( ListGetLogical( Solver % Values,'Linear System Skip Mask', GotIt ) ) THEN
+       CALL IterSolver( SplittedMatrix % InsideMatrix, TmpXVec, &
+@@ -2701,6 +2722,13 @@ RECURSIVE SUBROUTINE SolveHutiter( SourceMatrix, SplittedMatrix, ParallelInfo, &
+          MatVecF=AddrFunc(SParCMatrixVector), MatvecReadsNoValues = .TRUE., &
+          DotFU=AddrFunc(SParCDotProdU) )
+   END IF
++  IF ( IterSolverPrecWrap /= 0 ) IterSolverPrecWrap = 0
++  IF ( CC_napply > 0 ) THEN
++    WRITE( Message, '(A,I0,A,F10.3,A)' ) 'applications: ', CC_napply, &
++        ', coarse restriction+solve+prolongation: ', CC_tcoarse, ' s'
++    CALL Info('ColumnCoarse', Message, Level=3 )
++    CC_napply = 0; CC_tcoarse = 0.0_dp
++  END IF
+ 
+   IF (ASSOCIATED(CM)) THEN
+     DEALLOCATE(CM % Cols)
+@@ -4059,6 +4087,414 @@ SUBROUTINE RenumberDOFs( SourceMatrix, SplittedMatrix, ParallelInfo )
+ END SUBROUTINE RenumberDOFs
+ !********************************************************************
+ 
++!------------------------------------------------------------------------------
++!> ESS patch 02: column coarse space for extruded meshes.
++!>
++!> Partition-local preconditioners (ILU, i.e. block Jacobi) cannot see modes that are smooth across many
++!> partitions; on sliding or floating ice such modes are near-free: the column moves as a plug with little
++!> basal drag. This adds a coarse level spanned by vertically uniform modes: per mesh column (the nodes
++!> above one node of the 2D base mesh), a uniform horizontal velocity (u, and v in 3D) and optionally a
++!> uniform pressure. The coarse operator C = P^T A P (Galerkin; roughly the SSA operator of the
++!> current linearisation) is gathered to rank 0 and factorised with MUMPS on a subcommunicator once per
++!> linear solve; each application then is multiplicative:
++!>     x1 = P C^-1 P^T r ;   z = x1 + M^-1 ( r - A x1 ),
++!> M the preconditioner IterSolver set up as usual (ILUn/ILUT/BILU, diagonal or none).
++!> The columns come from the node numbering of Elmer's internal extrusion (layer by layer, the base
++!> nodes' global numbers repeated with an offset per layer), checked on every node. In the
++!> normal-tangential frame the Cartesian modes are rotated per node; constrained (Dirichlet) dofs carry
++!> no coarse component.
++!> Keywords (solver section):
++!>   Linear System Column Coarse = Logical True
++!>   Linear System Column Coarse Pressure = Logical      (default True: plug-flow pressure mode per column)
++!>   Linear System Column Coarse Levels = Integer        (node layers; default: Simulation's Extruded Mesh Levels)
++!>   Linear System Column Coarse Ranks = Integer         (MUMPS ranks for the coarse problem; default 1)
++!------------------------------------------------------------------------------
++SUBROUTINE ColumnCoarseSetup( SourceMatrix, ParallelInfo, Solver, nin )
++!------------------------------------------------------------------------------
++  TYPE(Matrix_t) :: SourceMatrix
++  TYPE(ParallelInfo_t) :: ParallelInfo
++  TYPE(Solver_t), TARGET :: Solver
++  INTEGER :: nin
++
++  TYPE(Mesh_t), POINTER :: Mesh
++  TYPE(ValueList_t), POINTER :: Params
++  INTEGER, POINTER :: Perm(:)
++  INTEGER :: DOFs, dim, nhm, M, Nlev, nn, nbl, Ncol, gmaxl, gmax, nrows, nd, c, r, s, k, j, i, mi, mj, &
++      p, ierr, nlc, W, nloc, ntot, nranks, color, nmiss, II, JJ, lcol, mode, maxp
++  INTEGER, ALLOCATABLE :: gcol(:), rwI(:,:), lcJ(:,:), lcCnt(:), cnts(:), displs(:), Il(:), Jl(:), &
++      Ig(:), Jg(:), tmpJ(:,:)
++  REAL(KIND=dp), ALLOCATABLE :: rwW(:,:), lcV(:,:), Vl(:), Vg(:), tmpV(:,:)
++  LOGICAL, ALLOCATABLE :: hasdiag(:)
++  REAL(KIND=dp) :: vec(3), val, t0
++  LOGICAL :: Found, UseP, Constrained
++  CHARACTER(:), ALLOCATABLE :: str
++  TYPE(NormalTangential_t), POINTER :: NT
++  CHARACTER(*), PARAMETER :: Caller = 'ColumnCoarse'
++!------------------------------------------------------------------------------
++  t0 = MPI_Wtime()
++  Params => Solver % Values
++  Mesh => Solver % Mesh
++  Perm => Solver % Variable % Perm
++  DOFs = Solver % Variable % DOFs
++  dim = DOFs - 1
++  IF ( dim < 2 .OR. dim > 3 ) CALL Fatal(Caller, 'expects a velocity-pressure variable (2 or 3 velocity '// &
++      'components + pressure), got DOFs = '//I2S(DOFs))
++  nhm = dim - 1
++  UseP = ListGetLogical( Params, 'Linear System Column Coarse Pressure', Found )
++  IF ( .NOT. Found ) UseP = .TRUE.
++  M = nhm
++  IF ( UseP ) M = M + 1
++
++  ! the preconditioner the wrapper applies after the coarse correction (IterSolver builds it)
++  str = ListGetString( Params, 'Linear System Preconditioning', Found )
++  IF ( .NOT. Found ) str = 'none'
++  IF ( str == 'none' ) THEN
++    CC_inner = 0
++  ELSE IF ( str == 'diagonal' ) THEN
++    CC_inner = 1
++  ELSE IF ( SEQL(str, 'ilu') .OR. SEQL(str, 'bilu') ) THEN
++    CC_inner = 2
++  ELSE
++    CALL Fatal(Caller, 'works with Linear System Preconditioning = none, diagonal, ILUn, ILUT or BILUn, not '//TRIM(str))
++  END IF
++
++  ! the MPI layout: rank 0 of the active communicator gathers the coarse matrix and is MUMPS's host
++  IF ( .NOT. CC_commset ) THEN
++    CC_comm = ParEnv % ActiveComm
++    CALL MPI_Comm_rank( CC_comm, CC_myrank, ierr )
++    CALL MPI_Comm_size( CC_comm, nranks, ierr )
++    CC_nsub = ListGetInteger( Params, 'Linear System Column Coarse Ranks', Found )
++    IF ( .NOT. Found ) CC_nsub = 1
++    CC_nsub = MAX( 1, MIN( CC_nsub, nranks ) )
++    CC_member = ( CC_myrank < CC_nsub )
++    color = MPI_UNDEFINED
++    IF ( CC_member ) color = 1
++    CALL MPI_Comm_split( CC_comm, color, CC_myrank, CC_subcomm, ierr )
++    CC_commset = .TRUE.
++  END IF
++  CALL MPI_Comm_size( CC_comm, nranks, ierr )
++
++  ! columns: Elmer's extrusion numbers the nodes layer by layer
++  Nlev = ListGetInteger( Params, 'Linear System Column Coarse Levels', Found )
++  IF ( .NOT. Found ) Nlev = ListGetInteger( CurrentModel % Simulation, 'Extruded Mesh Levels', Found )
++  IF ( .NOT. Found ) THEN
++    Nlev = ListGetInteger( CurrentModel % Simulation, 'Extruded Mesh Layers', Found ) + 1
++  END IF
++  IF ( .NOT. Found .OR. Nlev < 2 ) CALL Fatal(Caller, 'number of node layers unknown: give '// &
++      '"Linear System Column Coarse Levels" (needs a mesh from Elmer''s internal extrusion)')
++  nn = Mesh % NumberOfNodes
++  IF ( MOD(nn, Nlev) /= 0 ) CALL Fatal(Caller, 'local node count '//I2S(nn)//' is not a multiple of the '// &
++      I2S(Nlev)//' node layers: not an internally extruded mesh?')
++  nbl = nn / Nlev
++  gmaxl = MAXVAL( Mesh % ParallelInfo % GlobalDOFs(1:nn) )
++  CALL MPI_Allreduce( gmaxl, gmax, 1, MPI_INTEGER, MPI_MAX, CC_comm, ierr )
++  IF ( MOD(gmax, Nlev) /= 0 ) CALL Fatal(Caller, 'largest global node number '//I2S(gmax)// &
++      ' is not a multiple of the '//I2S(Nlev)//' node layers')
++  Ncol = gmax / Nlev
++  ALLOCATE( gcol(nn) )
++  DO nd = 1, nn
++    gcol(nd) = MOD( Mesh % ParallelInfo % GlobalDOFs(nd) - 1, Ncol ) + 1
++  END DO
++  DO nd = 1, nn
++    IF ( gcol(nd) /= gcol( MOD(nd-1, nbl) + 1 ) ) CALL Fatal(Caller, &
++        'node numbering is not layer by layer (node '//I2S(nd)//'): needs Elmer''s internal extrusion')
++  END DO
++  CC_ncoarse = M * Ncol
++
++  ! the coarse weights of every row of the local matrix: rwI = local coarse index M*(lcol-1)+mode
++  nrows = SourceMatrix % NumberOfRows
++  maxp = 0
++  DO nd = 1, nn
++    maxp = MAX( maxp, Perm(nd) )
++  END DO
++  IF ( DOFs * maxp > nrows ) CALL Fatal(Caller, 'matrix smaller than the variable')
++  ALLOCATE( rwI(2,nrows), rwW(2,nrows) )
++  rwI = 0; rwW = 0.0_dp
++  NT => Solver % NormalTangential
++  DO nd = 1, nn
++    p = Perm(nd)
++    IF ( p <= 0 ) CYCLE
++    lcol = MOD(nd-1, nbl) + 1
++    k = 0
++    IF ( NT % NormalTangentialNOFNodes > 0 ) THEN
++      IF ( ASSOCIATED( NT % BoundaryReorder ) ) THEN
++        IF ( nd <= SIZE( NT % BoundaryReorder ) ) k = NT % BoundaryReorder(nd)
++      END IF
++    END IF
++    DO c = 1, DOFs
++      r = DOFs * (p-1) + c
++      Constrained = .FALSE.
++      IF ( ALLOCATED( SourceMatrix % ConstrainedDOF ) ) Constrained = SourceMatrix % ConstrainedDOF(r)
++      IF ( Constrained ) CYCLE
++      IF ( c <= dim ) THEN
++        IF ( k > 0 ) THEN
++          ! rotated row: component c is (n, t1, t2)(c) . u; the Cartesian modes e_x, e_y map to their projections
++          vec = 0.0_dp
++          IF ( dim == 3 ) THEN
++            SELECT CASE( c )
++            CASE( 1 ); vec = NT % BoundaryNormals(k,1:3)
++            CASE( 2 ); vec = NT % BoundaryTangent1(k,1:3)
++            CASE( 3 ); vec = NT % BoundaryTangent2(k,1:3)
++            END SELECT
++          ELSE
++            IF ( c == 1 ) THEN
++              vec(1) = NT % BoundaryNormals(k,1); vec(2) = NT % BoundaryNormals(k,2)
++            ELSE
++              vec(1) = -NT % BoundaryNormals(k,2); vec(2) = NT % BoundaryNormals(k,1)
++            END IF
++          END IF
++          j = 0
++          DO mode = 1, nhm
++            IF ( ABS(vec(mode)) > 1.0e-12_dp ) THEN
++              j = j + 1
++              rwI(j,r) = M*(lcol-1) + mode; rwW(j,r) = vec(mode)
++            END IF
++          END DO
++        ELSE IF ( c <= nhm ) THEN
++          rwI(1,r) = M*(lcol-1) + c; rwW(1,r) = 1.0_dp
++        END IF
++      ELSE IF ( UseP ) THEN
++        rwI(1,r) = M*(lcol-1) + M; rwW(1,r) = 1.0_dp
++      END IF
++    END DO
++  END DO
++
++  ! local part of P^T A P (the local matrices sum to the global one), accumulated per local coarse row
++  nlc = M * nbl
++  W = 32
++  ALLOCATE( lcJ(W,nlc), lcV(W,nlc), lcCnt(nlc) )
++  lcCnt = 0
++  DO r = 1, nrows
++    IF ( rwI(1,r) == 0 ) CYCLE
++    DO k = SourceMatrix % Rows(r), SourceMatrix % Rows(r+1) - 1
++      s = SourceMatrix % Cols(k)
++      IF ( s > nrows ) CYCLE
++      IF ( rwI(1,s) == 0 ) CYCLE
++      val = SourceMatrix % Values(k)
++      IF ( val == 0.0_dp ) CYCLE
++      DO mi = 1, 2
++        II = rwI(mi,r)
++        IF ( II == 0 ) EXIT
++        DO mj = 1, 2
++          JJ = rwI(mj,s)
++          IF ( JJ == 0 ) EXIT
++          DO j = 1, lcCnt(II)
++            IF ( lcJ(j,II) == JJ ) EXIT
++          END DO
++          IF ( j > lcCnt(II) ) THEN
++            IF ( j > W ) THEN   ! grow the row width
++              ALLOCATE( tmpJ(2*W,nlc), tmpV(2*W,nlc) )
++              tmpJ(1:W,:) = lcJ; tmpV(1:W,:) = lcV
++              CALL MOVE_ALLOC( tmpJ, lcJ ); CALL MOVE_ALLOC( tmpV, lcV )
++              W = 2 * W
++            END IF
++            lcCnt(II) = j
++            lcJ(j,II) = JJ
++            lcV(j,II) = 0.0_dp
++          END IF
++          lcV(j,II) = lcV(j,II) + rwW(mi,r) * val * rwW(mj,s)
++        END DO
++      END DO
++    END DO
++  END DO
++
++  ! to global coarse numbering, gathered on rank 0
++  nloc = SUM( lcCnt )
++  ALLOCATE( Il(MAX(nloc,1)), Jl(MAX(nloc,1)), Vl(MAX(nloc,1)) )
++  i = 0
++  DO II = 1, nlc
++    DO j = 1, lcCnt(II)
++      i = i + 1
++      lcol = (II-1)/M + 1; mode = MOD(II-1, M) + 1
++      Il(i) = M*(gcol(lcol)-1) + mode
++      lcol = (lcJ(j,II)-1)/M + 1; mode = MOD(lcJ(j,II)-1, M) + 1
++      Jl(i) = M*(gcol(lcol)-1) + mode
++      Vl(i) = lcV(j,II)
++    END DO
++  END DO
++  DEALLOCATE( lcJ, lcV, lcCnt )
++  ALLOCATE( cnts(nranks), displs(nranks) )
++  CALL MPI_Gather( nloc, 1, MPI_INTEGER, cnts, 1, MPI_INTEGER, 0, CC_comm, ierr )
++  ntot = 0
++  IF ( CC_myrank == 0 ) THEN
++    displs(1) = 0
++    DO i = 2, nranks
++      displs(i) = displs(i-1) + cnts(i-1)
++    END DO
++    ntot = displs(nranks) + cnts(nranks)
++  END IF
++  k = 1
++  IF ( CC_myrank == 0 ) k = ntot + CC_ncoarse
++  ALLOCATE( Ig(k), Jg(k), Vg(k) )
++  CALL MPI_Gatherv( Il, nloc, MPI_INTEGER, Ig, cnts, displs, MPI_INTEGER, 0, CC_comm, ierr )
++  CALL MPI_Gatherv( Jl, nloc, MPI_INTEGER, Jg, cnts, displs, MPI_INTEGER, 0, CC_comm, ierr )
++  CALL MPI_Gatherv( Vl, nloc, MPI_DOUBLE_PRECISION, Vg, cnts, displs, MPI_DOUBLE_PRECISION, 0, CC_comm, ierr )
++  DEALLOCATE( Il, Jl, Vl )
++
++  ! coarse dofs nobody touches (fully constrained columns) get a unit diagonal: their right-hand side is zero
++  nmiss = 0
++  IF ( CC_myrank == 0 ) THEN
++    ALLOCATE( hasdiag(CC_ncoarse) )
++    hasdiag = .FALSE.
++    DO i = 1, ntot
++      IF ( Ig(i) == Jg(i) ) hasdiag(Ig(i)) = .TRUE.
++    END DO
++    DO i = 1, CC_ncoarse
++      IF ( .NOT. hasdiag(i) ) THEN
++        nmiss = nmiss + 1
++        Ig(ntot+nmiss) = i; Jg(ntot+nmiss) = i; Vg(ntot+nmiss) = 1.0_dp
++      END IF
++    END DO
++    DEALLOCATE( hasdiag )
++  END IF
++
++#ifdef HAVE_MUMPS
++  IF ( CC_member ) THEN
++    IF ( .NOT. CC_mumpsinit ) THEN
++      CC_id % COMM = CC_subcomm
++      CC_id % SYM = 0
++      CC_id % PAR = 1
++      CC_id % JOB = -1
++      CALL DMUMPS( CC_id )
++      CC_mumpsinit = .TRUE.
++    END IF
++    IF ( CC_myrank == 0 ) THEN
++      IF ( CC_havemat ) DEALLOCATE( CC_id % IRN, CC_id % JCN, CC_id % A )
++      CC_id % N = CC_ncoarse
++      CC_id % NZ = ntot + nmiss
++      CC_id % NNZ = INT( ntot + nmiss, KIND=8 )   ! MUMPS >= 5.1 reads NNZ when set
++      ALLOCATE( CC_id % IRN(ntot+nmiss), CC_id % JCN(ntot+nmiss), CC_id % A(ntot+nmiss) )
++      CC_id % IRN = Ig(1:ntot+nmiss)
++      CC_id % JCN = Jg(1:ntot+nmiss)
++      CC_id % A = Vg(1:ntot+nmiss)
++      CC_havemat = .TRUE.
++    END IF
++    CC_id % ICNTL(1) = 6     ! errors
++    CC_id % ICNTL(2) = -1
++    CC_id % ICNTL(3) = -1
++    CC_id % ICNTL(4) = 1
++    CC_id % ICNTL(5) = 0     ! assembled (duplicates are summed)
++    CC_id % ICNTL(18) = 0    ! centralised matrix
++    CC_id % ICNTL(21) = 0    ! centralised solution
++    CC_id % ICNTL(14) = 60
++    CC_id % JOB = 4          ! analysis + factorisation
++    CALL DMUMPS( CC_id )
++    IF ( CC_id % INFOG(1) < 0 ) CALL Fatal(Caller, 'MUMPS factorisation of the coarse matrix failed, INFOG(1) = '// &
++        I2S(CC_id % INFOG(1))//', INFOG(2) = '//I2S(CC_id % INFOG(2)))
++  END IF
++#else
++  CALL Fatal(Caller, 'needs Elmer built with MUMPS')
++#endif
++  DEALLOCATE( Ig, Jg, Vg, cnts, displs )
++
++  ! prolongation / restriction weights on the rows the iteration works with (the owned rows, in order)
++  IF ( ALLOCATED(CC_ci) ) DEALLOCATE( CC_ci, CC_w, CC_x1, CC_r1, CC_z1 )
++  CC_nin = nin
++  ALLOCATE( CC_ci(2,MAX(nin,1)), CC_w(2,MAX(nin,1)), CC_x1(MAX(nin,1)), CC_r1(MAX(nin,1)), CC_z1(MAX(nin,1)) )
++  CC_ci = 0; CC_w = 0.0_dp
++  j = 0
++  DO r = 1, nrows
++    IF ( ParallelInfo % NeighbourList(r) % Neighbours(1) /= ParEnv % MyPE ) CYCLE
++    j = j + 1
++    IF ( j > nin ) CALL Fatal(Caller, 'more owned rows than the iteration has')
++    DO mi = 1, 2
++      II = rwI(mi,r)
++      IF ( II == 0 ) EXIT
++      lcol = (II-1)/M + 1; mode = MOD(II-1, M) + 1
++      CC_ci(mi,j) = M*(gcol(lcol)-1) + mode
++      CC_w(mi,j) = rwW(mi,r)
++    END DO
++  END DO
++  IF ( j /= nin ) CALL Fatal(Caller, 'owned rows '//I2S(j)//' /= iteration size '//I2S(nin))
++  DEALLOCATE( rwI, rwW, gcol )
++
++  IF ( ASSOCIATED(CC_rhs) ) THEN
++    IF ( SIZE(CC_rhs) /= CC_ncoarse ) DEALLOCATE( CC_rhs )
++  END IF
++  IF ( .NOT. ASSOCIATED(CC_rhs) ) ALLOCATE( CC_rhs(CC_ncoarse) )
++  CC_napply = 0; CC_tcoarse = 0.0_dp
++
++  IF ( CC_myrank == 0 ) THEN
++    WRITE( Message, '(A,I0,A,I0,A,I0,A,I0,A,I0,A,F8.3,A)' ) 'columns ', Ncol, ' x modes ', M, ' = ', CC_ncoarse, &
++        ' coarse unknowns, ', ntot, ' entries gathered, MUMPS on ', CC_nsub, ' ranks, setup ', MPI_Wtime()-t0, ' s'
++    CALL Info(Caller, Message, Level=3)
++  END IF
++!------------------------------------------------------------------------------
++END SUBROUTINE ColumnCoarseSetup
++!------------------------------------------------------------------------------
++
++
++!------------------------------------------------------------------------------
++!> ESS patch 02: apply the two-level preconditioner, u = x1 + M^-1 (v - A x1), x1 = P C^-1 P^T v.
++!------------------------------------------------------------------------------
++SUBROUTINE ColumnCoarsePrec( u, v, ipar )
++!------------------------------------------------------------------------------
++  INTEGER, DIMENSION(*) :: ipar
++  REAL(KIND=dp), DIMENSION(*) :: u, v
++  INTEGER :: n, j, m, i, ierr
++  REAL(KIND=dp) :: t0
++!------------------------------------------------------------------------------
++  n = HUTI_NDIM
++  IF ( n /= CC_nin ) CALL Fatal('ColumnCoarse', 'vector size '//I2S(n)//' /= setup size '//I2S(CC_nin))
++  t0 = MPI_Wtime()
++  CC_rhs = 0.0_dp
++  DO j = 1, n
++    DO m = 1, 2
++      i = CC_ci(m,j)
++      IF ( i == 0 ) EXIT
++      CC_rhs(i) = CC_rhs(i) + CC_w(m,j) * v(j)
++    END DO
++  END DO
++  IF ( CC_myrank == 0 ) THEN
++    CALL MPI_Reduce( MPI_IN_PLACE, CC_rhs, CC_ncoarse, MPI_DOUBLE_PRECISION, MPI_SUM, 0, CC_comm, ierr )
++  ELSE
++    CALL MPI_Reduce( CC_rhs, CC_dummy, CC_ncoarse, MPI_DOUBLE_PRECISION, MPI_SUM, 0, CC_comm, ierr )
++  END IF
++#ifdef HAVE_MUMPS
++  IF ( CC_member ) THEN
++    IF ( CC_myrank == 0 ) THEN
++      CC_id % RHS => CC_rhs
++      CC_id % NRHS = 1
++      CC_id % LRHS = CC_ncoarse
++    END IF
++    CC_id % JOB = 3
++    CALL DMUMPS( CC_id )
++    IF ( CC_id % INFOG(1) < 0 ) CALL Fatal('ColumnCoarse', 'MUMPS coarse solve failed, INFOG(1) = '// &
++        I2S(CC_id % INFOG(1)))
++  END IF
++#endif
++  CALL MPI_Bcast( CC_rhs, CC_ncoarse, MPI_DOUBLE_PRECISION, 0, CC_comm, ierr )
++  DO j = 1, n
++    CC_x1(j) = 0.0_dp
++    DO m = 1, 2
++      i = CC_ci(m,j)
++      IF ( i == 0 ) EXIT
++      CC_x1(j) = CC_x1(j) + CC_w(m,j) * CC_rhs(i)
++    END DO
++  END DO
++  CC_tcoarse = CC_tcoarse + MPI_Wtime() - t0
++
++  CALL SParMatrixVector( CC_x1, CC_r1, ipar )
++  DO j = 1, n
++    CC_r1(j) = v(j) - CC_r1(j)
++  END DO
++  SELECT CASE( CC_inner )
++  CASE( 1 )
++    CALL CRS_DiagPrecondition( CC_z1, CC_r1, ipar )
++  CASE( 2 )
++    CALL CRS_LUPrecondition( CC_z1, CC_r1, ipar )
++  CASE DEFAULT
++    CC_z1(1:n) = CC_r1(1:n)
++  END SELECT
++  DO j = 1, n
++    u(j) = CC_x1(j) + CC_z1(j)
++  END DO
++  CC_napply = CC_napply + 1
++!------------------------------------------------------------------------------
++END SUBROUTINE ColumnCoarsePrec
++!------------------------------------------------------------------------------
++
++
+ END MODULE SParIterSolve
+ 
+ !> \}
