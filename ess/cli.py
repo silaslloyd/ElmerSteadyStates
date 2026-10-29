@@ -298,6 +298,9 @@ def cmd_run(args):
                  + ("" if model.shelf_cut_target else " (no Passive Target boundary: the cut face stress free)"))
     if args.output_level is not None:
         model.output_level = args.output_level
+    if args.rotate_guess:
+        model.stokes_rotate_guess = True
+        log.info("run: the Stokes initial guess rotated to the normal-tangential frame before each solve")
     for nm in args.add_diag or []:
         if nm not in model.diagnostics:
             model.diagnostics.append(nm)
@@ -1136,6 +1139,9 @@ def main(argv=None):
     s.add_argument("--shelf-cut-no-target", action="store_true",
                    help="with --shelf-cut: no Passive Target boundary (stress-free cut face; to test the machinery)")
     s.add_argument("--output-level", type=int, help="Elmer's Max Output Level for this run ([elmer] output_level)")
+    s.add_argument("--rotate-guess", action="store_true",
+                   help="rotate the Stokes initial guess to the normal-tangential frame before each linear solve "
+                        "(elmer/RotateGuess.so; [elmer] stokes_rotate_guess)")
     s.add_argument("--add-diag", action="append", metavar="NAME",
                    help="also write this variable with the diagnostics (repeatable; e.g. Pressure for --warm-start)")
     s.add_argument("--warm-start", metavar="STATE",

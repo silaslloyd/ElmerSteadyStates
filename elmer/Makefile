@@ -3,7 +3,7 @@
 # elmerf90_safe: elmerf90, rerun without unreadable -I/-L directories if it fails on them (elmerfem/2026-10-28)
 ELMERF90 ?= ./elmerf90_safe
 
-all: SteadyStateIO.so Buoyancy.so
+all: SteadyStateIO.so Buoyancy.so RotateGuess.so
 
 # not in `all` (only the periodic tests need it): make -C elmer PeriodicGL.so
 # PeriodicGL.so: PeriodicUtils (periodic copies of nodal fields), the FixPeriodicLoads solver and the periodic
@@ -17,6 +17,10 @@ SteadyStateIO.so: SteadyStateIO.F90
 	$(ELMERF90) -o $@ $<
 
 Buoyancy.so: Buoyancy.F90
+	$(ELMERF90) -o $@ $<
+
+# Before Linsolve procedure: the initial guess rotated to the normal-tangential frame ([elmer] stokes_rotate_guess)
+RotateGuess.so: RotateGuess.F90
 	$(ELMERF90) -o $@ $<
 
 PeriodicGL.so: PeriodicUtils.F90 FixPeriodicLoads.F90 ContactPeriodic.F90
@@ -33,4 +37,4 @@ SheetSolverhw.so: SheetSolverhw.F90
 	$(ELMERF90) -o $@ $<
 
 clean:
-	rm -f SteadyStateIO.so Buoyancy.so PeriodicGL.so FixPeriodicLoads.so ColdTempMask.so SheetSolverhw.so *.mod
+	rm -f SteadyStateIO.so Buoyancy.so RotateGuess.so PeriodicGL.so FixPeriodicLoads.so ColdTempMask.so SheetSolverhw.so *.mod

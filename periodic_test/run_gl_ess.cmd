@@ -20,6 +20,7 @@ echo "Elmer: ${ELMER_MODULE:-elmerfem/2026-07-13} -> $(command -v ElmerSolver)"
 build_libs() {
     local cur; cur=$(command -v ElmerSolver)
     if [ ! -f elmer/SteadyStateIO.so ] || [ ! -f elmer/Buoyancy.so ] || [ elmer/SteadyStateIO.F90 -nt elmer/SteadyStateIO.so ] \
+       || [ ! -f elmer/RotateGuess.so ] || [ elmer/RotateGuess.F90 -nt elmer/RotateGuess.so ] \
        || [ ! -f elmer/PeriodicGL.so ] || [ -n "$(find elmer -maxdepth 1 -name '*Periodic*.F90' -newer elmer/PeriodicGL.so)" ] \
        || [ ! -f elmer/ColdTempMask.so ] || [ ! -f elmer/SheetSolverhw.so ] \
        || [ "$(cat elmer/.built_with 2>/dev/null)" != "$cur" ]; then

@@ -75,6 +75,10 @@ class ElmerModel(Model):
         self.sea_level_param = bool(e.get("sea_level_param", False))
         self.mesh_db = e.get("mesh_db", "footprint")
         self.ess_lib = cfg["_path"](e.get("ess_lib", "elmer/SteadyStateIO"))
+        # [elmer] stokes_rotate_guess: rotate the Stokes initial guess to the normal-tangential frame before every
+        # (monolithic) linear solve (elmer/RotateGuess.F90: Elmer passes it unrotated, so warm starts - the previous
+        # time step - begin far worse than a zero guess at every normal-tangential bed node)
+        self.stokes_rotate_guess = bool(e.get("stokes_rotate_guess", False))
         self.ess_utils = cfg["_path"](e.get("ess_utils", "elmer/ess_utils.lua"))
         self.params_file = cfg["_path"](cfg.get("case", {}).get("parameters", "case/parameters.lua"))
         # ESS_NPROCS / ESS_MPIRUN (environment) override [elmer] n_procs / mpirun: several drivers in one batch
@@ -286,6 +290,14 @@ class ElmerModel(Model):
                     '    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * (tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
         raise ValueError(f"[elmer] friction_heat must be 'loads' or 'flux', not {self.friction_heat!r}")
 
+    def _stokes_linear(self) -> str:
+        """the Stokes linear-solver keywords, with the initial-guess rotation if asked (not for the block solver)"""
+        txt = self._linear_block(self.linear_stokes, "stokes")
+        if self.stokes_rotate_guess and not re.search(r'Linear System Solver\s*=\s*"?Block', txt, re.I):
+            lib = os.path.join(os.path.dirname(self.ess_lib), "RotateGuess")
+            txt += f'\n  Before Linsolve = File "{lib}" "RotateInitialGuess"   ! [elmer] stokes_rotate_guess'
+        return txt
+
     def _linear_block(self, kind, which) -> str:
         """Linear-solver keywords for one solver. Iterative solves must converge far below the finite-
         difference perturbation (fd eps): their error is noise in the Jacobian products (check with
@@ -450,7 +462,7 @@ End
             "__FS_EXEC__": '"Never"' if self.heat_only else '"after Timestep"',
             "__OUTPUT_LEVEL__": str(self.output_level),
             "__MIN_ZS_EXPR__": self.min_zs_expr,
-            "__LS_STOKES__": self._linear_block(self.linear_stokes, "stokes"),
+            "__LS_STOKES__": self._stokes_linear(),
             "__LS_HEAT__": self._linear_block(self.linear_heat, "heat"),
             "__LS_STRAIN__": self._linear_block(self.linear_heat, "strain"),
             # "Bubbles": ElmerStreams' P1 + bubbles (Stabilization Method = Bubbles with its Element line)
