@@ -298,6 +298,9 @@ def cmd_run(args):
                  + ("" if model.shelf_cut_target else " (no Passive Target boundary: the cut face stress free)"))
     if args.output_level is not None:
         model.output_level = args.output_level
+    if args.stokes_solver:
+        model.stokes_solver = args.stokes_solver
+        log.info(f"run: Stokes module {args.stokes_solver}")
     if args.rotate_guess:
         model.stokes_rotate_guess = True
         log.info("run: the Stokes initial guess rotated to the normal-tangential frame before each solve")
@@ -1139,6 +1142,8 @@ def main(argv=None):
     s.add_argument("--shelf-cut-no-target", action="store_true",
                    help="with --shelf-cut: no Passive Target boundary (stress-free cut face; to test the machinery)")
     s.add_argument("--output-level", type=int, help="Elmer's Max Output Level for this run ([elmer] output_level)")
+    s.add_argument("--stokes-solver", choices=["nsvec", "flowsolve", "ins"],
+                   help="Elmer's Stokes module: IncompressibleNSVec (default), FlowSolve, IncompressibleNS")
     s.add_argument("--rotate-guess", action="store_true",
                    help="rotate the Stokes initial guess to the normal-tangential frame before each linear solve "
                         "(elmer/RotateGuess.so; [elmer] stokes_rotate_guess)")

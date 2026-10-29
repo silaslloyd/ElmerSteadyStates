@@ -156,6 +156,10 @@ class ElmerModel(Model):
         # "P2/P1" (default) or "Stabilized" (P1/P1 with stabilisation: far easier for ILU-preconditioned
         # Krylov solvers, but a different discretisation, so slightly different steady states)
         self.stokes_element = str(e.get("stokes_element", "P2/P1"))
+        # [elmer] stokes_solver: Elmer's Stokes module: "nsvec" (IncompressibleNSVec, the default), "flowsolve" (the
+        # classic FlowSolve that Elmer/Ice has long used) or "ins" (IncompressibleNS, NSVec's non-vectorised
+        # predecessor). Same variable (Flow Solution[Velocity:3 Pressure:1]), boundary conditions and loads.
+        self.stokes_solver = str(e.get("stokes_solver", "nsvec"))
         # EXPERIMENTAL [elmer] shelf_cut_km (marine): Elmer's passive elements (as Elmer/Ice FS-SSA coupling): the ice
         # elements beyond x = shelf_cut_km are passive for Stokes; shelf_cut_target (default true): the face between
         # active and passive elements is a "Passive Target" boundary with a free-floating shelf's stress (see
@@ -506,6 +510,14 @@ End
             text = self._stokes_iterations(text, self.contact_stokes_iters)
         if self.shelf_cut_x is not None:
             text = self._shelf_cut(text)
+        if self.stokes_solver != "nsvec":
+            procs = {"flowsolve": '"FlowSolve" "FlowSolver"', "ins": '"IncompressibleNS" "IncompressibleNSSolver"'}
+            if self.stokes_solver not in procs:
+                raise ValueError(f"[elmer] stokes_solver must be nsvec, flowsolve or ins, not {self.stokes_solver!r}")
+            old = 'Procedure = "IncompressibleNSVec" "IncompressibleNSSolver"'
+            if text.count(old) != 1:
+                raise ValueError("stokes_solver: the Stokes procedure line of the template changed")
+            text = text.replace(old, f"Procedure = {procs[self.stokes_solver]}   ! [elmer] stokes_solver = {self.stokes_solver}")
         if self.slide_ybump:
             text = self._slide_ybump(text)
         if self.thermal == "elmerstreams":

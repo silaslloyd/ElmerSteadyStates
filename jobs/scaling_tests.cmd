@@ -184,6 +184,8 @@ opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --bed ${BED:-cold
 # CART=1: the bed condition in x/y/z components (marine template: ess run --cartesian-bed; no normal-tangential
 # rotation of the bed unknowns)
 [ "$CART" = 1 ] && opts="$opts --cartesian-bed"
+# STOKES_SOLVER=flowsolve|ins: Elmer's older Stokes modules instead of IncompressibleNSVec
+[ -n "$STOKES_SOLVER" ] && opts="$opts --stokes-solver $STOKES_SOLVER" && echo "Stokes module: $STOKES_SOLVER"
 # MAXIT: the GCR iteration cap of the GCR runs (default 2000)
 # FRIC=F: the sliding coefficient fcoeff times F (the periodic GL runs used 10, run_gl_ess.py --fbase; plain ess
 # run, as here by default: 1)
@@ -258,6 +260,7 @@ for t in $(echo $SET | fold -w1); do
         N) mkGCR $V/N.sif.in 0; echo "  Linear System ILU Factor = Real 0.001" >> $V/N.sif.in;;
         O) mkGCR $V/O.sif.in 1; echo "  Linear System ILU Factor = Real 0.01" >> $V/O.sif.in;;
         a|b|c|g|h) mkAMGvar $V/$t.sif.in $t;;
+        k) grep -v "^#" elmer/stokes_block.sif.in > $V/k.sif.in;;
         A) mkMG $V/A.sif.in;;  B) mkBlockMG $V/B.sif.in;;
         Y) mkHILU $V/Y.sif.in 30;;  Z) mkHILU $V/Z.sif.in 10;;  V) mkHILU $V/V.sif.in 31;;  I) mkHILU $V/I.sif.in 11;;
         P) mkGCR $V/P.sif.in 2;;  Q) mkGCR $V/Q.sif.in 3;;  W) mkGCR $V/W.sif.in 4;;  X) mkGCR $V/X.sif.in 6;;
@@ -307,6 +310,7 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
                L) what="GCR + ILU0, diagonal x 2 before factorising (ILU Factor 1.0)";;
                M) what="GCR + ILU0, ILU Factor 0.01";; N) what="GCR + ILU0, ILU Factor 0.001";;
                O) what="GCR + ILU1, ILU Factor 0.01";;
+               k) what="block preconditioner, ILU inner solves (elmer/stokes_block.sif.in)";;
                a) what="MLB block + BoomerAMG as the velocity block's solver, as is (crashed)";;
                b) what="a with scalar velocity blocks (1 2 3 4), no block preconditioner";;
                c) what="a without the block preconditioner (no pressure Schur solver)";;
