@@ -29,7 +29,7 @@ index dc9c82555..28ab42b54 100644
      IF ( .NOT. ComplexSystem ) THEN
        SELECT CASE ( IterType )
 diff --git a/fem/src/SParIterSolver.F90 b/fem/src/SParIterSolver.F90
-index 57850f0db..31b180b9c 100644
+index 57850f0db..f2341f04f 100644
 --- a/fem/src/SParIterSolver.F90
 +++ b/fem/src/SParIterSolver.F90
 @@ -59,6 +59,19 @@ MODULE SParIterSolve
@@ -59,7 +59,7 @@ index 57850f0db..31b180b9c 100644
 +  ! ESS patch 02: two-level preconditioner with a column coarse space (see ColumnCoarseSetup)
 +  IF ( .NOT. SourceMatrix % COMPLEX .AND. ListGetLogical( Solver % Values, &
 +      'Linear System Column Coarse', GotIt ) ) THEN
-+    CALL ColumnCoarseSetup( SourceMatrix, ParallelInfo, Solver, &
++    CALL ColumnCoarseSetup( SourceMatrix, SplittedMatrix, ParallelInfo, Solver, &
 +        SplittedMatrix % InsideMatrix % NumberOfRows )
 +    IterSolverPrecWrap = AddrFunc( ColumnCoarsePrec )
 +  END IF
@@ -81,7 +81,7 @@ index 57850f0db..31b180b9c 100644
  
    IF (ASSOCIATED(CM)) THEN
      DEALLOCATE(CM % Cols)
-@@ -4059,6 +4087,434 @@ SUBROUTINE RenumberDOFs( SourceMatrix, SplittedMatrix, ParallelInfo )
+@@ -4059,6 +4087,492 @@ SUBROUTINE RenumberDOFs( SourceMatrix, SplittedMatrix, ParallelInfo )
  END SUBROUTINE RenumberDOFs
  !********************************************************************
  
@@ -107,9 +107,10 @@ index 57850f0db..31b180b9c 100644
 +!>   Linear System Column Coarse Levels = Integer        (node layers; default: Simulation's Extruded Mesh Levels)
 +!>   Linear System Column Coarse Ranks = Integer         (MUMPS ranks for the coarse problem; default 1)
 +!------------------------------------------------------------------------------
-+SUBROUTINE ColumnCoarseSetup( SourceMatrix, ParallelInfo, Solver, nin )
++SUBROUTINE ColumnCoarseSetup( SourceMatrix, SplittedMatrix, ParallelInfo, Solver, nin )
 +!------------------------------------------------------------------------------
 +  TYPE(Matrix_t) :: SourceMatrix
++  TYPE(SplittedMatrixT) :: SplittedMatrix
 +  TYPE(ParallelInfo_t) :: ParallelInfo
 +  TYPE(Solver_t), TARGET :: Solver
 +  INTEGER :: nin
@@ -119,6 +120,8 @@ index 57850f0db..31b180b9c 100644
 +  INTEGER, POINTER :: Perm(:)
 +  INTEGER :: DOFs, dim, nhm, M, Nlev, nn, nbl, Ncol, gmaxl, gmax, nrows, nd, c, r, s, k, j, i, mi, mj, &
 +      p, ierr, nlc, W, nloc, ntot, nranks, color, nmiss, II, JJ, lcol, mode, maxp
++  INTEGER, ALLOCATABLE :: rowLcol(:)
++  REAL(KIND=dp), ALLOCATABLE :: Wm(:,:)
 +  INTEGER, ALLOCATABLE :: gcol(:), rwI(:,:), lcJ(:,:), lcCnt(:), cnts(:), displs(:), Il(:), Jl(:), &
 +      Ig(:), Jg(:), tmpJ(:,:)
 +  REAL(KIND=dp), ALLOCATABLE :: rwW(:,:), lcV(:,:), Vl(:), Vg(:), tmpV(:,:)
@@ -208,8 +211,8 @@ index 57850f0db..31b180b9c 100644
 +    maxp = MAX( maxp, Perm(nd) )
 +  END DO
 +  IF ( DOFs * maxp > nrows ) CALL Fatal(Caller, 'matrix smaller than the variable')
-+  ALLOCATE( rwI(2,nrows), rwW(2,nrows) )
-+  rwI = 0; rwW = 0.0_dp
++  ALLOCATE( rwI(2,nrows), rwW(2,nrows), rowLcol(nrows) )
++  rwI = 0; rwW = 0.0_dp; rowLcol = 0
 +  NT => Solver % NormalTangential
 +  DO nd = 1, nn
 +    p = Perm(nd)
@@ -223,6 +226,7 @@ index 57850f0db..31b180b9c 100644
 +    END IF
 +    DO c = 1, DOFs
 +      r = DOFs * (p-1) + c
++      rowLcol(r) = lcol
 +      Constrained = .FALSE.
 +      IF ( ALLOCATED( SourceMatrix % ConstrainedDOF ) ) Constrained = SourceMatrix % ConstrainedDOF(r)
 +      IF ( Constrained ) CYCLE
@@ -258,6 +262,36 @@ index 57850f0db..31b180b9c 100644
 +      END IF
 +    END DO
 +  END DO
++
++  ! Every dof takes the weights its OWNER computed: partitions sharing a node can differ in what they know about it
++  ! (Dirichlet flags, normal-tangential rotation), and P must be one operator for the assembly below (all local
++  ! rows) and the application (owned rows) to agree, i.e. for C to be exactly P^T A P
++  ALLOCATE( Wm(nrows,M) )
++  Wm = 0.0_dp
++  DO r = 1, nrows
++    IF ( ParallelInfo % NeighbourList(r) % Neighbours(1) /= ParEnv % MyPE ) CYCLE
++    DO mi = 1, 2
++      II = rwI(mi,r)
++      IF ( II == 0 ) EXIT
++      Wm(r, MOD(II-1,M)+1) = rwW(mi,r)
++    END DO
++  END DO
++  DO mode = 1, M
++    CALL ExchangeSourceVec( SourceMatrix, SplittedMatrix, ParallelInfo, Wm(:,mode) )
++  END DO
++  rwI = 0; rwW = 0.0_dp
++  DO r = 1, nrows
++    IF ( rowLcol(r) == 0 ) CYCLE
++    j = 0
++    DO mode = 1, M
++      IF ( ABS(Wm(r,mode)) > 1.0e-12_dp ) THEN
++        j = j + 1
++        IF ( j > 2 ) CALL Fatal(Caller, 'more than two coarse modes on one dof')
++        rwI(j,r) = M*(rowLcol(r)-1) + mode; rwW(j,r) = Wm(r,mode)
++      END IF
++    END DO
++  END DO
++  DEALLOCATE( Wm, rowLcol )
 +
 +  ! local part of P^T A P (the local matrices sum to the global one), accumulated per local coarse row
 +  nlc = M * nbl
@@ -432,11 +466,13 @@ index 57850f0db..31b180b9c 100644
 +  INTEGER, DIMENSION(*) :: ipar
 +  REAL(KIND=dp), DIMENSION(*) :: u, v
 +  INTEGER :: n, j, m, i, ierr
-+  REAL(KIND=dp) :: t0, sq(4)
++  REAL(KIND=dp) :: t0, sq(4), rcn, rc1n
++  LOGICAL :: diag
 +!------------------------------------------------------------------------------
 +  n = HUTI_NDIM
 +  IF ( n /= CC_nin ) CALL Fatal('ColumnCoarse', 'vector size '//I2S(n)//' /= setup size '//I2S(CC_nin))
 +  t0 = MPI_Wtime()
++  diag = ( CC_napply < CC_ndiag )
 +  CC_rhs = 0.0_dp
 +  DO j = 1, n
 +    DO m = 1, 2
@@ -450,6 +486,8 @@ index 57850f0db..31b180b9c 100644
 +  ELSE
 +    CALL MPI_Reduce( CC_rhs, CC_dummy, CC_ncoarse, MPI_DOUBLE_PRECISION, MPI_SUM, 0, CC_comm, ierr )
 +  END IF
++  rcn = 0.0_dp
++  IF ( diag .AND. CC_myrank == 0 ) rcn = SQRT( SUM( CC_rhs**2 ) )
 +#ifdef HAVE_MUMPS
 +  IF ( CC_member ) THEN
 +    IF ( CC_myrank == 0 ) THEN
@@ -491,7 +529,27 @@ index 57850f0db..31b180b9c 100644
 +  END DO
 +  ! diagnostics for the first applications of every solve: how much of the residual the coarse step removes,
 +  ! and how large the coarse and the local corrections are
-+  IF ( CC_napply < CC_ndiag ) THEN
++  IF ( diag ) THEN
++    ! consistency: an exact Galerkin step leaves no coarse component, P^T (r - A x1) = 0
++    CC_rhs = 0.0_dp
++    DO j = 1, n
++      DO m = 1, 2
++        i = CC_ci(m,j)
++        IF ( i == 0 ) EXIT
++        CC_rhs(i) = CC_rhs(i) + CC_w(m,j) * CC_r1(j)
++      END DO
++    END DO
++    IF ( CC_myrank == 0 ) THEN
++      CALL MPI_Reduce( MPI_IN_PLACE, CC_rhs, CC_ncoarse, MPI_DOUBLE_PRECISION, MPI_SUM, 0, CC_comm, ierr )
++      rc1n = SQRT( SUM( CC_rhs**2 ) )
++      IF ( rcn > 0.0_dp ) THEN
++        WRITE( Message, '(A,I0,A,ES10.3,A)' ) 'apply ', CC_napply+1, ': |P^T (r - A x1)| / |P^T r| = ', rc1n/rcn, &
++            '  (Galerkin consistency, should be ~1e-12)'
++        CALL Info('ColumnCoarse', Message, Level=3)
++      END IF
++    ELSE
++      CALL MPI_Reduce( CC_rhs, CC_dummy, CC_ncoarse, MPI_DOUBLE_PRECISION, MPI_SUM, 0, CC_comm, ierr )
++    END IF
 +    sq = 0.0_dp
 +    DO j = 1, n
 +      sq(1) = sq(1) + v(j)**2

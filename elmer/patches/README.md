@@ -32,4 +32,8 @@ extruded meshes, for Elmer's own parallel Krylov solvers (GCR, BiCGStab, ... wit
        Linear System Column Coarse Ranks = Integer        (ranks of the MUMPS coarse solve; default 1)
   The log reports per solve the coarse size, setup time and the time in the coarse corrections ("ColumnCoarse:").
   Hook: IterSolve's public IterSolverPrecWrap (an address) replaces the preconditioner IterSolver has just set up,
-  once. Without the keyword Elmer behaves as unpatched. Not compiled outside tethys yet: the first build checks it.
+  once. Without the keyword Elmer behaves as unpatched.
+  Every dof takes the coarse weights of its owning partition (sharing partitions may differ in Dirichlet flags or
+  rotation), so C is exactly P^T A P. Diagnostics for the first 3 applications per solve ("Linear System Column
+  Coarse Diagnostics" = n): |P^T (r - A x1)| / |P^T r| (Galerkin consistency, ~1e-12), |r - A x1|/|r|, and the
+  sizes of the coarse and local corrections.
