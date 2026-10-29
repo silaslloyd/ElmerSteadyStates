@@ -29,7 +29,7 @@ index dc9c82555..28ab42b54 100644
      IF ( .NOT. ComplexSystem ) THEN
        SELECT CASE ( IterType )
 diff --git a/fem/src/SParIterSolver.F90 b/fem/src/SParIterSolver.F90
-index 57850f0db..f2341f04f 100644
+index 57850f0db..bca2428eb 100644
 --- a/fem/src/SParIterSolver.F90
 +++ b/fem/src/SParIterSolver.F90
 @@ -59,6 +59,19 @@ MODULE SParIterSolve
@@ -38,13 +38,13 @@ index 57850f0db..f2341f04f 100644
  
 +  ! ESS patch 02: state of the column coarse space ("Linear System Column Coarse", see ColumnCoarseSetup).
 +  INTEGER, PRIVATE, SAVE :: CC_nin = 0, CC_ncoarse = 0, CC_inner = 0, CC_comm = 0, CC_subcomm = 0, &
-+      CC_myrank = 0, CC_napply = 0, CC_nsub = 0, CC_ndiag = 3
++      CC_myrank = 0, CC_napply = 0, CC_nsub = 0, CC_ndiag = 3, CC_order = 1, CC_ns = 2
 +  INTEGER, ALLOCATABLE, PRIVATE, SAVE :: CC_ci(:,:)
-+  REAL(KIND=dp), ALLOCATABLE, PRIVATE, SAVE :: CC_w(:,:), CC_x1(:), CC_r1(:), CC_z1(:)
++  REAL(KIND=dp), ALLOCATABLE, PRIVATE, SAVE :: CC_w(:,:), CC_x1(:), CC_r1(:), CC_z1(:), CC_s(:)
 +  REAL(KIND=dp), POINTER, PRIVATE, SAVE :: CC_rhs(:) => NULL()
 +  REAL(KIND=dp), PRIVATE, SAVE :: CC_tcoarse = 0.0_dp, CC_dummy(1)
 +  LOGICAL, PRIVATE, SAVE :: CC_member = .FALSE., CC_commset = .FALSE., CC_mumpsinit = .FALSE., &
-+      CC_havemat = .FALSE.
++      CC_havemat = .FALSE., CC_prepost = .FALSE.
 +#ifdef HAVE_MUMPS
 +  TYPE(dmumps_struc), PRIVATE, SAVE :: CC_id
 +#endif
@@ -81,7 +81,7 @@ index 57850f0db..f2341f04f 100644
  
    IF (ASSOCIATED(CM)) THEN
      DEALLOCATE(CM % Cols)
-@@ -4059,6 +4087,492 @@ SUBROUTINE RenumberDOFs( SourceMatrix, SplittedMatrix, ParallelInfo )
+@@ -4059,6 +4087,575 @@ SUBROUTINE RenumberDOFs( SourceMatrix, SplittedMatrix, ParallelInfo )
  END SUBROUTINE RenumberDOFs
  !********************************************************************
  
@@ -106,6 +106,13 @@ index 57850f0db..f2341f04f 100644
 +!>   Linear System Column Coarse Pressure = Logical      (default True: plug-flow pressure mode per column)
 +!>   Linear System Column Coarse Levels = Integer        (node layers; default: Simulation's Extruded Mesh Levels)
 +!>   Linear System Column Coarse Ranks = Integer         (MUMPS ranks for the coarse problem; default 1)
++!>   Linear System Column Coarse Order = Integer         (default 1: the velocity modes are polynomials of degree
++!>       0..Order in the relative height zeta in [0,1] of the node in its column, for u, v AND w, so the coarse
++!>       space holds plug flow that satisfies incompressibility (w linear in depth) and vertical shear;
++!>       0: only uniform u, v, which leaves w and the incompressibility to the local preconditioner)
++!>   Linear System Column Coarse Pre Smoothing = Logical (default False: x1 first, then M^-1 on the rest;
++!>       True: M^-1, coarse correction, M^-1 again, a V(1,1) cycle)
++!>   Linear System Column Coarse Diagnostics = Integer   (applications per solve reported, default 3)
 +!------------------------------------------------------------------------------
 +SUBROUTINE ColumnCoarseSetup( SourceMatrix, SplittedMatrix, ParallelInfo, Solver, nin )
 +!------------------------------------------------------------------------------
@@ -122,6 +129,8 @@ index 57850f0db..f2341f04f 100644
 +      p, ierr, nlc, W, nloc, ntot, nranks, color, nmiss, II, JJ, lcol, mode, maxp
 +  INTEGER, ALLOCATABLE :: rowLcol(:)
 +  REAL(KIND=dp), ALLOCATABLE :: Wm(:,:)
++  INTEGER :: nvd, nvm, d, kk
++  REAL(KIND=dp) :: zeta, wv
 +  INTEGER, ALLOCATABLE :: gcol(:), rwI(:,:), lcJ(:,:), lcCnt(:), cnts(:), displs(:), Il(:), Jl(:), &
 +      Ig(:), Jg(:), tmpJ(:,:)
 +  REAL(KIND=dp), ALLOCATABLE :: rwW(:,:), lcV(:,:), Vl(:), Vg(:), tmpV(:,:)
@@ -143,8 +152,16 @@ index 57850f0db..f2341f04f 100644
 +  nhm = dim - 1
 +  UseP = ListGetLogical( Params, 'Linear System Column Coarse Pressure', Found )
 +  IF ( .NOT. Found ) UseP = .TRUE.
-+  M = nhm
-+  IF ( UseP ) M = M + 1
++  CC_order = ListGetInteger( Params, 'Linear System Column Coarse Order', Found )
++  IF ( .NOT. Found ) CC_order = 1
++  CC_order = MAX( 0, CC_order )
++  nvd = dim                           ! velocity directions in the coarse space: u, v, w ...
++  IF ( CC_order == 0 ) nvd = nhm      ! ... or only the horizontal ones for uniform modes
++  nvm = nvd * (CC_order + 1)          ! mode (d, kk) = (d-1)*(Order+1) + kk + 1, kk the degree in zeta
++  M = nvm
++  IF ( UseP ) M = M + 1               ! pressure: mode M, uniform
++  CC_ns = MAX( 1, nvm )               ! coarse components per dof at most
++  CC_prepost = ListGetLogical( Params, 'Linear System Column Coarse Pre Smoothing', Found )
 +
 +  ! the preconditioner the wrapper applies after the coarse correction (IterSolver builds it)
 +  str = ListGetString( Params, 'Linear System Preconditioning', Found )
@@ -211,13 +228,14 @@ index 57850f0db..f2341f04f 100644
 +    maxp = MAX( maxp, Perm(nd) )
 +  END DO
 +  IF ( DOFs * maxp > nrows ) CALL Fatal(Caller, 'matrix smaller than the variable')
-+  ALLOCATE( rwI(2,nrows), rwW(2,nrows), rowLcol(nrows) )
++  ALLOCATE( rwI(CC_ns,nrows), rwW(CC_ns,nrows), rowLcol(nrows) )
 +  rwI = 0; rwW = 0.0_dp; rowLcol = 0
 +  NT => Solver % NormalTangential
 +  DO nd = 1, nn
 +    p = Perm(nd)
 +    IF ( p <= 0 ) CYCLE
 +    lcol = MOD(nd-1, nbl) + 1
++    zeta = REAL( (nd-1)/nbl, dp ) / REAL( Nlev-1, dp )     ! relative height of the node's layer
 +    k = 0
 +    IF ( NT % NormalTangentialNOFNodes > 0 ) THEN
 +      IF ( ASSOCIATED( NT % BoundaryReorder ) ) THEN
@@ -231,9 +249,9 @@ index 57850f0db..f2341f04f 100644
 +      IF ( ALLOCATED( SourceMatrix % ConstrainedDOF ) ) Constrained = SourceMatrix % ConstrainedDOF(r)
 +      IF ( Constrained ) CYCLE
 +      IF ( c <= dim ) THEN
++        vec = 0.0_dp
 +        IF ( k > 0 ) THEN
-+          ! rotated row: component c is (n, t1, t2)(c) . u; the Cartesian modes e_x, e_y map to their projections
-+          vec = 0.0_dp
++          ! rotated row: component c is (n, t1, t2)(c) . u; a Cartesian mode e_d maps to its projection vec(d)
 +          IF ( dim == 3 ) THEN
 +            SELECT CASE( c )
 +            CASE( 1 ); vec = NT % BoundaryNormals(k,1:3)
@@ -247,16 +265,20 @@ index 57850f0db..f2341f04f 100644
 +              vec(1) = -NT % BoundaryNormals(k,2); vec(2) = NT % BoundaryNormals(k,1)
 +            END IF
 +          END IF
-+          j = 0
-+          DO mode = 1, nhm
-+            IF ( ABS(vec(mode)) > 1.0e-12_dp ) THEN
-+              j = j + 1
-+              rwI(j,r) = M*(lcol-1) + mode; rwW(j,r) = vec(mode)
-+            END IF
-+          END DO
-+        ELSE IF ( c <= nhm ) THEN
-+          rwI(1,r) = M*(lcol-1) + c; rwW(1,r) = 1.0_dp
++        ELSE
++          vec(c) = 1.0_dp
 +        END IF
++        j = 0
++        DO d = 1, nvd
++          IF ( ABS(vec(d)) <= 1.0e-12_dp ) CYCLE
++          DO kk = 0, CC_order
++            wv = vec(d)
++            IF ( kk > 0 ) wv = wv * zeta**kk
++            IF ( ABS(wv) <= 1.0e-12_dp ) CYCLE
++            j = j + 1
++            rwI(j,r) = M*(lcol-1) + (d-1)*(CC_order+1) + kk + 1; rwW(j,r) = wv
++          END DO
++        END DO
 +      ELSE IF ( UseP ) THEN
 +        rwI(1,r) = M*(lcol-1) + M; rwW(1,r) = 1.0_dp
 +      END IF
@@ -270,7 +292,7 @@ index 57850f0db..f2341f04f 100644
 +  Wm = 0.0_dp
 +  DO r = 1, nrows
 +    IF ( ParallelInfo % NeighbourList(r) % Neighbours(1) /= ParEnv % MyPE ) CYCLE
-+    DO mi = 1, 2
++    DO mi = 1, CC_ns
 +      II = rwI(mi,r)
 +      IF ( II == 0 ) EXIT
 +      Wm(r, MOD(II-1,M)+1) = rwW(mi,r)
@@ -286,7 +308,7 @@ index 57850f0db..f2341f04f 100644
 +    DO mode = 1, M
 +      IF ( ABS(Wm(r,mode)) > 1.0e-12_dp ) THEN
 +        j = j + 1
-+        IF ( j > 2 ) CALL Fatal(Caller, 'more than two coarse modes on one dof')
++        IF ( j > CC_ns ) CALL Fatal(Caller, 'more coarse modes on one dof than expected')
 +        rwI(j,r) = M*(rowLcol(r)-1) + mode; rwW(j,r) = Wm(r,mode)
 +      END IF
 +    END DO
@@ -306,10 +328,10 @@ index 57850f0db..f2341f04f 100644
 +      IF ( rwI(1,s) == 0 ) CYCLE
 +      val = SourceMatrix % Values(k)
 +      IF ( val == 0.0_dp ) CYCLE
-+      DO mi = 1, 2
++      DO mi = 1, CC_ns
 +        II = rwI(mi,r)
 +        IF ( II == 0 ) EXIT
-+        DO mj = 1, 2
++        DO mj = 1, CC_ns
 +          JJ = rwI(mj,s)
 +          IF ( JJ == 0 ) EXIT
 +          DO j = 1, lcCnt(II)
@@ -422,16 +444,17 @@ index 57850f0db..f2341f04f 100644
 +  DEALLOCATE( Ig, Jg, Vg, cnts, displs )
 +
 +  ! prolongation / restriction weights on the rows the iteration works with (the owned rows, in order)
-+  IF ( ALLOCATED(CC_ci) ) DEALLOCATE( CC_ci, CC_w, CC_x1, CC_r1, CC_z1 )
++  IF ( ALLOCATED(CC_ci) ) DEALLOCATE( CC_ci, CC_w, CC_x1, CC_r1, CC_z1, CC_s )
 +  CC_nin = nin
-+  ALLOCATE( CC_ci(2,MAX(nin,1)), CC_w(2,MAX(nin,1)), CC_x1(MAX(nin,1)), CC_r1(MAX(nin,1)), CC_z1(MAX(nin,1)) )
++  ALLOCATE( CC_ci(CC_ns,MAX(nin,1)), CC_w(CC_ns,MAX(nin,1)), CC_x1(MAX(nin,1)), CC_r1(MAX(nin,1)), &
++      CC_z1(MAX(nin,1)), CC_s(MAX(nin,1)) )
 +  CC_ci = 0; CC_w = 0.0_dp
 +  j = 0
 +  DO r = 1, nrows
 +    IF ( ParallelInfo % NeighbourList(r) % Neighbours(1) /= ParEnv % MyPE ) CYCLE
 +    j = j + 1
 +    IF ( j > nin ) CALL Fatal(Caller, 'more owned rows than the iteration has')
-+    DO mi = 1, 2
++    DO mi = 1, CC_ns
 +      II = rwI(mi,r)
 +      IF ( II == 0 ) EXIT
 +      lcol = (II-1)/M + 1; mode = MOD(II-1, M) + 1
@@ -449,8 +472,9 @@ index 57850f0db..f2341f04f 100644
 +  CC_napply = 0; CC_tcoarse = 0.0_dp
 +
 +  IF ( CC_myrank == 0 ) THEN
-+    WRITE( Message, '(A,I0,A,I0,A,I0,A,I0,A,I0,A,F8.3,A)' ) 'columns ', Ncol, ' x modes ', M, ' = ', CC_ncoarse, &
-+        ' coarse unknowns, ', ntot, ' entries gathered, MUMPS on ', CC_nsub, ' ranks, setup ', MPI_Wtime()-t0, ' s'
++    WRITE( Message, '(A,I0,A,I0,A,I0,A,I0,A,I0,A,I0,A,L1,A,F8.3,A)' ) 'columns ', Ncol, ' x modes ', M, ' = ', &
++        CC_ncoarse, ' coarse unknowns (order ', CC_order, '), ', ntot, ' entries gathered, MUMPS on ', CC_nsub, &
++        ' ranks, pre-smoothing ', CC_prepost, ', setup ', MPI_Wtime()-t0, ' s'
 +    CALL Info(Caller, Message, Level=3)
 +  END IF
 +!------------------------------------------------------------------------------
@@ -459,26 +483,22 @@ index 57850f0db..f2341f04f 100644
 +
 +
 +!------------------------------------------------------------------------------
-+!> ESS patch 02: apply the two-level preconditioner, u = x1 + M^-1 (v - A x1), x1 = P C^-1 P^T v.
++!> ESS patch 02: x = P C^-1 P^T r (collective: restriction summed on rank 0, MUMPS solve, broadcast). On
++!> diagnostic calls also returns |P^T r| (rank 0).
 +!------------------------------------------------------------------------------
-+SUBROUTINE ColumnCoarsePrec( u, v, ipar )
++SUBROUTINE ColumnCoarseCorrect( r, x, n, diag, rcn )
 +!------------------------------------------------------------------------------
-+  INTEGER, DIMENSION(*) :: ipar
-+  REAL(KIND=dp), DIMENSION(*) :: u, v
-+  INTEGER :: n, j, m, i, ierr
-+  REAL(KIND=dp) :: t0, sq(4), rcn, rc1n
++  INTEGER :: n
++  REAL(KIND=dp) :: r(*), x(*), rcn
 +  LOGICAL :: diag
++  INTEGER :: j, m, i, ierr
 +!------------------------------------------------------------------------------
-+  n = HUTI_NDIM
-+  IF ( n /= CC_nin ) CALL Fatal('ColumnCoarse', 'vector size '//I2S(n)//' /= setup size '//I2S(CC_nin))
-+  t0 = MPI_Wtime()
-+  diag = ( CC_napply < CC_ndiag )
 +  CC_rhs = 0.0_dp
 +  DO j = 1, n
-+    DO m = 1, 2
++    DO m = 1, CC_ns
 +      i = CC_ci(m,j)
 +      IF ( i == 0 ) EXIT
-+      CC_rhs(i) = CC_rhs(i) + CC_w(m,j) * v(j)
++      CC_rhs(i) = CC_rhs(i) + CC_w(m,j) * r(j)
 +    END DO
 +  END DO
 +  IF ( CC_myrank == 0 ) THEN
@@ -503,37 +523,85 @@ index 57850f0db..f2341f04f 100644
 +#endif
 +  CALL MPI_Bcast( CC_rhs, CC_ncoarse, MPI_DOUBLE_PRECISION, 0, CC_comm, ierr )
 +  DO j = 1, n
-+    CC_x1(j) = 0.0_dp
-+    DO m = 1, 2
++    x(j) = 0.0_dp
++    DO m = 1, CC_ns
 +      i = CC_ci(m,j)
 +      IF ( i == 0 ) EXIT
-+      CC_x1(j) = CC_x1(j) + CC_w(m,j) * CC_rhs(i)
++      x(j) = x(j) + CC_w(m,j) * CC_rhs(i)
 +    END DO
 +  END DO
-+  CC_tcoarse = CC_tcoarse + MPI_Wtime() - t0
++!------------------------------------------------------------------------------
++END SUBROUTINE ColumnCoarseCorrect
++!------------------------------------------------------------------------------
 +
-+  CALL SParMatrixVector( CC_x1, CC_r1, ipar )
-+  DO j = 1, n
-+    CC_r1(j) = v(j) - CC_r1(j)
-+  END DO
++
++!------------------------------------------------------------------------------
++!> ESS patch 02: the local preconditioner IterSolver built, u = M^-1 v.
++!------------------------------------------------------------------------------
++SUBROUTINE ColumnCoarseLocal( u, v, ipar, n )
++!------------------------------------------------------------------------------
++  INTEGER, DIMENSION(*) :: ipar
++  REAL(KIND=dp), DIMENSION(*) :: u, v
++  INTEGER :: n
++!------------------------------------------------------------------------------
 +  SELECT CASE( CC_inner )
 +  CASE( 1 )
-+    CALL CRS_DiagPrecondition( CC_z1, CC_r1, ipar )
++    CALL CRS_DiagPrecondition( u, v, ipar )
 +  CASE( 2 )
-+    CALL CRS_LUPrecondition( CC_z1, CC_r1, ipar )
++    CALL CRS_LUPrecondition( u, v, ipar )
 +  CASE DEFAULT
-+    CC_z1(1:n) = CC_r1(1:n)
++    u(1:n) = v(1:n)
 +  END SELECT
++!------------------------------------------------------------------------------
++END SUBROUTINE ColumnCoarseLocal
++!------------------------------------------------------------------------------
++
++
++!------------------------------------------------------------------------------
++!> ESS patch 02: apply the two-level preconditioner to v:
++!>   default:            x1 = P C^-1 P^T v,  u = x1 + M^-1 (v - A x1)
++!>   Pre Smoothing:      z0 = M^-1 v, s = v - A z0,  x1 = z0 + P C^-1 P^T s,  u = x1 + M^-1 (v - A x1)
++!------------------------------------------------------------------------------
++SUBROUTINE ColumnCoarsePrec( u, v, ipar )
++!------------------------------------------------------------------------------
++  INTEGER, DIMENSION(*) :: ipar
++  REAL(KIND=dp), DIMENSION(*) :: u, v
++  INTEGER :: n, j, m, i, ierr
++  REAL(KIND=dp) :: t0, sq(5), rcn, rc1n
++  LOGICAL :: diag
++!------------------------------------------------------------------------------
++  n = HUTI_NDIM
++  IF ( n /= CC_nin ) CALL Fatal('ColumnCoarse', 'vector size '//I2S(n)//' /= setup size '//I2S(CC_nin))
++  diag = ( CC_napply < CC_ndiag )
++
++  ! optional pre-smoothing: CC_z1 = M^-1 v, CC_s = v - A CC_z1 (else CC_z1 = 0, CC_s = v)
++  IF ( CC_prepost ) THEN
++    CALL ColumnCoarseLocal( CC_z1, v, ipar, n )
++    CALL SParMatrixVector( CC_z1, CC_r1, ipar )
++    DO j = 1, n
++      CC_s(j) = v(j) - CC_r1(j)
++    END DO
++  ELSE
++    DO j = 1, n
++      CC_z1(j) = 0.0_dp
++      CC_s(j) = v(j)
++    END DO
++  END IF
++
++  ! coarse correction of the current residual CC_s: CC_x1 = P C^-1 P^T CC_s, residual after it CC_r1
++  t0 = MPI_Wtime()
++  CALL ColumnCoarseCorrect( CC_s, CC_x1, n, diag, rcn )
++  CC_tcoarse = CC_tcoarse + MPI_Wtime() - t0
++  CALL SParMatrixVector( CC_x1, CC_r1, ipar )
 +  DO j = 1, n
-+    u(j) = CC_x1(j) + CC_z1(j)
++    CC_r1(j) = CC_s(j) - CC_r1(j)
 +  END DO
-+  ! diagnostics for the first applications of every solve: how much of the residual the coarse step removes,
-+  ! and how large the coarse and the local corrections are
++
 +  IF ( diag ) THEN
-+    ! consistency: an exact Galerkin step leaves no coarse component, P^T (r - A x1) = 0
++    ! consistency: an exact Galerkin step leaves no coarse component, P^T (s - A x1) = 0
 +    CC_rhs = 0.0_dp
 +    DO j = 1, n
-+      DO m = 1, 2
++      DO m = 1, CC_ns
 +        i = CC_ci(m,j)
 +        IF ( i == 0 ) EXIT
 +        CC_rhs(i) = CC_rhs(i) + CC_w(m,j) * CC_r1(j)
@@ -543,25 +611,40 @@ index 57850f0db..f2341f04f 100644
 +      CALL MPI_Reduce( MPI_IN_PLACE, CC_rhs, CC_ncoarse, MPI_DOUBLE_PRECISION, MPI_SUM, 0, CC_comm, ierr )
 +      rc1n = SQRT( SUM( CC_rhs**2 ) )
 +      IF ( rcn > 0.0_dp ) THEN
-+        WRITE( Message, '(A,I0,A,ES10.3,A)' ) 'apply ', CC_napply+1, ': |P^T (r - A x1)| / |P^T r| = ', rc1n/rcn, &
++        WRITE( Message, '(A,I0,A,ES10.3,A)' ) 'apply ', CC_napply+1, ': |P^T (s - A x1)| / |P^T s| = ', rc1n/rcn, &
 +            '  (Galerkin consistency, should be ~1e-12)'
 +        CALL Info('ColumnCoarse', Message, Level=3)
 +      END IF
 +    ELSE
 +      CALL MPI_Reduce( CC_rhs, CC_dummy, CC_ncoarse, MPI_DOUBLE_PRECISION, MPI_SUM, 0, CC_comm, ierr )
 +    END IF
++  END IF
++
++  ! approximation so far z1 + x1 (residual CC_r1), then the local preconditioner on that residual
++  DO j = 1, n
++    CC_x1(j) = CC_z1(j) + CC_x1(j)
++  END DO
++  CALL ColumnCoarseLocal( CC_z1, CC_r1, ipar, n )
++  DO j = 1, n
++    u(j) = CC_x1(j) + CC_z1(j)
++  END DO
++
++  ! diagnostics: |v|, |s| (after pre-smoothing), |r1| (after the coarse step), |x1|, |final local correction|
++  IF ( diag ) THEN
 +    sq = 0.0_dp
 +    DO j = 1, n
 +      sq(1) = sq(1) + v(j)**2
-+      sq(2) = sq(2) + CC_r1(j)**2
-+      sq(3) = sq(3) + CC_x1(j)**2
-+      sq(4) = sq(4) + CC_z1(j)**2
++      sq(2) = sq(2) + CC_s(j)**2
++      sq(3) = sq(3) + CC_r1(j)**2
++      sq(4) = sq(4) + CC_x1(j)**2
++      sq(5) = sq(5) + CC_z1(j)**2
 +    END DO
-+    CALL MPI_Allreduce( MPI_IN_PLACE, sq, 4, MPI_DOUBLE_PRECISION, MPI_SUM, CC_comm, ierr )
++    CALL MPI_Allreduce( MPI_IN_PLACE, sq, 5, MPI_DOUBLE_PRECISION, MPI_SUM, CC_comm, ierr )
 +    sq = SQRT( sq )
-+    IF ( sq(1) > 0.0_dp ) THEN
-+      WRITE( Message, '(A,I0,A,ES10.3,A,ES10.3,A,ES10.3,A,ES10.3)' ) 'apply ', CC_napply+1, ': |r| ', sq(1), &
-+          '  |r - A x1|/|r| ', sq(2)/sq(1), '  |x1| (coarse) ', sq(3), '  |M^-1 (r - A x1)| (local) ', sq(4)
++    IF ( sq(1) > 0.0_dp .AND. sq(2) > 0.0_dp ) THEN
++      WRITE( Message, '(A,I0,A,ES10.3,A,ES10.3,A,ES10.3,A,ES10.3,A,ES10.3)' ) 'apply ', CC_napply+1, ': |r| ', &
++          sq(1), '  |s|/|r| ', sq(2)/sq(1), '  |s - A x1|/|s| ', sq(3)/sq(2), '  |x| before local ', sq(4), &
++          '  |local correction| ', sq(5)
 +      CALL Info('ColumnCoarse', Message, Level=3)
 +    END IF
 +  END IF
