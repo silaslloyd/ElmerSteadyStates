@@ -230,7 +230,8 @@ mkBlockMG() {   # $1 file: the block preconditioner, velocity block solved by El
 # the crashing one); c = a without Stokes-Vec's block preconditioner (no pressure Schur solver); b = a with scalar
 # blocks (Block Structure 1 2 3 4: u, v, w each BoomerAMG, pressure as before, no block preconditioner);
 # g = a without "BoomerAMG Smooth Type" (6: Schwarz smoothers); h = a with all BoomerAMG parameters at Hypre's
-# defaults (only HYPRE Block Diagonal kept)
+# defaults (only HYPRE Block Diagonal kept); d = a with "block 11: Linear System Preconditioning = None" given; e = a with
+# the pressure block solved by MUMPS
 mkAMGvar() {   # $1 file, $2 variant letter
     cp elmer/stokes_block_amg.sif.in $1
     case $2 in
@@ -240,6 +241,9 @@ mkAMGvar() {   # $1 file, $2 variant letter
            sed -i '/block 11: HYPRE Block Diagonal/d; /BoomerAMG Num Functions/d' $1;;
         g) sed -i '/BoomerAMG Smooth Type/d' $1;;
         h) sed -i '/^ *BoomerAMG /d; /^ *Boomeramg /d' $1;;
+        d) echo "  block 11: Linear System Preconditioning = None" >> $1;;
+        e) sed -i '/block 22:/d' $1
+           printf '%s\n' "  block 22: Linear System Solver = Direct" "  block 22: Linear System Direct Method = MUMPS" >> $1;;
     esac
 }
 mkBlock() {   # $1 file, $2 velocity-block preconditioner: block solver, velocity block Hypre BiCGStab + $2 capped
@@ -259,7 +263,7 @@ for t in $(echo $SET | fold -w1); do
         M) mkGCR $V/M.sif.in 0; echo "  Linear System ILU Factor = Real 0.01" >> $V/M.sif.in;;
         N) mkGCR $V/N.sif.in 0; echo "  Linear System ILU Factor = Real 0.001" >> $V/N.sif.in;;
         O) mkGCR $V/O.sif.in 1; echo "  Linear System ILU Factor = Real 0.01" >> $V/O.sif.in;;
-        a|b|c|g|h) mkAMGvar $V/$t.sif.in $t;;
+        a|b|c|d|e|g|h) mkAMGvar $V/$t.sif.in $t;;
         k) grep -v "^#" elmer/stokes_block.sif.in > $V/k.sif.in;;
         A) mkMG $V/A.sif.in;;  B) mkBlockMG $V/B.sif.in;;
         Y) mkHILU $V/Y.sif.in 30;;  Z) mkHILU $V/Z.sif.in 10;;  V) mkHILU $V/V.sif.in 31;;  I) mkHILU $V/I.sif.in 11;;
@@ -314,6 +318,8 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
                a) what="MLB block + BoomerAMG as the velocity block's solver, as is (crashed)";;
                b) what="a with scalar velocity blocks (1 2 3 4), no block preconditioner";;
                c) what="a without the block preconditioner (no pressure Schur solver)";;
+               d) what="a with block 11 preconditioning explicitly None";;
+               e) what="a with the pressure block (22) solved directly by MUMPS";;
                g) what="a without BoomerAMG Smooth Type (Schwarz smoothers)";;
                h) what="a with all BoomerAMG parameters at Hypre's defaults";;
                A) what="GCR + Elmer's cluster multigrid (one cycle, SGS smoothing) on the whole system";;
