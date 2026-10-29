@@ -156,6 +156,14 @@ if [ "${YEL:-1}" -gt 1 ]; then          # 3D: the whole-shelf runs from the same
     ) 9> $WORK/case/.lock || exit 1
     echo "whole-shelf runs start from $RSTART (laterally averaged, as the cut's)"
 fi
+# CHECKED=1: ESS's own Elmer libraries built with bounds checks (make -C elmer checked) and glibc's heap checks on
+# (MALLOC_CHECK_=3): memory corruption stops the run where it happens (file and line in the Elmer log)
+if [ "$CHECKED" = 1 ]; then
+    make -C elmer checked > ${L}_checked_build.log 2>&1 || { echo "checked build failed:"; tail -20 ${L}_checked_build.log; exit 1; }
+    export ESS_ELMER_LIBDIR=$PWD/elmer/checked
+    export ESS_MPIRUN="mpirun -np {n} --bind-to none -x MALLOC_CHECK_=3 -x MALLOC_PERTURB_=165"
+    echo "CHECKED: ESS libraries from elmer/checked (bounds checks), glibc heap checks on"
+fi
 SLOTS=${SLOTS:-$(( ${SLURM_NTASKS:-128} / RANKS ))}; [ $SLOTS -ge 1 ] || SLOTS=1   # runs at a time (SLOTS=1: one by one)
 opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --bed ${BED:-cold} --gl frozen --linear-stokes block"   # BED=temperate: sliding everywhere
 # STOKES_ELEMENT=Stabilized|Bubbles|P2/P1: the element for every run (default the config's). Low ILU needs

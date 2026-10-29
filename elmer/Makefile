@@ -5,6 +5,16 @@ ELMERF90 ?= ./elmerf90_safe
 
 all: SteadyStateIO.so Buoyancy.so RotateGuess.so
 
+# make -C elmer checked: the same libraries with bounds and pointer checks (-g -fcheck=all) in elmer/checked/, for
+# hunting memory corruption (ESS_ELMER_LIBDIR=$PWD/elmer/checked makes ess use them; jobs/scaling_tests.cmd CHECKED=1)
+CHECKFLAGS = -g -O0 -fcheck=all -fbacktrace
+checked:
+	mkdir -p checked
+	$(ELMERF90) $(CHECKFLAGS) -o checked/SteadyStateIO.so SteadyStateIO.F90
+	$(ELMERF90) $(CHECKFLAGS) -o checked/Buoyancy.so Buoyancy.F90
+	$(ELMERF90) $(CHECKFLAGS) -o checked/RotateGuess.so RotateGuess.F90
+	$(ELMERF90) $(CHECKFLAGS) -o checked/PeriodicGL.so PeriodicUtils.F90 FixPeriodicLoads.F90 ContactPeriodic.F90 $(ELMERICE_USF)
+
 # not in `all` (only the periodic tests need it): make -C elmer PeriodicGL.so
 # PeriodicGL.so: PeriodicUtils (periodic copies of nodal fields), the FixPeriodicLoads solver and the periodic
 # contact sliding function SlidCoef_ContactPeriodic. The latter calls Elmer/Ice's Sliding_Weertman etc., so it
@@ -37,4 +47,4 @@ SheetSolverhw.so: SheetSolverhw.F90
 	$(ELMERF90) -o $@ $<
 
 clean:
-	rm -f SteadyStateIO.so Buoyancy.so RotateGuess.so PeriodicGL.so FixPeriodicLoads.so ColdTempMask.so SheetSolverhw.so *.mod
+	rm -rf checked; rm -f SteadyStateIO.so Buoyancy.so RotateGuess.so PeriodicGL.so FixPeriodicLoads.so ColdTempMask.so SheetSolverhw.so *.mod

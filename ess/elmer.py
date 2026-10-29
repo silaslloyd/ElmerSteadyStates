@@ -75,6 +75,10 @@ class ElmerModel(Model):
         self.sea_level_param = bool(e.get("sea_level_param", False))
         self.mesh_db = e.get("mesh_db", "footprint")
         self.ess_lib = cfg["_path"](e.get("ess_lib", "elmer/SteadyStateIO"))
+        # ESS_ELMER_LIBDIR=DIR: ESS's own Elmer libraries from DIR instead (e.g. elmer/checked: built with bounds checks)
+        self._libdir = os.environ.get("ESS_ELMER_LIBDIR")
+        if self._libdir:
+            self.ess_lib = os.path.join(self._libdir, os.path.basename(self.ess_lib))
         # [elmer] stokes_rotate_guess: rotate the Stokes initial guess to the normal-tangential frame before every
         # (monolithic) linear solve (elmer/RotateGuess.F90: Elmer passes it unrotated, so warm starts - the previous
         # time step - begin far worse than a zero guess at every normal-tangential bed node)
@@ -233,6 +237,9 @@ class ElmerModel(Model):
         # [elmer] sliding: "subtemperate" (TDepSliding, the default) or "temperate" (fcoeff everywhere, as at T0)
         self.sliding = str(e.get("sliding", "subtemperate"))
         self.periodic_lib = cfg["_path"](e.get("periodic_lib", "elmer/PeriodicGL"))
+        if self._libdir:                     # ESS_ELMER_LIBDIR (see ess_lib): all of ESS's own libraries from there
+            self.buoyancy_lib = os.path.join(self._libdir, os.path.basename(self.buoyancy_lib))
+            self.periodic_lib = os.path.join(self._libdir, os.path.basename(self.periodic_lib))
         self._check_inputs()
 
     # ---------------------------------------------------------------- set-up checks
