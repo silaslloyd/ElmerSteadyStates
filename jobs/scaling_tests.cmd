@@ -24,6 +24,8 @@
 #   D  the cut with GCR + ILU0      E  the cut with GCR + ILU1
 #   G  F without Elmer's bandwidth optimisation (another elimination order: ILU0 pivots?)
 #   H  F with row equilibration
+#   K, L  ILU0 with Elmer's diagonal relaxation (Linear System ILU Factor 0.1, 1.0: the diagonal is multiplied by
+#      1.1, 2 before factorising, the standard cure for ILU breakdown)
 #   J  GCR with only the diagonal (Jacobi) as preconditioner: if it reduces the residual where ILU0 does not at
 #      all, the ILU0 factors are broken somewhere (not merely weak)
 # From the repository root, one job per partition count. No node limit: give --ntasks (default 128) and Slurm takes
@@ -182,6 +184,8 @@ for t in $(echo $SET | fold -w1); do
         R) mkGCR $V/R.sif.in 8;;  F) mkGCR $V/F.sif.in 0;;
         G) mkGCR $V/G.sif.in 0; echo "  Optimize Bandwidth = Logical False" >> $V/G.sif.in;;
         H) mkGCR $V/H.sif.in 0; echo "  Linear System Row Equilibration = Logical True" >> $V/H.sif.in;;
+        K) mkGCR $V/K.sif.in 0; echo "  Linear System ILU Factor = Real 0.1" >> $V/K.sif.in;;
+        L) mkGCR $V/L.sif.in 0; echo "  Linear System ILU Factor = Real 1.0" >> $V/L.sif.in;;
         J) mkGCR $V/J.sif.in 0; sed -i 's/Linear System Preconditioning = ILU0/Linear System Preconditioning = Diagonal/' $V/J.sif.in;;
         C) mkGCR $V/C.sif.in 8;;  D) mkGCR $V/D.sif.in 0;;  E) mkGCR $V/E.sif.in 1;;
         S) mkBlock $V/S.sif.in ParaSails;;
@@ -223,6 +227,8 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
     case $t in R0) what="GCR + ILU8, cold (the warm start)";; R) what="GCR + ILU8, whole shelf (reference)";; F) what="GCR + ILU0, whole shelf";;
                G) what="GCR + ILU0, whole shelf, no bandwidth optimisation (another elimination order)";;
                H) what="GCR + ILU0, whole shelf, row equilibration";;
+               K) what="GCR + ILU0, diagonal x 1.1 before factorising (ILU Factor 0.1)";;
+               L) what="GCR + ILU0, diagonal x 2 before factorising (ILU Factor 1.0)";;
                J) what="GCR + Jacobi (diagonal), whole shelf: progress where ILU0 makes none = ILU0 broken";;
                S) what="block, velocity block BiCGStab + ParaSails";; T) what="block, velocity block BiCGStab + FSAI";;
                U) what="block, velocity block BiCGStab + BoomerAMG on uncoupled components";;
