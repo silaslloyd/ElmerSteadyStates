@@ -68,7 +68,7 @@ linear_heat = "iterative"
 mumps_workspace = 200                   # only if linear_stokes = "direct"
 linear_stokes = "iterative"
 stokes_element = "Bubbles"
-stokes_preconditioner = "ILU4"          # ILU8 would overflow on 4x the nodes per rank (ess init)
+stokes_preconditioner = "ILU0"          # ess init only (the runs set their own): ILU4 overflowed Elmer's integers here
 stokes_iterative_tol = 1.0e-8
 stokes_abort_not_converged = false
 linear_free_surface = "iterative"      # BiCGStab + ILU1
