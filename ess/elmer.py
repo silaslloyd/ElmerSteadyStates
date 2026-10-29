@@ -84,8 +84,11 @@ class ElmerModel(Model):
         self.mpirun = os.environ.get("ESS_MPIRUN") or e.get("mpirun", "mpirun -np {n}")
         self.solver = e.get("solver", "ElmerSolver")
         self.timeout = float(e.get("timeout", 6 * 3600))
-        self.keep_runs = bool(e.get("keep_runs", False))
-        self.use_cache = bool(e.get("cache", True))
+        self.keep_runs = bool(e.get("keep_runs", False)) or os.environ.get("ESS_KEEP_RUNS") == "1"
+        self.use_cache = bool(e.get("cache", True)) and os.environ.get("ESS_NO_CACHE") != "1"
+        # warm start (ess run --warm-start): records (e.g. Velocity 1..3, Pressure) set by StateRead at the start
+        # of the run, so the first Stokes solve starts from them instead of zero
+        self.warm_records = {}
         self.diagnostics = list(e.get("diagnostics", []))
         self.extra_subs = dict(e.get("substitutions", {}))
         self.vtu = bool(e.get("vtu", False))
@@ -884,6 +887,7 @@ End
     def state_records(self, x) -> Records:
         rec = dict(self.layout.to_records(np.asarray(x, float)))
         rec.update(self.frozen)
+        rec.update(self.warm_records)
         return rec
 
     # ---------------------------------------------------------------- running Elmer
@@ -930,6 +934,9 @@ End
         for k in sorted(self.frozen):
             h.update(k.encode())
             h.update(np.ascontiguousarray(self.frozen[k][1], "<f8").tobytes())
+        for k in sorted(self.warm_records):
+            h.update(k.encode())
+            h.update(np.ascontiguousarray(self.warm_records[k][1], "<f8").tobytes())
         h.update(self._mesh_stamp().encode())
         return h.hexdigest()[:40]
 

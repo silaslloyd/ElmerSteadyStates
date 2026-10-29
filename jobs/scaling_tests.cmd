@@ -194,9 +194,21 @@ for t in $(echo $SET | fold -w1); do
     echo "! ESS scaling $t ${SLURM_JOB_ID:-local}" >> $V/$t.sif.in
 done
 
+export ESS_KEEP_RUNS=1 ESS_NO_CACHE=1     # every run really runs, and its Elmer log stays (iteration counts)
+# WARM=1: a cold GCR + ILU8 run (R0) first, then every whole-shelf run starts its Stokes solves from R0's final
+# velocity and pressure (ess run --warm-start), like a later time step of a long run (the cut runs C, D, E: cold,
+# their mesh differs)
+WARMOPT=""
+if [ "$WARM" = 1 ]; then
+    mkGCR $V/R0.sif.in 8; echo "! ESS scaling R0 ${SLURM_JOB_ID:-local}" >> $V/R0.sif.in
+    echo "$(date +%T) start R0 (cold, the warm start for the others)"
+    python3 -u -m ess run $GL_CONFIG --state $RSTART $opts --add-diag Pressure --out $WORK/scaling_${RANKS}_R0.npz \
+        --stokes-block-file $PWD/$V/R0.sif.in > ${L}_R0.log 2>&1 || { echo "R0 failed: ${L}_R0.log"; exit 1; }
+    WARMOPT="--warm-start $WORK/scaling_${RANKS}_R0.npz"
+fi
 running=0
 for t in $(echo $SET | fold -w1); do
-    c="run $GL_CONFIG --state $RSTART $opts"; o=$WORK/scaling_${RANKS}_$t.npz
+    c="run $GL_CONFIG --state $RSTART $opts $WARMOPT"; o=$WORK/scaling_${RANKS}_$t.npz
     case $t in C|D|E) c="run $CUTCFG --state $CW/start.npz $opts"; o=$CW/scaling_${RANKS}_$t.npz;; esac
     if [ $running -ge $SLOTS ]; then wait -n || true; running=$((running - 1)); fi
     echo "$(date +%T) start $t"
@@ -206,9 +218,9 @@ done
 wait || true
 
 echo
-echo "===== $RANKS ranks, $(date +%T) ====="
-for t in $(echo $SET | fold -w1); do
-    case $t in R) what="GCR + ILU8, whole shelf (reference)";; F) what="GCR + ILU0, whole shelf";;
+echo "===== $RANKS ranks, $(date +%T)$([ "$WARM" = 1 ] && echo ', WARM START from R0 (whole-shelf runs)') ====="
+for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
+    case $t in R0) what="GCR + ILU8, cold (the warm start)";; R) what="GCR + ILU8, whole shelf (reference)";; F) what="GCR + ILU0, whole shelf";;
                G) what="GCR + ILU0, whole shelf, no bandwidth optimisation (another elimination order)";;
                H) what="GCR + ILU0, whole shelf, row equilibration";;
                J) what="GCR + Jacobi (diagonal), whole shelf: progress where ILU0 makes none = ILU0 broken";;

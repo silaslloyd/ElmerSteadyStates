@@ -298,6 +298,24 @@ def cmd_run(args):
                  + ("" if model.shelf_cut_target else " (no Passive Target boundary: the cut face stress free)"))
     if args.output_level is not None:
         model.output_level = args.output_level
+    for nm in args.add_diag or []:
+        if nm not in model.diagnostics:
+            model.diagnostics.append(nm)
+    if args.warm_start:
+        ws = load_state(args.warm_start)
+        allws = {**ws.diag, **ws.frozen}
+        got = []
+        for nm in ("Velocity 1", "Velocity 2", "Velocity 3", "Pressure"):
+            try:
+                k = find_name(allws, nm)
+            except KeyError:
+                continue
+            model.warm_records[nm] = allws[k]
+            got.append(nm)
+        if not got:
+            raise SystemExit(f"--warm-start {args.warm_start}: no Velocity / Pressure in its diagnostics")
+        log.info(f"run: warm start from {args.warm_start}: {', '.join(got)}"
+                 + ("" if "Pressure" in got else " (no Pressure: write it with --add-diag Pressure)"))
     if args.linear_stokes:
         model.linear_stokes = args.linear_stokes
         log.info(f"run: Stokes linear solver {args.linear_stokes}"
@@ -1118,6 +1136,10 @@ def main(argv=None):
     s.add_argument("--shelf-cut-no-target", action="store_true",
                    help="with --shelf-cut: no Passive Target boundary (stress-free cut face; to test the machinery)")
     s.add_argument("--output-level", type=int, help="Elmer's Max Output Level for this run ([elmer] output_level)")
+    s.add_argument("--add-diag", action="append", metavar="NAME",
+                   help="also write this variable with the diagnostics (repeatable; e.g. Pressure for --warm-start)")
+    s.add_argument("--warm-start", metavar="STATE",
+                   help="start Stokes from the velocity (and pressure) in STATE's diagnostics (same mesh)")
     s.add_argument("--friction-heat", choices=["loads", "flux"],
                    help="frictional heating from the Stokes loads (nodal) or as a basal flux; default [elmer] friction_heat")
     s.add_argument("--chunk-offset", type=int, default=0,
