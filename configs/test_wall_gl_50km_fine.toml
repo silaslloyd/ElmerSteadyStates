@@ -66,7 +66,8 @@ linear_heat = "iterative"
 # MUMPS ran out of workspace (INFO(1) = -9, twice) on this 4.5M-unknown P2/P1 Stokes system: as ElmerStreams,
 # P1 + bubbles and GCR + ILU8 (linsys/gcr.sif: restart 200 here 250, tolerance 1e-8, no abort when not converged)
 mumps_workspace = 200                   # only if linear_stokes = "direct"
-linear_stokes = "iterative"
+linear_stokes = "block"                 # ess init only: the cheap solve below (the runs set their own)
+stokes_block_file = "elmer/stokes_cheap.sif.in"
 stokes_element = "Bubbles"
 stokes_preconditioner = "ILU0"          # ess init only (the runs set their own): ILU4 overflowed Elmer's integers here
 stokes_iterative_tol = 1.0e-8

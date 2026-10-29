@@ -1,0 +1,11 @@
+# A deliberately cheap, inexact Stokes solve: GCR + Jacobi, at most 20 iterations, never aborts. For runs whose
+# velocity is not used, e.g. `ess init` of a big test mesh (configs/test_wall_gl_50km_fine.toml), where ILU8/ILU4
+# overflow Elmer's integers and ILU0 grinds through thousands of iterations. Use with
+#   [elmer] linear_stokes = "block", stokes_block_file = "elmer/stokes_cheap.sif.in"
+  Linear System Solver = Iterative
+  Linear System Iterative Method = GCR
+  Linear System GCR Restart = Integer 20
+  Linear System Max Iterations = 20
+  Linear System Preconditioning = Diagonal
+  Linear System Convergence Tolerance = 1.0e-8
+  Linear System Abort Not Converged = Logical False
