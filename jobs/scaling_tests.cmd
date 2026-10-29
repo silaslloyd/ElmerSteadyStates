@@ -124,7 +124,8 @@ fi
 SLOTS=${SLOTS:-$(( ${SLURM_NTASKS:-128} / RANKS ))}; [ $SLOTS -ge 1 ] || SLOTS=1   # runs at a time (SLOTS=1: one by one)
 opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --bed cold --gl frozen --linear-stokes block"
 # STOKES_ELEMENT=Stabilized|Bubbles|P2/P1: the element for every run (default the config's). Low ILU needs
-# Stabilized: with Bubbles the pressure block has no diagonal and ILU0/ILU1 stagnate completely.
+# Stabilized? (the flowline tests, where ILU0/ILU1 converged, were Stabilized; the 50 km config is Bubbles, where
+# they did not reduce the residual at all)
 [ -n "$STOKES_ELEMENT" ] && opts="$opts --stokes-element $STOKES_ELEMENT"
 CFG_ELEMENT=$(grep -o '^stokes_element *= *"[^"]*"' $GL_CONFIG | cut -d'"' -f2)
 echo "Stokes element: ${STOKES_ELEMENT:-$CFG_ELEMENT, from the config}"
