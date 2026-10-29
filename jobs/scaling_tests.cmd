@@ -148,6 +148,12 @@ opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --bed cold --gl f
 # Stabilized? (the flowline tests, where ILU0/ILU1 converged, were Stabilized; the 50 km config is Bubbles, where
 # they did not reduce the residual at all)
 [ -n "$STOKES_ELEMENT" ] && opts="$opts --stokes-element $STOKES_ELEMENT"
+# FRIC=F: the sliding coefficient fcoeff times F (the periodic GL runs used 10, run_gl_ess.py --fbase; plain ess
+# run, as here by default: 1)
+if [ -n "$FRIC" ]; then
+    FC=$(python3 -c "import sys; sys.path.insert(0, '.'); from ess.case import eval_lua_parameters as e; print(repr($FRIC * e('case/parameters.lua')['fcoeff']))" | tail -1)
+    opts="$opts --lua fcoeff=$FC"; echo "sliding coefficient fcoeff x $FRIC = $FC"
+fi
 CFG_ELEMENT=$(grep -o '^stokes_element *= *"[^"]*"' $GL_CONFIG | cut -d'"' -f2)
 echo "Stokes element: ${STOKES_ELEMENT:-$CFG_ELEMENT, from the config}"
 
