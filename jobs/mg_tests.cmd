@@ -42,7 +42,7 @@ for m in $MODULES; do
                 else timeout 900 mpirun -np $n --bind-to none ElmerSolver > run.log 2>&1; fi
                 echo "exit $?" >> run.log
             )
-            pass=$(cat $w/TEST.PASSED 2>/dev/null | head -1)
+            pass=$(cat $w/TEST.PASSED $w/TEST.PASSED_$n 2>/dev/null | head -1)   # parallel runs write TEST.PASSED_<ranks>
             case "$pass" in 1) r=PASSED;; 0) r="FAILED (wrong result)";; *) r="CRASHED/ERROR";; esac
             RES["$m $t np$n"]="$r"
             echo "$(date +%T) $m $t np$n: $r"
