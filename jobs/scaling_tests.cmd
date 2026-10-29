@@ -160,6 +160,9 @@ opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --bed ${BED:-cold
 # ROT=1: the Stokes initial guess rotated to the normal-tangential frame before each solve (elmer/RotateGuess.F90;
 # Elmer passes it unrotated, so warm starts begin far worse than zero at the bed nodes)
 [ "$ROT" = 1 ] && opts="$opts --rotate-guess"
+# CART=1: the bed condition in x/y/z components (marine template: ess run --cartesian-bed; no normal-tangential
+# rotation of the bed unknowns)
+[ "$CART" = 1 ] && opts="$opts --cartesian-bed"
 # MAXIT: the GCR iteration cap of the GCR runs (default 2000)
 # FRIC=F: the sliding coefficient fcoeff times F (the periodic GL runs used 10, run_gl_ess.py --fbase; plain ess
 # run, as here by default: 1)
