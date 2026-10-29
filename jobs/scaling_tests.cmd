@@ -46,16 +46,19 @@ L=slurms/scaling_${SLURM_JOB_ID:-local}
 bash periodic_test/run_gl_ess.cmd build
 module load "$ELMER_MODULE"
 echo "Elmer: $ELMER_MODULE -> $(command -v ElmerSolver); $RANKS ranks per run; runs $SET; start $START"
-partition() {   # $1 mesh dir: add partitioning.$RANKS (the 2D footprint: Elmer extrudes it, whole columns per rank)
-    [ -d $1/partitioning.$RANKS ] && return 0
-    echo "$(date +%T) partitioning $1 for $RANKS ranks"
-    local tmp=$1.part$RANKS.$$
-    rm -rf $tmp
-    ElmerGrid 2 2 $1 -out $tmp -metiskway $RANKS > ${L}_partition.log 2>&1 || { cat ${L}_partition.log; return 1; }
-    [ -d $tmp/partitioning.$RANKS ] || { echo "ElmerGrid made no $tmp/partitioning.$RANKS:"; tail -20 ${L}_partition.log; return 1; }
-    mv $tmp/partitioning.$RANKS $1/ && rm -rf $tmp
+partition() {   # $1 case dir (with footprint.msh), $2 config: add footprint/partitioning.$RANKS, converted from
+    # footprint.msh exactly as `ess setup` does (same node numbering; the mesh dir only holds partitioned copies).
+    # The 2D footprint: Elmer extrudes it, so every rank gets whole columns.
+    [ -d $1/footprint/partitioning.$RANKS ] && return 0
+    echo "$(date +%T) partitioning $1/footprint for $RANKS ranks"
+    local per=""; grep -q "^periodic_sides *= *true" $2 && per="-periodic 0 1 0"
+    rm -rf $1/fp_part$RANKS
+    ( cd $1 && ElmerGrid 14 2 footprint.msh -autoclean -out fp_part$RANKS $per -metiskway $RANKS ) \
+        > ${L}_partition.log 2>&1 || { cat ${L}_partition.log; return 1; }
+    [ -d $1/fp_part$RANKS/partitioning.$RANKS ] || { echo "ElmerGrid made no partitioning.$RANKS:"; tail -20 ${L}_partition.log; return 1; }
+    mv $1/fp_part$RANKS/partitioning.$RANKS $1/footprint/ && rm -rf $1/fp_part$RANKS
 }
-( flock 9; partition $WORK/case/footprint ) 9> $WORK/case/.lock
+( flock 9; partition $WORK/case $GL_CONFIG ) 9> $WORK/case/.lock
 GL=$(python3 periodic_test/run_gl_ess.py glpos $START | tail -1)
 CUT=$(python3 -c "print($GL + $DIST)")
 echo "start grounding line $GL km; shelf cut (C, D, E) at $CUT km"
@@ -83,7 +86,7 @@ PY
           python3 -u -m ess transfer $CUTCFG --state $CW/state0.npz --from $START --out $CW/start.npz; } \
             > ${L}_cutprep.log 2>&1 || { echo "cut mesh preparation failed:"; tail -30 ${L}_cutprep.log; exit 1; }
     fi
-    partition $CW/case/footprint
+    partition $CW/case $CUTCFG
     ) 9> $CW.lock || exit 1
     echo "cut mesh $CW, start $CW/start.npz"
 ;; esac
