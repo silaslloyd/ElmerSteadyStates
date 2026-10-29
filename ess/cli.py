@@ -291,6 +291,13 @@ def cmd_run(args):
     if args.stokes_element:
         model.stokes_element = args.stokes_element
         log.info(f"run: Stokes element {args.stokes_element}")
+    if args.shelf_cut is not None:
+        model.shelf_cut_x = args.shelf_cut * 1e3
+        model.shelf_cut_target = not args.shelf_cut_no_target
+        log.info(f"run: EXPERIMENTAL passive shelf beyond x = {args.shelf_cut:g} km"
+                 + ("" if model.shelf_cut_target else " (no Passive Target boundary: the cut face stress free)"))
+    if args.output_level is not None:
+        model.output_level = args.output_level
     if args.linear_stokes:
         model.linear_stokes = args.linear_stokes
         log.info(f"run: Stokes linear solver {args.linear_stokes}"
@@ -1105,6 +1112,12 @@ def main(argv=None):
                                                    "default [elmer] stokes_preconditioner")
     s.add_argument("--stokes-element", choices=["P2/P1", "Stabilized", "Bubbles"],
                    help="Stokes element for this run (default [elmer] stokes_element, P2/P1)")
+    s.add_argument("--shelf-cut", type=float, metavar="KM",
+                   help="EXPERIMENTAL: Stokes elements beyond x = KM passive (Elmer passive elements), the cut face "
+                        "with a free-floating shelf's stress ([elmer] shelf_cut_km)")
+    s.add_argument("--shelf-cut-no-target", action="store_true",
+                   help="with --shelf-cut: no Passive Target boundary (stress-free cut face; to test the machinery)")
+    s.add_argument("--output-level", type=int, help="Elmer's Max Output Level for this run ([elmer] output_level)")
     s.add_argument("--friction-heat", choices=["loads", "flux"],
                    help="frictional heating from the Stokes loads (nodal) or as a basal flux; default [elmer] friction_heat")
     s.add_argument("--chunk-offset", type=int, default=0,

@@ -145,6 +145,14 @@ class ElmerModel(Model):
         # "P2/P1" (default) or "Stabilized" (P1/P1 with stabilisation: far easier for ILU-preconditioned
         # Krylov solvers, but a different discretisation, so slightly different steady states)
         self.stokes_element = str(e.get("stokes_element", "P2/P1"))
+        # EXPERIMENTAL [elmer] shelf_cut_km (marine): Elmer's passive elements (as Elmer/Ice FS-SSA coupling): the ice
+        # elements beyond x = shelf_cut_km are passive for Stokes; shelf_cut_target (default true): the face between
+        # active and passive elements is a "Passive Target" boundary with a free-floating shelf's stress (see
+        # _shelf_cut). Crashed in the first tests (jobs/passive_tests.cmd diagnoses it); jobs/scaling_tests.cmd cuts
+        # the mesh instead ([case] front_km).
+        sc = e.get("shelf_cut_km")
+        self.shelf_cut_x = None if sc is None else float(sc) * 1e3
+        self.shelf_cut_target = bool(e.get("shelf_cut_target", True))
         # iterative Stokes ([elmer] linear_stokes = "iterative"): tolerance (default iterative_tol) and whether to
         # stop when GCR does not converge (default yes; ElmerStreams' linsys/gcr.sif: 1e-8 and no)
         self.stokes_iterative_tol = e.get("stokes_iterative_tol")
@@ -474,6 +482,8 @@ End
             text = self._sea_level_param(text)
         if self.marine and self.gl_mode == "contact" and self.contact_stokes_iters > 1:
             text = self._stokes_iterations(text, self.contact_stokes_iters)
+        if self.shelf_cut_x is not None:
+            text = self._shelf_cut(text)
         if self.slide_ybump:
             text = self._slide_ybump(text)
         if self.thermal == "elmerstreams":
@@ -581,6 +591,37 @@ End
         sec = sec.replace(a, f"  ! contact grounding line: a second iteration applies the nodes SlidCoef_Contact ungrounded\n"
                              f"  Nonlinear System Min Iterations = {n}\n  Nonlinear System Max Iterations = {n}")
         return text[:i] + sec + text[j:]
+
+    def _shelf_cut(self, text):
+        """EXPERIMENTAL (see shelf_cut_km): the ice elements with a node beyond x = shelf_cut_x are passive for the
+        Stokes solver (Elmer fixes their velocities at the current values). With shelf_cut_target, the face between
+        active and passive elements (Elmer's "Passive Target" boundary) carries the normal stress of a free-floating,
+        laterally uniform shelf of the local thickness H: sigma_nn = -rho_i g depth + rho_i g H (1 - rho_i/rho_w) / 2
+        (cryostatic plus the uniform tension that balances the sea water on the shelf; Elmer/Ice MISMIP_FS-SSA puts
+        the cryostatic part plus the SSA loads there). Without it, the face is stress free (only to test Elmer's
+        passive machinery)."""
+        if not self.marine:
+            raise ValueError("shelf_cut_km: marine template only")
+        k = text.index('Name = "bodyforce ice"')
+        j = text.index("\nEnd", k)
+        text = (text[:j] + "\n  ! shelf cut (shelf_cut_km): the Stokes problem ends at the cut, the shelf beyond is passive"
+                f"\n  Passive Element Min Nodes = Integer 1\n  Flow Solution Passive = Variable Coordinate 1\n"
+                f'    Real Lua "tx[0] - {self.shelf_cut_x!r}"' + text[j:])
+        if not self.shelf_cut_target:
+            return text
+        n = max(int(m) for m in re.findall(r"^Boundary Condition (\d+)\s*$", text, re.M))
+        bc = (f"\nBoundary Condition {n + 1}\n"
+              '  Name = "shelf cut"\n'
+              "  ! the active/passive interface of the shelf cut: the normal stress of a free-floating shelf\n"
+              "  Passive Target = Logical True\n"
+              "  Flow Force BC = Logical True\n"
+              "  External Pressure = Variable depth, height\n"
+              '    Real Lua "-rhoi*gravity*tx[0] + 0.5*rhoi*gravity*(tx[0] + tx[1])*(1 - rhoi/rhow)"\n'
+              "  ComputeNormal = Logical False\n"
+              "End\n")
+        m = list(re.finditer(r"^Boundary Condition \d+\s*$", text, re.M))[-1]
+        e = text.index("\nEnd", m.start()) + len("\nEnd")
+        return text[:e] + "\n" + bc + text[e:]
 
     def _surface_dirichlet(self, text):
         """the upper surface: T = the surface temperature (Tsurf, or the warm snout ramp) instead of the transfer
