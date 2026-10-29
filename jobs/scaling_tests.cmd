@@ -98,6 +98,10 @@ if n1 != 1 or n2 != 1:
 s = re.sub(r'^fine_band_km = \[\s*([0-9.]+)\s*,\s*[0-9.]+\s*\]',
            lambda m: f'fine_band_km = [{m.group(1)}, {cut - 2.5}]', s, flags=re.M)
 s = re.sub(r'^partition = \[.*?\]', f'partition = [{px}, {py}]', s, flags=re.M)
+# ess init solves Stokes once (not used): ILU0, as ILU8 on few large 3D partitions overflows Elmer's integers
+s, n3 = re.subn(r'^stokes_preconditioner = .*$', 'stokes_preconditioner = "ILU0"', s, flags=re.M)
+if n3 == 0:
+    s = s.replace("[elmer]\n", '[elmer]\nstokes_preconditioner = "ILU0"\n', 1)
 open(dst, "w").write(s)
 PYEND
         { python3 -u -m ess setup $CUTCFG && python3 -u -m ess init $CUTCFG --out $CW/state0.npz && \
