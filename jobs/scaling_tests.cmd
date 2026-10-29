@@ -48,7 +48,11 @@ if [ -z "$START" ]; then
         [ -n "$START" ] || START=$WORK/start.npz
     fi
 fi
-[ -f "$START" ] || { echo "no start state in $WORK (START=...): $(ls $WORK 2>&1 | head -20 | tr '\n' ' ')"; exit 1; }
+# FROM=STATE: a config whose mesh does not exist yet (e.g. configs/test_wall_gl_50km.toml) is set up first and
+# STATE carried onto it (ess setup, init, transfer -> <work dir>/start.npz)
+if [ ! -f "$START" ] && [ -z "$FROM" ]; then
+    echo "no start state in $WORK (START=..., or FROM=... to build the mesh): $(ls $WORK 2>&1 | head -20 | tr '\n' ' ')"; exit 1
+fi
 RANKS=${RANKS:-32}
 SET=${SET:-RFSTUCDE}
 DIST=${DIST:-30}
@@ -57,6 +61,14 @@ L=slurms/scaling_${SLURM_JOB_ID:-local}
 
 bash periodic_test/run_gl_ess.cmd build
 module load "$ELMER_MODULE"
+if [ ! -f "$START" ]; then
+    echo "$(date +%T) setting up $GL_CONFIG for $RANKS ranks, start from $FROM (log ${L}_setup.log)"
+    { ESS_NPROCS=$RANKS ESS_MPIRUN="mpirun -np {n} --bind-to none" python3 -u -m ess setup $GL_CONFIG && \
+      ESS_NPROCS=$RANKS ESS_MPIRUN="mpirun -np {n} --bind-to none" python3 -u -m ess init $GL_CONFIG --out $WORK/state0.npz && \
+      python3 -u -m ess transfer $GL_CONFIG --state $WORK/state0.npz --from $FROM --out $WORK/start.npz; } \
+        > ${L}_setup.log 2>&1 || { echo "setup failed:"; tail -30 ${L}_setup.log; exit 1; }
+    START=$WORK/start.npz
+fi
 echo "Elmer: $ELMER_MODULE -> $(command -v ElmerSolver); $RANKS ranks per run; runs $SET; start $START"
 partition() {   # $1 case dir (with footprint.msh), $2 config: add footprint/partitioning.$RANKS, converted from
     # footprint.msh exactly as `ess setup` does (same node numbering; the mesh dir only holds partitioned copies).
