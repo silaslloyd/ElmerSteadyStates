@@ -24,6 +24,8 @@
 #   D  the cut with GCR + ILU0      E  the cut with GCR + ILU1
 #   G  F without Elmer's bandwidth optimisation (another elimination order: ILU0 pivots?)
 #   H  F with row equilibration
+#   J  GCR with only the diagonal (Jacobi) as preconditioner: if it reduces the residual where ILU0 does not at
+#      all, the ILU0 factors are broken somewhere (not merely weak)
 # From the repository root, one job per partition count. No node limit: give --ntasks (default 128) and Slurm takes
 # as many nodes as that needs; with --ntasks=RANKS the runs go one after another (more tasks than RANKS: several at
 # once, but keep that within one node, as each mpirun starts on the first node). E.g. 512 ranks:
@@ -176,6 +178,7 @@ for t in $(echo $SET | fold -w1); do
         R) mkGCR $V/R.sif.in 8;;  F) mkGCR $V/F.sif.in 0;;
         G) mkGCR $V/G.sif.in 0; echo "  Optimize Bandwidth = Logical False" >> $V/G.sif.in;;
         H) mkGCR $V/H.sif.in 0; echo "  Linear System Row Equilibration = Logical True" >> $V/H.sif.in;;
+        J) mkGCR $V/J.sif.in 0; sed -i 's/Linear System Preconditioning = ILU0/Linear System Preconditioning = Diagonal/' $V/J.sif.in;;
         C) mkGCR $V/C.sif.in 8;;  D) mkGCR $V/D.sif.in 0;;  E) mkGCR $V/E.sif.in 1;;
         S) mkBlock $V/S.sif.in ParaSails;;
         T) mkBlock $V/T.sif.in FSAI;;
@@ -204,6 +207,7 @@ for t in $(echo $SET | fold -w1); do
     case $t in R) what="GCR + ILU8, whole shelf (reference)";; F) what="GCR + ILU0, whole shelf";;
                G) what="GCR + ILU0, whole shelf, no bandwidth optimisation (another elimination order)";;
                H) what="GCR + ILU0, whole shelf, row equilibration";;
+               J) what="GCR + Jacobi (diagonal), whole shelf: progress where ILU0 makes none = ILU0 broken";;
                S) what="block, velocity block BiCGStab + ParaSails";; T) what="block, velocity block BiCGStab + FSAI";;
                U) what="block, velocity block BiCGStab + BoomerAMG on uncoupled components";;
                C) what="GCR + ILU8, mesh ends at $CUT km";; D) what="GCR + ILU0, shelf cut";;
