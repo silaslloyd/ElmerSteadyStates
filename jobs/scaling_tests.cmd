@@ -122,7 +122,12 @@ if [ "${YEL:-1}" -gt 1 ]; then          # 3D: the whole-shelf runs from the same
     echo "whole-shelf runs start from $RSTART (laterally averaged, as the cut's)"
 fi
 SLOTS=${SLOTS:-$(( ${SLURM_NTASKS:-128} / RANKS ))}; [ $SLOTS -ge 1 ] || SLOTS=1   # runs at a time (SLOTS=1: one by one)
-opts="--stokes-only --chunks 1 --steps 2 --no-remask --bed cold --gl frozen --linear-stokes block"
+opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --bed cold --gl frozen --linear-stokes block"
+# STOKES_ELEMENT=Stabilized|Bubbles|P2/P1: the element for every run (default the config's). Low ILU needs
+# Stabilized: with Bubbles the pressure block has no diagonal and ILU0/ILU1 stagnate completely.
+[ -n "$STOKES_ELEMENT" ] && opts="$opts --stokes-element $STOKES_ELEMENT"
+CFG_ELEMENT=$(grep -o '^stokes_element *= *"[^"]*"' $GL_CONFIG | cut -d'"' -f2)
+echo "Stokes element: ${STOKES_ELEMENT:-$CFG_ELEMENT, from the config}"
 
 V=$WORK/scaling_files_${SLURM_JOB_ID:-local}; mkdir -p $V
 mkGCR() {   # $1 file, $2 ILU level: GCR + ILU on the whole Stokes system, every iteration printed (counts)
