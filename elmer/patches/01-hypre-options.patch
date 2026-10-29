@@ -1,0 +1,78 @@
+--- a/fem/src/SolveHypre.c	2026-10-29 15:46:50.795716582 +0100
++++ b/fem/src/SolveHypre.c	2026-10-29 15:46:50.838056460 +0100
+@@ -511,6 +511,17 @@
+         for 3D Laplace, 0.9 for elasticity) */
+      HYPRE_BoomerAMGSetStrongThreshold(precond, hypre_dppara[0]);
+ 
++     /* ESS patch: BoomerAMG options for systems of PDEs (e.g. the velocity of Stokes, elasticity) and for the
++        complexity of the coarse levels, from the keywords read in SParIterSolver.F90 (0: Hypre's default) */
++     if (hypre_intpara[8] > 0) HYPRE_BoomerAMGSetNodal(precond, hypre_intpara[8]);         /* BoomerAMG Nodal */
++     if (hypre_intpara[9] > 0) HYPRE_BoomerAMGSetNodalDiag(precond, hypre_intpara[9]);     /* BoomerAMG Nodal Diag */
++     if (hypre_intpara[10] > 0) HYPRE_BoomerAMGSetAggNumLevels(precond, hypre_intpara[10]); /* BoomerAMG Agg Num Levels */
++     if (hypre_intpara[11] > 0) HYPRE_BoomerAMGSetPMaxElmts(precond, hypre_intpara[11]);   /* BoomerAMG P Max Elmts */
++     if (hypre_dppara[1] > 0.0) HYPRE_BoomerAMGSetTruncFactor(precond, hypre_dppara[1]);   /* BoomerAMG Trunc Factor */
++     if (myverb > 5) fprintf(stdout, "SolveHypre: BoomerAMG functions %d nodal %d nodal diag %d agg levels %d "
++                             "P max %d trunc %g strong %g\n", hypre_intpara[7], hypre_intpara[8], hypre_intpara[9],
++                             hypre_intpara[10], hypre_intpara[11], hypre_dppara[1], hypre_dppara[0]);
++
+      if( myverb > 10) fprintf(stdout,"SolveHypre: Created BoomerAMG preconditioner!\n");
+ 
+    } else if ( hypre_pre == 2 || hypre_sol == 2 ) {
+@@ -535,6 +546,14 @@
+      /* (Recommended) General solver options */
+      HYPRE_ILUSetType(precond, ilu_type=*ILUn); /* 0, 1, 10, 11, 20, 21, 30, 31, 40, 41, 50 */
+      HYPRE_ILUSetMaxIter(precond, max_iter=1);
++     /* ESS patch: the ILU options read in SParIterSolver.F90 (0: Hypre's default) */
++     if (hypre_intpara[5] > 0) HYPRE_ILUSetLevelOfFill(precond, hypre_intpara[5]);       /* ILU Fill Level (ILUK) */
++     if (hypre_intpara[1] > 0) HYPRE_ILUSetLocalReordering(precond, hypre_intpara[1]);   /* ILU Reordering (1: RCM) */
++     if (hypre_intpara[2] > 0) HYPRE_ILUSetMaxNnzPerRow(precond, hypre_intpara[2]);      /* ILU Max Nonzeros Per Row */
++     if (hypre_intpara[3] > 0) HYPRE_ILUSetSchurMaxIter(precond, hypre_intpara[3]);      /* ILU Schur Max Iterations */
++     if (hypre_dppara[1] > 0.0) HYPRE_ILUSetDropThreshold(precond, hypre_dppara[1]);     /* ILU Drop Threshold (ILUT) */
++     if (myverb > 5) fprintf(stdout, "SolveHypre: ILU type %d fill %d reordering %d drop %g\n", *ILUn,
++                             hypre_intpara[5], hypre_intpara[1], hypre_dppara[1]);
+ #if 0
+      HYPRE_ILUSetTol(precond, tol);
+      HYPRE_ILUSetLocalReordering(precond, reordering); /* 0: none, 1: RCM */
+@@ -614,7 +633,15 @@
+      HYPRE_BoomerAMGSetTol(solver, *TOL);
+      HYPRE_BoomerAMGSetMaxIter(solver, *Rounds);
+ 
+-     HYPRE_BoomerAMGSetup(solver, parcsr_A, par_b, par_x);
++     /* ESS patch: as a SOLVER, BoomerAMG is set up with the system matrix A that SolveHypre2 solves with, not with
++        the preconditioning matrix Atilde (parcsr_A here): the hierarchy built on Atilde and then handed A as its
++        finest level crashed ("double free or corruption") whenever a separate preconditioning matrix existed
++        (block preconditioning of a multi-component block). */
++     {
++       HYPRE_ParCSRMatrix parcsr_Asys;
++       HYPRE_IJMatrixGetObject(A, (void**) &parcsr_Asys);
++       HYPRE_BoomerAMGSetup(solver, parcsr_Asys, par_b, par_x);
++     }
+ 
+ 
+    } else if ( hypre_sol == 2 ) { /* AMS */
+--- a/fem/src/SParIterSolver.F90	2026-10-29 15:46:50.802868814 +0100
++++ b/fem/src/SParIterSolver.F90	2026-10-29 15:46:50.838537740 +0100
+@@ -1223,6 +1223,12 @@
+ 
+         hypre_dppara(1) = ListGetCReal( Params,&
+             'BoomerAMG Strong Threshold', Found, DefValue = 0.25_dp)
++        ! ESS patch: BoomerAMG options for systems and for the coarse-level complexity (0: Hypre's default)
++        hypre_intpara(9) = ListGetInteger( Params, 'BoomerAMG Nodal', Found, DefValue = 0 )
++        hypre_intpara(10) = ListGetInteger( Params, 'BoomerAMG Nodal Diag', Found, DefValue = 0 )
++        hypre_intpara(11) = ListGetInteger( Params, 'BoomerAMG Agg Num Levels', Found, DefValue = 0 )
++        hypre_intpara(12) = ListGetInteger( Params, 'BoomerAMG P Max Elmts', Found, DefValue = 0 )
++        hypre_dppara(2) = ListGetCReal( Params, 'BoomerAMG Trunc Factor', Found, DefValue = 0.0_dp )
+ 
+       CASE(2) ! AMS
+         ! The numbering follows the old convention.
+@@ -1268,6 +1274,10 @@
+         hypre_intpara(5) = ListGetInteger( Params,&
+             'ILU Trisolve Direct', Found, DefValue = 0 )
+ 
++        ! ESS patch: the fill level of Hypre's ILU(k) types (SolveHypre.c passes it on)
++        hypre_intpara(6) = ListGetInteger( Params,&
++            'ILU Fill Level', Found, DefValue = 0 )
++
+         hypre_dppara(1) = ListGetCReal( Params,&
+             'ILU Tolerance', Found, DefValue = 0.0_dp)
+ 

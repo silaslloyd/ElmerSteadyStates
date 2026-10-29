@@ -251,6 +251,28 @@ mkAMGvar() {   # $1 file, $2 variant letter
            printf '%s\n' "  block 22: Linear System Solver = Direct" "  block 22: Linear System Direct Method = MUMPS" >> $1;;
     esac
 }
+# With the patched Elmer (elmer/patches/01-hypre-options.patch, ELMER_PREFIX): n = block, velocity block Hypre
+# BiCGStab + NODAL BoomerAMG (all three components of a node coarsened together; HMIS, extended interpolation,
+# P max 4, threshold 0.5, inner 30 its / 1e-2); o = the same with BoomerAMG as the velocity SOLVER (the crash fix);
+# p = n with nodal 1 and threshold 0.8; q, r = Hypre FlexGMRES + RAS-ILU(2) / GMRES-ILU(2) on the whole system
+mkNodal() {   # $1 file, $2 nodal norm, $3 strong threshold, $4 "solver" for BoomerAMG as the solver
+    grep -v "block 11:\|^ *BoomerAMG \|^ *Boomeramg " elmer/stokes_block_amg.sif.in > $1
+    if [ "$4" = solver ]; then
+        printf '%s\n' "  block 11: Linear System Solver = Iterative" "  block 11: Linear System Use Hypre = Logical True" \
+            "  block 11: Linear System Iterative Method = BoomerAMG" >> $1
+    else
+        printf '%s\n' "  block 11: Linear System Solver = Iterative" "  block 11: Linear System Use Hypre = Logical True" \
+            "  block 11: Linear System Iterative Method = BiCGStab" "  block 11: Linear System Preconditioning = BoomerAMG" >> $1
+    fi
+    printf '%s\n' "  block 11: Linear System Max Iterations = 30" "  block 11: Linear System Convergence Tolerance = 1.0e-2" \
+        "  block 11: Linear System Abort Not Converged = Logical False" \
+        "  BoomerAMG Num Functions = Integer 3" "  BoomerAMG Nodal = Integer $2" "  BoomerAMG Coarsen Type = Integer 10" \
+        "  BoomerAMG Interpolation Type = Integer 6" "  BoomerAMG P Max Elmts = Integer 4" \
+        "  BoomerAMG Relax Type = Integer 6" "  BoomerAMG Strong Threshold = Real $3" >> $1
+}
+mkHILUk() {   # $1 file, $2 Hypre ILU type, $3 fill level
+    mkHILU $1 $2; echo "  ILU Fill Level = Integer $3" >> $1
+}
 mkBlock() {   # $1 file, $2 velocity-block preconditioner: block solver, velocity block Hypre BiCGStab + $2 capped
     grep -v "block 11: Linear System Iterative Method\|block 11: HYPRE Block Diagonal\|block 11: Linear System Preconditioning\|block 11: Linear System Max Iterations\|block 11: Linear System Convergence Tolerance" \
         elmer/stokes_block_amg.sif.in > $1
@@ -270,6 +292,8 @@ for t in $(echo $SET | fold -w1); do
         O) mkGCR $V/O.sif.in 1; echo "  Linear System ILU Factor = Real 0.01" >> $V/O.sif.in;;
         a|b|c|d|e|f|g|h) mkAMGvar $V/$t.sif.in $t;;
         k) grep -v "^#" elmer/stokes_block.sif.in > $V/k.sif.in;;
+        n) mkNodal $V/n.sif.in 4 0.5;;  o) mkNodal $V/o.sif.in 4 0.5 solver;;  p) mkNodal $V/p.sif.in 1 0.8;;
+        q) mkHILUk $V/q.sif.in 30 2;;  r) mkHILUk $V/r.sif.in 10 2;;
         A) mkMG $V/A.sif.in;;  B) mkBlockMG $V/B.sif.in;;
         Y) mkHILU $V/Y.sif.in 30;;  Z) mkHILU $V/Z.sif.in 10;;  V) mkHILU $V/V.sif.in 31;;  I) mkHILU $V/I.sif.in 11;;
         P) mkGCR $V/P.sif.in 2;;  Q) mkGCR $V/Q.sif.in 3;;  W) mkGCR $V/W.sif.in 4;;  X) mkGCR $V/X.sif.in 6;;
@@ -301,7 +325,7 @@ running=0
 for t in $(echo $SET | fold -w1); do
     c="run $GL_CONFIG --state $RSTART $opts $WARMOPT"; o=$WORK/scaling_${RANKS}_$t.npz
     case $t in C|D|E) c="run $CUTCFG --state $CW/start.npz $opts"; o=$CW/scaling_${RANKS}_$t.npz;; esac
-    case $t in Y|Z|V|I) c="$c --output-level 6";; esac          # Hypre reports its iterations from level 6
+    case $t in Y|Z|V|I|q|r) c="$c --output-level 6";; esac          # Hypre reports its iterations from level 6
     if [ $running -ge $SLOTS ]; then wait -n || true; running=$((running - 1)); fi
     echo "$(date +%T) start $t"
     python3 -u -m ess $c --out $o --stokes-block-file $PWD/$V/$t.sif.in > ${L}_$t.log 2>&1 &
@@ -320,6 +344,11 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
                M) what="GCR + ILU0, ILU Factor 0.01";; N) what="GCR + ILU0, ILU Factor 0.001";;
                O) what="GCR + ILU1, ILU Factor 0.01";;
                k) what="block preconditioner, ILU inner solves (elmer/stokes_block.sif.in)";;
+               n) what="block, velocity BiCGStab + NODAL BoomerAMG (patched Elmer)";;
+               o) what="block, NODAL BoomerAMG as the velocity solver (patched Elmer: the crash fix)";;
+               p) what="n with nodal 1, strong threshold 0.8";;
+               q) what="Hypre FlexGMRES + RAS-ILU(2) (patched Elmer: fill level)";;
+               r) what="Hypre FlexGMRES + GMRES-ILU(2) (patched Elmer: fill level)";;
                a) what="MLB block + BoomerAMG as the velocity block's solver, as is (crashed)";;
                b) what="a with scalar velocity blocks (1 2 3 4), no block preconditioner";;
                c) what="a without the block preconditioner (no pressure Schur solver)";;
