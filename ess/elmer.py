@@ -223,6 +223,9 @@ class ElmerModel(Model):
     # ---------------------------------------------------------------- set-up checks
     def _check_inputs(self):
         mesh = os.path.join(self.case_dir, self.mesh_db)
+        if len(mesh) > 127:      # ElmerSolver truncates the mesh path and then crashes reading a partition
+            raise ValueError(f"mesh path {mesh} is {len(mesh)} characters: Elmer only reads 128 (it cuts the rest "
+                             f"off and fails to find the mesh). Use a shorter work_dir / case_dir.")
         if not os.path.isdir(mesh):
             log.warning(f"mesh directory not found: {mesh} (run `ess setup` first)")
         elif self.n_procs > 1 and not os.path.isdir(os.path.join(mesh, f"partitioning.{self.n_procs}")):

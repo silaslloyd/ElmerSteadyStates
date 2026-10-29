@@ -79,7 +79,7 @@ CUT=$(python3 -c "print($GL + $DIST)")
 echo "start grounding line $GL km; shelf cut (C, D, E) at $CUT km"
 export ESS_NPROCS=$RANKS ESS_MPIRUN="mpirun -np {n} --bind-to none"
 case $SET in *[CDE]*)
-    CW=work/${CNAME}_cut$(python3 -c "print(f'{$CUT:g}')")
+    CW=work/${CNAME}_c$(python3 -c "print(round($CUT))")     # short: Elmer cuts mesh paths at 128 characters
     CUTCFG=$CW/cut.toml
     mkdir -p $CW
     (
