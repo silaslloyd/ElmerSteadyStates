@@ -30,6 +30,8 @@
 #   P, Q, W, X  GCR + ILU2, ILU3, ILU4, ILU6 (the lowest fill that avoids the breakdown?)
 #   Y, Z  Hypre FlexGMRES + Hypre ILU(0) coupling the partitions: RAS (overlapping, type 30), GMRES-ILU (Schur
 #      complement on the interfaces, type 10)     V, I  the same with ILUT (types 31, 11; Hypre's default threshold)
+#   A  GCR preconditioned by Elmer's own cluster (aggregation) multigrid on the whole system
+#   B  the block preconditioner with the velocity block solved by Elmer's cluster multigrid
 #   J  GCR with only the diagonal (Jacobi) as preconditioner: if it reduces the residual where ILU0 does not at
 #      all, the ILU0 factors are broken somewhere (not merely weak)
 # From the repository root, one job per partition count. No node limit: give --ntasks (default 128) and Slurm takes
@@ -83,6 +85,7 @@ if [ ! -f "$START" ]; then
     START=$WORK/start.npz
 fi
 echo "Elmer: $ELMER_MODULE -> $(command -v ElmerSolver); $RANKS ranks per run; runs $SET; start $START"
+echo "solver libraries linked to ElmerSolver: $(ldd $(command -v ElmerSolver) 2>/dev/null | grep -io 'lib[a-z_]*\(hypre\|trilinos\|epetra\|ml\|ifpack\|mumps\|petsc\)[a-z_]*' | sort -u | tr '\n' ' ')"
 partition() {   # $1 case dir (with footprint.msh), $2 config: add footprint/partitioning.$RANKS, converted from
     # footprint.msh exactly as `ess setup` does (same node numbering; the mesh dir only holds partitioned copies).
     # The 2D footprint: Elmer extrudes it, so every rank gets whole columns.
@@ -189,6 +192,22 @@ mkHILU() {   # $1 file, $2 Hypre ILU type: Hypre FlexGMRES + Hypre ILU on the wh
         "  Hypre GMRES Dimension = Integer 250" "  Linear System Max Iterations = ${MAXIT:-2000}" \
         "  Linear System Convergence Tolerance = 1.0e-8" "  Linear System Abort Not Converged = Logical False" > $1
 }
+MGKEYS=("MG Method = String cluster" "MG Levels = Integer 10" "MG Smoother = String sgs"
+        "MG Pre Smoothing Iterations(1) = 1" "MG Post Smoothing Iterations(1) = 1" "MG Cluster Size = Integer 0"
+        "MG Cluster Alpha = Real 1.8" "MG Strong Connection Limit = Real 0.01" "MG Max Iterations = Integer 1")
+mkMG() {   # $1 file: GCR preconditioned by one cycle of Elmer's own cluster (aggregation) multigrid, whole system
+    mkGCR $1 0
+    sed -i 's/Linear System Preconditioning = ILU0/Linear System Preconditioning = Multigrid/' $1
+    for k in "${MGKEYS[@]}"; do echo "  $k" >> $1; done
+}
+mkBlockMG() {   # $1 file: the block preconditioner, velocity block solved by Elmer's cluster multigrid (as Elmer's
+    # BlockLinElast3b test), pressure block as before
+    grep -v "block 11:" elmer/stokes_block_amg.sif.in > $1
+    printf '%s\n' "  block 11: Linear System Solver = Multigrid" "  block 11: Linear System Convergence Tolerance = 1.0e-2" \
+        "  block 11: Linear System Max Iterations = 20" "  block 11: Linear System Abort Not Converged = Logical False" >> $1
+    for k in "${MGKEYS[@]}"; do echo "  block 11: $k" >> $1; done
+    sed -i 's/block 11: MG Max Iterations = Integer 1/block 11: MG Max Iterations = Integer 20/' $1
+}
 mkBlock() {   # $1 file, $2 velocity-block preconditioner: block solver, velocity block Hypre BiCGStab + $2 capped
     grep -v "block 11: Linear System Iterative Method\|block 11: HYPRE Block Diagonal\|block 11: Linear System Preconditioning\|block 11: Linear System Max Iterations\|block 11: Linear System Convergence Tolerance" \
         elmer/stokes_block_amg.sif.in > $1
@@ -206,6 +225,7 @@ for t in $(echo $SET | fold -w1); do
         M) mkGCR $V/M.sif.in 0; echo "  Linear System ILU Factor = Real 0.01" >> $V/M.sif.in;;
         N) mkGCR $V/N.sif.in 0; echo "  Linear System ILU Factor = Real 0.001" >> $V/N.sif.in;;
         O) mkGCR $V/O.sif.in 1; echo "  Linear System ILU Factor = Real 0.01" >> $V/O.sif.in;;
+        A) mkMG $V/A.sif.in;;  B) mkBlockMG $V/B.sif.in;;
         Y) mkHILU $V/Y.sif.in 30;;  Z) mkHILU $V/Z.sif.in 10;;  V) mkHILU $V/V.sif.in 31;;  I) mkHILU $V/I.sif.in 11;;
         P) mkGCR $V/P.sif.in 2;;  Q) mkGCR $V/Q.sif.in 3;;  W) mkGCR $V/W.sif.in 4;;  X) mkGCR $V/X.sif.in 6;;
         J) mkGCR $V/J.sif.in 0; sed -i 's/Linear System Preconditioning = ILU0/Linear System Preconditioning = Diagonal/' $V/J.sif.in;;
@@ -254,6 +274,8 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
                L) what="GCR + ILU0, diagonal x 2 before factorising (ILU Factor 1.0)";;
                M) what="GCR + ILU0, ILU Factor 0.01";; N) what="GCR + ILU0, ILU Factor 0.001";;
                O) what="GCR + ILU1, ILU Factor 0.01";;
+               A) what="GCR + Elmer's cluster multigrid (one cycle, SGS smoothing) on the whole system";;
+               B) what="block, velocity block by Elmer's cluster multigrid";;
                Y) what="Hypre FlexGMRES + RAS-ILU(0) (overlapping partitions)";;
                Z) what="Hypre FlexGMRES + GMRES-ILU(0) (partitions coupled through a Schur complement)";;
                V) what="Hypre FlexGMRES + RAS-ILUT";; I) what="Hypre FlexGMRES + GMRES-ILUT";;
