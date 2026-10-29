@@ -71,7 +71,8 @@ if [ ! -f "$START" ]; then
     echo "$(date +%T) setting up $GL_CONFIG for $RANKS ranks, start from $FROM (log ${L}_setup.log)"
     { ESS_NPROCS=$RANKS ESS_MPIRUN="mpirun -np {n} --bind-to none" python3 -u -m ess setup $GL_CONFIG && \
       ESS_NPROCS=$RANKS ESS_MPIRUN="mpirun -np {n} --bind-to none" python3 -u -m ess init $GL_CONFIG --out $WORK/state0.npz && \
-      python3 -u -m ess transfer $GL_CONFIG --state $WORK/state0.npz --from $FROM --out $WORK/start.npz; } \
+      if [ "$FROM" = none ]; then cp $WORK/state0.npz $WORK/start.npz      # FROM=none: the config's own initial state
+      else python3 -u -m ess transfer $GL_CONFIG --state $WORK/state0.npz --from $FROM --out $WORK/start.npz; fi; } \
         > ${L}_setup.log 2>&1 || { echo "setup failed:"; tail -30 ${L}_setup.log; exit 1; }
     START=$WORK/start.npz
 fi
@@ -97,9 +98,11 @@ partition() {   # $1 case dir (with footprint.msh), $2 config: add footprint/par
 if [ -z "$PY" ]; then PY=1; [ $((RANKS % 4)) = 0 ] && PY=4; fi; PX=$((RANKS / PY))
 YEL=$(grep -o "^y_elements *= *[0-9]*" $GL_CONFIG | grep -o "[0-9]*$" || echo 1)
 ( flock 9; partition $WORK/case $GL_CONFIG ) 9> $WORK/case/.lock
-GL=$(python3 periodic_test/run_gl_ess.py glpos $START | tail -1)
-CUT=$(python3 -c "print($GL + $DIST)")
-echo "start grounding line $GL km; shelf cut (C, D, E) at $CUT km"
+case $SET in *[CDE]*)        # the shelf cut needs a grounding line (marine)
+    GL=$(python3 periodic_test/run_gl_ess.py glpos $START | tail -1)
+    CUT=$(python3 -c "print($GL + $DIST)")
+    echo "start grounding line $GL km; shelf cut (C, D, E) at $CUT km";;
+esac
 export ESS_NPROCS=$RANKS ESS_MPIRUN="mpirun -np {n} --bind-to none"
 case $SET in *[CDE]*)
     CW=work/${CNAME}_c$(python3 -c "print(round($CUT))")     # short: Elmer cuts mesh paths at 128 characters
