@@ -1,8 +1,9 @@
 # Land-terminating counterpart of configs/test_wall_gl_50km_fine.toml, for solver benchmarks (jobs/scaling_tests.cmd):
 # the same 50 km width between free-slip walls (Velocity 2 = 0, the land template's sides), 100 elements across
-# (500 m), the fine2x element sizes along the flow (case/parameters_fine2x.lua: 500 m around the margin, 250 m in its
-# finest band, 5 km far away), 51 layers, P1 + bubbles, METIS partitions; the margin fixed at 0.8 L
-# (configs/land_margin_3d.toml). Sliding temperature-dependent (TDepSliding, as ElmerStreams' Land_Term).
+# (500 m), the marine mesh's resolution structure along the flow (case/flowline_margin_band.geo.in with
+# case/parameters_fine2x.lua: 5 km at the divide, 500 m from Lend - Lend/6, a 40 km band of 250 m ending at the
+# margin), 51 layers, P1 + bubbles, METIS partitions; the margin fixed at 0.8 L (configs/land_margin_3d.toml), so the
+# grounded domain is ~0.7x the marine mesh's: run it at ~0.7x the ranks for the same nodes per partition. Sliding temperature-dependent (TDepSliding, as ElmerStreams' Land_Term).
 # Build with FROM=<a land state> (e.g. a work/land_margin chunk) or FROM=none (ess init's state).
 # ElmerSteadyStates: thermo-coupled land-terminating ice sheet on a 3D STRIP, for the stability of
 # the (y-uniform) flowline steady state to perturbations across the flow.
@@ -27,7 +28,9 @@ case_dir = "{work}/case"                # mesh and initial conditions, written b
 
 [case]
 parameters = "case/parameters_fine2x.lua"   # element sizes halved (as the fine marine test)
-geo = "case/flowline_cut.geo.in"        # footprint ending at x_end * L
+geo = "case/flowline_margin_band.geo.in"   # the marine test mesh's resolution structure, ending at the margin
+fine_res = 250.0                        # m: the fine band (as configs/test_wall_gl_50km_fine.toml)
+fine_half_width = 20000.0               # m: the band is 2 x this wide (40 km, as the marine one), ending at the margin
 x_end = 0.8                             # domain end (fraction of L): the steady margin
 edge_thickness = 150.0                  # m, ice thickness held at the end
 width = 50000.0                         # m across the flow (as the marine tests)

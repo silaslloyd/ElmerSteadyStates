@@ -1,0 +1,28 @@
+// Land counterpart of flowline_marine_gl.geo.in: a footprint ending at the fixed margin Lend ([case] x_end < 1) with
+// the marine mesh's resolution structure, so solver tests carry over between the two: BoundaryRes at the divide,
+// MarginRes from Lend - Lend/6, FineRes over the last 2 FineHalf (the marine fine band's width, ending at the margin
+// instead of straddling the grounding line); gmsh grades linearly between the points. {YElements} element(s) across.
+// The physical-group order (inflow, front, side1, side2) gives Elmer boundaries 1-4 (steady_template.sif); groups
+// are selected by position (bounding boxes).
+Lend = {Lend};
+W = {Wmesh};
+Ny = {YElements};
+resb = {BoundaryRes};
+resgl = {MarginRes};
+resf = {FineRes};
+df = {FineHalf};
+Point(1) = {0, 0, 0, resb};
+Point(2) = {Lend - Lend/6, 0, 0, resgl};
+Point(3) = {Lend - 2*df, 0, 0, resf};
+Point(4) = {Lend, 0, 0, resf};
+Line(1) = {1, 2};
+Line(2) = {2, 3};
+Line(3) = {3, 4};
+Extrude {0, W, 0} { Curve{1}; Curve{2}; Curve{3}; Layers{Ny}; Recombine; }
+Coherence;
+e = 1.0;   // m, bounding-box tolerance
+Physical Surface(21) = Surface{:};
+Physical Curve(22) = Curve In BoundingBox{-e, -e, -e, e, W + e, e};                // inflow, x = 0
+Physical Curve(23) = Curve In BoundingBox{Lend - e, -e, -e, Lend + e, W + e, e};   // front, x = Lend
+Physical Curve(24) = Curve In BoundingBox{-e, -e, -e, Lend + e, e, e};             // side1, y = 0
+Physical Curve(25) = Curve In BoundingBox{-e, W - e, -e, Lend + e, W + e, e};      // side2, y = W
