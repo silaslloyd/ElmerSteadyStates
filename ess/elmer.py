@@ -301,6 +301,27 @@ class ElmerModel(Model):
                     '    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * (tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
         raise ValueError(f"[elmer] friction_heat must be 'loads' or 'flux', not {self.friction_heat!r}")
 
+    @staticmethod
+    def _dt_ramp(text: str, ramp: str, n_steps: int) -> str:
+        """TESTING (solver benchmarks, jobs/scaling_tests.cmd DT_RAMP): replace the uniform time step by a sequence,
+        env ESS_DT_RAMP = "1e-4,1e-2,0.1*3" (years; "dt*n" = n steps of dt) as Elmer timestep intervals. The steps
+        must add up to the run's step count; ESS's own time bookkeeping still assumes the uniform dt."""
+        sizes, counts = [], []
+        for item in ramp.replace(" ", "").split(","):
+            dt, _, n = item.partition("*")
+            sizes.append(float(dt)); counts.append(int(n) if n else 1)
+        if sum(counts) != n_steps:
+            raise ValueError(f"ESS_DT_RAMP {ramp!r} has {sum(counts)} steps, the run {n_steps}")
+        k = len(sizes)
+        new = (f"  Timestep Intervals({k}) = Integer {' '.join(map(str, counts))}\n"
+               f"  Timestep Sizes({k}) = Real {' '.join(repr(x) for x in sizes)}\n"
+               f"  Output Intervals({k}) = Integer {' '.join(map(str, counts))}   ! ESS_DT_RAMP")
+        text, n = re.subn(r"^ *Timestep Intervals = .*\n *Timestep Sizes = .*\n *Output Intervals = .*$", new,
+                          text, count=1, flags=re.M)
+        if n != 1:
+            raise ValueError("ESS_DT_RAMP: Timestep Intervals / Sizes / Output Intervals lines not found in the template")
+        return text
+
     def _stokes_linear(self) -> str:
         """the Stokes linear-solver keywords, with the initial-guess rotation if asked (not for the block solver)"""
         txt = self._linear_block(self.linear_stokes, "stokes")
@@ -496,6 +517,9 @@ End
         text = self._template_text
         for k, v in subs.items():
             text = text.replace(k, v)
+        ramp = os.environ.get("ESS_DT_RAMP")
+        if ramp:
+            text = self._dt_ramp(text, ramp, int(spec.n_steps))
         if self.cartesian_bed:
             text = self._cartesian_bed(text)
         if self.periodic_sides:

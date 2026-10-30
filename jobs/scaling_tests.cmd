@@ -181,6 +181,15 @@ opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --bed ${BED:-cold
 # DT=years: the time step of every run (default the config's [map] dt, 5 yr for the 50 km tests); small steps as a
 # production start (e.g. DT=1e-2) make the warm-started later solves representative
 [ -n "$DT" ] && opts="$opts --dt $DT" && echo "time step $DT yr"
+# DT_RAMP="1e-4,1e-2,0.1*3": a sequence of time steps (years, dt*n = n steps), as a production start; sets STEPS
+if [ -n "$DT_RAMP" ]; then
+    export ESS_DT_RAMP=$DT_RAMP
+    STEPS=$(python3 -c "print(sum(int(i.partition('*')[2] or 1) for i in '$DT_RAMP'.replace(' ','').split(',')))")
+    opts=$(echo "$opts" | sed "s/--steps [0-9]*/--steps $STEPS/")
+    echo "time steps $DT_RAMP yr ($STEPS steps)"
+fi
+# TOL: the GCR runs' convergence tolerance (default 1e-8)
+[ -n "$TOL" ] && echo "GCR tolerance $TOL"
 # STOKES_ELEMENT=Stabilized|Bubbles|P2/P1: the element for every run (default the config's). Low ILU needs
 # Stabilized? (the flowline tests, where ILU0/ILU1 converged, were Stabilized; the 50 km config is Bubbles, where
 # they did not reduce the residual at all)
@@ -207,7 +216,7 @@ V=$WORK/scaling_files_${SLURM_JOB_ID:-local}; mkdir -p $V
 mkGCR() {   # $1 file, $2 ILU level: GCR + ILU on the whole Stokes system, every iteration printed (counts)
     printf '%s\n' "  Linear System Solver = Iterative" "  Linear System Iterative Method = GCR" \
         "  Linear System GCR Restart = Integer 250" "  Linear System Max Iterations = ${MAXIT:-2000}" \
-        "  Linear System Preconditioning = ILU$2" "  Linear System Convergence Tolerance = 1.0e-8" \
+        "  Linear System Preconditioning = ILU$2" "  Linear System Convergence Tolerance = ${TOL:-1.0e-8}" \
         "  Linear System Abort Not Converged = Logical False" "  Linear System Residual Output = 1" > $1
 }
 mkHILU() {   # $1 file, $2 Hypre ILU type: Hypre FlexGMRES + Hypre ILU on the whole Stokes system (fill level and drop
