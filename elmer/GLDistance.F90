@@ -211,6 +211,15 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   LOGICAL, ALLOCATABLE, SAVE :: prevP(:)       ! passive state of each active element at the previous solve
   INTEGER, SAVE :: ncall = 0
   REAL(KIND=dp) :: npas, nchg, nchgLoc, ngm, nreb
+  ! periodic sides: Elmer has already folded each slave node's row into its master rows and replaced it by the
+  ! periodic constraint (SetPeriodicBoundariesPass1/2), so a slave node's force goes to its masters, by the
+  ! projector weights (pStart/pCnt/pNode/pW: per slave node, its masters)
+  INTEGER, ALLOCATABLE, SAVE :: pStart(:), pCnt(:), pNode(:)
+  REAL(KIND=dp), ALLOCATABLE, SAVE :: pW(:)
+  LOGICAL, SAVE :: pDone = .FALSE.
+  TYPE(Matrix_t), POINTER :: Proj
+  INTEGER :: bc, ii, l, np, mnode, kk
+  REAL(KIND=dp) :: nmiss, wsl
   INTEGER :: thrEl, thrGm
   LOGICAL :: rebuild
   TYPE(Variable_t), POINTER :: gmVar
@@ -264,6 +273,46 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   nn = Mesh % NumberOfNodes
   ALLOCATE( tagP(nn) )
   tagP = 0
+  IF ( .NOT. pDone ) THEN
+    pDone = .TRUE.
+    ALLOCATE( pStart(nn), pCnt(nn) )
+    pStart = 0; pCnt = 0
+    np = 0
+    DO pass = 1, 2
+      DO bc = 1, Model % NumberOfBCs
+        IF ( .NOT. ListGetLogical( Model % BCs(bc) % Values, 'Periodic BC Velocity 1', Found ) ) CYCLE
+        Proj => Model % BCs(bc) % PMatrix
+        IF ( .NOT. ASSOCIATED( Proj ) ) CYCLE
+        DO i = 1, Proj % NumberOfRows
+          ii = Proj % InvPerm(i)
+          IF ( ii <= 0 .OR. ii > nn ) CYCLE
+          DO l = Proj % Rows(i), Proj % Rows(i+1) - 1
+            IF ( Proj % Cols(l) <= 0 .OR. Proj % Values(l) == 0.0_dp ) CYCLE
+            IF ( pass == 1 ) THEN
+              pCnt(ii) = pCnt(ii) + 1
+            ELSE
+              np = np + 1
+              pNode( pStart(ii) + np - 1 ) = Proj % Cols(l)
+              pW( pStart(ii) + np - 1 ) = Proj % Values(l)
+            END IF
+          END DO
+          IF ( pass == 2 ) np = 0
+        END DO
+      END DO
+      IF ( pass == 1 ) THEN
+        k = 1
+        DO i = 1, nn
+          pStart(i) = k
+          k = k + pCnt(i)
+        END DO
+        ALLOCATE( pNode( MAX(k-1,1) ), pW( MAX(k-1,1) ) )
+      END IF
+    END DO
+    WRITE( Message, '(A,I0,A)' ) 'periodic slave nodes on this partition: ', COUNT( pCnt > 0 ), &
+        ' (interface forces there go to their masters)'
+    CALL Info( 'FSSSALinsolve', Message, Level=5 )
+  END IF
+  nmiss = 0.0_dp
   DO t = 1, Solver % NumberOfActiveElements
     El => Mesh % Elements( Solver % ActiveElements(t) )
     passive = .FALSE.
@@ -444,13 +493,45 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
           Fr(2) = DOT_PRODUCT( NT % BoundaryTangent1(k,:), Fxyz )
           Fr(3) = DOT_PRODUCT( NT % BoundaryTangent2(k,:), Fxyz )
         END IF
-        DO c = 1, 3
-          r = DOFs * (q-1) + c
-          IF ( ALLOCATED( A % ConstrainedDOF ) ) THEN
-            IF ( A % ConstrainedDOF(r) ) CYCLE
-          END IF
-          b(r) = b(r) + Fr(c)
-        END DO
+        IF ( pCnt(nd) > 0 ) THEN
+          ! a periodic slave: to its masters (rotated to the master's frame)
+          DO l = pStart(nd), pStart(nd) + pCnt(nd) - 1
+            mnode = pNode(l); wsl = pW(l)
+            IF ( mnode > SIZE(Perm) ) THEN
+              nmiss = nmiss + 1.0_dp
+              CYCLE
+            END IF
+            IF ( Perm(mnode) <= 0 ) THEN
+              nmiss = nmiss + 1.0_dp
+              CYCLE
+            END IF
+            Fr = Fxyz
+            kk = 0
+            IF ( NT % NormalTangentialNOFNodes > 0 .AND. ASSOCIATED( NT % BoundaryReorder ) ) THEN
+              IF ( mnode <= SIZE( NT % BoundaryReorder ) ) kk = NT % BoundaryReorder(mnode)
+            END IF
+            IF ( kk > 0 ) THEN
+              Fr(1) = DOT_PRODUCT( NT % BoundaryNormals(kk,:), Fxyz )
+              Fr(2) = DOT_PRODUCT( NT % BoundaryTangent1(kk,:), Fxyz )
+              Fr(3) = DOT_PRODUCT( NT % BoundaryTangent2(kk,:), Fxyz )
+            END IF
+            DO c = 1, 3
+              r = DOFs * (Perm(mnode)-1) + c
+              IF ( ALLOCATED( A % ConstrainedDOF ) ) THEN
+                IF ( A % ConstrainedDOF(r) ) CYCLE
+              END IF
+              b(r) = b(r) + wsl * Fr(c)
+            END DO
+          END DO
+        ELSE
+          DO c = 1, 3
+            r = DOFs * (q-1) + c
+            IF ( ALLOCATED( A % ConstrainedDOF ) ) THEN
+              IF ( A % ConstrainedDOF(r) ) CYCLE
+            END IF
+            b(r) = b(r) + Fr(c)
+          END DO
+        END IF
         ftot = ftot + Fxyz(1)
       END DO
     END DO
@@ -480,6 +561,12 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
     DEALLOCATE( lst )
   END IF
   END DO
+  IF ( ParEnv % PEs > 1 ) nmiss = ParallelReduction( nmiss )
+  IF ( nmiss > 0.0_dp ) THEN
+    WRITE( Message, '(A,I0,A)' ) 'WARNING: ', NINT(nmiss), ' interface force contributions at periodic slave nodes '// &
+        'whose master is on another partition were dropped'
+    CALL Info( 'FSSSALinsolve', Message, Level=3 )
+  END IF
   IF ( ssaStress ) THEN
     fssa = ftot
     npas = REAL( nssa, dp )
