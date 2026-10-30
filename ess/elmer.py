@@ -1058,8 +1058,10 @@ End
                 raise ModelFailure(f"{tag}: cannot launch {cmd[0]}: {e}")
         dt = time.time() - t0
         with open(logf, errors="replace") as f:
-            tail = f.read()[-20000:]
-        if ret != 0 or "ALL DONE" not in tail:
+            log = f.read()
+        tail = log[-20000:]
+        # the whole log: per-rank warnings at the end (e.g. StateIO at 768 ranks) can push ALL DONE out of the tail
+        if ret != 0 or not ("ALL DONE" in log or "ELMER SOLVER FINISHED" in tail):
             err = [l for l in tail.splitlines() if "ERROR" in l or "Fatal" in l or "FATAL" in l][-3:]
             raise ModelFailure(f"{tag}: Elmer failed (exit {ret}) after {dt:.0f} s; see {logf}"
                                + ("\n  " + "\n  ".join(err) if err else ""))
