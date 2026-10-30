@@ -175,6 +175,14 @@ class ElmerModel(Model):
         sc = e.get("shelf_cut_km")
         self.shelf_cut_x = None if sc is None else float(sc) * 1e3
         self.shelf_cut_target = bool(e.get("shelf_cut_target", True))
+        # [elmer] fs_ssa_km (marine; env ESS_FS_SSA_KM overrides): a MOVING full-Stokes region. Every time step the
+        # horizontal distance of every node to the current grounding line is computed (elmer/GLDistance.F90, from
+        # GroundedMask); ice more than fs_ssa_km beyond it is passive for Stokes, and the face between active and
+        # passive ice carries the normal stress of a free-floating, laterally uniform shelf (as shelf_cut_target:
+        # exact for an unbuttressed shelf, e.g. between free-slip walls). STAGE 1: the passive shelf keeps its last
+        # velocities (no SSA solve yet), so its geometry evolves with them.
+        fs = os.environ.get("ESS_FS_SSA_KM") or e.get("fs_ssa_km")
+        self.fs_ssa_x = None if fs in (None, "") else float(fs) * 1e3
         # iterative Stokes ([elmer] linear_stokes = "iterative"): tolerance (default iterative_tol) and whether to
         # stop when GCR does not converge (default yes; ElmerStreams' linsys/gcr.sif: 1e-8 and no)
         self.stokes_iterative_tol = e.get("stokes_iterative_tol")
@@ -559,6 +567,8 @@ End
             text = self._stokes_iterations(text, self.contact_stokes_iters)
         if self.shelf_cut_x is not None:
             text = self._shelf_cut(text)
+        if self.fs_ssa_x is not None:
+            text = self._fs_ssa(text)
         if self.stokes_solver != "nsvec":
             procs = {"flowsolve": '"FlowSolve" "FlowSolver"', "ins": '"IncompressibleNS" "IncompressibleNSSolver"'}
             if self.stokes_solver not in procs:
@@ -696,6 +706,47 @@ End
         bc = (f"\nBoundary Condition {n + 1}\n"
               '  Name = "shelf cut"\n'
               "  ! the active/passive interface of the shelf cut: the normal stress of a free-floating shelf\n"
+              "  Passive Target = Logical True\n"
+              "  Flow Force BC = Logical True\n"
+              "  External Pressure = Variable depth, height\n"
+              '    Real Lua "-rhoi*gravity*tx[0] + 0.5*rhoi*gravity*(tx[0] + tx[1])*(1 - rhoi/rhow)"\n'
+              "  ComputeNormal = Logical False\n"
+              "End\n")
+        m = list(re.finditer(r"^Boundary Condition \d+\s*$", text, re.M))[-1]
+        e = text.index("\nEnd", m.start()) + len("\nEnd")
+        return text[:e] + "\n" + bc + text[e:]
+
+    def _fs_ssa(self, text):
+        """the moving full-Stokes region (see fs_ssa_km): the grounding-line distance solver, the passive condition
+        on the ice and the active/passive interface with the free-floating shelf stress"""
+        if not self.marine:
+            raise ValueError("fs_ssa_km: marine template only")
+        if self.shelf_cut_x is not None:
+            raise ValueError("fs_ssa_km and shelf_cut_km exclude each other")
+        lib = os.path.join(os.path.dirname(self.ess_lib), "GLDistance")
+        n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M)) + 1
+        sol = (f"Solver {n}\n"
+               '  Exec Solver = "Before Timestep"\n'
+               '  Equation = "GL distance"\n'
+               f'  Procedure = File "{lib}" "GLDistance"\n'
+               '  Variable = -nooutput "GL Distance"\n'
+               "  Variable DOFs = 1\n"
+               "  No Matrix = Logical True\n"
+               "End\n")
+        k = text.index("!---------------- BOUNDARY CONDITIONS")
+        k = text.rindex("\n", 0, k - 1)
+        text = (text[:k] + "\n! the horizontal distance to the grounding line, every time step ([elmer] fs_ssa_km)\n"
+                + sol + text[k:])
+        text = self._add_active(text, "ice equations", [n])
+        k = text.index('Name = "bodyforce ice"')
+        j = text.index("\nEnd", k)
+        text = (text[:j] + "\n  ! the moving full-Stokes region ([elmer] fs_ssa_km): ice beyond it is passive for Stokes"
+                "\n  Passive Element Min Nodes = Integer 1\n  Flow Solution Passive = Variable GL Distance\n"
+                f'    Real Lua "tx[0] - {self.fs_ssa_x!r}"' + text[j:])
+        nb = max(int(m) for m in re.findall(r"^Boundary Condition (\d+)\s*$", text, re.M))
+        bc = (f"\nBoundary Condition {nb + 1}\n"
+              '  Name = "full-Stokes / shelf interface"\n'
+              "  ! the active/passive interface ([elmer] fs_ssa_km): the normal stress of a free-floating shelf\n"
               "  Passive Target = Logical True\n"
               "  Flow Force BC = Logical True\n"
               "  External Pressure = Variable depth, height\n"

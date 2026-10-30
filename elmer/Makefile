@@ -3,7 +3,7 @@
 # elmerf90_safe: elmerf90, rerun without unreadable -I/-L directories if it fails on them (elmerfem/2026-10-28)
 ELMERF90 ?= ./elmerf90_safe
 
-all: SteadyStateIO.so Buoyancy.so RotateGuess.so
+all: SteadyStateIO.so Buoyancy.so RotateGuess.so GLDistance.so
 
 # make -C elmer checked: the same libraries with bounds and pointer checks (-g -fcheck=all) in elmer/checked/, for
 # hunting memory corruption (ESS_ELMER_LIBDIR=$PWD/elmer/checked makes ess use them; jobs/scaling_tests.cmd CHECKED=1)
@@ -33,6 +33,10 @@ Buoyancy.so: Buoyancy.F90
 RotateGuess.so: RotateGuess.F90
 	$(ELMERF90) -o $@ $<
 
+# the distance to the grounding line, every time step ([elmer] fs_ssa_km: the moving full-Stokes region)
+GLDistance.so: GLDistance.F90
+	$(ELMERF90) -o $@ $<
+
 PeriodicGL.so: PeriodicUtils.F90 FixPeriodicLoads.F90 ContactPeriodic.F90
 	@[ -n "$(ELMERICE_USF)" ] || echo "warning: ElmerIceUSF.so not found; SlidCoef_ContactPeriodic needs it loaded"
 	$(ELMERF90) -o $@ $^ $(ELMERICE_USF)
@@ -47,4 +51,4 @@ SheetSolverhw.so: SheetSolverhw.F90
 	$(ELMERF90) -o $@ $<
 
 clean:
-	rm -rf checked; rm -f SteadyStateIO.so Buoyancy.so RotateGuess.so PeriodicGL.so FixPeriodicLoads.so ColdTempMask.so SheetSolverhw.so *.mod
+	rm -rf checked; rm -f SteadyStateIO.so Buoyancy.so RotateGuess.so GLDistance.so PeriodicGL.so FixPeriodicLoads.so ColdTempMask.so SheetSolverhw.so *.mod

@@ -202,6 +202,9 @@ fi
 # NL=n: Stokes nonlinear iterations per time step (ElmerStreams' marine production: 2, nonlinear tolerance 1e-5;
 # default the template's 1)
 [ -n "$NL" ] && export ESS_STOKES_NL_ITERS=$NL && echo "Stokes nonlinear iterations per step: up to $NL"
+# FS_SSA=km: the moving full-Stokes region ([elmer] fs_ssa_km): ice more than this beyond the current grounding line
+# is passive for Stokes, its face carries the free-floating shelf's stress
+[ -n "$FS_SSA" ] && export ESS_FS_SSA_KM=$FS_SSA && echo "moving full-Stokes region: up to $FS_SSA km beyond the grounding line"
 # TOL: the GCR runs' convergence tolerance (default 1e-8)
 [ -n "$TOL" ] && echo "GCR tolerance $TOL"
 # STOKES_ELEMENT=Stabilized|Bubbles|P2/P1: the element for every run (default the config's). Low ILU needs
