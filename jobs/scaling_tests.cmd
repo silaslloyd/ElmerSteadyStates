@@ -177,7 +177,10 @@ if [ "$CHECKED" = 1 ]; then
     echo "CHECKED: ESS libraries from elmer/checked (bounds checks), glibc heap checks on"
 fi
 SLOTS=${SLOTS:-$(( ${SLURM_NTASKS:-128} / RANKS ))}; [ $SLOTS -ge 1 ] || SLOTS=1   # runs at a time (SLOTS=1: one by one)
-opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --bed ${BED:-cold} --gl frozen --linear-stokes block --output-level 4"   # BED=temperate: sliding everywhere
+opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --gl frozen --linear-stokes block --output-level 4"
+# BED=cold (default) | temperate (sliding everywhere) | none (the start state's own bed temperatures: the land
+# benchmark's temperature-dependent sliding)
+[ "${BED:-cold}" != none ] && opts="$opts --bed ${BED:-cold}"
 # DT=years: the time step of every run (default the config's [map] dt, 5 yr for the 50 km tests); small steps as a
 # production start (e.g. DT=1e-2) make the warm-started later solves representative
 [ -n "$DT" ] && opts="$opts --dt $DT" && echo "time step $DT yr"
