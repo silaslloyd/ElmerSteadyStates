@@ -738,11 +738,15 @@ End
         text = (text[:k] + "\n! the horizontal distance to the grounding line, every time step ([elmer] fs_ssa_km)\n"
                 + sol + text[k:])
         text = self._add_active(text, "ice equations", [n])
-        k = text.index('Name = "bodyforce ice"')
-        j = text.index("\nEnd", k)
-        text = (text[:j] + "\n  ! the moving full-Stokes region ([elmer] fs_ssa_km): ice beyond it is passive for Stokes"
-                "\n  Passive Element Min Nodes = Integer 1\n  Flow Solution Passive = Variable GL Distance\n"
-                f'    Real Lua "tx[0] - {self.fs_ssa_x!r}"' + text[j:])
+        # passive beyond the region: the ice, and the boundary elements of its base and surface (bodies of their own:
+        # otherwise the sea pressure and spring of the passive shelf's base would still act on the interface nodes,
+        # as Elmer/Ice's MISMIP_FS-SSA test also makes its base body passive)
+        for bf in ("bodyforce ice", "bodyforce interface", "bodyforce freesurface"):
+            k = text.index(f'Name = "{bf}"')
+            j = text.index("\nEnd", k)
+            text = (text[:j] + "\n  ! the moving full-Stokes region ([elmer] fs_ssa_km): passive beyond it for Stokes"
+                    "\n  Passive Element Min Nodes = Integer 1\n  Flow Solution Passive = Variable GL Distance\n"
+                    f'    Real Lua "tx[0] - {self.fs_ssa_x!r}"' + text[j:])
         # the shelf's force on the interface: "loads" (default: added to the Stokes right-hand side by
         # GLDistance's FSSSALinsolve), "elmer" (Elmer's Passive Target boundary: crashes in 3D, see FSSSALinsolve),
         # "0" (none: the interface stress free; tests). Env ESS_FS_SSA_TARGET.
