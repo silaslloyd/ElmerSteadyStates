@@ -174,7 +174,7 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   USE MeshBasics, ONLY : CommunicateParallelSystemTag
   IMPLICIT NONE
   TYPE(Model_t) :: Model
-  TYPE(Solver_t) :: Solver
+  TYPE(Solver_t), TARGET :: Solver
   TYPE(Matrix_t), POINTER :: A
   INTEGER :: n, DOFs
   REAL(KIND=dp) :: b(n), x(n), Norm
