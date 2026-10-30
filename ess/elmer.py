@@ -304,10 +304,10 @@ class ElmerModel(Model):
     @staticmethod
     def _dt_ramp(text: str, ramp: str, n_steps: int) -> str:
         """TESTING (solver benchmarks, jobs/scaling_tests.cmd DT_RAMP): replace the uniform time step by a sequence,
-        env ESS_DT_RAMP = "1e-4,1e-2,0.1*3" (years; "dt*n" = n steps of dt) as Elmer timestep intervals. The steps
+        env ESS_DT_RAMP = "1e-4:1e-2:0.1*3" (years; "dt*n" = n steps of dt) as Elmer timestep intervals. The steps
         must add up to the run's step count; ESS's own time bookkeeping still assumes the uniform dt."""
         sizes, counts = [], []
-        for item in ramp.replace(" ", "").split(","):
+        for item in [i for i in re.split(r"[,:;\s]+", ramp) if i]:   # ":" for sbatch --export (splits at commas)
             dt, _, n = item.partition("*")
             sizes.append(float(dt)); counts.append(int(n) if n else 1)
         if sum(counts) != n_steps:
