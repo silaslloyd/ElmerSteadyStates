@@ -189,7 +189,7 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   INTEGER, ALLOCATABLE :: tagP(:)
   INTEGER :: nn, t, j, k, f, nf, q, c, r, nd, code, nfaces
   INTEGER :: fn(4,6)
-  REAL(KIND=dp) :: Dcut, rhoi, rhow, g, pts(3,4), av(3), cen(3), fc(3), sig, dep, hei, Fxyz(3), Fr(3), ftot, fsum
+  REAL(KIND=dp) :: Dcut, rhoi, rhow, g, pts(3,4), av(3), cen(3), fc(3), sig, dep, hei, Fxyz(3), Fr(3), ftot, fsum, dg(8)
   LOGICAL :: Found, passive, inface
   LOGICAL, SAVE :: Reported = .FALSE.
 !------------------------------------------------------------------------------
@@ -231,6 +231,8 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   END IF
 
   nfaces = 0; ftot = 0.0_dp
+  ! diagnostics: sum of face x-areas, area-weighted H, depth-integral check, min/max H, x range of face centres
+  dg = 0.0_dp; dg(4) = HUGE(1.0_dp); dg(5) = -HUGE(1.0_dp); dg(6) = HUGE(1.0_dp); dg(7) = -HUGE(1.0_dp)
   DO t = 1, Solver % NumberOfActiveElements
     El => Mesh % Elements( Solver % ActiveElements(t) )
     code = El % TYPE % ElementCode
@@ -269,6 +271,8 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
       fc = SUM( pts, DIM=2 ) / 4.0_dp
       IF ( DOT_PRODUCT( av, fc - cen ) < 0.0_dp ) av = -av          ! out of the active element
       nfaces = nfaces + 1
+      dg(1) = dg(1) + av(1)
+      dg(6) = MIN( dg(6), fc(1) ); dg(7) = MAX( dg(7), fc(1) )
       DO j = 1, 4
         nd = El % NodeIndexes( fn(j,f) )
         IF ( nd > SIZE(Perm) ) CYCLE
@@ -276,6 +280,10 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
         IF ( q <= 0 ) CYCLE
         dep = essNodeVal( depVar, nd ); hei = essNodeVal( heiVar, nd )
         sig = -rhoi * g * dep + 0.5_dp * rhoi * g * (dep + hei) * (1.0_dp - rhoi / rhow)
+        dg(2) = dg(2) + (dep + hei) * av(1) / 4.0_dp
+        dg(3) = dg(3) - 0.5_dp * rhoi**2 / rhow * g * (dep + hei)**2 * av(1) / 4.0_dp / MAX( dep + hei, 1.0_dp )
+        dg(4) = MIN( dg(4), dep + hei ); dg(5) = MAX( dg(5), dep + hei )
+        dg(8) = dg(8) + 1.0_dp
         Fxyz = sig * av / 4.0_dp
         Fr = Fxyz
         k = 0
@@ -306,6 +314,22 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
       ftot = ParallelReduction( ftot )
     END IF
     WRITE( Message, '(A,I0,A,ES12.4)' ) 'shelf force on ', NINT(fsum), ' interface faces (all ranks), x component ', ftot
+    CALL Info( 'FSSSALinsolve', Message, Level=3 )
+    IF ( ParEnv % PEs > 1 ) THEN
+      DO j = 1, 3
+        dg(j) = ParallelReduction( dg(j) )
+      END DO
+      dg(8) = ParallelReduction( dg(8) )
+      dg(4) = ParallelReduction( dg(4), 1 ); dg(6) = ParallelReduction( dg(6), 1 )
+      dg(5) = ParallelReduction( dg(5), 2 ); dg(7) = ParallelReduction( dg(7), 2 )
+    END IF
+    WRITE( Message, '(A,ES12.4,A,ES12.4,A,ES12.4,A,ES12.4)' ) 'interface x-area ', dg(1), '  area-weighted H ', &
+        dg(2) / MAX( dg(1), 1.0_dp ), '  H min ', dg(4), '  max ', dg(5)
+    CALL Info( 'FSSSALinsolve', Message, Level=3 )
+    WRITE( Message, '(A,ES12.4,A,ES12.4,A,ES12.4,A,I0)' ) 'interface face centres x ', dg(6), ' to ', dg(7), &
+        '  expected -rho_w g D^2/2 force (from nodal H) ', dg(3), '  node visits ', NINT(dg(8))
+    CALL Info( 'FSSSALinsolve', Message, Level=3 )
+    WRITE( Message, '(A,ES14.6,A,ES14.6,A,ES14.6)' ) 'rho_i ', rhoi, '  rho_w ', rhow, '  g ', g
     CALL Info( 'FSSSALinsolve', Message, Level=3 )
     Reported = .TRUE.
   END IF
