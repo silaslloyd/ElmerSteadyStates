@@ -182,7 +182,7 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   TYPE(Mesh_t), POINTER :: Mesh
   TYPE(Element_t), POINTER :: El
   TYPE(Variable_t), POINTER :: dVar, depVar, heiVar
-  TYPE(ParallelInfo_t), POINTER :: PI
+  TYPE(ParallelInfo_t), POINTER :: parInfo
   TYPE(NormalTangential_t), POINTER :: NT
   INTEGER, POINTER :: Perm(:)
   INTEGER, ALLOCATABLE :: tagP(:)
@@ -225,8 +225,8 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
     IF ( passive ) tagP( El % NodeIndexes(1:El % TYPE % NumberOfNodes) ) = 1
   END DO
   IF ( ParEnv % PEs > 1 ) THEN
-    PI => Mesh % ParallelInfo
-    CALL CommunicateParallelSystemTag( PI, Itag=tagP, ParOper=2 )
+    parInfo => Mesh % ParallelInfo
+    CALL CommunicateParallelSystemTag( parInfo, Itag=tagP, ParOper=2 )
   END IF
 
   nfaces = 0; ftot = 0.0_dp
