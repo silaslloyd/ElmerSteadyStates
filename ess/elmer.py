@@ -742,7 +742,9 @@ End
                '  Variable = -nooutput "GL Distance"\n'
                "  Variable DOFs = 1\n"
                "  No Matrix = Logical True\n"
-               "End\n")
+               + (f"  Periodic Width = Real {self.width!r}   ! periodic sides: the distance wraps across the seam\n"
+                  if self.periodic_sides else "")
+               + "End\n")
         ssa = self.fs_ssa_shelf == "ssa"
         # TESTING knobs for the SSA shelf: ESS_FS_SSA_PERIODIC=0 (no periodic coupling of the SSA velocity even with
         # periodic sides), ESS_FS_SSA_WALLS=1/0 (v = 0 on the side nodes; default: not periodic), ESS_FS_SSA_STRESS=0

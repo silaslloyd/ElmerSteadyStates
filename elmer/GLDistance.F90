@@ -49,7 +49,7 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   REAL(KIND=dp), ALLOCATABLE :: colgm(:), glx(:), gly(:), allx(:), ally(:)
   LOGICAL, ALLOCATABLE :: isgl(:)
   LOGICAL :: Found, hasg, hasf
-  REAL(KIND=dp) :: d2, dmin, m, dmax
+  REAL(KIND=dp) :: d2, dmin, m, dmax, dy, pw
   CHARACTER(:), ALLOCATABLE :: mname
   CHARACTER(*), PARAMETER :: Caller = 'GLDistance'
 !------------------------------------------------------------------------------
@@ -64,6 +64,11 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   gmVar => VariableGet( Mesh % Variables, mname )
   IF ( .NOT. ASSOCIATED( gmVar ) ) CALL Fatal( Caller, 'no variable '//TRIM(mname) )
 
+  ! "Periodic Width" (m): periodic sides, y and y + width the same column; the distance wraps across the seam, so a
+  ! node and its periodic image get the same distance and the same active/passive state (without it they could
+  ! differ under a wavy grounding line, and the periodic constraint then tied an active node to a passive one)
+  pw = ListGetConstReal( Params, 'Periodic Width', Found )
+  IF ( .NOT. Found ) pw = 0.0_dp
   nlev = ListGetInteger( Params, 'Extruded Mesh Levels', Found )
   IF ( .NOT. Found ) nlev = ListGetInteger( Model % Simulation, 'Extruded Mesh Levels', Found )
   IF ( .NOT. Found .OR. nlev < 2 ) CALL Fatal( Caller, 'Extruded Mesh Levels unknown' )
@@ -147,7 +152,9 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
     END IF
     dmin = HUGE(1.0_dp)
     DO k = 1, ntot
-      d2 = (Mesh % Nodes % x(i) - allx(k))**2 + (Mesh % Nodes % y(i) - ally(k))**2
+      dy = ABS( Mesh % Nodes % y(i) - ally(k) )
+      IF ( pw > 0.0_dp ) dy = MIN( dy, ABS( pw - dy ) )      ! periodic in y: the distance across the seam
+      d2 = (Mesh % Nodes % x(i) - allx(k))**2 + dy**2
       IF ( d2 < dmin ) dmin = d2
     END DO
     dVal(q) = SQRT( dmin )
