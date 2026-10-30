@@ -913,12 +913,12 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
   DO i = 1, nn
     IF ( nodal(i,7) > 0.0_dp ) nodal(i,1:6) = nodal(i,1:6) / nodal(i,7)
   END DO
-  ! the strain rate for the interface stress, relaxed in time ("FS SSA Stress Relaxation" w, default 0.25:
-  ! e = e_previous + w (e_SSA - e_previous) where the node had one): the coupling is explicit (the SSA's inflow is the
-  ! last Stokes velocity, Stokes' interface stress the SSA's strain rate) and, unrelaxed, oscillated and grew with
-  ! periodic sides (the interface's lateral motion is free there)
+  ! the strain rate for the interface stress, optionally relaxed in time ("FS SSA Stress Relaxation" w, default 1:
+  ! none; e = e_previous + w (e_SSA - e_previous) where the node had one). The coupling is explicit (the SSA's inflow
+  ! is the last Stokes velocity, Stokes' interface stress the SSA's strain rate); it was stable unrelaxed once the
+  ! periodic seam's forces went to the master nodes (the blow-up with periodic sides was that, not the coupling)
   relax = ListGetConstReal( Params, 'FS SSA Stress Relaxation', Found )
-  IF ( .NOT. Found ) relax = 0.25_dp
+  IF ( .NOT. Found ) relax = 1.0_dp
   IF ( ASSOCIATED( eVar ) ) THEN
     DO i = 1, MIN( nn, SIZE(eVar % Perm) )
       q = eVar % Perm(i)
