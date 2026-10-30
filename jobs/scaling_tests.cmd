@@ -359,6 +359,9 @@ for t in $(echo $SET | fold -w1); do
     # Elmer times the Stokes solver in every time step (assembly + linear solves) and each linear solve, so the
     # summary can give the cost per step without Elmer's start-up (needs output level 4)
     printf '%s\n' "  Linear System Timing = Logical True" "  Solver Timing = Logical True" >> $V/$t.sif.in
+    # RECOMPUTE=n: the ILU factors rebuilt only every n-th linear solve (Elmer's Linear System Precondition
+    # Recompute), reused in between: the factorisation is ~6 s of a ~10 s land step
+    [ -n "$RECOMPUTE" ] && echo "  Linear System Precondition Recompute = Integer $RECOMPUTE" >> $V/$t.sif.in
     echo "! ESS scaling $t ${SLURM_JOB_ID:-local}" >> $V/$t.sif.in
 done
 
