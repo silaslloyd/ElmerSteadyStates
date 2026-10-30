@@ -214,6 +214,9 @@ fi
 # FS_SSA_SHELF=frozen (default) | ssa: the passive shelf by the shallow-shelf approximation every step ([elmer]
 # fs_ssa_shelf: floated, moved with the SSA velocity, the interface stress from its strain rate)
 [ -n "$FS_SSA_SHELF" ] && export ESS_FS_SSA_SHELF=$FS_SSA_SHELF && echo "  passive shelf: $FS_SSA_SHELF"
+# REBUILD=elements:grounding: per-rank thresholds of the ILU rebuild after the active set / grounded mask changed
+# (FSSSALinsolve; default 1:1, any change)
+[ -n "$REBUILD" ] && export ESS_FS_SSA_REBUILD=$REBUILD && echo "  ILU rebuild thresholds per rank (elements:grounding changes): $REBUILD"
 # TAG=name: the whole-shelf runs write <work>/scaling_<ranks><TAG>_<letter>.npz (keeps runs apart, e.g. TAG=_fsssa10)
 # TOL: the GCR runs' convergence tolerance (default 1e-8)
 [ -n "$TOL" ] && echo "GCR tolerance $TOL"

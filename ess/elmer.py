@@ -792,13 +792,28 @@ End
             sec += (f'\n  Before Linsolve = File "{lib}" "FSSSALinsolve"   ! [elmer] fs_ssa_km: the shelf force on the interface'
                     f"\n  FS SSA Distance = Real {self.fs_ssa_x!r}"
                     + ("\n  FS SSA Rotate Guess = Logical True" if rot else ""))
+            # ESS_FS_SSA_REBUILD="elements:grounding" (TESTING): the per-rank thresholds of the ILU rebuild after the
+            # active set or the grounded mask changed (default 1:1, any change)
+            rb = os.environ.get("ESS_FS_SSA_REBUILD")
+            if rb:
+                el, _, gm = rb.partition(":")
+                sec += (f"\n  FS SSA Rebuild Min Elements = Integer {int(el)}"
+                        f"\n  FS SSA Rebuild Min Grounding Changes = Integer {int(gm or el)}")
             if ssa:
                 if re.search(r"\n *After Linsolve *=", sec):
                     raise ValueError("fs_ssa_shelf = ssa: the Stokes solver already has an After Linsolve procedure")
                 sec += ("\n  FS SSA Shelf Stress = Logical True   ! the interface stress from the SSA shelf's strain rate"
                         "\n  FS SSA Viscosity = Real #viscosity"
                         f'\n  After Linsolve = File "{lib}" "FSSSAAfterLinsolve"   ! the passive shelf\'s plug flow back')
-            return text[:i0] + sec + text[i1:]
+            text = text[:i0] + sec + text[i1:]
+            if ssa and self.periodic_sides:      # the SSA velocity periodic like Zb (on the same base faces)
+                k = text.index('Name = "side2 ice"')
+                j = text.index("\nEnd", k)
+                if "Periodic BC = " not in text[k:j]:
+                    raise ValueError("fs_ssa_shelf with periodic_sides: side2 ice is not periodic")
+                text = (text[:j] + "\n  Periodic BC SSA Velocity 1 = Logical True"
+                        "\n  Periodic BC SSA Velocity 2 = Logical True" + text[j:])
+            return text
         if target != "elmer":
             raise ValueError(f"ESS_FS_SSA_TARGET must be loads, elmer or 0, not {target!r}")
         nb = max(int(m) for m in re.findall(r"^Boundary Condition (\d+)\s*$", text, re.M))

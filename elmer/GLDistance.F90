@@ -210,7 +210,9 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   LOGICAL, SAVE :: Reported = .FALSE.
   LOGICAL, ALLOCATABLE, SAVE :: prevP(:)       ! passive state of each active element at the previous solve
   INTEGER, SAVE :: ncall = 0
-  REAL(KIND=dp) :: npas, nchg, nchgLoc, ngm
+  REAL(KIND=dp) :: npas, nchg, nchgLoc, ngm, nreb
+  INTEGER :: thrEl, thrGm
+  LOGICAL :: rebuild
   TYPE(Variable_t), POINTER :: gmVar
   INTEGER, ALLOCATABLE, SAVE :: prevGM(:)      ! grounded (1) / floating (-1) at the previous solve
   LOGICAL, SAVE :: gmFirst = .TRUE.
@@ -311,15 +313,24 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
     END DO
     gmFirst = .FALSE.
   END IF
-  nchgLoc = nchgLoc + ngm
+  ! rebuild on this rank only above the thresholds ("FS SSA Rebuild Min Elements", "FS SSA Rebuild Min Grounding
+  ! Changes", default 1 each: any change): every rank waits for the slowest, so one rank's rebuild costs all of
+  ! them its time; a few changed columns cost fewer extra iterations than an ILU4 factorisation
+  thrEl = ListGetInteger( Solver % Values, 'FS SSA Rebuild Min Elements', Found )
+  IF ( .NOT. Found ) thrEl = 1
+  thrGm = ListGetInteger( Solver % Values, 'FS SSA Rebuild Min Grounding Changes', Found )
+  IF ( .NOT. Found ) thrGm = 1
+  rebuild = ( nchgLoc > 0.0_dp .AND. nchgLoc >= REAL(thrEl, dp) ) .OR. ( ngm > 0.0_dp .AND. ngm >= REAL(thrGm, dp) )
+  nreb = MERGE( 1.0_dp, 0.0_dp, rebuild )
   IF ( ParEnv % PEs > 1 ) THEN
     npas = ParallelReduction( npas ); nchg = ParallelReduction( nchg ); ngm = ParallelReduction( ngm )
+    nreb = ParallelReduction( nreb )
   END IF
   ! the active set changed on this rank: its ILU factors (kept over "Linear System Precondition Recompute"
   ! solves) were built for the old one, with the then-passive rows fixed; rebuild them for this solve (the
   ! partition-local ILU needs no other rank). Elmer refactorises when the matrix's solve count is a multiple of
   ! the recompute interval: in parallel the counter of the partition's inside matrix, which carries the factors.
-  IF ( nchgLoc > 0.0_dp ) THEN
+  IF ( rebuild ) THEN
     IF ( ASSOCIATED( A % ParMatrix ) ) THEN
       IF ( ASSOCIATED( A % ParMatrix % SplittedMatrix ) ) THEN
         IF ( ASSOCIATED( A % ParMatrix % SplittedMatrix % InsideMatrix ) ) &
@@ -330,9 +341,9 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
     END IF
   END IF
   ncall = ncall + 1
-  WRITE( Message, '(A,I0,A,I0,A,I0,A,I0,A)' ) 'solve ', ncall, ': passive elements ', NINT(npas), &
+  WRITE( Message, '(A,I0,A,I0,A,I0,A,I0,A,I0)' ) 'solve ', ncall, ': passive elements ', NINT(npas), &
       ', changed active/passive since the previous solve ', NINT(nchg), ', grounded/floating ', NINT(ngm), &
-      TRIM( MERGE( ' (ILU factors rebuilt where changed)', '                                    ', nchg + ngm > 0.0_dp ) )
+      '; ILU factors rebuilt on ranks: ', NINT(nreb)
   CALL Info( 'FSSSALinsolve', Message, Level=3 )
   IF ( ParEnv % PEs > 1 ) THEN
     parInfo => Mesh % ParallelInfo
