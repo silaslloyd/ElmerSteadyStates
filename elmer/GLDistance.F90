@@ -18,7 +18,7 @@
 !------------------------------------------------------------------------------
 SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   USE DefUtils
-  USE mpi
+  USE SParIterComm      ! MPI (Elmer's own module, built with MPI; elmerf90 has no MPI module path)
   IMPLICIT NONE
   TYPE(Model_t) :: Model
   TYPE(Solver_t) :: Solver
