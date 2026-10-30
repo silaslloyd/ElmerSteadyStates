@@ -188,7 +188,7 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   INTEGER, ALLOCATABLE :: tagP(:)
   INTEGER :: nn, t, j, k, f, nf, q, c, r, nd, code, nfaces
   INTEGER :: fn(4,6)
-  REAL(KIND=dp) :: Dcut, rhoi, rhow, g, pts(3,4), av(3), cen(3), fc(3), sig, dep, hei, F(3), Fr(3), ftot
+  REAL(KIND=dp) :: Dcut, rhoi, rhow, g, pts(3,4), av(3), cen(3), fc(3), sig, dep, hei, Fxyz(3), Fr(3), ftot
   LOGICAL :: Found, passive, inface
   LOGICAL, SAVE :: Reported = .FALSE.
 !------------------------------------------------------------------------------
@@ -275,16 +275,16 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
         IF ( q <= 0 ) CYCLE
         dep = essNodeVal( depVar, nd ); hei = essNodeVal( heiVar, nd )
         sig = -rhoi * g * dep + 0.5_dp * rhoi * g * (dep + hei) * (1.0_dp - rhoi / rhow)
-        F = sig * av / 4.0_dp
-        Fr = F
+        Fxyz = sig * av / 4.0_dp
+        Fr = Fxyz
         k = 0
         IF ( NT % NormalTangentialNOFNodes > 0 .AND. ASSOCIATED( NT % BoundaryReorder ) ) THEN
           IF ( nd <= SIZE( NT % BoundaryReorder ) ) k = NT % BoundaryReorder(nd)
         END IF
         IF ( k > 0 ) THEN
-          Fr(1) = DOT_PRODUCT( NT % BoundaryNormals(k,:), F )
-          Fr(2) = DOT_PRODUCT( NT % BoundaryTangent1(k,:), F )
-          Fr(3) = DOT_PRODUCT( NT % BoundaryTangent2(k,:), F )
+          Fr(1) = DOT_PRODUCT( NT % BoundaryNormals(k,:), Fxyz )
+          Fr(2) = DOT_PRODUCT( NT % BoundaryTangent1(k,:), Fxyz )
+          Fr(3) = DOT_PRODUCT( NT % BoundaryTangent2(k,:), Fxyz )
         END IF
         DO c = 1, 3
           r = DOFs * (q-1) + c
@@ -293,7 +293,7 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
           END IF
           b(r) = b(r) + Fr(c)
         END DO
-        ftot = ftot + F(1)
+        ftot = ftot + Fxyz(1)
       END DO
     END DO
   END DO
