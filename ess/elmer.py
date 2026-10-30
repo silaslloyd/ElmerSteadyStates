@@ -160,6 +160,13 @@ class ElmerModel(Model):
         # classic FlowSolve that Elmer/Ice has long used) or "ins" (IncompressibleNS, NSVec's non-vectorised
         # predecessor). Same variable (Flow Solution[Velocity:3 Pressure:1]), boundary conditions and loads.
         self.stokes_solver = str(e.get("stokes_solver", "nsvec"))
+        # [elmer] sea_spring_dt (years, marine): the time step in the sea-pressure spring at the shelf base and front
+        # (Buoyancy SeaSpring, rho_w g dt n; Elmer/Ice's "Sea Spring Timestep Size"), fixed instead of the run's dt.
+        # Tiny steps (e.g. 1e-4 yr at a run's start) make that spring ~0 and Stokes nearly singular under floating
+        # ice; a fixed spring keeps them well-posed but damps the free surface more in those steps. Env
+        # ESS_SEA_SPRING_DT overrides (tests). Unset: the run's dt (as before)
+        ssd = os.environ.get("ESS_SEA_SPRING_DT") or e.get("sea_spring_dt")
+        self.sea_spring_dt = None if ssd in (None, "") else float(ssd)
         # EXPERIMENTAL [elmer] shelf_cut_km (marine): Elmer's passive elements (as Elmer/Ice FS-SSA coupling): the ice
         # elements beyond x = shelf_cut_km are passive for Stokes; shelf_cut_target (default true): the face between
         # active and passive elements is a "Passive Target" boundary with a free-floating shelf's stress (see
@@ -517,6 +524,11 @@ End
         text = self._template_text
         for k, v in subs.items():
             text = text.replace(k, v)
+        if self.sea_spring_dt is not None:
+            text, n = re.subn(r"^Constants *\n", "Constants\n  Sea Spring Timestep Size = Real "
+                              f"{self.sea_spring_dt!r}   ! [elmer] sea_spring_dt\n", text, count=1, flags=re.M)
+            if n != 1:
+                raise ValueError("[elmer] sea_spring_dt: no Constants section in the template")
         ramp = os.environ.get("ESS_DT_RAMP")
         if ramp:
             text = self._dt_ramp(text, ramp, int(spec.n_steps))
