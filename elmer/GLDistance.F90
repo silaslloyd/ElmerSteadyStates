@@ -158,7 +158,8 @@ END SUBROUTINE GLDistance
 ! nodes all also belong to passive elements (an element is passive when any of its nodes is more than
 ! "FS SSA Distance" from the grounding line: "GL Distance" > FS SSA Distance, as Passive Element Min Nodes = 1).
 ! The traction is sigma_nn n (n out of the active region), sigma_nn = -rho_i g d + rho_i g H (1 - rho_i/rho_w)/2
-! at depth d (H = d + height): the normal stress of a laterally uniform shelf in free flotation, whose depth
+! at depth d below the surface of the interface column of thickness H (both from the node coordinates): the normal
+! stress of a laterally uniform shelf in free flotation, whose depth
 ! integral balances the sea water on the shelf front (exact for an unbuttressed shelf). Nodal forces: face area/4 per
 ! node (quadrilateral faces of the extruded hexahedra or wedges), rotated to the normal-tangential frame where the
 ! system is, and not on constrained (Dirichlet) rows. Passive-element membership of nodes on partition boundaries is
@@ -182,15 +183,17 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
 
   TYPE(Mesh_t), POINTER :: Mesh
   TYPE(Element_t), POINTER :: El
-  TYPE(Variable_t), POINTER :: dVar, depVar, heiVar
+  TYPE(Variable_t), POINTER :: dVar
   TYPE(ParallelInfo_t), POINTER :: parInfo
   TYPE(NormalTangential_t), POINTER :: NT
   INTEGER, POINTER :: Perm(:)
-  INTEGER, ALLOCATABLE :: tagP(:)
-  INTEGER :: nn, t, j, k, f, nf, q, c, r, nd, code, nfaces
+  INTEGER, ALLOCATABLE :: tagP(:), lst(:)
+  INTEGER :: nn, t, j, k, f, nf, q, c, r, nd, code, nfaces, pass, ni, i, ia, ib
   INTEGER :: fn(4,6)
   REAL(KIND=dp) :: Dcut, rhoi, rhow, g, pts(3,4), av(3), cen(3), fc(3), sig, dep, hei, Fxyz(3), Fr(3), ftot, fsum, dg(8)
   LOGICAL :: Found, passive, inface
+  LOGICAL, ALLOCATABLE :: onIF(:)
+  REAL(KIND=dp), ALLOCATABLE :: zTop(:), zBot(:)
   LOGICAL, SAVE :: Reported = .FALSE.
 !------------------------------------------------------------------------------
   FSSSALinsolve = 0
@@ -205,10 +208,7 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   Dcut = ListGetConstReal( Solver % Values, 'FS SSA Distance', Found )
   IF ( .NOT. Found ) RETURN
   dVar => VariableGet( Mesh % Variables, 'GL Distance' )
-  depVar => VariableGet( Mesh % Variables, 'depth' )
-  heiVar => VariableGet( Mesh % Variables, 'height' )
-  IF ( .NOT. ( ASSOCIATED(dVar) .AND. ASSOCIATED(depVar) .AND. ASSOCIATED(heiVar) ) ) &
-      CALL Fatal( 'FSSSALinsolve', 'needs the variables GL Distance, depth and height' )
+  IF ( .NOT. ASSOCIATED(dVar) ) CALL Fatal( 'FSSSALinsolve', 'needs the variable GL Distance' )
   rhoi = ListGetConstReal( Model % Constants, 'Ice Density' )
   rhow = ListGetConstReal( Model % Constants, 'Water Density' )
   g = ListGetConstReal( Model % Constants, 'Gravity Norm' )
@@ -230,8 +230,13 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
     CALL CommunicateParallelSystemTag( parInfo, Itag=tagP, ParOper=2 )
   END IF
 
+  ! pass 1: the interface nodes; then the top and base of each interface column (from the node coordinates: the
+  ! "height" variable is ambiguous in the template, the Zs solver exports one too); pass 2: the loads
+  ALLOCATE( onIF(nn), zTop(nn), zBot(nn) )
+  onIF = .FALSE.; zTop = 0.0_dp; zBot = 0.0_dp
+  DO pass = 1, 2
   nfaces = 0; ftot = 0.0_dp
-  ! diagnostics: sum of face x-areas, area-weighted H, depth-integral check, min/max H, x range of face centres
+  ! diagnostics: sum of face x-areas, area-weighted H, expected force, min/max H, x range of face centres
   dg = 0.0_dp; dg(4) = HUGE(1.0_dp); dg(5) = -HUGE(1.0_dp); dg(6) = HUGE(1.0_dp); dg(7) = -HUGE(1.0_dp)
   DO t = 1, Solver % NumberOfActiveElements
     El => Mesh % Elements( Solver % ActiveElements(t) )
@@ -268,6 +273,10 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
       ! area vector of the quadrilateral: half the cross product of its diagonals
       av = 0.5_dp * essCross( pts(:,3) - pts(:,1), pts(:,4) - pts(:,2) )
       IF ( ABS(av(3)) > 0.5_dp * SQRT( SUM(av**2) ) ) CYCLE        ! a horizontal face (top/base): not the interface
+      IF ( pass == 1 ) THEN
+        onIF( El % NodeIndexes( fn(:,f) ) ) = .TRUE.
+        CYCLE
+      END IF
       fc = SUM( pts, DIM=2 ) / 4.0_dp
       IF ( DOT_PRODUCT( av, fc - cen ) < 0.0_dp ) av = -av          ! out of the active element
       nfaces = nfaces + 1
@@ -278,11 +287,12 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
         IF ( nd > SIZE(Perm) ) CYCLE
         q = Perm(nd)
         IF ( q <= 0 ) CYCLE
-        dep = essNodeVal( depVar, nd ); hei = essNodeVal( heiVar, nd )
-        sig = -rhoi * g * dep + 0.5_dp * rhoi * g * (dep + hei) * (1.0_dp - rhoi / rhow)
-        dg(2) = dg(2) + (dep + hei) * av(1) / 4.0_dp
-        dg(3) = dg(3) - 0.5_dp * rhoi**2 / rhow * g * (dep + hei)**2 * av(1) / 4.0_dp / MAX( dep + hei, 1.0_dp )
-        dg(4) = MIN( dg(4), dep + hei ); dg(5) = MAX( dg(5), dep + hei )
+        hei = zTop(nd) - zBot(nd)                     ! ice thickness of the interface column
+        dep = zTop(nd) - Mesh % Nodes % z(nd)         ! depth below its surface
+        sig = -rhoi * g * dep + 0.5_dp * rhoi * g * hei * (1.0_dp - rhoi / rhow)
+        dg(2) = dg(2) + hei * av(1) / 4.0_dp
+        dg(3) = dg(3) - 0.5_dp * rhoi**2 / rhow * g * hei * av(1) / 4.0_dp
+        dg(4) = MIN( dg(4), hei ); dg(5) = MAX( dg(5), hei )
         dg(8) = dg(8) + 1.0_dp
         Fxyz = sig * av / 4.0_dp
         Fr = Fxyz
@@ -306,16 +316,37 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
       END DO
     END DO
   END DO
+  IF ( pass == 1 ) THEN
+    ! top and base of each interface column: the extreme z of the interface nodes at the same (x,y) (whole columns are
+    ! on one rank: the mesh is extruded after partitioning)
+    ni = COUNT( onIF )
+    ALLOCATE( lst(ni) )
+    ni = 0
+    DO i = 1, nn
+      IF ( onIF(i) ) THEN
+        ni = ni + 1; lst(ni) = i
+      END IF
+    END DO
+    DO ia = 1, ni
+      i = lst(ia)
+      zTop(i) = Mesh % Nodes % z(i); zBot(i) = zTop(i)
+      DO ib = 1, ni
+        k = lst(ib)
+        IF ( ABS( Mesh % Nodes % x(k) - Mesh % Nodes % x(i) ) < 1.0e-3_dp .AND. &
+             ABS( Mesh % Nodes % y(k) - Mesh % Nodes % y(i) ) < 1.0e-3_dp ) THEN
+          zTop(i) = MAX( zTop(i), Mesh % Nodes % z(k) ); zBot(i) = MIN( zBot(i), Mesh % Nodes % z(k) )
+        END IF
+      END DO
+    END DO
+    DEALLOCATE( lst )
+  END IF
+  END DO
   IF ( .NOT. Reported ) THEN
     ! totals over all ranks (the interface usually lies on a few ranks only)
     fsum = REAL( nfaces, dp )
     IF ( ParEnv % PEs > 1 ) THEN
       fsum = ParallelReduction( fsum )
       ftot = ParallelReduction( ftot )
-    END IF
-    WRITE( Message, '(A,I0,A,ES12.4)' ) 'shelf force on ', NINT(fsum), ' interface faces (all ranks), x component ', ftot
-    CALL Info( 'FSSSALinsolve', Message, Level=3 )
-    IF ( ParEnv % PEs > 1 ) THEN
       DO j = 1, 3
         dg(j) = ParallelReduction( dg(j) )
       END DO
@@ -323,13 +354,11 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
       dg(4) = ParallelReduction( dg(4), 1 ); dg(6) = ParallelReduction( dg(6), 1 )
       dg(5) = ParallelReduction( dg(5), 2 ); dg(7) = ParallelReduction( dg(7), 2 )
     END IF
-    WRITE( Message, '(A,ES12.4,A,ES12.4,A,ES12.4,A,ES12.4)' ) 'interface x-area ', dg(1), '  area-weighted H ', &
-        dg(2) / MAX( dg(1), 1.0_dp ), '  H min ', dg(4), '  max ', dg(5)
+    WRITE( Message, '(A,I0,A,ES12.4,A,ES12.4)' ) 'shelf force on ', NINT(fsum), ' interface faces (all ranks), x component ', &
+        ftot, '  (expected -rho_w g D^2/2 integrated: ', dg(3)
     CALL Info( 'FSSSALinsolve', Message, Level=3 )
-    WRITE( Message, '(A,ES12.4,A,ES12.4,A,ES12.4,A,I0)' ) 'interface face centres x ', dg(6), ' to ', dg(7), &
-        '  expected -rho_w g D^2/2 force (from nodal H) ', dg(3), '  node visits ', NINT(dg(8))
-    CALL Info( 'FSSSALinsolve', Message, Level=3 )
-    WRITE( Message, '(A,ES14.6,A,ES14.6,A,ES14.6)' ) 'rho_i ', rhoi, '  rho_w ', rhow, '  g ', g
+    WRITE( Message, '(A,ES12.4,A,ES12.4,A,ES12.4,A,ES12.4,A,ES12.4,A,ES12.4)' ) 'interface x-area ', dg(1), &
+        '  area-weighted H ', dg(2) / MAX( dg(1), 1.0_dp ), '  H min ', dg(4), '  max ', dg(5), '  at x ', dg(6), ' to ', dg(7)
     CALL Info( 'FSSSALinsolve', Message, Level=3 )
     Reported = .TRUE.
   END IF
