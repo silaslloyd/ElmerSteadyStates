@@ -743,6 +743,8 @@ End
         text = (text[:j] + "\n  ! the moving full-Stokes region ([elmer] fs_ssa_km): ice beyond it is passive for Stokes"
                 "\n  Passive Element Min Nodes = Integer 1\n  Flow Solution Passive = Variable GL Distance\n"
                 f'    Real Lua "tx[0] - {self.fs_ssa_x!r}"' + text[j:])
+        if os.environ.get("ESS_FS_SSA_TARGET", "1") == "0":     # TESTING: no interface condition (stress free)
+            return text
         nb = max(int(m) for m in re.findall(r"^Boundary Condition (\d+)\s*$", text, re.M))
         bc = (f"\nBoundary Condition {nb + 1}\n"
               '  Name = "full-Stokes / shelf interface"\n'
