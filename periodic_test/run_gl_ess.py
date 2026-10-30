@@ -542,6 +542,76 @@ def cmd_cutcheck(a):
           f"{d[near].max():.3g} m/a (speed there {ugl:.4g}), whole cut domain {d.max():.3g} m/a")
 
 
+def _columns(path):
+    """per mesh column (x, y rounded to 0.1 m): the nodes' horizontal velocity, the bed node's GroundedMask; and the
+    grounding line per y row (km)"""
+    allf = _state_fields(path)
+    g, X = _field(allf, "coordinate 1")
+    Xd = dict(zip(g.tolist(), X.tolist()))
+    Yd = dict(zip(*_field(allf, "coordinate 2")))
+    u1, u2 = _field(allf, "Velocity 1"), _field(allf, "Velocity 2")
+    if u1 is None or u2 is None:
+        raise SystemExit(f"{path}: no Velocity 1/2 in the diagnostics")
+    U2 = dict(zip(*u2))
+    vel = {}
+    for i, v in zip(u1[0].tolist(), u1[1].tolist()):
+        if i in Xd:
+            vel.setdefault((round(Xd[i], 1), round(Yd[i], 1)), {})[i] = (v, U2.get(i, 0.0))
+    gm = _field(allf, "GroundedMask")
+    mask = {}
+    for i, m in zip(gm[0].tolist(), gm[1].tolist()):
+        if i in Xd:
+            mask[(round(Xd[i], 1), round(Yd[i], 1))] = m
+    rows = {}
+    for (x, y), m in mask.items():
+        rows.setdefault(y, ([], []))
+        rows[y][0].append(x); rows[y][1].append(m)
+    gl = {y: gl_upstream(np.array(xs), np.array(ms)) / 1e3 for y, (xs, ms) in rows.items()}
+    return vel, mask, gl
+
+
+def cmd_wavycheck(a):
+    """two runs on the SAME mesh (e.g. the whole shelf and the moving full-Stokes region): the grounding line per y
+    row, and the horizontal velocity difference (every node of a column, max) on the grounded ice, within 5 km of
+    the local grounding line, and on the floating ice within the full-Stokes region (--d km beyond the grounding line)"""
+    vr, mr, glr = _columns(a.ref)
+    vt, mt, glt = _columns(a.test)
+    ys = sorted(set(glr) & set(glt))
+    gr = np.array([glr[y] for y in ys]); gt = np.array([glt[y] for y in ys])
+    if a.rows:
+        print("      y (km)   GL ref   GL test  (km)")
+        for y, p, q in zip(ys, gr, gt):
+            print(f"      {y/1e3:6.1f} {p:9.3f} {q:9.3f}")
+    print(f"      grounding line (ref): {np.nanmin(gr):.2f} .. {np.nanmax(gr):.2f} km across y "
+          f"(waviness {np.nanmax(gr) - np.nanmin(gr):.2f} km); |GL test - GL ref| max {np.nanmax(np.abs(gt - gr)):.3f} km, "
+          f"mean {np.nanmean(np.abs(gt - gr)):.3f} km")
+    glrow = dict(zip(ys, gr))
+    yk = np.array(ys)
+    dmax = {"grounded": 0.0, "near": 0.0, "float": 0.0}
+    umax = 0.0
+    for key, nodes in vr.items():
+        if key not in vt:
+            continue
+        x, y = key
+        j = int(np.argmin(np.abs(yk - y)))
+        dist = x / 1e3 - glrow[ys[j]]                     # km downstream of the row's grounding line
+        du = 0.0
+        for i, (u, v) in nodes.items():
+            if i in vt[key]:
+                p, q = vt[key][i]
+                du = max(du, float(np.hypot(p - u, q - v)))
+                umax = max(umax, float(np.hypot(u, v)))
+        if mr.get(key, -1.0) > -0.5 and dist <= 0.0:
+            dmax["grounded"] = max(dmax["grounded"], du)
+        if abs(dist) <= 5.0:
+            dmax["near"] = max(dmax["near"], du)
+        if 0.0 < dist <= a.d:
+            dmax["float"] = max(dmax["float"], du)
+    print(f"      horizontal velocity, max |du| (any depth): grounded ice {dmax['grounded']:.3g} m/a, within 5 km of the "
+          f"local grounding line {dmax['near']:.3g} m/a, floating ice up to {a.d:g} km beyond it {dmax['float']:.3g} m/a "
+          f"(max speed {umax:.4g} m/a)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -598,6 +668,12 @@ def main():
     s.add_argument("gl_km", type=float)
     s.add_argument("--profile", action="store_true", help="also print both surface-speed profiles near the grounding line")
     s.set_defaults(fn=cmd_cutcheck)
+    s = sub.add_parser("wavycheck", help="two runs on the same mesh: grounding line per row, velocity differences")
+    s.add_argument("ref")
+    s.add_argument("test")
+    s.add_argument("--d", type=float, default=10.0, help="km: the full-Stokes region beyond the grounding line")
+    s.add_argument("--rows", action="store_true", help="print the grounding line of every y row")
+    s.set_defaults(fn=cmd_wavycheck)
     s = sub.add_parser("compare")
     s.add_argument("a", nargs="?", default="fix_loads")
     s.add_argument("b", nargs="?", default="fix_flux")
