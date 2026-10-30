@@ -197,7 +197,7 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   LOGICAL, SAVE :: Reported = .FALSE.
   LOGICAL, ALLOCATABLE, SAVE :: prevP(:)       ! passive state of each active element at the previous solve
   INTEGER, SAVE :: ncall = 0
-  REAL(KIND=dp) :: npas, nchg
+  REAL(KIND=dp) :: npas, nchg, nchgLoc
 !------------------------------------------------------------------------------
   FSSSALinsolve = 0
   Mesh => Solver % Mesh
@@ -244,12 +244,28 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
     IF ( ncall > 0 .AND. ( passive .NEQV. prevP(t) ) ) nchg = nchg + 1.0_dp
     prevP(t) = passive
   END DO
+  nchgLoc = nchg
   IF ( ParEnv % PEs > 1 ) THEN
     npas = ParallelReduction( npas ); nchg = ParallelReduction( nchg )
   END IF
+  ! the active set changed on this rank: its ILU factors (kept over "Linear System Precondition Recompute"
+  ! solves) were built for the old one, with the then-passive rows fixed; rebuild them for this solve (the
+  ! partition-local ILU needs no other rank). Elmer refactorises when the matrix's solve count is a multiple of
+  ! the recompute interval: in parallel the counter of the partition's inside matrix, which carries the factors.
+  IF ( nchgLoc > 0.0_dp ) THEN
+    IF ( ASSOCIATED( A % ParMatrix ) ) THEN
+      IF ( ASSOCIATED( A % ParMatrix % SplittedMatrix ) ) THEN
+        IF ( ASSOCIATED( A % ParMatrix % SplittedMatrix % InsideMatrix ) ) &
+            A % ParMatrix % SplittedMatrix % InsideMatrix % SolveCount = 0
+      END IF
+    ELSE
+      A % SolveCount = 0
+    END IF
+  END IF
   ncall = ncall + 1
-  WRITE( Message, '(A,I0,A,I0,A,I0)' ) 'solve ', ncall, ': passive elements ', NINT(npas), &
-      ', changed active/passive since the previous solve ', NINT(nchg)
+  WRITE( Message, '(A,I0,A,I0,A,I0,A)' ) 'solve ', ncall, ': passive elements ', NINT(npas), &
+      ', changed active/passive since the previous solve ', NINT(nchg), &
+      TRIM( MERGE( ' (ILU factors rebuilt where changed)', '                                    ', nchg > 0.0_dp ) )
   CALL Info( 'FSSSALinsolve', Message, Level=3 )
   IF ( ParEnv % PEs > 1 ) THEN
     parInfo => Mesh % ParallelInfo
