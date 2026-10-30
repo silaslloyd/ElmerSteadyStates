@@ -210,7 +210,10 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   LOGICAL, SAVE :: Reported = .FALSE.
   LOGICAL, ALLOCATABLE, SAVE :: prevP(:)       ! passive state of each active element at the previous solve
   INTEGER, SAVE :: ncall = 0
-  REAL(KIND=dp) :: npas, nchg, nchgLoc
+  REAL(KIND=dp) :: npas, nchg, nchgLoc, ngm
+  TYPE(Variable_t), POINTER :: gmVar
+  INTEGER, ALLOCATABLE, SAVE :: prevGM(:)      ! grounded (1) / floating (-1) at the previous solve
+  LOGICAL, SAVE :: gmFirst = .TRUE.
   ! the SSA shelf's stress on the interface (fs_ssa_shelf = "ssa"): its strain rate at the column's base node
   TYPE(Variable_t), POINTER :: eVar, zbVar
   LOGICAL :: ssaStress
@@ -284,8 +287,33 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
     prevP(t) = passive
   END DO
   nchgLoc = nchg
+  ! the grounded mask's changes too (contact grounding line: a node that grounds or floats changes its rows a lot,
+  ! sliding against free flotation): counted like the active-set changes, ILU rebuilt where any happened
+  ngm = 0.0_dp
+  gmVar => VariableGet( Mesh % Variables, 'GroundedMask' )
+  IF ( ASSOCIATED( gmVar ) ) THEN
+    IF ( .NOT. ALLOCATED( prevGM ) ) THEN
+      ALLOCATE( prevGM(nn) )
+      prevGM = 0
+      gmFirst = .TRUE.
+    END IF
+    DO i = 1, MIN( nn, SIZE(prevGM) )
+      k = 0
+      IF ( ASSOCIATED( gmVar % Perm ) ) THEN
+        IF ( i <= SIZE( gmVar % Perm ) ) k = gmVar % Perm(i)
+      ELSE
+        k = i
+      END IF
+      IF ( k <= 0 ) CYCLE
+      j = MERGE( 1, -1, gmVar % Values(k) >= -0.5_dp )
+      IF ( .NOT. gmFirst .AND. j /= prevGM(i) ) ngm = ngm + 1.0_dp
+      prevGM(i) = j
+    END DO
+    gmFirst = .FALSE.
+  END IF
+  nchgLoc = nchgLoc + ngm
   IF ( ParEnv % PEs > 1 ) THEN
-    npas = ParallelReduction( npas ); nchg = ParallelReduction( nchg )
+    npas = ParallelReduction( npas ); nchg = ParallelReduction( nchg ); ngm = ParallelReduction( ngm )
   END IF
   ! the active set changed on this rank: its ILU factors (kept over "Linear System Precondition Recompute"
   ! solves) were built for the old one, with the then-passive rows fixed; rebuild them for this solve (the
@@ -302,9 +330,9 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
     END IF
   END IF
   ncall = ncall + 1
-  WRITE( Message, '(A,I0,A,I0,A,I0,A)' ) 'solve ', ncall, ': passive elements ', NINT(npas), &
-      ', changed active/passive since the previous solve ', NINT(nchg), &
-      TRIM( MERGE( ' (ILU factors rebuilt where changed)', '                                    ', nchg > 0.0_dp ) )
+  WRITE( Message, '(A,I0,A,I0,A,I0,A,I0,A)' ) 'solve ', ncall, ': passive elements ', NINT(npas), &
+      ', changed active/passive since the previous solve ', NINT(nchg), ', grounded/floating ', NINT(ngm), &
+      TRIM( MERGE( ' (ILU factors rebuilt where changed)', '                                    ', nchg + ngm > 0.0_dp ) )
   CALL Info( 'FSSSALinsolve', Message, Level=3 )
   IF ( ParEnv % PEs > 1 ) THEN
     parInfo => Mesh % ParallelInfo
