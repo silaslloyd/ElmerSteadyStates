@@ -195,6 +195,9 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   LOGICAL, ALLOCATABLE :: onIF(:)
   REAL(KIND=dp), ALLOCATABLE :: zTop(:), zBot(:)
   LOGICAL, SAVE :: Reported = .FALSE.
+  LOGICAL, ALLOCATABLE, SAVE :: prevP(:)       ! passive state of each active element at the previous solve
+  INTEGER, SAVE :: ncall = 0
+  REAL(KIND=dp) :: npas, nchg
 !------------------------------------------------------------------------------
   FSSSALinsolve = 0
   Mesh => Solver % Mesh
@@ -225,6 +228,29 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
     END DO
     IF ( passive ) tagP( El % NodeIndexes(1:El % TYPE % NumberOfNodes) ) = 1
   END DO
+  ! diagnostics: elements that changed between active and passive since the previous solve (a moving interface)
+  IF ( .NOT. ALLOCATED( prevP ) ) THEN
+    ALLOCATE( prevP( Solver % NumberOfActiveElements ) )
+    prevP = .FALSE.
+  END IF
+  npas = 0.0_dp; nchg = 0.0_dp
+  DO t = 1, MIN( Solver % NumberOfActiveElements, SIZE(prevP) )
+    El => Mesh % Elements( Solver % ActiveElements(t) )
+    passive = .FALSE.
+    DO j = 1, El % TYPE % NumberOfNodes
+      IF ( essNodeVal( dVar, El % NodeIndexes(j) ) > Dcut ) passive = .TRUE.
+    END DO
+    IF ( passive ) npas = npas + 1.0_dp
+    IF ( ncall > 0 .AND. ( passive .NEQV. prevP(t) ) ) nchg = nchg + 1.0_dp
+    prevP(t) = passive
+  END DO
+  IF ( ParEnv % PEs > 1 ) THEN
+    npas = ParallelReduction( npas ); nchg = ParallelReduction( nchg )
+  END IF
+  ncall = ncall + 1
+  WRITE( Message, '(A,I0,A,I0,A,I0)' ) 'solve ', ncall, ': passive elements ', NINT(npas), &
+      ', changed active/passive since the previous solve ', NINT(nchg)
+  CALL Info( 'FSSSALinsolve', Message, Level=3 )
   IF ( ParEnv % PEs > 1 ) THEN
     parInfo => Mesh % ParallelInfo
     CALL CommunicateParallelSystemTag( parInfo, Itag=tagP, ParOper=2 )
