@@ -194,6 +194,9 @@ fi
 # SPRING_DT=years: the sea-pressure spring's time step fixed ([elmer] sea_spring_dt; default the run's dt, which makes
 # the spring ~0 at tiny steps and Stokes nearly singular under the shelf)
 [ -n "$SPRING_DT" ] && export ESS_SEA_SPRING_DT=$SPRING_DT && echo "sea spring time step fixed at $SPRING_DT yr"
+# SLIDING=subtemperate|temperate: the sliding law for every run ([elmer] sliding; with BED=none the start state's
+# bed temperatures decide where the bed slides)
+[ -n "$SLIDING" ] && export ESS_SLIDING=$SLIDING && echo "sliding: $SLIDING"
 # TOL: the GCR runs' convergence tolerance (default 1e-8)
 [ -n "$TOL" ] && echo "GCR tolerance $TOL"
 # STOKES_ELEMENT=Stabilized|Bubbles|P2/P1: the element for every run (default the config's). Low ILU needs

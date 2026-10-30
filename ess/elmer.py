@@ -246,7 +246,7 @@ class ElmerModel(Model):
         # periodic copy, run by the heat solver first; elmerstreams: halved at y < 1; none: raw), the frozen
         # cold/temperate mask as it is (e.g. all cold: the grounded bed free, no temperature cap)
         # [elmer] sliding: "subtemperate" (TDepSliding, the default) or "temperate" (fcoeff everywhere, as at T0)
-        self.sliding = str(e.get("sliding", "subtemperate"))
+        self.sliding = str(os.environ.get("ESS_SLIDING") or e.get("sliding", "subtemperate"))   # env: tests
         self.periodic_lib = cfg["_path"](e.get("periodic_lib", "elmer/PeriodicGL"))
         if self._libdir:                     # ESS_ELMER_LIBDIR (see ess_lib): all of ESS's own libraries from there
             self.buoyancy_lib = os.path.join(self._libdir, os.path.basename(self.buoyancy_lib))
