@@ -211,6 +211,9 @@ fi
 # FS_SSA_TARGET=loads (default: the shelf force added to the Stokes right-hand side) | elmer (Elmer's Passive Target
 # boundary) | 0 (none: the interface stress free; tests)
 [ -n "$FS_SSA_TARGET" ] && export ESS_FS_SSA_TARGET=$FS_SSA_TARGET && echo "  interface shelf stress: $FS_SSA_TARGET"
+# FS_SSA_SHELF=frozen (default) | ssa: the passive shelf by the shallow-shelf approximation every step ([elmer]
+# fs_ssa_shelf: floated, moved with the SSA velocity, the interface stress from its strain rate)
+[ -n "$FS_SSA_SHELF" ] && export ESS_FS_SSA_SHELF=$FS_SSA_SHELF && echo "  passive shelf: $FS_SSA_SHELF"
 # TAG=name: the whole-shelf runs write <work>/scaling_<ranks><TAG>_<letter>.npz (keeps runs apart, e.g. TAG=_fsssa10)
 # TOL: the GCR runs' convergence tolerance (default 1e-8)
 [ -n "$TOL" ] && echo "GCR tolerance $TOL"

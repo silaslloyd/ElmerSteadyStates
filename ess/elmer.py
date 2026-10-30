@@ -183,6 +183,14 @@ class ElmerModel(Model):
         # velocities (no SSA solve yet), so its geometry evolves with them.
         fs = os.environ.get("ESS_FS_SSA_KM") or e.get("fs_ssa_km")
         self.fs_ssa_x = None if fs in (None, "") else float(fs) * 1e3
+        # [elmer] fs_ssa_shelf (env ESS_FS_SSA_SHELF): "frozen" (default: stage 1 above) or "ssa": the passive shelf
+        # solved by the shallow-shelf approximation every step (GLDistance.F90 FSSSAShelf: inflow from the
+        # depth-averaged Stokes velocity on the interface, natural calving front, linear viscous ice), kept in
+        # flotation and moved with that velocity, and the interface stress taken from the SSA strain rate instead of
+        # the free-floating formula (FSSSALinsolve, "FS SSA Shelf Stress"). Side walls: v = 0 unless periodic_sides.
+        self.fs_ssa_shelf = (os.environ.get("ESS_FS_SSA_SHELF") or e.get("fs_ssa_shelf") or "frozen").lower()
+        if self.fs_ssa_shelf not in ("frozen", "ssa"):
+            raise ValueError(f"[elmer] fs_ssa_shelf must be frozen or ssa, not {self.fs_ssa_shelf!r}")
         # iterative Stokes ([elmer] linear_stokes = "iterative"): tolerance (default iterative_tol) and whether to
         # stop when GCR does not converge (default yes; ElmerStreams' linsys/gcr.sif: 1e-8 and no)
         self.stokes_iterative_tol = e.get("stokes_iterative_tol")
@@ -735,11 +743,31 @@ End
                "  Variable DOFs = 1\n"
                "  No Matrix = Logical True\n"
                "End\n")
+        ssa = self.fs_ssa_shelf == "ssa"
+        if ssa:     # the SSA shelf (fs_ssa_shelf): right after the distance, before every time step, on the ice base
+            sol += (f"\nSolver {n + 1}\n"
+                    '  Exec Solver = "Before Timestep"\n'
+                    '  Equation = "FS SSA shelf"\n'
+                    f'  Procedure = File "{lib}" "FSSSAShelf"\n'
+                    '  Variable = -dofs 2 "SSA Velocity"\n'
+                    '  Exported Variable 1 = -dofs 4 "SSA Strain"\n'
+                    f"  FS SSA Distance = Real {self.fs_ssa_x!r}\n"
+                    "  FS SSA Viscosity = Real #viscosity\n"
+                    f"  FS SSA Walls = Logical {not self.periodic_sides}\n"
+                    "  Linear System Solver = Direct\n"
+                    "  Linear System Direct Method = $directsolver\n"
+                    "  Linear System Abort Not Converged = Logical True\n"
+                    "  Linear System Convergence Tolerance = 1.0e-12\n"
+                    "  Nonlinear System Max Iterations = 1\n"
+                    "  Steady State Convergence Tolerance = 1.0e-5\n"
+                    "End\n")
         k = text.index("!---------------- BOUNDARY CONDITIONS")
         k = text.rindex("\n", 0, k - 1)
         text = (text[:k] + "\n! the horizontal distance to the grounding line, every time step ([elmer] fs_ssa_km)\n"
                 + sol + text[k:])
         text = self._add_active(text, "ice equations", [n])
+        if ssa:
+            text = self._add_active(text, "interface equations", [n + 1])
         # passive beyond the region: the ice, and the boundary elements of its base and surface (bodies of their own:
         # otherwise the sea pressure and spring of the passive shelf's base would still act on the interface nodes,
         # as Elmer/Ice's MISMIP_FS-SSA test also makes its base body passive)
@@ -764,6 +792,12 @@ End
             sec += (f'\n  Before Linsolve = File "{lib}" "FSSSALinsolve"   ! [elmer] fs_ssa_km: the shelf force on the interface'
                     f"\n  FS SSA Distance = Real {self.fs_ssa_x!r}"
                     + ("\n  FS SSA Rotate Guess = Logical True" if rot else ""))
+            if ssa:
+                if re.search(r"\n *After Linsolve *=", sec):
+                    raise ValueError("fs_ssa_shelf = ssa: the Stokes solver already has an After Linsolve procedure")
+                sec += ("\n  FS SSA Shelf Stress = Logical True   ! the interface stress from the SSA shelf's strain rate"
+                        "\n  FS SSA Viscosity = Real #viscosity"
+                        f'\n  After Linsolve = File "{lib}" "FSSSAAfterLinsolve"   ! the passive shelf\'s plug flow back')
             return text[:i0] + sec + text[i1:]
         if target != "elmer":
             raise ValueError(f"ESS_FS_SSA_TARGET must be loads, elmer or 0, not {target!r}")

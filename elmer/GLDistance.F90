@@ -1,4 +1,17 @@
 !------------------------------------------------------------------------------
+! Shared between FSSSAShelf (fills it) and FSSSAAfterLinsolve (applies it): the passive columns' plug flow, as
+! (index in the Flow Solution vector, value) pairs.
+!------------------------------------------------------------------------------
+MODULE FSSSAShared
+  USE Types, ONLY : dp
+  IMPLICIT NONE
+  INTEGER, ALLOCATABLE :: plugIdx(:)
+  REAL(KIND=dp), ALLOCATABLE :: plugVal(:)
+  INTEGER :: nplug = 0
+END MODULE FSSSAShared
+
+
+!------------------------------------------------------------------------------
 ! GLDistance: the horizontal distance of every node to the grounding line, for ESS's moving FS-SSA region
 ! ([elmer] fs_ssa_km). Run before every time step, active on the ice body: its variable ("GL Distance") is 0 in
 ! grounded columns and, in floating columns, the distance in (x, y) to the nearest grounding-line node.
@@ -198,6 +211,11 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   LOGICAL, ALLOCATABLE, SAVE :: prevP(:)       ! passive state of each active element at the previous solve
   INTEGER, SAVE :: ncall = 0
   REAL(KIND=dp) :: npas, nchg, nchgLoc
+  ! the SSA shelf's stress on the interface (fs_ssa_shelf = "ssa"): its strain rate at the column's base node
+  TYPE(Variable_t), POINTER :: eVar, zbVar
+  LOGICAL :: ssaStress
+  INTEGER :: nlev, nbl, Lb, ibase, qe, nssa
+  REAL(KIND=dp) :: mu, exx, eyy, exy, fssa, funi
 !------------------------------------------------------------------------------
   FSSSALinsolve = 0
   Mesh => Solver % Mesh
@@ -215,6 +233,27 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   rhoi = ListGetConstReal( Model % Constants, 'Ice Density' )
   rhow = ListGetConstReal( Model % Constants, 'Water Density' )
   g = ListGetConstReal( Model % Constants, 'Gravity Norm' )
+  ssaStress = ListGetLogical( Solver % Values, 'FS SSA Shelf Stress', Found )
+  Lb = 0; nbl = 1; mu = 0.0_dp
+  IF ( ssaStress ) THEN
+    mu = ListGetConstReal( Solver % Values, 'FS SSA Viscosity', UnFoundFatal=.TRUE. )
+    eVar => VariableGet( Mesh % Variables, 'SSA Strain' )
+    zbVar => VariableGet( Mesh % Variables, 'Zb' )
+    nlev = ListGetInteger( Model % Simulation, 'Extruded Mesh Levels', Found )
+    IF ( .NOT. ( ASSOCIATED(eVar) .AND. ASSOCIATED(zbVar) ) .OR. nlev < 2 ) THEN
+      ssaStress = .FALSE.
+    ELSE
+      nbl = Mesh % NumberOfNodes / nlev
+      DO i = 1, Mesh % NumberOfNodes
+        IF ( i > SIZE( zbVar % Perm ) ) EXIT
+        IF ( zbVar % Perm(i) > 0 ) THEN
+          Lb = (i-1) / nbl + 1
+          EXIT
+        END IF
+      END DO
+    END IF
+  END IF
+  fssa = 0.0_dp; funi = 0.0_dp; nssa = 0
 
   ! nodes of passive elements (Elmer's rule with Passive Element Min Nodes = 1), exchanged between ranks
   nn = Mesh % NumberOfNodes
@@ -337,6 +376,25 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
         dg(4) = MIN( dg(4), hei ); dg(5) = MAX( dg(5), hei )
         dg(8) = dg(8) + 1.0_dp
         Fxyz = sig * av / 4.0_dp
+        funi = funi + Fxyz(1)
+        IF ( ssaStress ) THEN
+          ! the SSA shelf's stress: deviatoric from its strain rate (depth-uniform, sigma_xz = sigma_yz = 0) plus
+          ! the cryostatic -rho_i g d, on the face's area vector
+          ibase = (Lb-1)*nbl + MOD( nd-1, nbl ) + 1
+          qe = 0
+          IF ( Lb > 0 .AND. ibase >= 1 .AND. ibase <= SIZE( eVar % Perm ) ) qe = eVar % Perm(ibase)
+          IF ( qe > 0 ) THEN
+            IF ( eVar % Values( eVar % DOFs*(qe-1)+4 ) > 0.5_dp ) THEN
+              exx = eVar % Values( eVar % DOFs*(qe-1)+1 )
+              eyy = eVar % Values( eVar % DOFs*(qe-1)+2 )
+              exy = eVar % Values( eVar % DOFs*(qe-1)+3 )
+              Fxyz(1) = ( 2.0_dp*mu*( (2.0_dp*exx + eyy)*av(1) + exy*av(2) ) - rhoi*g*dep*av(1) ) / 4.0_dp
+              Fxyz(2) = ( 2.0_dp*mu*( exy*av(1) + (exx + 2.0_dp*eyy)*av(2) ) - rhoi*g*dep*av(2) ) / 4.0_dp
+              Fxyz(3) = -rhoi*g*dep*av(3) / 4.0_dp
+              nssa = nssa + 1
+            END IF
+          END IF
+        END IF
         Fr = Fxyz
         k = 0
         IF ( NT % NormalTangentialNOFNodes > 0 .AND. ASSOCIATED( NT % BoundaryReorder ) ) THEN
@@ -383,6 +441,16 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
     DEALLOCATE( lst )
   END IF
   END DO
+  IF ( ssaStress ) THEN
+    fssa = ftot
+    npas = REAL( nssa, dp )
+    IF ( ParEnv % PEs > 1 ) THEN
+      fssa = ParallelReduction( fssa ); funi = ParallelReduction( funi ); npas = ParallelReduction( npas )
+    END IF
+    WRITE( Message, '(A,ES12.4,A,ES12.4,A,I0,A)' ) 'interface force x: SSA shelf ', fssa, &
+        '  (free-floating shelf formula ', funi, '; ', NINT(npas), ' node contributions from the SSA)'
+    CALL Info( 'FSSSALinsolve', Message, Level=3 )
+  END IF
   IF ( .NOT. Reported ) THEN
     ! totals over all ranks (the interface usually lies on a few ranks only)
     fsum = REAL( nfaces, dp )
@@ -430,4 +498,398 @@ CONTAINS
   END FUNCTION essCross
 !------------------------------------------------------------------------------
 END FUNCTION FSSSALinsolve
+!------------------------------------------------------------------------------
+
+
+!------------------------------------------------------------------------------
+! FSSSAShelf: the shelf beyond ESS's moving full-Stokes region ([elmer] fs_ssa_km with fs_ssa_shelf = "ssa") by the
+! shallow-shelf approximation, every time step before Stokes. Active on the base of the ice (the "interface" body:
+! its boundary elements are the solver's elements), 2 DOFs ("SSA Velocity").
+!
+! The SSA domain: the base faces of the passive ice (a face with a node more than "FS SSA Distance" from the
+! grounding line, as the passive Stokes elements). Its nodes that also belong to a face of the full-Stokes region
+! (the interface) take the depth-averaged full-Stokes velocity of their column (Dirichlet; the last Stokes solution,
+! so lagged by a time step); every other base node outside the domain too (unused). With walls ("FS SSA Walls",
+! free-slip sides) v = 0 on the side nodes. Linear viscous ice (constant viscosity mu, "FS SSA Viscosity", as the
+! templates' Newtonian ice), floating, no friction:
+!     div( mu H [ 2 (2 u_x + v_y), u_y + v_x ; u_y + v_x, 2 (u_x + 2 v_y) ] ) = rho_i g H grad s,
+! with the floating ice's driving stress written as grad P, P = rho_i g (1 - rho_i/rho_w) H^2 / 2, and integrated by
+! parts: the calving front's sea-water condition is then natural (no front term), on any front shape.
+!
+! Before the solve the passive columns are put back in flotation (base -rho_i/rho_w H, surface (1 - rho_i/rho_w) H,
+! thickness kept: nothing else holds them there, Stokes being passive). After it, the passive columns' nodes get
+! the SSA velocity as plug flow in "Flow Solution", which Elmer keeps fixed on passive nodes: the free surfaces
+! advect the passive shelf with it, and ice that becomes active again starts from it. The vertical velocity:
+! w = u . grad(z_b) - (z - z_b) div(u) (incompressible; the thickness then changes as dH/dt = a - div(u H)), the
+! pressure cryostatic plus the SSA's vertical normal stress, p = rho_i g (z_s - z) - 2 mu div(u).
+! "SSA Strain" (exported, 4 DOFs on the base nodes: e_xx, e_yy, e_xy and 1 where defined) is the nodal average of
+! the SSA strain rate over the domain's faces: FSSSALinsolve's interface stress ("FS SSA Shelf Stress").
+!
+! Columns: Elmer's internal extrusion numbers the nodes layer by layer (node i in column mod(i-1, nodes per layer)+1);
+! the ice of a column runs from the layer of the Zb nodes to that of the Zs nodes; whole columns are on one rank.
+! Solver section:
+!   Procedure = File "GLDistance" "FSSSAShelf"     Variable = -dofs 2 "SSA Velocity"
+!   Exported Variable 1 = -dofs 4 "SSA Strain"
+!   FS SSA Distance = Real (m)    FS SSA Viscosity = Real    FS SSA Walls = Logical (default True)
+!   Linear System Solver = Direct ...
+!------------------------------------------------------------------------------
+SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
+  USE DefUtils
+  USE FSSSAShared
+  USE MeshBasics, ONLY : CommunicateParallelSystemTag
+  USE ParallelUtils, ONLY : ParallelReduction, ParallelSumNodalVector
+  IMPLICIT NONE
+  TYPE(Model_t) :: Model
+  TYPE(Solver_t) :: Solver
+  REAL(KIND=dp) :: dt
+  LOGICAL :: Transient
+
+  TYPE(Mesh_t), POINTER :: Mesh
+  TYPE(Element_t), POINTER :: El
+  TYPE(ValueList_t), POINTER :: Params
+  TYPE(Variable_t), POINTER :: dVar, zbVar, zsVar, fVar, gmVar, eVar
+  TYPE(Matrix_t), POINTER :: A
+  TYPE(ParallelInfo_t), POINTER :: parInfo
+  TYPE(Nodes_t), SAVE :: Nodes
+  TYPE(GaussIntegrationPoints_t) :: IP
+  INTEGER, POINTER :: sPerm(:), fPerm(:)
+  INTEGER, POINTER, SAVE :: idPerm(:) => NULL()
+  INTEGER :: nn, nlev, nbl, Lb, Lt, i, j, k, t, n, p, q, lc, L, ib, it, nd, ninner, ndir, nmax, fd
+  INTEGER, ALLOCATABLE :: tagS(:), tagA(:)
+  LOGICAL, ALLOCATABLE :: inner(:), elS(:)
+  REAL(KIND=dp), ALLOCATABLE :: Hc(:), ubar(:), vbar(:), zbc(:), STIFF(:,:), FORCE(:), Basis(:), dBasisdx(:,:)
+  REAL(KIND=dp), ALLOCATABLE :: nodal(:,:), wsum(:)
+  REAL(KIND=dp) :: Dcut, mu, rhoi, rhow, g, r, detJ, Hg, Pg, ymin, ymax, tolw, wq, uq(2), dux(2), duy(2), &
+      dzb(2), ar, zb, zs, H, divu, wb, su, sv, umax, Norm
+  LOGICAL :: Found, walls, stat, ssaEl
+  CHARACTER(*), PARAMETER :: Caller = 'FSSSAShelf'
+!------------------------------------------------------------------------------
+  Mesh => Solver % Mesh
+  Params => GetSolverParams()
+  sPerm => Solver % Variable % Perm
+  nn = Mesh % NumberOfNodes
+  fd = Solver % Variable % DOFs
+  IF ( fd /= 2 ) CALL Fatal( Caller, 'the variable needs 2 DOFs (SSA Velocity 1, 2)' )
+
+  Dcut = ListGetConstReal( Params, 'FS SSA Distance', UnFoundFatal=.TRUE. )
+  mu = ListGetConstReal( Params, 'FS SSA Viscosity', UnFoundFatal=.TRUE. )
+  walls = ListGetLogical( Params, 'FS SSA Walls', Found )
+  IF ( .NOT. Found ) walls = .TRUE.
+  rhoi = ListGetConstReal( Model % Constants, 'Ice Density' )
+  rhow = ListGetConstReal( Model % Constants, 'Water Density' )
+  g = ListGetConstReal( Model % Constants, 'Gravity Norm' )
+  r = rhoi / rhow
+
+  dVar => VariableGet( Mesh % Variables, 'GL Distance' )
+  zbVar => VariableGet( Mesh % Variables, 'Zb' )
+  zsVar => VariableGet( Mesh % Variables, 'Zs' )
+  fVar => VariableGet( Mesh % Variables, 'Flow Solution' )
+  gmVar => VariableGet( Mesh % Variables, 'GroundedMask' )
+  eVar => VariableGet( Mesh % Variables, 'SSA Strain' )
+  IF ( .NOT. ( ASSOCIATED(dVar) .AND. ASSOCIATED(zbVar) .AND. ASSOCIATED(zsVar) .AND. ASSOCIATED(fVar) ) ) &
+      CALL Fatal( Caller, 'needs the variables GL Distance, Zb, Zs and Flow Solution' )
+  fPerm => fVar % Perm
+
+  nlev = ListGetInteger( Model % Simulation, 'Extruded Mesh Levels', Found )
+  IF ( .NOT. Found .OR. nlev < 2 .OR. MOD(nn, MAX(nlev,1)) /= 0 ) CALL Fatal( Caller, 'Extruded Mesh Levels unknown' )
+  nbl = nn / nlev
+  ! the layers of the ice base and surface
+  Lb = 0; Lt = 0
+  DO i = 1, nn
+    IF ( Lb == 0 .AND. essPerm( zbVar, i ) > 0 ) Lb = (i-1) / nbl + 1
+    IF ( Lt == 0 .AND. essPerm( zsVar, i ) > 0 ) Lt = (i-1) / nbl + 1
+    IF ( Lb > 0 .AND. Lt > 0 ) EXIT
+  END DO
+  IF ( Lb == 0 .OR. Lt <= Lb ) CALL Fatal( Caller, 'no ice columns (Zb / Zs layers) on this partition' )
+
+  IF ( .NOT. ASSOCIATED( idPerm ) ) THEN
+    ALLOCATE( idPerm(nn) )
+    DO i = 1, nn
+      idPerm(i) = i
+    END DO
+  END IF
+
+  ! the SSA faces (a node beyond the distance) and the nodes of full-Stokes faces, exchanged between ranks
+  ALLOCATE( tagS(nn), tagA(nn), elS(Solver % NumberOfActiveElements) )
+  tagS = 0; tagA = 0
+  DO t = 1, Solver % NumberOfActiveElements
+    El => Mesh % Elements( Solver % ActiveElements(t) )
+    n = El % TYPE % NumberOfNodes
+    ssaEl = .FALSE.
+    DO j = 1, n
+      IF ( essVal( dVar, El % NodeIndexes(j) ) > Dcut ) ssaEl = .TRUE.
+    END DO
+    elS(t) = ssaEl
+    IF ( ssaEl ) THEN
+      tagS( El % NodeIndexes(1:n) ) = 1
+    ELSE
+      tagA( El % NodeIndexes(1:n) ) = 1
+    END IF
+  END DO
+  IF ( ParEnv % PEs > 1 ) THEN
+    parInfo => Mesh % ParallelInfo
+    CALL CommunicateParallelSystemTag( parInfo, Itag=tagS, ParOper=2 )
+    CALL CommunicateParallelSystemTag( parInfo, Itag=tagA, ParOper=2 )
+  END IF
+
+  ! per column: interior of the SSA domain; thickness (passive columns floated first); depth-averaged Stokes velocity
+  ALLOCATE( inner(nbl), Hc(nbl), ubar(nbl), vbar(nbl), zbc(nbl) )
+  inner = .FALSE.; Hc = 0.0_dp; ubar = 0.0_dp; vbar = 0.0_dp; zbc = 0.0_dp
+  ninner = 0
+  DO lc = 1, nbl
+    ib = (Lb-1)*nbl + lc
+    it = (Lt-1)*nbl + lc
+    IF ( essPerm( zbVar, ib ) <= 0 .OR. essPerm( zsVar, it ) <= 0 ) CYCLE
+    zb = zbVar % Values( essPerm( zbVar, ib ) )
+    zs = zsVar % Values( essPerm( zsVar, it ) )
+    H = zs - zb
+    inner(lc) = ( tagS(ib) > 0 .AND. tagA(ib) == 0 )
+    IF ( inner(lc) .AND. ASSOCIATED( gmVar ) ) THEN
+      IF ( essVal( gmVar, ib ) >= -0.5_dp ) inner(lc) = .FALSE.     ! grounded: never (distance 0)
+    END IF
+    IF ( inner(lc) ) THEN
+      zb = -r * H
+      zbVar % Values( essPerm( zbVar, ib ) ) = zb
+      zsVar % Values( essPerm( zsVar, it ) ) = (1.0_dp - r) * H
+      ninner = ninner + 1
+    END IF
+    Hc(lc) = H
+    zbc(lc) = zb
+    ! depth average of the full-Stokes velocity (layers equally spaced: the trapezoidal rule)
+    su = 0.0_dp; sv = 0.0_dp
+    DO L = Lb, Lt
+      i = (L-1)*nbl + lc
+      q = 0
+      IF ( i <= SIZE(fPerm) ) q = fPerm(i)
+      IF ( q <= 0 ) CYCLE
+      wq = 1.0_dp
+      IF ( L == Lb .OR. L == Lt ) wq = 0.5_dp
+      su = su + wq * fVar % Values( fVar % DOFs*(q-1) + 1 )
+      sv = sv + wq * fVar % Values( fVar % DOFs*(q-1) + 2 )
+    END DO
+    ubar(lc) = su / REAL( Lt - Lb, dp )
+    vbar(lc) = sv / REAL( Lt - Lb, dp )
+  END DO
+
+  ! the sides (walls: v = 0 there)
+  ymin = MINVAL( Mesh % Nodes % y(1:nn) ); ymax = MAXVAL( Mesh % Nodes % y(1:nn) )
+  IF ( ParEnv % PEs > 1 ) THEN
+    ymin = ParallelReduction( ymin, 1 ); ymax = ParallelReduction( ymax, 2 )
+  END IF
+  tolw = 1.0e-6_dp * MAX( ymax - ymin, 1.0_dp )
+
+  ! assembly over the SSA faces (the face projected onto the horizontal plane)
+  nmax = Model % MaxElementNodes
+  ALLOCATE( STIFF(2*nmax,2*nmax), FORCE(2*nmax), Basis(nmax), dBasisdx(nmax,3) )
+  IF ( .NOT. ASSOCIATED( Nodes % x ) ) ALLOCATE( Nodes % x(nmax), Nodes % y(nmax), Nodes % z(nmax) )
+  CALL DefaultInitialize()
+  DO t = 1, Solver % NumberOfActiveElements
+    IF ( .NOT. elS(t) ) CYCLE
+    El => GetActiveElement(t)
+    n = GetElementNOFNodes()
+    Nodes % x(1:n) = Mesh % Nodes % x( El % NodeIndexes(1:n) )
+    Nodes % y(1:n) = Mesh % Nodes % y( El % NodeIndexes(1:n) )
+    Nodes % z(1:n) = 0.0_dp
+    STIFF = 0.0_dp; FORCE = 0.0_dp
+    IP = GaussPoints( El )
+    DO k = 1, IP % n
+      stat = ElementInfo( El, Nodes, IP % U(k), IP % V(k), IP % W(k), detJ, Basis, dBasisdx )
+      Hg = 0.0_dp
+      DO p = 1, n
+        Hg = Hg + Basis(p) * Hc( MOD( El % NodeIndexes(p)-1, nbl ) + 1 )
+      END DO
+      Hg = MAX( Hg, 1.0_dp )
+      Pg = 0.5_dp * rhoi * g * (1.0_dp - r) * Hg**2
+      wq = IP % s(k) * detJ
+      DO p = 1, n
+        DO q = 1, n
+          STIFF(2*p-1,2*q-1) = STIFF(2*p-1,2*q-1) + wq * mu * Hg * &
+              ( 4.0_dp*dBasisdx(p,1)*dBasisdx(q,1) + dBasisdx(p,2)*dBasisdx(q,2) )
+          STIFF(2*p-1,2*q) = STIFF(2*p-1,2*q) + wq * mu * Hg * &
+              ( 2.0_dp*dBasisdx(p,1)*dBasisdx(q,2) + dBasisdx(p,2)*dBasisdx(q,1) )
+          STIFF(2*p,2*q-1) = STIFF(2*p,2*q-1) + wq * mu * Hg * &
+              ( dBasisdx(p,1)*dBasisdx(q,2) + 2.0_dp*dBasisdx(p,2)*dBasisdx(q,1) )
+          STIFF(2*p,2*q) = STIFF(2*p,2*q) + wq * mu * Hg * &
+              ( dBasisdx(p,1)*dBasisdx(q,1) + 4.0_dp*dBasisdx(p,2)*dBasisdx(q,2) )
+        END DO
+        FORCE(2*p-1) = FORCE(2*p-1) + wq * Pg * dBasisdx(p,1)
+        FORCE(2*p) = FORCE(2*p) + wq * Pg * dBasisdx(p,2)
+      END DO
+    END DO
+    CALL DefaultUpdateEquations( STIFF(1:2*n,1:2*n), FORCE(1:2*n) )
+  END DO
+  CALL DefaultFinishBulkAssembly()
+  CALL DefaultFinishAssembly()
+
+  ! Dirichlet: the depth-averaged Stokes velocity outside the SSA interior, v = 0 on the walls
+  A => Solver % Matrix
+  ndir = 0
+  DO i = 1, MIN( nn, SIZE(sPerm) )
+    q = sPerm(i)
+    IF ( q <= 0 ) CYCLE
+    lc = MOD( i-1, nbl ) + 1
+    IF ( .NOT. inner(lc) ) THEN
+      CALL UpdateDirichletDof( A, 2*(q-1)+1, ubar(lc) )
+      CALL UpdateDirichletDof( A, 2*(q-1)+2, vbar(lc) )
+      ndir = ndir + 1
+    ELSE IF ( walls .AND. ( ABS( Mesh % Nodes % y(i) - ymin ) < tolw .OR. ABS( Mesh % Nodes % y(i) - ymax ) < tolw ) ) THEN
+      CALL UpdateDirichletDof( A, 2*(q-1)+2, 0.0_dp )
+    END IF
+  END DO
+  CALL DefaultDirichletBCs()
+  Norm = DefaultSolve()
+
+  ! nodal averages over the SSA faces: the strain rate, div(u) and grad(z_b) (area weighted), summed over ranks
+  ALLOCATE( nodal(nn,7) )
+  nodal = 0.0_dp
+  DO t = 1, Solver % NumberOfActiveElements
+    IF ( .NOT. elS(t) ) CYCLE
+    El => Mesh % Elements( Solver % ActiveElements(t) )
+    n = El % TYPE % NumberOfNodes
+    Nodes % x(1:n) = Mesh % Nodes % x( El % NodeIndexes(1:n) )
+    Nodes % y(1:n) = Mesh % Nodes % y( El % NodeIndexes(1:n) )
+    Nodes % z(1:n) = 0.0_dp
+    IP = GaussPoints( El )
+    ar = 0.0_dp; dux = 0.0_dp; duy = 0.0_dp; dzb = 0.0_dp
+    DO k = 1, IP % n
+      stat = ElementInfo( El, Nodes, IP % U(k), IP % V(k), IP % W(k), detJ, Basis, dBasisdx )
+      wq = IP % s(k) * detJ
+      ar = ar + wq
+      DO p = 1, n
+        nd = El % NodeIndexes(p)
+        q = sPerm(nd)
+        IF ( q <= 0 ) CYCLE
+        uq(1) = Solver % Variable % Values( 2*(q-1)+1 )
+        uq(2) = Solver % Variable % Values( 2*(q-1)+2 )
+        dux = dux + wq * uq * dBasisdx(p,1)        ! (u_x, v_x)
+        duy = duy + wq * uq * dBasisdx(p,2)        ! (u_y, v_y)
+        dzb(1) = dzb(1) + wq * zbc( MOD(nd-1, nbl) + 1 ) * dBasisdx(p,1)
+        dzb(2) = dzb(2) + wq * zbc( MOD(nd-1, nbl) + 1 ) * dBasisdx(p,2)
+      END DO
+    END DO
+    IF ( ar <= 0.0_dp ) CYCLE
+    DO p = 1, n
+      nd = El % NodeIndexes(p)
+      nodal(nd,1) = nodal(nd,1) + dux(1)                       ! e_xx * area
+      nodal(nd,2) = nodal(nd,2) + duy(2)                       ! e_yy * area
+      nodal(nd,3) = nodal(nd,3) + 0.5_dp * ( duy(1) + dux(2) ) ! e_xy * area
+      nodal(nd,4) = nodal(nd,4) + dux(1) + duy(2)              ! div u * area
+      nodal(nd,5) = nodal(nd,5) + dzb(1)
+      nodal(nd,6) = nodal(nd,6) + dzb(2)
+      nodal(nd,7) = nodal(nd,7) + ar
+    END DO
+  END DO
+  IF ( ParEnv % PEs > 1 ) THEN
+    DO k = 1, 7
+      CALL ParallelSumNodalVector( Mesh, nodal(:,k), idPerm, Solver % Matrix )
+    END DO
+  END IF
+  DO i = 1, nn
+    IF ( nodal(i,7) > 0.0_dp ) nodal(i,1:6) = nodal(i,1:6) / nodal(i,7)
+  END DO
+  IF ( ASSOCIATED( eVar ) ) THEN
+    DO i = 1, MIN( nn, SIZE(eVar % Perm) )
+      q = eVar % Perm(i)
+      IF ( q <= 0 ) CYCLE
+      eVar % Values( eVar % DOFs*(q-1)+1 : eVar % DOFs*(q-1)+3 ) = nodal(i,1:3)
+      IF ( eVar % DOFs >= 4 ) eVar % Values( eVar % DOFs*(q-1)+4 ) = MERGE( 1.0_dp, 0.0_dp, nodal(i,7) > 0.0_dp )
+    END DO
+  END IF
+
+  ! the passive columns: plug flow from the SSA solution in Flow Solution (Elmer keeps it on passive nodes, but in
+  ! the normal-tangential frame on the base nodes: FSSSAAfterLinsolve writes it back after every Stokes solve)
+  umax = 0.0_dp
+  IF ( ALLOCATED( plugIdx ) ) DEALLOCATE( plugIdx, plugVal )
+  ALLOCATE( plugIdx( MAX( 1, COUNT(inner) * (Lt-Lb+1) * fVar % DOFs ) ) )
+  ALLOCATE( plugVal( SIZE(plugIdx) ) )
+  nplug = 0
+  DO lc = 1, nbl
+    IF ( .NOT. inner(lc) ) CYCLE
+    ib = (Lb-1)*nbl + lc
+    it = (Lt-1)*nbl + lc
+    q = sPerm(ib)
+    IF ( q <= 0 ) CYCLE
+    uq(1) = Solver % Variable % Values( 2*(q-1)+1 )
+    uq(2) = Solver % Variable % Values( 2*(q-1)+2 )
+    umax = MAX( umax, SQRT( SUM( uq**2 ) ) )
+    divu = nodal(ib,4)
+    wb = uq(1) * nodal(ib,5) + uq(2) * nodal(ib,6)
+    DO L = Lb, Lt
+      i = (L-1)*nbl + lc
+      k = 0
+      IF ( i <= SIZE(fPerm) ) k = fPerm(i)
+      IF ( k <= 0 ) CYCLE
+      j = fVar % DOFs * (k-1)
+      fVar % Values( j+1 ) = uq(1)
+      fVar % Values( j+2 ) = uq(2)
+      fVar % Values( j+3 ) = wb - ( Mesh % Nodes % z(i) - Mesh % Nodes % z(ib) ) * divu
+      IF ( fVar % DOFs >= 4 ) fVar % Values( j+4 ) = rhoi * g * ( Mesh % Nodes % z(it) - Mesh % Nodes % z(i) ) &
+          - 2.0_dp * mu * divu
+      DO p = 1, fVar % DOFs
+        nplug = nplug + 1
+        plugIdx(nplug) = j + p
+        plugVal(nplug) = fVar % Values( j+p )
+      END DO
+    END DO
+  END DO
+  IF ( ParEnv % PEs > 1 ) THEN
+    su = ParallelReduction( REAL( ninner, dp ) )
+    umax = ParallelReduction( umax, 2 )
+  ELSE
+    su = REAL( ninner, dp )
+  END IF
+  WRITE( Message, '(A,I0,A,ES11.4,A)' ) 'shelf columns by SSA (floated, plug flow): ', NINT(su), &
+      ', largest SSA speed ', umax, ' m/a'
+  CALL Info( Caller, Message, Level=3 )
+
+CONTAINS
+
+  FUNCTION essPerm( v, i ) RESULT( p )
+    TYPE(Variable_t), POINTER :: v
+    INTEGER :: i, p
+    p = i
+    IF ( ASSOCIATED( v % Perm ) ) THEN
+      p = 0
+      IF ( i <= SIZE( v % Perm ) ) p = v % Perm(i)
+    END IF
+  END FUNCTION essPerm
+
+  FUNCTION essVal( v, i ) RESULT( val )
+    TYPE(Variable_t), POINTER :: v
+    INTEGER :: i
+    REAL(KIND=dp) :: val
+    INTEGER :: p
+    val = 0.0_dp
+    p = essPerm( v, i )
+    IF ( p <= 0 .OR. p > SIZE( v % Values ) ) RETURN
+    val = v % Values(p)
+  END FUNCTION essVal
+!------------------------------------------------------------------------------
+END SUBROUTINE FSSSAShelf
+!------------------------------------------------------------------------------
+
+
+!------------------------------------------------------------------------------
+! FSSSAAfterLinsolve: "After Linsolve" of the Stokes solver with the SSA shelf (fs_ssa_shelf = "ssa"): the passive
+! columns get back FSSSAShelf's plug flow. Elmer fixes passive-only nodes at their values but, on the base, applies
+! them in the normal-tangential frame and rotates back, which would scramble them; those nodes are decoupled from
+! the active ones, so this changes nothing else. Runs after Elmer's back-rotation (Cartesian x).
+!------------------------------------------------------------------------------
+INTEGER FUNCTION FSSSAAfterLinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
+  USE DefUtils
+  USE FSSSAShared
+  IMPLICIT NONE
+  TYPE(Model_t) :: Model
+  TYPE(Solver_t) :: Solver
+  TYPE(Matrix_t), POINTER :: A
+  INTEGER :: n, DOFs
+  REAL(KIND=dp) :: b(n), x(n), Norm
+  INTEGER :: k
+!------------------------------------------------------------------------------
+  FSSSAAfterLinsolve = 0
+  DO k = 1, nplug
+    IF ( plugIdx(k) >= 1 .AND. plugIdx(k) <= n ) x( plugIdx(k) ) = plugVal(k)
+  END DO
+!------------------------------------------------------------------------------
+END FUNCTION FSSSAAfterLinsolve
 !------------------------------------------------------------------------------
