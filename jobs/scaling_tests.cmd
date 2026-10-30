@@ -177,7 +177,7 @@ if [ "$CHECKED" = 1 ]; then
     echo "CHECKED: ESS libraries from elmer/checked (bounds checks), glibc heap checks on"
 fi
 SLOTS=${SLOTS:-$(( ${SLURM_NTASKS:-128} / RANKS ))}; [ $SLOTS -ge 1 ] || SLOTS=1   # runs at a time (SLOTS=1: one by one)
-opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --bed ${BED:-cold} --gl frozen --linear-stokes block"   # BED=temperate: sliding everywhere
+opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --bed ${BED:-cold} --gl frozen --linear-stokes block --output-level 4"   # BED=temperate: sliding everywhere
 # STOKES_ELEMENT=Stabilized|Bubbles|P2/P1: the element for every run (default the config's). Low ILU needs
 # Stabilized? (the flowline tests, where ILU0/ILU1 converged, were Stabilized; the 50 km config is Bubbles, where
 # they did not reduce the residual at all)
@@ -335,6 +335,9 @@ for t in $(echo $SET | fold -w1); do
                "  block 11: BoomerAMG Interpolation Type = Integer 6" "  block 11: BoomerAMG Strong Threshold = Real 0.5" >> $V/U.sif.in;;
         *) echo "unknown run $t"; exit 1;;
     esac
+    # Elmer times the Stokes solver in every time step (assembly + linear solves) and each linear solve, so the
+    # summary can give the cost per step without Elmer's start-up (needs output level 4)
+    printf '%s\n' "  Linear System Timing = Logical True" "  Solver Timing = Logical True" >> $V/$t.sif.in
     echo "! ESS scaling $t ${SLURM_JOB_ID:-local}" >> $V/$t.sif.in
 done
 
@@ -344,7 +347,7 @@ export ESS_KEEP_RUNS=1 ESS_NO_CACHE=1     # every run really runs, and its Elmer
 # their mesh differs)
 WARMOPT=""
 if [ "$WARM" = 1 ]; then
-    mkGCR $V/R0.sif.in 8; echo "! ESS scaling R0 ${SLURM_JOB_ID:-local}" >> $V/R0.sif.in
+    mkGCR $V/R0.sif.in 8; printf '%s\n' "  Linear System Timing = Logical True" "  Solver Timing = Logical True" "! ESS scaling R0 ${SLURM_JOB_ID:-local}" >> $V/R0.sif.in
     echo "$(date +%T) start R0 (cold, the warm start for the others)"
     python3 -u -m ess run $GL_CONFIG --state $RSTART $opts --add-diag Pressure --out $WORK/scaling_${RANKS}_R0.npz \
         --stokes-block-file $PWD/$V/R0.sif.in > ${L}_R0.log 2>&1 || { echo "R0 failed: ${L}_R0.log"; exit 1; }
@@ -420,7 +423,14 @@ for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
                                   {prev=$2; res=$3} END {n++; printf "      solve %d: %4d iterations, residual %s\n", n, prev, res}'
             hc=$(grep -c "did not converge" $el || true); [ "$hc" -gt 0 ] && echo "      Hypre 'did not converge' messages: $hc"
             grep "SolveHypre: Required iterations" $el | head -4 | sed 's/^/      /'
-            grep "ColumnCoarse:" $el | head -5 | sed 's/^/      /'
+            # Stokes cost per time step (Elmer's own timers, start-up excluded): the whole solver (assembly, nonlinear
+            # iterations, linear solves) and the linear solves alone, wall-clock seconds
+            st=$(grep "Solver time (CPU,REAL)" $el | awk '{print $NF == "(s)" ? $(NF-1) : $NF}' | tr '\n' ' ')
+            ls=$(grep "Linear system time (CPU,REAL)" $el | awk '{print $(NF-1)}' | tr '\n' ' ')
+            [ -n "$st" ] && echo "      Stokes solver per step (s): $st"
+            [ -n "$ls" ] && echo "      linear solves (s):           $ls"
+            [ -n "$st" ] && echo "$st" | awk '{if (NF > 1) {s = 0; for (i = 2; i <= NF; i++) s += $i; printf "      mean Stokes time of steps 2-%d (warm): %.1f s\n", NF, s/(NF-1)}}'
+            grep "ColumnCoarse:" $el | grep -v "apply [0-9]" | head -3 | sed 's/^/      /'
         fi
         case $t in C|D|E) [ -f $WORK/scaling_${RANKS}_R.npz ] && \
             python3 periodic_test/run_gl_ess.py cutcheck $WORK/scaling_${RANKS}_R.npz $CW/scaling_${RANKS}_$t.npz $CUT $GL | tail -1;; esac
