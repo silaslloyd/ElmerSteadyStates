@@ -563,7 +563,9 @@ End
             text = self._surface_dirichlet(text)
         if self.marine and self.sea_level_param:
             text = self._sea_level_param(text)
-        if self.marine and self.gl_mode == "contact" and self.contact_stokes_iters > 1:
+        # (ESS_STOKES_NL_ITERS, set above, takes precedence: ElmerStreams' max n with a 1e-5 tolerance)
+        if (self.marine and self.gl_mode == "contact" and self.contact_stokes_iters > 1
+                and not os.environ.get("ESS_STOKES_NL_ITERS")):
             text = self._stokes_iterations(text, self.contact_stokes_iters)
         if self.shelf_cut_x is not None:
             text = self._shelf_cut(text)
