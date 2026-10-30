@@ -48,20 +48,26 @@ echo "start $START, grounding line $GL km, passive beyond $CUT km"
 
 # Elmer's own FS-SSA test, serial and on 4 ranks
 D=$WORK/passive_mismip_${SLURM_JOB_ID:-local}
-rm -rf $D; mkdir -p $D/m1 $D/m4
-cp -r diag/mismip_fs_ssa/{coupled.sif,mesh2d,uppersurface.dat,ELMERSOLVER_STARTINFO} $D/m1/
-cp -r diag/mismip_fs_ssa/{coupled.sif,mesh2d,uppersurface.dat,ELMERSOLVER_STARTINFO} $D/m4/
-sed -i 's/umfpack/mumps/I' $D/m4/coupled.sif
-( cd $D/m4 && ElmerGrid 2 2 mesh2d -metiskway 4 > partition.log 2>&1 )
+rm -rf $D; mkdir -p $D/m1 $D/m4 $D/m5
+for m in m1 m4 m5; do cp -r diag/mismip_fs_ssa/{coupled.sif,mesh2d,uppersurface.dat,ELMERSOLVER_STARTINFO} $D/$m/; done
+sed -i 's/umfpack/mumps/I' $D/m4/coupled.sif $D/m5/coupled.sif
+# M4: 4 strips along x, whole columns per rank (as ESS's extruded meshes; Elmer/Ice's column solvers -
+# StructuredProjectToPlane, StructuredMeshMapper - need that); M5: METIS, which cuts through columns
+( cd $D/m4 && ElmerGrid 2 2 mesh2d -partition 4 1 1 > partition.log 2>&1 )
+( cd $D/m5 && ElmerGrid 2 2 mesh2d -metiskway 4 > partition.log 2>&1 )
 ( cd $D/m1 && timeout 3000 ElmerSolver coupled.sif > run.log 2>&1; echo "exit $?" >> run.log ) &
 ( cd $D/m4 && timeout 3000 mpirun -np 4 --bind-to none ElmerSolver coupled.sif > run.log 2>&1; echo "exit $?" >> run.log ) &
+( cd $D/m5 && timeout 3000 mpirun -np 4 --bind-to none ElmerSolver coupled.sif > run.log 2>&1; echo "exit $?" >> run.log ) &
 
 if [ "$ONLY_ELMER" = 1 ]; then          # only Elmer/Ice's own FS-SSA test
     wait || true
-    for t in M1 M4; do
+    for t in M1 M4 M5; do
         d=$D/$(echo $t | tr M m)
-        echo "$t (Elmer/Ice MISMIP_FS-SSA, $([ $t = M1 ] && echo '1 rank, UMFPACK' || echo '4 ranks, MUMPS')): $(tail -1 $d/run.log)"
-        grep -i -m8 "passive\|reference norm\|passed\|failed\|error\|signal\|nan" $d/run.log | sed 's/^/      /'
+        case $t in M1) w="1 rank, UMFPACK";; M4) w="4 ranks in strips along x (whole columns), MUMPS";;
+                   M5) w="4 ranks by METIS (columns cut), MUMPS";; esac
+        echo "$t (Elmer/Ice MISMIP_FS-SSA, $w): $(tail -1 $d/run.log)"
+        grep -i "ComputeChange" $d/run.log | grep -i "navier-stokes" | head -4 | sed 's/^/      /'
+        grep -i -m3 "error\|signal\|nan" $d/run.log | sed 's/^/      /'
     done
     exit 0
 fi
