@@ -599,7 +599,7 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
   REAL(KIND=dp), ALLOCATABLE :: Hc(:), ubar(:), vbar(:), zbc(:), STIFF(:,:), FORCE(:), Basis(:), dBasisdx(:,:)
   REAL(KIND=dp), ALLOCATABLE :: nodal(:,:), wsum(:)
   REAL(KIND=dp) :: Dcut, mu, rhoi, rhow, g, r, detJ, Hg, Pg, ymin, ymax, tolw, wq, uq(2), dux(2), duy(2), &
-      dzb(2), ar, zb, zs, H, divu, wb, su, sv, umax, Norm
+      dzb(2), ar, zb, zs, H, divu, wb, su, sv, umax, Norm, relax
   LOGICAL :: Found, walls, stat, ssaEl
   CHARACTER(*), PARAMETER :: Caller = 'FSSSAShelf'
 !------------------------------------------------------------------------------
@@ -826,12 +826,23 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
   DO i = 1, nn
     IF ( nodal(i,7) > 0.0_dp ) nodal(i,1:6) = nodal(i,1:6) / nodal(i,7)
   END DO
+  ! the strain rate for the interface stress, relaxed in time ("FS SSA Stress Relaxation" w, default 0.25:
+  ! e = e_previous + w (e_SSA - e_previous) where the node had one): the coupling is explicit (the SSA's inflow is the
+  ! last Stokes velocity, Stokes' interface stress the SSA's strain rate) and, unrelaxed, oscillated and grew with
+  ! periodic sides (the interface's lateral motion is free there)
+  relax = ListGetConstReal( Params, 'FS SSA Stress Relaxation', Found )
+  IF ( .NOT. Found ) relax = 0.25_dp
   IF ( ASSOCIATED( eVar ) ) THEN
     DO i = 1, MIN( nn, SIZE(eVar % Perm) )
       q = eVar % Perm(i)
       IF ( q <= 0 ) CYCLE
-      eVar % Values( eVar % DOFs*(q-1)+1 : eVar % DOFs*(q-1)+3 ) = nodal(i,1:3)
-      IF ( eVar % DOFs >= 4 ) eVar % Values( eVar % DOFs*(q-1)+4 ) = MERGE( 1.0_dp, 0.0_dp, nodal(i,7) > 0.0_dp )
+      j = eVar % DOFs*(q-1)
+      IF ( eVar % DOFs >= 4 .AND. eVar % Values(j+4) > 0.5_dp .AND. nodal(i,7) > 0.0_dp ) THEN
+        eVar % Values(j+1:j+3) = eVar % Values(j+1:j+3) + relax * ( nodal(i,1:3) - eVar % Values(j+1:j+3) )
+      ELSE
+        eVar % Values(j+1:j+3) = nodal(i,1:3)
+      END IF
+      IF ( eVar % DOFs >= 4 ) eVar % Values(j+4) = MERGE( 1.0_dp, 0.0_dp, nodal(i,7) > 0.0_dp )
     END DO
   END IF
 

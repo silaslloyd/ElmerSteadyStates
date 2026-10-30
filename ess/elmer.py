@@ -760,6 +760,7 @@ End
                     f"  FS SSA Distance = Real {self.fs_ssa_x!r}\n"
                     "  FS SSA Viscosity = Real #viscosity\n"
                     f"  FS SSA Walls = Logical {walls}\n"
+                    f"  FS SSA Stress Relaxation = Real {float(os.environ.get('ESS_FS_SSA_RELAX', '0.25'))!r}\n"
                     "  Linear System Solver = Direct\n"
                     "  Linear System Direct Method = $directsolver\n"
                     "  Linear System Abort Not Converged = Logical True\n"
