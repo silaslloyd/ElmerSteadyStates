@@ -49,7 +49,7 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   REAL(KIND=dp), ALLOCATABLE :: colgm(:), glx(:), gly(:), allx(:), ally(:)
   LOGICAL, ALLOCATABLE :: isgl(:)
   LOGICAL :: Found, hasg, hasf
-  REAL(KIND=dp) :: d2, dmin, m, dmax, dy, pw
+  REAL(KIND=dp) :: d2, dmin, m, dmax, dy, pw, strip
   CHARACTER(:), ALLOCATABLE :: mname
   CHARACTER(*), PARAMETER :: Caller = 'GLDistance'
 !------------------------------------------------------------------------------
@@ -69,6 +69,8 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   ! differ under a wavy grounding line, and the periodic constraint then tied an active node to a passive one)
   pw = ListGetConstReal( Params, 'Periodic Width', Found )
   IF ( .NOT. Found ) pw = 0.0_dp
+  strip = ListGetConstReal( Params, 'Periodic Seam Strip', Found )
+  IF ( .NOT. Found ) strip = 0.0_dp
   nlev = ListGetInteger( Params, 'Extruded Mesh Levels', Found )
   IF ( .NOT. Found ) nlev = ListGetInteger( Model % Simulation, 'Extruded Mesh Levels', Found )
   IF ( .NOT. Found .OR. nlev < 2 ) CALL Fatal( Caller, 'Extruded Mesh Levels unknown' )
@@ -158,6 +160,13 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
       IF ( d2 < dmin ) dmin = d2
     END DO
     dVal(q) = SQRT( dmin )
+    ! the seam strip: 0 (always full Stokes) within "Periodic Seam Strip" of the periodic seam. Elmer decides whether a
+    ! node is passive-only from its own side's elements, so a seam node and its periodic image could differ (one
+    ! fixed at its old value, the other solved) and the periodic constraint did not hold there: one row of elements
+    ! on each side of the seam active makes every seam node active on both sides
+    IF ( pw > 0.0_dp .AND. strip > 0.0_dp ) THEN
+      IF ( MIN( Mesh % Nodes % y(i), pw - Mesh % Nodes % y(i) ) <= strip ) dVal(q) = 0.0_dp
+    END IF
     dmax = MAX( dmax, dVal(q) )
   END DO
   IF ( ParEnv % PEs > 1 ) THEN

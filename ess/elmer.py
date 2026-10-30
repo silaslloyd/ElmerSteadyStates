@@ -234,6 +234,7 @@ class ElmerModel(Model):
         # (else parameters.lua Wmesh). The mesh needs ElmerGrid -periodic 0 1 0 (`ess setup` adds it).
         self.periodic_sides = bool(c.get("periodic_sides", False))
         self.width = float(c.get("width", P.get("Wmesh", 1000.0)))
+        self.y_elements = int(c.get("y_elements", 1))
         # [case] slide_ybump: the sliding coefficient times 1 + slide_ybump sin(2 pi y / width) (periodic), so the
         # grounding line is not straight across the flow (tests of the periodic sides); 0: off
         self.slide_ybump = float(c.get("slide_ybump", 0.0))
@@ -743,6 +744,8 @@ End
                "  Variable DOFs = 1\n"
                "  No Matrix = Logical True\n"
                + (f"  Periodic Width = Real {self.width!r}   ! periodic sides: the distance wraps across the seam\n"
+                  f"  Periodic Seam Strip = Real {1.01 * self.width / max(self.y_elements, 1)!r}   "
+                  "! one element row each side of the seam always full Stokes\n"
                   if self.periodic_sides else "")
                + "End\n")
         ssa = self.fs_ssa_shelf == "ssa"
