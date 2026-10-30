@@ -178,6 +178,9 @@ if [ "$CHECKED" = 1 ]; then
 fi
 SLOTS=${SLOTS:-$(( ${SLURM_NTASKS:-128} / RANKS ))}; [ $SLOTS -ge 1 ] || SLOTS=1   # runs at a time (SLOTS=1: one by one)
 opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --bed ${BED:-cold} --gl frozen --linear-stokes block --output-level 4"   # BED=temperate: sliding everywhere
+# DT=years: the time step of every run (default the config's [map] dt, 5 yr for the 50 km tests); small steps as a
+# production start (e.g. DT=1e-2) make the warm-started later solves representative
+[ -n "$DT" ] && opts="$opts --dt $DT" && echo "time step $DT yr"
 # STOKES_ELEMENT=Stabilized|Bubbles|P2/P1: the element for every run (default the config's). Low ILU needs
 # Stabilized? (the flowline tests, where ILU0/ILU1 converged, were Stabilized; the 50 km config is Bubbles, where
 # they did not reduce the residual at all)
