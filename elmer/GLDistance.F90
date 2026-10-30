@@ -172,6 +172,7 @@ END SUBROUTINE GLDistance
 INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   USE DefUtils
   USE MeshBasics, ONLY : CommunicateParallelSystemTag
+  USE ParallelUtils, ONLY : ParallelReduction
   IMPLICIT NONE
   TYPE(Model_t) :: Model
   TYPE(Solver_t), TARGET :: Solver
@@ -188,7 +189,7 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   INTEGER, ALLOCATABLE :: tagP(:)
   INTEGER :: nn, t, j, k, f, nf, q, c, r, nd, code, nfaces
   INTEGER :: fn(4,6)
-  REAL(KIND=dp) :: Dcut, rhoi, rhow, g, pts(3,4), av(3), cen(3), fc(3), sig, dep, hei, Fxyz(3), Fr(3), ftot
+  REAL(KIND=dp) :: Dcut, rhoi, rhow, g, pts(3,4), av(3), cen(3), fc(3), sig, dep, hei, Fxyz(3), Fr(3), ftot, fsum
   LOGICAL :: Found, passive, inface
   LOGICAL, SAVE :: Reported = .FALSE.
 !------------------------------------------------------------------------------
@@ -298,7 +299,13 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
     END DO
   END DO
   IF ( .NOT. Reported ) THEN
-    WRITE( Message, '(A,I0,A,ES12.4)' ) 'shelf force on ', nfaces, ' interface faces (this rank), x component ', ftot
+    ! totals over all ranks (the interface usually lies on a few ranks only)
+    fsum = REAL( nfaces, dp )
+    IF ( ParEnv % PEs > 1 ) THEN
+      fsum = ParallelReduction( fsum )
+      ftot = ParallelReduction( ftot )
+    END IF
+    WRITE( Message, '(A,I0,A,ES12.4)' ) 'shelf force on ', NINT(fsum), ' interface faces (all ranks), x component ', ftot
     CALL Info( 'FSSSALinsolve', Message, Level=3 )
     Reported = .TRUE.
   END IF
