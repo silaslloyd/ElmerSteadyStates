@@ -177,7 +177,9 @@ if [ "$CHECKED" = 1 ]; then
     echo "CHECKED: ESS libraries from elmer/checked (bounds checks), glibc heap checks on"
 fi
 SLOTS=${SLOTS:-$(( ${SLURM_NTASKS:-128} / RANKS ))}; [ $SLOTS -ge 1 ] || SLOTS=1   # runs at a time (SLOTS=1: one by one)
-opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --gl frozen --linear-stokes block --output-level 4"
+# GL=contact: the grounding line by contact every step (Elmer/Ice's SlidCoef_Contact: the sliding coefficient depends
+# on the normal stress, so the Stokes problem is nonlinear; ElmerStreams' marine production, with NL=2); default frozen
+opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --gl ${GL:-frozen} --linear-stokes block --output-level 4"
 # BED=cold (default) | temperate (sliding everywhere) | none (the start state's own bed temperatures: the land
 # benchmark's temperature-dependent sliding)
 [ "${BED:-cold}" != none ] && opts="$opts --bed ${BED:-cold}"
@@ -197,6 +199,9 @@ fi
 # SLIDING=subtemperate|temperate: the sliding law for every run ([elmer] sliding; with BED=none the start state's
 # bed temperatures decide where the bed slides)
 [ -n "$SLIDING" ] && export ESS_SLIDING=$SLIDING && echo "sliding: $SLIDING"
+# NL=n: Stokes nonlinear iterations per time step (ElmerStreams' marine production: 2, nonlinear tolerance 1e-5;
+# default the template's 1)
+[ -n "$NL" ] && export ESS_STOKES_NL_ITERS=$NL && echo "Stokes nonlinear iterations per step: up to $NL"
 # TOL: the GCR runs' convergence tolerance (default 1e-8)
 [ -n "$TOL" ] && echo "GCR tolerance $TOL"
 # STOKES_ELEMENT=Stabilized|Bubbles|P2/P1: the element for every run (default the config's). Low ILU needs

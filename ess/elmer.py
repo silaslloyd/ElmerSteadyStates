@@ -529,6 +529,19 @@ End
                               f"{self.sea_spring_dt!r}   ! [elmer] sea_spring_dt\n", text, count=1, flags=re.M)
             if n != 1:
                 raise ValueError("[elmer] sea_spring_dt: no Constants section in the template")
+        nl = os.environ.get("ESS_STOKES_NL_ITERS")      # TESTING: Stokes nonlinear iterations per step (ElmerStreams
+        if nl:                                          # marine: 2, tolerance 1e-5); the template has 1
+            i0 = text.find('"IncompressibleNSVec"')
+            i1 = text.find("\nEnd", i0)
+            if i0 < 0 or i1 < 0:
+                raise ValueError("ESS_STOKES_NL_ITERS: no IncompressibleNSVec section")
+            sec, n = re.subn(r"Nonlinear System Max Iterations = \d+", f"Nonlinear System Max Iterations = {int(nl)}",
+                             text[i0:i1], count=1)
+            sec = re.sub(r"Nonlinear System Convergence Tolerance *= *[0-9.eE+-]+",
+                         "Nonlinear System Convergence Tolerance = 1.0e-5", sec, count=1)
+            if n != 1:
+                raise ValueError("ESS_STOKES_NL_ITERS: no Nonlinear System Max Iterations in the Stokes section")
+            text = text[:i0] + sec + text[i1:]
         ramp = os.environ.get("ESS_DT_RAMP")
         if ramp:
             text = self._dt_ramp(text, ramp, int(spec.n_steps))
