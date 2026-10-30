@@ -368,6 +368,31 @@ if [ "$WARM" = 1 ]; then
         --stokes-block-file $PWD/$V/R0.sif.in > ${L}_R0.log 2>&1 || { echo "R0 failed: ${L}_R0.log"; exit 1; }
     WARMOPT="--warm-start $WORK/scaling_${RANKS}_R0.npz"
 fi
+# WARMUP="1e-4:1e-2:0.1*3:1*2" (time steps, years): a production-like continuation. First a ramp-up run R0 (GCR +
+# ILU4, the rotated guess, these steps; it also saves the final velocity and pressure), then every run CONTINUES
+# from R0's end: its geometry and temperature (--state) and its velocity and pressure as the Stokes initial guess
+# (--warm-start, with the rotated guess), with STEPS (default 5) steps of DT (default 1) years. The summary's
+# per-step Stokes times are then those of a long run's ordinary steps. WARMUP_STATE=FILE: reuse an R0 state
+# (a WARMUP job's work/<config>/scaling_<ranks>_R0.npz) instead of running the ramp again.
+if [ -n "$WARMUP" ] || [ -n "$WARMUP_STATE" ]; then
+    R0S=${WARMUP_STATE:-$WORK/scaling_${RANKS}_R0.npz}
+    if [ -z "$WARMUP_STATE" ]; then
+        mkGCR $V/R0.sif.in 4
+        printf '%s\n' "  Linear System Timing = Logical True" "  Solver Timing = Logical True" "! ESS scaling R0 ${SLURM_JOB_ID:-local}" >> $V/R0.sif.in
+        n0=$(python3 -c "import re; print(sum(int(i.partition('*')[2] or 1) for i in re.split(r'[,:;\s]+', '$WARMUP') if i))")
+        o0=$(echo "$opts" | sed "s/--steps [0-9]*/--steps $n0/")
+        echo "$(date +%T) start R0: the ramp-up $WARMUP yr ($n0 steps), GCR + ILU4 (log ${L}_R0.log)"
+        ESS_DT_RAMP=$WARMUP python3 -u -m ess run $GL_CONFIG --state $RSTART $o0 --rotate-guess --add-diag Pressure \
+            --out $R0S --stokes-block-file $PWD/$V/R0.sif.in > ${L}_R0.log 2>&1 || { echo "R0 failed: ${L}_R0.log"; exit 1; }
+    fi
+    [ -f "$R0S" ] || { echo "no warm-up state $R0S"; exit 1; }
+    unset ESS_DT_RAMP
+    opts=$(echo "$opts" | sed "s/--steps [0-9]*/--steps ${STEPS:-5}/; s/--dt [^ ]*//") 
+    opts="$opts --dt ${DT:-1} --rotate-guess"
+    RSTART=$R0S
+    WARMOPT="--warm-start $R0S"
+    echo "runs continue from $R0S: ${STEPS:-5} steps of ${DT:-1} yr, warm-started (velocity, pressure; rotated guess)"
+fi
 running=0
 for t in $(echo $SET | fold -w1); do
     c="run $GL_CONFIG --state $RSTART $opts $WARMOPT"; o=$WORK/scaling_${RANKS}_$t.npz
@@ -381,9 +406,9 @@ done
 wait || true
 
 echo
-echo "===== $RANKS ranks, $(date +%T)$([ "$WARM" = 1 ] && echo ', WARM START from R0 (whole-shelf runs)') ====="
-for t in $([ "$WARM" = 1 ] && echo R0) $(echo $SET | fold -w1); do
-    case $t in R0) what="GCR + ILU8, cold (the warm start)";; R) what="GCR + ILU8, whole shelf (reference)";; F) what="GCR + ILU0, whole shelf";;
+echo "===== $RANKS ranks, $(date +%T)$([ "$WARM" = 1 ] && echo ', WARM START from R0 (whole-shelf runs)')$([ -n "$WARMUP$WARMUP_STATE" ] && echo ", runs CONTINUE from the ramp-up R0 (${STEPS:-5} x ${DT:-1} yr)") ====="
+for t in $([ "$WARM" = 1 ] || [ -n "$WARMUP" ] && echo R0) $(echo $SET | fold -w1); do
+    case $t in R0) what="the warm-up run ($([ -n "$WARMUP" ] && echo "ramp $WARMUP, ILU4" || echo "GCR + ILU8, cold"))";; R) what="GCR + ILU8, whole shelf (reference)";; F) what="GCR + ILU0, whole shelf";;
                G) what="GCR + ILU0, whole shelf, no bandwidth optimisation (another elimination order)";;
                H) what="GCR + ILU0, whole shelf, row equilibration";;
                K) what="GCR + ILU0, diagonal x 1.1 before factorising (ILU Factor 0.1)";;
