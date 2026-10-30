@@ -29,10 +29,10 @@ index dc9c82555..28ab42b54 100644
      IF ( .NOT. ComplexSystem ) THEN
        SELECT CASE ( IterType )
 diff --git a/fem/src/SParIterSolver.F90 b/fem/src/SParIterSolver.F90
-index 57850f0db..8f965046a 100644
+index 57850f0db..09c1c769c 100644
 --- a/fem/src/SParIterSolver.F90
 +++ b/fem/src/SParIterSolver.F90
-@@ -59,6 +59,20 @@ MODULE SParIterSolve
+@@ -59,6 +59,21 @@ MODULE SParIterSolve
    END TYPE
    TYPE(OrderList_t), ALLOCATABLE :: OrderList(:)
  
@@ -46,6 +46,7 @@ index 57850f0db..8f965046a 100644
 +  LOGICAL, PRIVATE, SAVE :: CC_member = .FALSE., CC_commset = .FALSE., CC_mumpsinit = .FALSE., &
 +      CC_havemat = .FALSE., CC_prepost = .FALSE., CC_ready = .FALSE.
 +  INTEGER, PRIVATE, SAVE :: CC_nsetup = 0, CC_nsel = 0
++  LOGICAL, PRIVATE, SAVE :: CC_off = .FALSE.     ! the coarse factorisation failed: this solve without the coarse level
 +#ifdef HAVE_MUMPS
 +  TYPE(dmumps_struc), PRIVATE, SAVE :: CC_id
 +#endif
@@ -53,7 +54,7 @@ index 57850f0db..8f965046a 100644
  
  CONTAINS
  
-@@ -2670,6 +2684,14 @@ RECURSIVE SUBROUTINE SolveHutiter( SourceMatrix, SplittedMatrix, ParallelInfo, &
+@@ -2670,6 +2685,14 @@ RECURSIVE SUBROUTINE SolveHutiter( SourceMatrix, SplittedMatrix, ParallelInfo, &
      CALL SParMatVecCommSetup( SplittedMatrix )
    END IF
  
@@ -68,7 +69,7 @@ index 57850f0db..8f965046a 100644
    IF ( .NOT. SourceMatrix % COMPLEX ) THEN
      IF( ListGetLogical( Solver % Values,'Linear System Skip Mask', GotIt ) ) THEN
        CALL IterSolver( SplittedMatrix % InsideMatrix, TmpXVec, &
-@@ -2701,6 +2723,13 @@ RECURSIVE SUBROUTINE SolveHutiter( SourceMatrix, SplittedMatrix, ParallelInfo, &
+@@ -2701,6 +2724,13 @@ RECURSIVE SUBROUTINE SolveHutiter( SourceMatrix, SplittedMatrix, ParallelInfo, &
           MatVecF=AddrFunc(SParCMatrixVector), MatvecReadsNoValues = .TRUE., &
           DotFU=AddrFunc(SParCDotProdU) )
    END IF
@@ -82,7 +83,7 @@ index 57850f0db..8f965046a 100644
  
    IF (ASSOCIATED(CM)) THEN
      DEALLOCATE(CM % Cols)
-@@ -4059,6 +4088,706 @@ SUBROUTINE RenumberDOFs( SourceMatrix, SplittedMatrix, ParallelInfo )
+@@ -4059,6 +4089,731 @@ SUBROUTINE RenumberDOFs( SourceMatrix, SplittedMatrix, ParallelInfo )
  END SUBROUTINE RenumberDOFs
  !********************************************************************
  
@@ -142,7 +143,7 @@ index 57850f0db..8f965046a 100644
 +  REAL(KIND=dp) :: zeta, wv
 +  LOGICAL, ALLOCATABLE :: colsel(:), colsel2(:)
 +  INTEGER, ALLOCATABLE :: gmap(:), invP(:), selown(:), selall(:), scnt(:), sdis(:)
-+  INTEGER :: nsel, nown, ngrow, ig, nrec, q, nd2, g, lc, nall, ib
++  INTEGER :: nsel, nown, ngrow, igr, nrec, q, nd2, g, lc, nall, ib
 +  TYPE(Variable_t), POINTER :: mvar
 +  REAL(KIND=dp) :: thr, mv
 +  LOGICAL :: GotSel, GotV
@@ -291,7 +292,7 @@ index 57850f0db..8f965046a 100644
 +    DO nd = 1, nn
 +      IF ( Perm(nd) > 0 ) invP(Perm(nd)) = nd
 +    END DO
-+    DO ig = 1, ngrow
++    DO igr = 1, ngrow
 +      colsel2 = colsel
 +      DO nd = 1, nn
 +        p = Perm(nd)
@@ -564,11 +565,30 @@ index 57850f0db..8f965046a 100644
 +    CC_id % CNTL(3) = 1.0e-10_dp
 +    CC_id % JOB = 4          ! analysis + factorisation
 +    CALL DMUMPS( CC_id )
-+    IF ( CC_id % INFOG(1) < 0 ) CALL Fatal(Caller, 'MUMPS factorisation of the coarse matrix failed, INFOG(1) = '// &
-+        I2S(CC_id % INFOG(1))//', INFOG(2) = '//I2S(CC_id % INFOG(2)))
-+    IF ( CC_myrank == 0 .AND. CC_id % INFOG(28) > 0 ) CALL Info(Caller, 'null pivots in the coarse matrix: '// &
-+        I2S(CC_id % INFOG(28))//' (those coarse components are left out)', Level=3)
++    IF ( CC_id % INFOG(1) < 0 .AND. CC_myrank == 0 ) THEN
++      CALL Warn(Caller, 'MUMPS factorisation of the coarse matrix failed, INFOG(1) = '// &
++          I2S(CC_id % INFOG(1))//', INFOG(2) = '//I2S(CC_id % INFOG(2))//': retrying with a small diagonal shift')
++    END IF
++    IF ( CC_id % INFOG(1) < 0 ) THEN
++      ! a tiny shift of the diagonal (1e-8 of the largest entry) makes singular coarse directions harmless
++      IF ( CC_myrank == 0 ) THEN
++        val = 1.0e-8_dp * MAXVAL( ABS( CC_id % A ) )
++        DO i = 1, ntot + nmiss
++          IF ( CC_id % IRN(i) == CC_id % JCN(i) ) CC_id % A(i) = CC_id % A(i) + &
++              SIGN( val, CC_id % A(i) )
++        END DO
++      END IF
++      CC_id % JOB = 2          ! factorisation (the analysis is kept)
++      CALL DMUMPS( CC_id )
++    END IF
++    CC_off = ( CC_id % INFOG(1) < 0 )
++    IF ( CC_myrank == 0 .AND. CC_off ) CALL Warn(Caller, 'the coarse factorisation failed again (INFOG(1) = '// &
++        I2S(CC_id % INFOG(1))//'): this solve runs without the coarse level')
++    IF ( CC_myrank == 0 .AND. .NOT. CC_off .AND. CC_id % INFOG(28) > 0 ) CALL Info(Caller, &
++        'null pivots in the coarse matrix: '//I2S(CC_id % INFOG(28))//' (those coarse components are left out)', Level=3)
 +  END IF
++  ! every rank must know whether the coarse level is on (only the MUMPS ranks saw the result)
++  CALL MPI_Bcast( CC_off, 1, MPI_LOGICAL, 0, CC_comm, ierr )
 +#else
 +  CALL Fatal(Caller, 'needs Elmer built with MUMPS')
 +#endif
@@ -649,8 +669,9 @@ index 57850f0db..8f965046a 100644
 +    END IF
 +    CC_id % JOB = 3
 +    CALL DMUMPS( CC_id )
-+    IF ( CC_id % INFOG(1) < 0 ) CALL Fatal('ColumnCoarse', 'MUMPS coarse solve failed, INFOG(1) = '// &
-+        I2S(CC_id % INFOG(1)))
++    IF ( CC_id % INFOG(1) < 0 .AND. CC_myrank == 0 ) CALL Warn('ColumnCoarse', 'MUMPS coarse solve failed, INFOG(1) = '// &
++        I2S(CC_id % INFOG(1))//': no coarse correction in this application')
++    IF ( CC_id % INFOG(1) < 0 .AND. CC_myrank == 0 ) CC_rhs = 0.0_dp
 +  END IF
 +#endif
 +  CALL MPI_Bcast( CC_rhs, CC_ncoarse, MPI_DOUBLE_PRECISION, 0, CC_comm, ierr )
@@ -722,7 +743,12 @@ index 57850f0db..8f965046a 100644
 +
 +  ! coarse correction of the current residual CC_s: CC_x1 = P C^-1 P^T CC_s, residual after it CC_r1
 +  t0 = MPI_Wtime()
-+  CALL ColumnCoarseCorrect( CC_s, CC_x1, n, diag, rcn )
++  IF ( CC_off ) THEN
++    CC_x1(1:n) = 0.0_dp
++    diag = .FALSE.
++  ELSE
++    CALL ColumnCoarseCorrect( CC_s, CC_x1, n, diag, rcn )
++  END IF
 +  CC_tcoarse = CC_tcoarse + MPI_Wtime() - t0
 +  CALL SParMatrixVector( CC_x1, CC_r1, ipar )
 +  DO j = 1, n
