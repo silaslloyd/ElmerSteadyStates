@@ -177,9 +177,10 @@ if [ "$CHECKED" = 1 ]; then
     echo "CHECKED: ESS libraries from elmer/checked (bounds checks), glibc heap checks on"
 fi
 SLOTS=${SLOTS:-$(( ${SLURM_NTASKS:-128} / RANKS ))}; [ $SLOTS -ge 1 ] || SLOTS=1   # runs at a time (SLOTS=1: one by one)
-# GL=contact: the grounding line by contact every step (Elmer/Ice's SlidCoef_Contact: the sliding coefficient depends
-# on the normal stress, so the Stokes problem is nonlinear; ElmerStreams' marine production, with NL=2); default frozen
-opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --gl ${GL:-frozen} --linear-stokes block --output-level 4"
+# GLMODE=contact: the grounding line by contact every step (Elmer/Ice's SlidCoef_Contact: the sliding coefficient
+# depends on the normal stress, so the Stokes problem is nonlinear; ElmerStreams' marine production, with NL=2);
+# default frozen (not GL: that is the grounding-line position of the cut runs)
+opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --gl ${GLMODE:-frozen} --linear-stokes block --output-level 4"
 # BED=cold (default) | temperate (sliding everywhere) | none (the start state's own bed temperatures: the land
 # benchmark's temperature-dependent sliding)
 [ "${BED:-cold}" != none ] && opts="$opts --bed ${BED:-cold}"
