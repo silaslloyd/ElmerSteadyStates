@@ -743,8 +743,24 @@ End
         text = (text[:j] + "\n  ! the moving full-Stokes region ([elmer] fs_ssa_km): ice beyond it is passive for Stokes"
                 "\n  Passive Element Min Nodes = Integer 1\n  Flow Solution Passive = Variable GL Distance\n"
                 f'    Real Lua "tx[0] - {self.fs_ssa_x!r}"' + text[j:])
-        if os.environ.get("ESS_FS_SSA_TARGET", "1") == "0":     # TESTING: no interface condition (stress free)
+        # the shelf's force on the interface: "loads" (default: added to the Stokes right-hand side by
+        # GLDistance's FSSSALinsolve), "elmer" (Elmer's Passive Target boundary: crashes in 3D, see FSSSALinsolve),
+        # "0" (none: the interface stress free; tests). Env ESS_FS_SSA_TARGET.
+        target = os.environ.get("ESS_FS_SSA_TARGET", "loads")
+        if target == "0":
             return text
+        if target == "loads":
+            i0 = text.index('"IncompressibleNSVec"')
+            i1 = text.index("\nEnd", i0)
+            sec = text[i0:i1]
+            rot = "RotateInitialGuess" in sec
+            sec = re.sub(r"\n *Before Linsolve = .*", "", sec)
+            sec += (f'\n  Before Linsolve = File "{lib}" "FSSSALinsolve"   ! [elmer] fs_ssa_km: the shelf force on the interface'
+                    f"\n  FS SSA Distance = Real {self.fs_ssa_x!r}"
+                    + ("\n  FS SSA Rotate Guess = Logical True" if rot else ""))
+            return text[:i0] + sec + text[i1:]
+        if target != "elmer":
+            raise ValueError(f"ESS_FS_SSA_TARGET must be loads, elmer or 0, not {target!r}")
         nb = max(int(m) for m in re.findall(r"^Boundary Condition (\d+)\s*$", text, re.M))
         bc = (f"\nBoundary Condition {nb + 1}\n"
               '  Name = "full-Stokes / shelf interface"\n'

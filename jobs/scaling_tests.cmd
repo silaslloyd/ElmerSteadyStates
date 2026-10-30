@@ -206,8 +206,9 @@ fi
 # FS_SSA=km: the moving full-Stokes region ([elmer] fs_ssa_km): ice more than this beyond the current grounding line
 # is passive for Stokes, its face carries the free-floating shelf's stress
 [ -n "$FS_SSA" ] && export ESS_FS_SSA_KM=$FS_SSA && echo "moving full-Stokes region: up to $FS_SSA km beyond the grounding line"
-# FS_SSA_TARGET=0: without the interface's shelf-stress condition (Passive Target), the interface stress free (tests)
-[ "$FS_SSA_TARGET" = 0 ] && export ESS_FS_SSA_TARGET=0 && echo "  no shelf-stress condition on the interface"
+# FS_SSA_TARGET=loads (default: the shelf force added to the Stokes right-hand side) | elmer (Elmer's Passive Target
+# boundary) | 0 (none: the interface stress free; tests)
+[ -n "$FS_SSA_TARGET" ] && export ESS_FS_SSA_TARGET=$FS_SSA_TARGET && echo "  interface shelf stress: $FS_SSA_TARGET"
 # TOL: the GCR runs' convergence tolerance (default 1e-8)
 [ -n "$TOL" ] && echo "GCR tolerance $TOL"
 # STOKES_ELEMENT=Stabilized|Bubbles|P2/P1: the element for every run (default the config's). Low ILU needs
