@@ -744,6 +744,12 @@ End
                "  No Matrix = Logical True\n"
                "End\n")
         ssa = self.fs_ssa_shelf == "ssa"
+        # TESTING knobs for the SSA shelf: ESS_FS_SSA_PERIODIC=0 (no periodic coupling of the SSA velocity even with
+        # periodic sides), ESS_FS_SSA_WALLS=1/0 (v = 0 on the side nodes; default: not periodic), ESS_FS_SSA_STRESS=0
+        # (the interface keeps the free-floating formula instead of the SSA stress)
+        ssa_periodic = self.periodic_sides and os.environ.get("ESS_FS_SSA_PERIODIC", "1") != "0"
+        walls = (os.environ["ESS_FS_SSA_WALLS"] != "0") if os.environ.get("ESS_FS_SSA_WALLS") else not ssa_periodic
+        ssa_stress = os.environ.get("ESS_FS_SSA_STRESS", "1") != "0"
         if ssa:     # the SSA shelf (fs_ssa_shelf): right after the distance, before every time step, on the ice base
             sol += (f"\nSolver {n + 1}\n"
                     '  Exec Solver = "Before Timestep"\n'
@@ -753,7 +759,7 @@ End
                     '  Exported Variable 1 = -dofs 4 "SSA Strain"\n'
                     f"  FS SSA Distance = Real {self.fs_ssa_x!r}\n"
                     "  FS SSA Viscosity = Real #viscosity\n"
-                    f"  FS SSA Walls = Logical {not self.periodic_sides}\n"
+                    f"  FS SSA Walls = Logical {walls}\n"
                     "  Linear System Solver = Direct\n"
                     "  Linear System Direct Method = $directsolver\n"
                     "  Linear System Abort Not Converged = Logical True\n"
@@ -802,11 +808,11 @@ End
             if ssa:
                 if re.search(r"\n *After Linsolve *=", sec):
                     raise ValueError("fs_ssa_shelf = ssa: the Stokes solver already has an After Linsolve procedure")
-                sec += ("\n  FS SSA Shelf Stress = Logical True   ! the interface stress from the SSA shelf's strain rate"
+                sec += (f"\n  FS SSA Shelf Stress = Logical {ssa_stress}   ! the interface stress from the SSA shelf's strain rate"
                         "\n  FS SSA Viscosity = Real #viscosity"
                         f'\n  After Linsolve = File "{lib}" "FSSSAAfterLinsolve"   ! the passive shelf\'s plug flow back')
             text = text[:i0] + sec + text[i1:]
-            if ssa and self.periodic_sides:      # the SSA velocity periodic like Zb (on the same base faces)
+            if ssa and ssa_periodic:      # the SSA velocity periodic like Zb (on the same base faces)
                 k = text.index('Name = "side2 ice"')
                 j = text.index("\nEnd", k)
                 if "Periodic BC = " not in text[k:j]:
