@@ -209,6 +209,7 @@ fi
 # FS_SSA_TARGET=loads (default: the shelf force added to the Stokes right-hand side) | elmer (Elmer's Passive Target
 # boundary) | 0 (none: the interface stress free; tests)
 [ -n "$FS_SSA_TARGET" ] && export ESS_FS_SSA_TARGET=$FS_SSA_TARGET && echo "  interface shelf stress: $FS_SSA_TARGET"
+# TAG=name: the whole-shelf runs write <work>/scaling_<ranks><TAG>_<letter>.npz (keeps runs apart, e.g. TAG=_fsssa10)
 # TOL: the GCR runs' convergence tolerance (default 1e-8)
 [ -n "$TOL" ] && echo "GCR tolerance $TOL"
 # STOKES_ELEMENT=Stabilized|Bubbles|P2/P1: the element for every run (default the config's). Low ILU needs
@@ -427,7 +428,7 @@ if [ -n "$WARMUP" ] || [ -n "$WARMUP_STATE" ]; then
 fi
 running=0
 for t in $(echo $SET | fold -w1); do
-    c="run $GL_CONFIG --state $RSTART $opts $WARMOPT"; o=$WORK/scaling_${RANKS}_$t.npz
+    c="run $GL_CONFIG --state $RSTART $opts $WARMOPT"; o=$WORK/scaling_${RANKS}${TAG}_$t.npz
     case $t in C|D|E) c="run $CUTCFG --state $CW/start.npz $opts"; o=$CW/scaling_${RANKS}_$t.npz;; esac
     case $t in Y|Z|V|I|q|r) c="$c --output-level 6";; esac          # Hypre reports its iterations from level 6
     if [ $running -ge $SLOTS ]; then wait -n || true; running=$((running - 1)); fi
@@ -485,7 +486,8 @@ for t in $([ "$WARM" = 1 ] || [ -n "$WARMUP" ] && echo R0) $(echo $SET | fold -w
                C) what="GCR + ILU8, mesh ends at $CUT km";; D) what="GCR + ILU0, shelf cut";;
                E) what="GCR + ILU1, shelf cut";; esac
     W=$WORK; case $t in C|D|E) W=$CW;; esac
-    if grep -q "wrote $W/scaling_${RANKS}_$t.npz" ${L}_$t.log; then
+    OUTN=scaling_${RANKS}${TAG}_$t.npz; case $t in C|D|E) OUTN=scaling_${RANKS}_$t.npz;; esac
+    if grep -q "wrote $W/$OUTN" ${L}_$t.log; then
         echo "$t ($what): RAN   $(grep -o "Elmer [0-9]* s for .*" ${L}_$t.log | tail -1)"
         f=$(grep -l "ESS scaling $t ${SLURM_JOB_ID:-local}\$" $W/runs/*/run.sif 2>/dev/null | tail -1)
         if [ -n "$f" ]; then
