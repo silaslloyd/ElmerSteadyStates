@@ -531,6 +531,12 @@ def cmd_cutcheck(a):
     up = xc[m] < a.gl_km * 1e3
     near = np.abs(xc[m] - a.gl_km * 1e3) < 5e3
     ugl = np.interp(a.gl_km * 1e3, xr, ur)
+    if getattr(a, "profile", False):          # the two surface-speed profiles near the grounding line, every ~1 km
+        print("      x (km)   u ref    u test   (surface, y = 0)")
+        for x in np.arange(a.gl_km - 10.0, a.cut_km + 0.01, 1.0):
+            if x * 1e3 > xc.max():
+                break
+            print(f"      {x:7.1f} {np.interp(x * 1e3, xr, ur):8.2f} {np.interp(x * 1e3, xc, uc):8.2f}")
     print(f"      surface speed vs the whole domain: grounded ice max |du| {d[up].max():.3g} m/a "
           f"(max speed {np.abs(ur[xr < a.gl_km * 1e3]).max():.4g}), within 5 km of the grounding line max |du| "
           f"{d[near].max():.3g} m/a (speed there {ugl:.4g}), whole cut domain {d.max():.3g} m/a")
@@ -590,6 +596,7 @@ def main():
     s.add_argument("cut")
     s.add_argument("cut_km", type=float)
     s.add_argument("gl_km", type=float)
+    s.add_argument("--profile", action="store_true", help="also print both surface-speed profiles near the grounding line")
     s.set_defaults(fn=cmd_cutcheck)
     s = sub.add_parser("compare")
     s.add_argument("a", nargs="?", default="fix_loads")
