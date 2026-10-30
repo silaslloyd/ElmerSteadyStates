@@ -588,6 +588,7 @@ def cmd_wavycheck(a):
     glrow = dict(zip(ys, gr))
     yk = np.array(ys)
     dmax = {"grounded": 0.0, "near": 0.0, "float": 0.0}
+    where = {"grounded": None, "near": None, "float": None}
     umax = 0.0
     for key, nodes in vr.items():
         if key not in vt:
@@ -596,20 +597,26 @@ def cmd_wavycheck(a):
         j = int(np.argmin(np.abs(yk - y)))
         dist = x / 1e3 - glrow[ys[j]]                     # km downstream of the row's grounding line
         du = 0.0
+        info = None
         for i, (u, v) in nodes.items():
             if i in vt[key]:
                 p, q = vt[key][i]
-                du = max(du, float(np.hypot(p - u, q - v)))
+                d = float(np.hypot(p - u, q - v))
+                if d >= du:
+                    du, info = d, (x / 1e3, y / 1e3, i, (u, v), (p, q))
                 umax = max(umax, float(np.hypot(u, v)))
-        if mr.get(key, -1.0) > -0.5 and dist <= 0.0:
-            dmax["grounded"] = max(dmax["grounded"], du)
-        if abs(dist) <= 5.0:
-            dmax["near"] = max(dmax["near"], du)
-        if 0.0 < dist <= a.d:
-            dmax["float"] = max(dmax["float"], du)
+        for cat, ok in (("grounded", mr.get(key, -1.0) > -0.5 and dist <= 0.0), ("near", abs(dist) <= 5.0),
+                        ("float", 0.0 < dist <= a.d)):
+            if ok and du > dmax[cat]:
+                dmax[cat], where[cat] = du, info
     print(f"      horizontal velocity, max |du| (any depth): grounded ice {dmax['grounded']:.3g} m/a, within 5 km of the "
           f"local grounding line {dmax['near']:.3g} m/a, floating ice up to {a.d:g} km beyond it {dmax['float']:.3g} m/a "
           f"(max speed {umax:.4g} m/a)")
+    if a.where:
+        for cat, w in where.items():
+            if w:
+                print(f"      largest {cat}: x {w[0]:.2f} km, y {w[1]:.2f} km, node {w[2]}, ref (u, v) "
+                      f"({w[3][0]:.1f}, {w[3][1]:.1f}), test ({w[4][0]:.1f}, {w[4][1]:.1f})")
 
 
 def main():
@@ -673,6 +680,7 @@ def main():
     s.add_argument("test")
     s.add_argument("--d", type=float, default=10.0, help="km: the full-Stokes region beyond the grounding line")
     s.add_argument("--rows", action="store_true", help="print the grounding line of every y row")
+    s.add_argument("--where", action="store_true", help="print where the largest differences are")
     s.set_defaults(fn=cmd_wavycheck)
     s = sub.add_parser("compare")
     s.add_argument("a", nargs="?", default="fix_loads")
