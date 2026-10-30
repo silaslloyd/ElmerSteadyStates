@@ -49,7 +49,7 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   REAL(KIND=dp), ALLOCATABLE :: colgm(:), glx(:), gly(:), allx(:), ally(:)
   LOGICAL, ALLOCATABLE :: isgl(:)
   LOGICAL :: Found, hasg, hasf
-  REAL(KIND=dp) :: d2, dmin, m, dmax, dy, pw, strip
+  REAL(KIND=dp) :: d2, dmin, m, dmax, dy, pw, srows
   CHARACTER(:), ALLOCATABLE :: mname
   CHARACTER(*), PARAMETER :: Caller = 'GLDistance'
 !------------------------------------------------------------------------------
@@ -69,8 +69,8 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   ! differ under a wavy grounding line, and the periodic constraint then tied an active node to a passive one)
   pw = ListGetConstReal( Params, 'Periodic Width', Found )
   IF ( .NOT. Found ) pw = 0.0_dp
-  strip = ListGetConstReal( Params, 'Periodic Seam Strip', Found )
-  IF ( .NOT. Found ) strip = 0.0_dp
+  srows = ListGetConstReal( Params, 'Periodic Seam Rows', Found )
+  IF ( .NOT. Found ) srows = 0.0_dp
   nlev = ListGetInteger( Params, 'Extruded Mesh Levels', Found )
   IF ( .NOT. Found ) nlev = ListGetInteger( Model % Simulation, 'Extruded Mesh Levels', Found )
   IF ( .NOT. Found .OR. nlev < 2 ) CALL Fatal( Caller, 'Extruded Mesh Levels unknown' )
@@ -152,20 +152,15 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
       dVal(q) = 0.0_dp
       CYCLE
     END IF
-    dmin = HUGE(1.0_dp)
-    DO k = 1, ntot
-      dy = ABS( Mesh % Nodes % y(i) - ally(k) )
-      IF ( pw > 0.0_dp ) dy = MIN( dy, ABS( pw - dy ) )      ! periodic in y: the distance across the seam
-      d2 = (Mesh % Nodes % x(i) - allx(k))**2 + dy**2
-      IF ( d2 < dmin ) dmin = d2
-    END DO
-    dVal(q) = SQRT( dmin )
-    ! the seam strip: 0 (always full Stokes) within "Periodic Seam Strip" of the periodic seam. Elmer decides whether a
-    ! node is passive-only from its own side's elements, so a seam node and its periodic image could differ (one
-    ! fixed at its old value, the other solved) and the periodic constraint did not hold there: one row of elements
-    ! on each side of the seam active makes every seam node active on both sides
-    IF ( pw > 0.0_dp .AND. strip > 0.0_dp ) THEN
-      IF ( MIN( Mesh % Nodes % y(i), pw - Mesh % Nodes % y(i) ) <= strip ) dVal(q) = 0.0_dp
+    dVal(q) = glDist( Mesh % Nodes % x(i), Mesh % Nodes % y(i) )
+    ! next to the periodic seam (within "Periodic Seam Rows" of it): the smaller of the distance here and at the
+    ! mirror point (x, width - y). Elmer decides whether a node is passive-only from the elements on its own side,
+    ! so a seam node and its periodic image could differ (one pinned at its old value, which the periodic constraint
+    ! then imposed on the other); with the rows next to the seam symmetric (the mesh is structured across y), the
+    ! seam elements on both sides are active or passive together
+    IF ( pw > 0.0_dp .AND. srows > 0.0_dp ) THEN
+      IF ( MIN( Mesh % Nodes % y(i), pw - Mesh % Nodes % y(i) ) <= srows ) &
+          dVal(q) = MIN( dVal(q), glDist( Mesh % Nodes % x(i), pw - Mesh % Nodes % y(i) ) )
     END IF
     dmax = MAX( dmax, dVal(q) )
   END DO
@@ -174,6 +169,21 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   END IF
   WRITE( Message, '(A,I0,A,ES10.3,A)' ) 'grounding-line nodes: ', ntot, ', largest distance ', dmax, ' m'
   CALL Info( Caller, Message, Level=3 )
+
+CONTAINS
+
+  ! the distance from (x, y) to the nearest grounding-line node (periodic in y when pw > 0)
+  FUNCTION glDist( xp, yp ) RESULT( dd )
+    REAL(KIND=dp) :: xp, yp, dd, ddy, dd2
+    INTEGER :: kk
+    dd2 = HUGE(1.0_dp)
+    DO kk = 1, ntot
+      ddy = ABS( yp - ally(kk) )
+      IF ( pw > 0.0_dp ) ddy = MIN( ddy, ABS( pw - ddy ) )
+      dd2 = MIN( dd2, (xp - allx(kk))**2 + ddy**2 )
+    END DO
+    dd = SQRT( dd2 )
+  END FUNCTION glDist
 !------------------------------------------------------------------------------
 END SUBROUTINE GLDistance
 !------------------------------------------------------------------------------

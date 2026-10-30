@@ -744,8 +744,8 @@ End
                "  Variable DOFs = 1\n"
                "  No Matrix = Logical True\n"
                + (f"  Periodic Width = Real {self.width!r}   ! periodic sides: the distance wraps across the seam\n"
-                  f"  Periodic Seam Strip = Real {1.01 * self.width / max(self.y_elements, 1)!r}   "
-                  "! one element row each side of the seam always full Stokes\n"
+                  f"  Periodic Seam Rows = Real {1.01 * self.width / max(self.y_elements, 1)!r}   "
+                  "! the node rows next to the seam take the smaller of their own and their mirror distance\n"
                   if self.periodic_sides else "")
                + "End\n")
         ssa = self.fs_ssa_shelf == "ssa"
