@@ -33,6 +33,10 @@ extruded meshes, for Elmer's own parallel Krylov solvers (GCR, BiCGStab, ... wit
        Linear System Column Coarse Ranks = Integer        (ranks of the MUMPS coarse solve; default 1)
        Linear System Column Coarse Order = Integer        (degree in height of the velocity modes; default 1)
        Linear System Column Coarse Pre Smoothing = Logical (ILU before and after the coarse step; default False)
+       Linear System Column Coarse Recompute = Integer    (rebuild C and its factors every n-th solve; default 1)
+       Linear System Column Coarse Below Variable / Below Value, Above Variable / Above Value, Grow: coarse modes
+         only in the columns where a variable is below / above a value (e.g. GroundedMask < 0.5: floating and
+         grounding line; ColdTempMask > 0: temperate bed), plus Grow rings of neighbours; compact numbering
   The log reports per solve the coarse size, setup time and the time in the coarse corrections ("ColumnCoarse:").
   Hook: IterSolve's public IterSolverPrecWrap (an address) replaces the preconditioner IterSolver has just set up,
   once. Without the keyword Elmer behaves as unpatched.

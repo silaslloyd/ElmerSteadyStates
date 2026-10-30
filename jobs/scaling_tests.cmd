@@ -309,6 +309,17 @@ mkCC() {   # $1 file, $2 preconditioner (ILU0, Diagonal, ...), $3 pressure mode 
     printf '%s\n' "  Linear System Column Coarse = Logical True" "  Linear System Column Coarse Pressure = Logical $3" \
         "  Linear System Column Coarse Ranks = Integer ${CC_RANKS:-1}" \
         "  Linear System Column Coarse Order = Integer ${CC_ORDER:-1}" >> $1
+    # CC_RECOMPUTE=n: the coarse operator and its factors rebuilt every n-th solve (default 1)
+    [ -n "$CC_RECOMPUTE" ] && echo "  Linear System Column Coarse Recompute = Integer $CC_RECOMPUTE" >> $1
+    # CC_SELECT=1: coarse modes only in floating/grounding-line columns (GroundedMask < 0.5) and over a temperate bed
+    # (ColdTempMask > 0), grown by CC_GROW (default 2) rings of neighbouring columns
+    if [ "$CC_SELECT" = 1 ]; then
+        printf '%s\n' "  Linear System Column Coarse Below Variable = String GroundedMask" \
+            "  Linear System Column Coarse Below Value = Real 0.5" \
+            "  Linear System Column Coarse Above Variable = String ColdTempMask" \
+            "  Linear System Column Coarse Above Value = Real 0.0" \
+            "  Linear System Column Coarse Grow = Integer ${CC_GROW:-2}" >> $1
+    fi
 }
 mkBlock() {   # $1 file, $2 velocity-block preconditioner: block solver, velocity block Hypre BiCGStab + $2 capped
     grep -v "block 11: Linear System Iterative Method\|block 11: HYPRE Block Diagonal\|block 11: Linear System Preconditioning\|block 11: Linear System Max Iterations\|block 11: Linear System Convergence Tolerance" \
