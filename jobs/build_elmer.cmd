@@ -36,6 +36,22 @@ if [ "$1" = fetch ]; then
 fi
 
 [ -d $SRC/.git ] || { echo "no source in $SRC: run 'bash jobs/build_elmer.cmd fetch' on the login node first"; exit 1; }
+# ElmerGrid only (a minute, login node is fine): bash jobs/build_elmer.cmd elmergrid -> $PREFIX/bin/ElmerGrid, from a
+# patched copy of the source's elmergrid (patch 03: -metisper, -partfile). The rest of $PREFIX is left as it is.
+if [ "$1" = elmergrid ]; then
+    module load ${ELMER_MODULE:-elmerfem/2026-10-28} 2>/dev/null || true
+    T=$ROOT/elmergrid_build; rm -rf $T; mkdir -p $T/src
+    git -C $SRC archive $REV elmergrid | tar -x -C $T/src
+    for p in $REPO/elmer/patches/*elmergrid*.patch; do
+        echo "applying $(basename $p)"; ( cd $T/src && patch -p1 -s < "$p" )
+    done
+    mkdir -p $T/build && cd $T/build
+    cmake $T/src/elmergrid -DCMAKE_BUILD_TYPE=Release > cmake.log 2>&1 || { tail -20 cmake.log; exit 1; }
+    make -j 8 > make.log 2>&1 || { grep -m10 -i error make.log; exit 1; }
+    mkdir -p $PREFIX/bin && cp src/ElmerGrid $PREFIX/bin/ElmerGrid
+    echo "installed $PREFIX/bin/ElmerGrid: $($PREFIX/bin/ElmerGrid 2>&1 | grep -c metisper) -metisper line(s) in its help"
+    exit 0
+fi
 module load ${ELMER_MODULE:-elmerfem/2026-10-28} 2>/dev/null || true   # the same MPI environment as the module runs
 echo "building $SRC ($(git -C $SRC log -1 --format='%h %cd')) into $PREFIX on $(hostname), $(nproc) cores"
 # a clean source at the revision, then the patches

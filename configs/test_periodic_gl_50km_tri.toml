@@ -1,0 +1,164 @@
+# configs/test_periodic_gl_50km_fine.toml on an UNSTRUCTURED, NON-UNIFORM triangle footprint mirrored about
+# y = width/2 (case/flowline_marine_gl_mirror.geo.in, as ElmerStreams' Marine_Term template.geo): 5 km triangles at
+# the divide and the front, 500 m around the margin, 250 m within the grounding line +- 20 km; partitioned by METIS
+# (ElmerGrid -metisper: METIS on the element graph, every element with a node on side 2 in a partition that also
+# holds its periodic partner's elements; elmer/patches/03-elmergrid-metisper.patch, bash jobs/build_elmer.cmd
+# elmergrid). The walls-vs-periodic comparison with METIS partitions on both: configs/test_wall_gl_50km_tri.toml.
+# Mesh and start: jobs/scaling_tests.cmd with FROM=work/test_periodic_gl_50km/start.npz.
+#
+[paths]
+work_dir = "work/test_periodic_gl_50km_tri"
+case_dir = "{work}/case"                # mesh and initial conditions, written by `ess setup`
+
+[case]
+geometry = "marine"                     # ice shelf, sea pressure, frozen grounded mask (steady_template_marine.sif)
+marine_ics = "case/marine_ics"          # ElmerStreams Marine_Term Initialisation/Dimensional_ICs tables
+parameters = "case/parameters_fine2x.lua"      # physical parameters (the same as Marine_Term's)
+geo = "case/flowline_marine_gl_mirror.geo.in"   # mirrored unstructured triangles, fine_res within GL +- fine_half_width
+gl_from_state = "work/marine_flowline/run_cold_p268.15.npz"   # the start state (refined around its grounding line, ~739 km)
+fine_res = 250.0                        # m, element size in the band around the grounding line
+fine_half_width = 20000.0               # m, half width of that band
+width = 50000.0                         # m across the flow (the periodic translation, and the bump wavelength)
+y_elements = 100                        # not used by the triangle mesh (the seam row band in GLDistance: 500 m)
+partitioner = "metisper"                # METIS with periodic partners together (any rank count)
+periodic_sides = true                   # side 2 the periodic image of side 1 (ElmerGrid -periodic 0 1 0)
+slide_ybump = 0.8                       # sliding coefficient x (1 + 0.8 sin(2 pi y / width)): 0.2 .. 1.8
+gmsh = "gmsh"
+elmergrid = "ElmerGrid"
+
+[model]
+type = "elmer"
+
+[elmer]
+template = "elmer/steady_template_marine.sif"
+buoyancy_lib = "elmer/Buoyancy"      # SeaPressure / SeaSpring (make -C elmer)
+mesh_db = "footprint"
+ess_lib = "elmer/SteadyStateIO"         # build with: make -C elmer
+ess_utils = "elmer/ess_utils.lua"
+n_procs = 0                             # 0: $SLURM_NTASKS. `ess setup` partitions the mesh for this many.
+mpirun = "mpirun -np {n}"
+solver = "ElmerSolver"
+timeout = 21600                         # seconds per Elmer run
+keep_runs = true                        # keep every run directory (sif, log, state files)
+cache = false                           # every run fresh
+periodic_gl = "fix"                     # none | elmerstreams | fix (ess run --periodic-gl)
+gl_mode = "contact"                     # the grounding line moves every step (ess run --gl contact)
+# heat on, the loads test: friction heating from the Stokes loads (periodic-aware, [elmer] thermal = loads) or as a
+# flux (ess run --friction-heat flux); the cold/temperate mask all cold and frozen (run_gl_ess passes --bed cold): the
+# grounded bed free (no cap on T), T0 under the shelf; sliding as at the melting point everywhere
+thermal = "loads"
+sliding = "temperate"
+strain_heat = true
+# MUMPS segfaulted in the heat solve on the partitioned periodic mesh (Elmer bcc2c52); ElmerStreams solves heat
+# (and Stokes) iteratively. Stokes stays direct until shown otherwise (ess run --linear-stokes iterative).
+linear_heat = "iterative"
+# MUMPS ran out of workspace (INFO(1) = -9, twice) on this 4.5M-unknown P2/P1 Stokes system: as ElmerStreams,
+# P1 + bubbles and GCR + ILU8 (linsys/gcr.sif: restart 200 here 250, tolerance 1e-8, no abort when not converged)
+mumps_workspace = 200                   # only if linear_stokes = "direct"
+linear_stokes = "block"                 # ess init only: the cheap solve below (the runs set their own)
+stokes_block_file = "elmer/stokes_cheap.sif.in"
+stokes_element = "Bubbles"
+stokes_preconditioner = "ILU0"          # ess init only (the runs set their own)
+stokes_iterative_tol = 1.0e-8
+stokes_abort_not_converged = false
+linear_free_surface = "iterative"      # BiCGStab + ILU1
+vtu = false                             # true: every run also writes a VTU at its end
+friction_heat = "loads"                 # nodal friction heating from the Stokes loads (ElmerStreams)
+# written with every run besides the state, used for the mask checks and plots
+diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "ColdTempMask", "GroundedMask", "Flow Solution Loads 3",
+               "Temperature Loads", "Periodic Flow Solution Loads 3"]
+
+[state]
+variables = ["Temperature", "Zs", "Zb"] # the state vector (velocity is slaved to it); Zb: the shelf base
+scales = { Temperature = 5.0, Zs = 50.0, Zb = 50.0 }   # K and m per scaled unit (norms, tolerances, FD steps)
+frozen = ["ColdTempMask", "GroundedMask", "bedrock"]
+
+# Frozen masks (ess/masks.py): after Newton converges, the cold/temperate mask (cold above T0 ->
+# temperate, refreezing temperate -> cold) and the grounded mask (floating base on the bed -> grounded,
+# grounded ice below flotation -> floating, base put at flotation) are moved to fit the state and Newton
+# runs again, up to max_rounds times; along a branch after every point (column "remasked").
+# The thin "filler" layer between the bedrock (rock properties too) and the ice base spans bed - minh .. Zb.
+# minh = 1 m (parameters.lua) inverts it as soon as a floating base sinks > 1 m below the bed before the
+# remask grounds it (NaN in the heat solve). 50 m: room for that; thermally the same rock under grounded ice.
+[lua]
+minh = 50.0
+# cap of the sliding factor exp(-(T - T0)/dT) (elmer/ess_utils.lua TDepSliding): 1e6 is reached ~2 K below
+# melting; uncapped, nodes switched temperate -> cold beside the fast ice near the grounding line overflowed
+ess_slide_maxfactor = 1.0e6
+
+[masks]
+auto = true
+max_rounds = 6
+
+[extract]
+# Only for `ess extract --restart FILE` (start from an Elmer .result in the mesh directory, written
+# with the same partitioning). true: masks/bedrock/Zb from the `ess setup` tables; false: from the
+# restart where it has them.
+restart_before_ics = true
+
+[parameter]
+name = "Tsurf"          # any top-level assignment in parameters.lua
+value = 268.15
+scale = 1.0             # parameter change (K) counted like one scaled unit of state change
+
+# The map used by Newton and continuation: n_steps of size dt (years). Its horizon T = n_steps*dt
+# must be comparable to the slow time scales, or GMRES stalls on all the modes that barely change
+# over T: ice-column diffusion H^2/kappa ~ 30 kyr, volume response H/a ~ 60 kyr. The 10.7 km bedrock
+# would take ~2 Myr; rock_heat_capacity < 1 speeds it up (no advection there, so steady states are
+# exactly the same). Use the largest dt the free surface tolerates (test with `ess run --dt`).
+# Fixed points do not depend on dt, n_steps or rock_heat_capacity.
+[map]
+# marine: 50 yr (200 yr is unstable with the shelf: the mesh tangled after ~10 kyr); horizon 2000 yr as land
+dt = 5.0                # contact grounding line, moving every step
+n_steps = 20            # 100 yr per chunk (a state saved after every chunk)
+coupled_iters = 1       # >1: iterate Stokes <-> heat within each step (same fixed points)
+rock_heat_capacity = 0.001
+
+# The map used for stability: the physical transient (rock_heat_capacity = 1). Use the same dt as
+# [map]: the discretisation's stabilisation depends slightly on dt, so a different dt has a slightly
+# different fixed point. Backward Euler with dt = 200 is accurate for modes slower than ~100 yr
+# (it reports modes with sigma dt > 2 as stable, so anything that fast would be missed).
+[stability_map]
+dt = 50.0
+n_steps = 100
+rock_heat_capacity = 1.0
+
+[fd]
+eps = 1e-6              # rms size of FD perturbations in scaled units; check with `ess check --vector residual`
+scheme = "central"
+
+[newton]
+tol = 1e-5              # rms(Phi(x) - x) in scaled units over one map horizon
+maxit = 15
+eta_max = 0.1
+eta_min = 1e-5
+gmres_restart = 60
+gmres_maxiter = 150
+max_step = 2.0          # max change per Newton step, scaled units (10 K, 100 m)
+linesearch = 6
+
+[continuation]
+name = "flux"
+ds = 0.5
+ds_min = 1e-3
+ds_max = 2.0
+dp0 = 0.01              # first step in Tsurf (K); its sign sets the direction
+p_min = 255.0
+p_max = 273.0
+max_points = 150
+max_folds = 4
+tol = 1e-5
+predictor = "parameter" # natural-parameter steps; arclength corrector near folds
+maxit = 8
+target_its = 3
+eta = 1e-3
+gmres_restart = 60
+gmres_maxiter = 150
+max_step = 2.0
+stability_every = 0     # >0: a short Arnoldi (stability_m runs) at every k-th point
+stability_m = 10
+
+[stability]
+m = 50                  # Krylov dimension = model runs (slow modes cluster near |mu| = 1: needs a few dozen)
+nev = 10
+tol = 1e-2              # Ritz residual / |mu| for a mode to count as converged

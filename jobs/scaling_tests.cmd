@@ -105,8 +105,14 @@ partition() {   # $1 case dir (with footprint.msh), $2 config: add footprint/par
     echo "$(date +%T) partitioning $1/footprint for $RANKS ranks"
     local per="" part="-metiskway $RANKS"
     grep -q "^periodic_sides *= *true" $2 && per="-periodic 0 1 0"
-    # box partitions RANKS/PY x PY for periodic sides, or with BOXES=1 (else METIS)
+    # box partitions RANKS/PY x PY for periodic sides, or with BOXES=1 (else METIS); PART=metisper or the config's
+    # partitioner = "metisper": Metis on the element graph with periodic partners kept together (ElmerGrid with
+    # elmer/patches/03-elmergrid-metisper.patch: bash jobs/build_elmer.cmd elmergrid), periodic or not
     if [ -n "$per" ] || [ "$BOXES" = 1 ]; then part="-partition $PX $PY 1"; fi
+    if [ "$PART" = metisper ] || grep -q '^partitioner *= *"metisper"' $2; then
+        part="-metisper $RANKS"
+        ElmerGrid 2>&1 | grep -q metisper || { echo "ElmerGrid $(command -v ElmerGrid) has no -metisper: bash jobs/build_elmer.cmd elmergrid"; return 1; }
+    fi
     rm -rf $1/fp_part$RANKS
     ( cd $1 && ElmerGrid 14 2 footprint.msh -autoclean -out fp_part$RANKS $per $part ) \
         > ${L}_partition.log 2>&1 || { cat ${L}_partition.log; return 1; }

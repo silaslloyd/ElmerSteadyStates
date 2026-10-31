@@ -327,7 +327,9 @@ def setup_case(cfg, mesh=True):
         cmd += ["-periodic", "0", "1", "0"]
     if n > 1:
         part = c.get("partition")              # [px, py]: px x py boxes (px * py = n), e.g. [64, 4] (stream.cmd)
-        if part:
+        if c.get("partitioner") == "metisper":  # Metis on the element graph, periodic partners kept together
+            cmd += ["-metisper", str(n)]        # (ElmerGrid with elmer/patches/03-elmergrid-metisper.patch)
+        elif part:
             px, py = (int(v) for v in part)
             if px * py != n:
                 raise SystemExit(f"[case] partition {px} x {py} != {n} processes")

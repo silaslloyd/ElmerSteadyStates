@@ -1,0 +1,342 @@
+diff --git a/elmergrid/src/egnative.c b/elmergrid/src/egnative.c
+index b97823e23..9c9765f96 100644
+--- a/elmergrid/src/egnative.c
++++ b/elmergrid/src/egnative.c
+@@ -241,6 +241,11 @@ void Instructions()
+   printf("-metisbc             : partition connected BCs separately to partitions by Metis\n");
+ #endif
+   printf("-partlayers int      : extend boundary partitioning by element layers\n");
++  printf("-partfile str        : read the element partitioning (one partition 1..N per element) from a file\n");
++#if USE_METIS
++  printf("-metisper int        : Metis (dual graph, Kway) on a periodic mesh (with -periodic), every periodic\n");
++  printf("                       node in the same partitions as its counterpart\n");
++#endif
+   
+   
+ #if 0
+@@ -3616,6 +3621,7 @@ void InitParameters(struct ElmergridType *eg)
+   eg->nodes3d = 0;
+   eg->metis = 0;
+   eg->metis_contig = FALSE;
++  eg->metisper = 0;
+   eg->metis_volcut = FALSE;
+   eg->metis_seed = 0;
+   eg->metis_ncuts = 1;
+@@ -3644,6 +3650,7 @@ void InitParameters(struct ElmergridType *eg)
+   eg->findsides = FALSE;
+   eg->parthypre = FALSE;
+   eg->partdual = FALSE;
++  eg->partfile[0] = '\0';
+   eg->partbcz = 0;
+   eg->partbcr = 0;
+   eg->partbclayers = 1;
+@@ -4339,6 +4346,24 @@ int InlineParameters(struct ElmergridType *eg,int argc,char *argv[],int first,in
+     else if(strcmp(argv[arg],"-timer") == 0) {
+       eg->timeron = TRUE;
+     }
++    else if(strcmp(argv[arg],"-metisper") == 0) {
++      if(arg+1 >= argc) {
++	printf("The number of partitions is required as a parameter\n");
++	return(2);
++      }
++      eg->metisper = atoi(argv[arg+1]);
++      printf("Metis partitioning of the periodic mesh into %d partitions, periodic partners together\n",eg->metisper);
++    }
++    else if(strcmp(argv[arg],"-partfile") == 0) {
++      if(arg+1 >= argc) {
++	printf("The partitioning file is required as a parameter\n");
++	return(2);
++      }
++      else {
++	strcpy(eg->partfile,argv[arg+1]);
++	printf("The element partitioning is read from file: %s\n",eg->partfile);
++      }
++    }
+     else if(strcmp(argv[arg],"-infofile") == 0) {
+       eg->timeron = TRUE;
+       if(arg+1 >= argc) {
+diff --git a/elmergrid/src/egparallel.c b/elmergrid/src/egparallel.c
+index 61d0c0ecd..20b621929 100644
+--- a/elmergrid/src/egparallel.c
++++ b/elmergrid/src/egparallel.c
+@@ -2615,6 +2615,214 @@ int PartitionMetisMesh(struct FemType *data,struct ElmergridType *eg,
+ 
+ 
+ 
++int PartitionFromFile(struct FemType *data,char *filename,int info)
++/* The element partitioning from a file: one integer per element, 1..N, in the order of ElmerGrid's own
++   element numbering (as in the serial mesh.elements written with the same input and options). The node
++   ownership follows the elements (as for Metis' dual graph), so the partitioning keeps any structure the
++   file gives it, e.g. periodic partners in the same partitions. */
++{
++  int i,part,maxpart,noelements;
++  FILE *in;
++
++  noelements = data->noelements;
++  if((in = fopen(filename,"r")) == NULL) {
++    printf("PartitionFromFile: cannot open %s\n",filename);
++    return(1);
++  }
++  if(!data->partitionexist) {
++    data->partitionexist = TRUE;
++    data->elempart = Ivector(1,noelements);
++    data->nodepart = Ivector(1,data->noknots);
++  }
++  maxpart = 0;
++  for(i=1;i<=noelements;i++) {
++    if(fscanf(in,"%d",&part) != 1) {
++      printf("PartitionFromFile: %s has %d entries, the mesh %d elements\n",filename,i-1,noelements);
++      fclose(in);
++      return(1);
++    }
++    if(part < 1) {
++      printf("PartitionFromFile: invalid partition %d for element %d\n",part,i);
++      fclose(in);
++      return(1);
++    }
++    data->elempart[i] = part;
++    if(part > maxpart) maxpart = part;
++  }
++  fclose(in);
++  data->nopartitions = maxpart;
++  if(info) printf("Read the partitioning of %d elements into %d partitions from %s\n",noelements,maxpart,filename);
++  PartitionNodesByElements(data,info);
++  return(0);
++}
++
++
++#if USE_METIS
++int PartitionMetisPeriodic(struct FemType *data,struct ElmergridType *eg,int partitions,int info)
++/* Metis on the dual graph (elements, neighbours sharing a face) of a periodic mesh: the periodic counterparts are
++   merged first (FindPeriodicNodes; -periodic), so elements across the seam are neighbours and Metis partitions the
++   closed (e.g. cylindrical) domain. Then every element holding a periodic slave node gets a partition that its
++   counterpart nodes also have (preferably its own, else that of the element across the seam), so each slave node
++   is only in partitions that also hold its master: Elmer's periodic conditions need the master where the slave is.
++   The node ownership follows the elements. Without periodic nodes: plain Metis on the dual graph. */
++{
++  int passi,i,j,k,l,e,e2,r,noelements,noknots,nl,ncommon,nnb,changed,viol,best,bestn,ok;
++  int *indxper,*mcnt,*mstart,*mlist,*rcnt,*rstart,*rlist,*shared,*touched,*part;
++  idx_t *xadj,*adjncy,nvtxs,ncon,nparts,objval,*mpart;
++  idx_t options[METIS_NOPTIONS];
++
++  noelements = data->noelements;
++  noknots = data->noknots;
++  if(data->periodicexist) {
++    indxper = data->periodic;
++  }
++  else {      /* not periodic: the same element-graph Metis, for comparisons with periodic meshes */
++    if(info) printf("PartitionMetisPeriodic: no periodic nodes, plain dual-graph Metis\n");
++    indxper = Ivector(1,noknots);
++    for(i=1;i<=noknots;i++) indxper[i] = i;
++  }
++  ncommon = (data->dim >= 3) ? 3 : 2;
++  if(info) printf("Periodic Metis: %d elements, %d partitions, neighbours share %d nodes\n",
++		  noelements,partitions,ncommon);
++
++  /* merged-node -> elements and raw-node -> elements (CSR, 1-based nodes) */
++  mcnt = Ivector(1,noknots); rcnt = Ivector(1,noknots);
++  mstart = Ivector(1,noknots+1); rstart = Ivector(1,noknots+1);
++  for(i=1;i<=noknots;i++) mcnt[i] = rcnt[i] = 0;
++  for(e=1;e<=noelements;e++) {
++    nl = LinearNodes(data->elementtypes[e]);
++    for(j=0;j<nl;j++) {
++      k = data->topology[e][j];
++      mcnt[indxper[k]]++;
++      rcnt[k]++;
++    }
++  }
++  mstart[1] = rstart[1] = 0;
++  for(i=1;i<=noknots;i++) {
++    mstart[i+1] = mstart[i] + mcnt[i];
++    rstart[i+1] = rstart[i] + rcnt[i];
++  }
++  mlist = Ivector(0,mstart[noknots+1]); rlist = Ivector(0,rstart[noknots+1]);
++  for(i=1;i<=noknots;i++) mcnt[i] = rcnt[i] = 0;
++  for(e=1;e<=noelements;e++) {
++    nl = LinearNodes(data->elementtypes[e]);
++    for(j=0;j<nl;j++) {
++      k = data->topology[e][j];
++      r = indxper[k];
++      mlist[mstart[r] + mcnt[r]++] = e;
++      rlist[rstart[k] + rcnt[k]++] = e;
++    }
++  }
++
++  /* the dual graph */
++  shared = Ivector(1,noelements); touched = Ivector(0,noelements);
++  for(e=1;e<=noelements;e++) shared[e] = 0;
++  xadj = (idx_t*) malloc((noelements+1)*sizeof(idx_t));
++  nnb = 0;
++  for(passi = 0; passi < 2; passi++) {
++    if(passi == 1) adjncy = (idx_t*) malloc((nnb+1)*sizeof(idx_t));
++    nnb = 0;
++    for(e=1;e<=noelements;e++) {
++      xadj[e-1] = nnb;
++      l = 0;
++      nl = LinearNodes(data->elementtypes[e]);
++      for(j=0;j<nl;j++) {
++	r = indxper[data->topology[e][j]];
++	for(k=mstart[r];k<mstart[r+1];k++) {
++	  e2 = mlist[k];
++	  if(e2 == e) continue;
++	  if(shared[e2] == 0) touched[l++] = e2;
++	  shared[e2]++;
++	}
++      }
++      for(k=0;k<l;k++) {
++	e2 = touched[k];
++	if(shared[e2] >= ncommon) {
++	  if(passi == 1) adjncy[nnb] = e2-1;
++	  nnb++;
++	}
++	shared[e2] = 0;
++      }
++    }
++    xadj[noelements] = nnb;
++  }
++
++  nvtxs = noelements; ncon = 1; nparts = partitions;
++  mpart = (idx_t*) malloc(noelements*sizeof(idx_t));
++  SetMetisOptions(options,eg,info);
++  options[METIS_OPTION_DBGLVL] = 0;
++  if(info) printf("Starting METIS_PartGraphKway on the periodic dual graph (%d edges)\n",nnb/2);
++  METIS_PartGraphKway(&nvtxs,&ncon,xadj,adjncy,NULL,NULL,NULL,&nparts,NULL,NULL,options,&objval,mpart);
++  if(info) printf("Edge cut %d\n",(int)objval);
++
++  if(!data->partitionexist) {
++    data->partitionexist = TRUE;
++    data->elempart = Ivector(1,noelements);
++    data->nodepart = Ivector(1,noknots);
++  }
++  data->nopartitions = partitions;
++  part = data->elempart;
++  for(e=1;e<=noelements;e++) part[e] = mpart[e-1]+1;
++
++  /* the seam: an element with slave nodes takes a partition that all their masters' elements have */
++  changed = 0;
++  for(e=1;e<=noelements;e++) {
++    nl = LinearNodes(data->elementtypes[e]);
++    best = -1; bestn = -1;
++    for(j=0;j<nl;j++) {
++      k = data->topology[e][j];
++      if(indxper[k] == k) continue;
++      /* candidate partitions: those of the elements on the first master; check against the other masters */
++      for(l=rstart[indxper[k]];l<rstart[indxper[k]+1];l++) {
++	int p = part[rlist[l]], jj, kk, ll, has, n2 = 0;
++	ok = TRUE;
++	for(jj=0;jj<nl && ok;jj++) {
++	  kk = data->topology[e][jj];
++	  if(indxper[kk] == kk) continue;
++	  has = FALSE;
++	  for(ll=rstart[indxper[kk]];ll<rstart[indxper[kk]+1];ll++) 
++	    if(part[rlist[ll]] == p) { has = TRUE; n2++; }
++	  if(!has) ok = FALSE;
++	}
++	if(!ok) continue;
++	if(p == part[e]) { best = p; bestn = 1<<30; }
++	else if(n2 > bestn) { best = p; bestn = n2; }
++      }
++      break;
++    }
++    if(best > 0 && best != part[e]) {
++      part[e] = best;
++      changed++;
++    }
++  }
++  if(info) printf("Periodic Metis: %d elements on the seam moved to their counterparts' partitions\n",changed);
++
++  /* check: every partition of a slave node's elements also holds an element of its master */
++  viol = 0;
++  for(k=1;k<=noknots;k++) {
++    if(indxper[k] == k) continue;
++    for(l=rstart[k];l<rstart[k+1];l++) {
++      int p = part[rlist[l]], ll, has = FALSE;
++      for(ll=rstart[indxper[k]];ll<rstart[indxper[k]+1];ll++) 
++	if(part[rlist[ll]] == p) has = TRUE;
++      if(!has) viol++;
++    }
++  }
++  if(info || viol) printf("Periodic Metis: slave-node partitions without the master: %d\n",viol);
++
++  PartitionNodesByElements(data,info);
++
++  if(!data->periodicexist) free_Ivector(indxper,1,noknots);
++  free(xadj); free(adjncy); free(mpart);
++  free_Ivector(mlist,0,mstart[noknots+1]); free_Ivector(rlist,0,rstart[noknots+1]);
++  free_Ivector(mcnt,1,noknots); free_Ivector(rcnt,1,noknots);
++  free_Ivector(mstart,1,noknots+1); free_Ivector(rstart,1,noknots+1);
++  free_Ivector(shared,1,noelements); free_Ivector(touched,0,noelements);
++  return(viol ? 2 : 0);
++}
++#endif
++
++
+ #if USE_METIS
+ int PartitionMetisGraph(struct FemType *data,struct BoundaryType *bound,
+ 			struct ElmergridType *eg,int partitions,int metisopt,
+diff --git a/elmergrid/src/egparallel.h b/elmergrid/src/egparallel.h
+index 730111554..97a7a1c7d 100644
+--- a/elmergrid/src/egparallel.h
++++ b/elmergrid/src/egparallel.h
+@@ -21,6 +21,10 @@ int PartitionConnectedElements1D(struct FemType *data,struct BoundaryType *bound
+ int PartitionSimpleNodes(struct FemType *data,int dimpart[],int dimper[],
+ 			 int partorder, Real corder[],Real parttol,int info);
+ #if USE_METIS
++int PartitionFromFile(struct FemType *data,char *filename,int info);
++#if USE_METIS
++int PartitionMetisPeriodic(struct FemType *data,struct ElmergridType *eg,int partitions,int info);
++#endif
+ int PartitionMetisMesh(struct FemType *data,struct ElmergridType *eg,
+ 		       int partitions,int dual,int info);
+ int PartitionMetisGraph(struct FemType *data,struct BoundaryType *bound,
+diff --git a/elmergrid/src/egtypes.h b/elmergrid/src/egtypes.h
+index a167ff0cc..1d08b6533 100644
+--- a/elmergrid/src/egtypes.h
++++ b/elmergrid/src/egtypes.h
+@@ -299,6 +299,7 @@ struct ElmergridType {
+     layermove,  /* map the created layer to the original geometry */
+     metis,      /* number of Metis partitions */
+     metis_contig,  /* is Metis partitioning contiguous */
++    metisper,      /* -metisper: Metis on the elements of the periodic mesh, partners kept together */
+     metis_minconn,  /* is Metis partitioning contiguous */
+     metis_seed,   /* seed for Metis partitioning routines */
+     metis_volcut, /* minimize edgecut (default) or total communication volume when true */
+@@ -391,6 +392,7 @@ struct ElmergridType {
+ 
+   char filesin[MAXCASES][MAXFILESIZE],
+     filesout[MAXCASES][MAXFILESIZE], 
+-    infofile[MAXFILESIZE];
++    infofile[MAXFILESIZE],
++    partfile[MAXFILESIZE]; /* -partfile: element partitioning read from a file */
+ };
+ 
+diff --git a/elmergrid/src/fempre.c b/elmergrid/src/fempre.c
+index 9b638e638..617600911 100644
+--- a/elmergrid/src/fempre.c
++++ b/elmergrid/src/fempre.c
+@@ -729,7 +729,7 @@ int main(int argc, char *argv[])
+     partbcoptim = eg.partbcoptim;
+     partdual = eg.partdual;
+ 
+-    if(eg.partitions || eg.metis) {
++    if(eg.partitions || eg.metis || eg.partfile[0] || eg.metisper) {
+       printf("\nElmergrid partitioning meshes:\n");
+       printf(  "------------------------------\n");
+       timer_show();
+@@ -777,6 +777,16 @@ int main(int argc, char *argv[])
+ 	} 
+       }
+ #endif
++#if USE_METIS
++      if(eg.metisper) {
++	if( PartitionMetisPeriodic(&data[k],&eg,eg.metisper,info) ) 
++	  bigerror("Periodic Metis partitioning failed");
++      }
++#endif
++      if(eg.partfile[0]) {
++	if( PartitionFromFile(&data[k],eg.partfile,info) ) 
++	  bigerror("Cannot read the partitioning file");
++      }
+       if(data[k].periodicexist) 
+ 	FindPeriodicParents(&data[k],boundaries[k],info);	
+ 

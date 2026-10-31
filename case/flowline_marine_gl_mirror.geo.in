@@ -1,0 +1,61 @@
+// Marine footprint as flowline_marine_gl.geo.in (the same refinement bands around the grounding line along x), but
+// UNSTRUCTURED TRIANGLES with a guaranteed mirror symmetry about y = W/2, as ElmerStreams' Marine_Term
+// Initialisation/template.geo: the bottom half [0, W/2] is meshed and the top half [W/2, W] forced to be its
+// reflection (Periodic Surface with an affine reflection; the halves share the mid line). The sides y = 0 and y = W
+// are then node-for-node periodic, and the elements touching them are mirror images (GLDistance.F90 relies on that).
+// Element sizes from the points (BoundaryRes at x = 0 and L, MarginRes / FineRes at the band ends), set on both the
+// side and the mid line so the interior follows them. Physical groups as flowline_marine_gl.geo.in (inflow, front,
+// side1, side2 -> Elmer boundaries 1-4).
+Mesh.Algorithm = 5;
+Mesh.MeshSizeFromPoints = 1;
+Mesh.MeshSizeExtendFromBoundary = 1;
+Mesh.MeshSizeFromCurvature = 0;
+L = {L};
+W = {Wmesh};
+GL = {GLx};
+resb = {BoundaryRes};
+resgl = {MarginRes};
+resf = {FineRes};
+df = {FineHalf};
+// bottom side y = 0
+Point(1) = {0, 0, 0, resb};
+Point(2) = {{Xa}, 0, 0, resgl};
+Point(3) = {{Xb}, 0, 0, resf};
+Point(4) = {{Xc}, 0, 0, resf};
+Point(5) = {{Xd}, 0, 0, resgl};
+Point(6) = {L, 0, 0, resb};
+// mid line y = W/2 (shared by both halves), from x = L back to 0
+Point(7) = {L, W/2, 0, resb};
+Point(8) = {{Xd}, W/2, 0, resgl};
+Point(9) = {{Xc}, W/2, 0, resf};
+Point(10) = {{Xb}, W/2, 0, resf};
+Point(11) = {{Xa}, W/2, 0, resgl};
+Point(12) = {0, W/2, 0, resb};
+// top side y = W, from x = L back to 0
+Point(13) = {L, W, 0, resb};
+Point(14) = {{Xd}, W, 0, resgl};
+Point(15) = {{Xc}, W, 0, resf};
+Point(16) = {{Xb}, W, 0, resf};
+Point(17) = {{Xa}, W, 0, resgl};
+Point(18) = {0, W, 0, resb};
+Line(1) = {1, 2};  Line(2) = {2, 3};  Line(3) = {3, 4};  Line(4) = {4, 5};  Line(5) = {5, 6};   // y = 0
+Line(6) = {6, 7};                                                                                // x = L, lower
+Line(7) = {7, 8};  Line(8) = {8, 9};  Line(9) = {9, 10}; Line(10) = {10, 11}; Line(11) = {11, 12}; // y = W/2
+Line(12) = {12, 1};                                                                              // x = 0, lower
+Line(13) = {7, 13};                                                                              // x = L, upper
+Line(14) = {13, 14}; Line(15) = {14, 15}; Line(16) = {15, 16}; Line(17) = {16, 17}; Line(18) = {17, 18}; // y = W
+Line(19) = {18, 12};                                                                             // x = 0, upper
+Curve Loop(1) = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+Plane Surface(100) = {1};
+Curve Loop(2) = {-11, -10, -9, -8, -7, 13, 14, 15, 16, 17, 18, 19};
+Plane Surface(200) = {2};
+// the top half the mirror image of the bottom half: (x, y, z) -> (x, W - y, z)
+Periodic Surface {200} = {100} Affine {1, 0, 0, 0,
+                                        0, -1, 0, W,
+                                        0, 0, 1, 0,
+                                        0, 0, 0, 1};
+Physical Surface(21) = {100, 200};
+Physical Curve(22) = {12, 19};               // inflow, x = 0
+Physical Curve(23) = {6, 13};                // calving front, x = L
+Physical Curve(24) = {1, 2, 3, 4, 5};        // side 1, y = 0
+Physical Curve(25) = {14, 15, 16, 17, 18};   // side 2, y = W
