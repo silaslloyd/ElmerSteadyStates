@@ -19,6 +19,7 @@ slider through the states.
     python plots/plot_state_3d.py STATE.npz --partitions --mesh-dir CASE/footprint   # partition outlines, white
 Buttons above the velocity panel switch its colours between speed, vx, vy and vz.
     python plots/plot_state_3d.py work/<config>/runs/<run>                  # a run with ESS_VTU_EVERY: every step
+    python plots/plot_state_3d.py A.npz --diff B.npz                      # colours: A minus B (same mesh)
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
 Speed colours max out at the surface speed on the grounding line (--vmax V, or --vmax-all for the largest speed).
 Structured footprints and the unstructured triangle ones (configs/*_tri.toml; Delaunay, needs scipy).
@@ -415,6 +416,11 @@ def main():
         k = args.index("--vmax")
         VMAX = float(args[k + 1])
         args = args[:k] + args[k + 2:]
+    DIFF = None
+    if "--diff" in args:                          # --diff OTHER.npz: colours = this state minus OTHER (same mesh)
+        k = args.index("--diff")
+        DIFF = args[k + 1]
+        args = args[:k] + args[k + 2:]
     if "--full" in args:                          # the whole ice sheet, divide to front
         X_WINDOW = (-1.0, 1e9)
         args.remove("--full")
@@ -464,6 +470,17 @@ def main():
     data = []
     for label, f in items:
         top, base, t = surfaces(f)
+        if DIFF:                                  # the fields minus the other state's, node by node (global ids)
+            otop, obase, _ = surfaces(DIFF)
+            for d, o in ((top, otop), (base, obase)):
+                if d is None or o is None:
+                    continue
+                pos = {g: i for i, g in enumerate(o["g"].tolist())}
+                idx = np.array([pos.get(g, -1) for g in d["g"].tolist()])
+                for key in ("speed", "vx", "vy", "vz", "T"):
+                    if key in d and key in o:
+                        d[key] = np.where(idx >= 0, d[key] - o[key][np.maximum(idx, 0)], np.nan)
+            label = f"{label} minus {os.path.basename(DIFF)[:-4]}"
         data.append((label, top, base, t))
         if base is None or "mask" not in base:
             print(f"  {label}: no GroundedMask / Zb in {f}")
@@ -518,6 +535,12 @@ def main():
         print(f"temperature colours {tmin:.2f} .. {tmax:.2f} K: all temperatures (--tmin / --tmax to narrow)")
     # the panels: (field, colour range, colour scale, colour bar title, colour bar x, scene)
     panels = [("speed", 0.0, smax, "Viridis", "speed (m/yr)", 0.47 if temp else 1.0, "scene")]
+    if DIFF:                                      # differences: vz first, symmetric red/blue
+        v = np.abs(np.concatenate([d["vz"] for _, tp, b, _ in data for d in (tp, b) if d is not None]))
+        m = max(float(np.nanpercentile(v, 99.5)) if np.isfinite(v).any() else 1.0, 1e-9)
+        panels[0] = ("vz", -m, m, "RdBu_r", "difference in vz (m/yr)", panels[0][5], "scene")
+        print(f"difference mode: vz colours -{m:.3g} .. {m:.3g} m/yr (99.5th percentile of |difference|), "
+              f"largest {np.nanmax(v):.3g} m/yr")
     if temp:
         panels.append(("T", tmin, tmax, "RdBu_r", "temperature (K)", 1.0, "scene2"))
 
@@ -751,7 +774,7 @@ def main():
         buttons = []
         for fld, title in (("speed", "speed (m/yr)"), ("vx", "vx, along the flow (m/yr)"),
                            ("vy", "vy, across (m/yr)"), ("vz", "vz, vertical (m/yr)")):
-            if fld == "speed":
+            if fld == "speed" and not DIFF:
                 lo, hi, cs = P0[1], P0[2], P0[3]
             else:
                 v = np.abs(np.concatenate([tp0[fld], b0[fld]]))
