@@ -13,19 +13,31 @@ ap = argparse.ArgumentParser()
 ap.add_argument("pdir")
 a = ap.parse_args()
 files = sorted(glob.glob(os.path.join(a.pdir, "part.*.nodes")), key=lambda f: int(re.findall(r"part\.(\d+)\.nodes", f)[0]))
-xy = {}; where = {}; used = {}; nel = []; nshared = []
+xy = {}; where = {}; used = {}; nel = []; nshared = []; ncomp = []
 for f in files:
     p = int(re.findall(r"part\.(\d+)\.nodes", f)[0])
     for line in open(f):
         s = line.split()
         g = int(s[0]); xy[g] = (float(s[2]), float(s[3]))
         where.setdefault(g, set()).add(p)
-    ne = 0
+    ne = 0; par = {}
+    def root(g):
+        while par[g] != g:
+            par[g] = par[par[g]]; g = par[g]
+        return g
     for line in open(f.replace(".nodes", ".elements")):
         s = line.split(); ne += 1
         for g in s[3:]:
             used.setdefault(int(g), set()).add(p)
+        # connected pieces of the partition (elements sharing a node)
+        ns = [int(g) for g in s[3:]]
+        for g in ns:
+            par.setdefault(g, g)
+        r0 = root(ns[0])
+        for g in ns[1:]:
+            par[root(g)] = r0
     nel.append(ne)
+    ncomp.append(len({root(g) for g in par}))
     sh = f.replace(".nodes", ".shared")
     nshared.append(sum(1 for _ in open(sh)) if os.path.exists(sh) else 0)
 ys = np.array([v[1] for v in xy.values()]); ymin, ymax = ys.min(), ys.max(); eps = 1e-5 * (ymax - ymin)
@@ -44,6 +56,11 @@ print(f"{len(files)} partitions: elements per partition {nel.min()}..{nel.max()}
       f"shared nodes per partition {min(nshared)}..{max(nshared)} (total {sum(nshared)})")
 print(f"periodic pairs {len(pairs)} (unpaired top nodes {unpaired}): slave in a partition without its master: {len(bad)}; "
       f"pairs with different partition sets: {split}; ghost node copies (listed, no element): {ghosts}")
+ncomp = np.array(ncomp)
+print(f"connected pieces per partition: max {ncomp.max()}; partitions in more than one piece: {(ncomp > 1).sum()}"
+      + (f" ({', '.join(str(i + 1) + ':' + str(c) for i, c in enumerate(ncomp) if c > 1)[:200]})" if (ncomp > 1).any() else ""))
+sh = np.array(nshared); print(f"shared nodes / sqrt(elements) (compactness, larger = more ragged): median "
+      f"{np.median(sh / np.sqrt(nel)):.2f}, max {(sh / np.sqrt(nel)).max():.2f} (partition {np.argmax(sh / np.sqrt(nel)) + 1})")
 for s, m in bad[:5]:
     print(f"   slave {s} at x {xy[s][0]:.1f} used in {sorted(U(s))}, master {m} used in {sorted(U(m))}")
 raise SystemExit(1 if bad else 0)
