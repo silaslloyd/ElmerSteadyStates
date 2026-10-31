@@ -636,6 +636,7 @@ End
                     f'  Equation = "vtu {fname}"\n'
                     '  Procedure = "ResultOutputSolve" "ResultOutputSolver"\n'
                     f'  Output File Name = "{fname}"\n'
+                    '  Output Directory = "."\n'   # the run directory (default: the mesh directory)
                     '  Output Format = String "vtu"\n'
                     "  Save Boundaries Only = Logical True\n"
                     f'  Mask Name = String "{key}"\n'
