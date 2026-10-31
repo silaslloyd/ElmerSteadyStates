@@ -18,6 +18,7 @@ slider through the states.
                                                                             # white (without --mesh-dir: Delaunay)
     python plots/plot_state_3d.py STATE.npz --partitions --mesh-dir CASE/footprint   # partition outlines, white
 Buttons above the velocity panel switch its colours between speed, vx, vy and vz.
+    python plots/plot_state_3d.py work/<config>/runs/<run>                  # a run with ESS_VTU_EVERY: every step
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
 Speed colours max out at the surface speed on the grounding line (--vmax V, or --vmax-all for the largest speed).
 Structured footprints and the unstructured triangle ones (configs/*_tri.toml; Delaunay, needs scipy).
@@ -27,6 +28,7 @@ A treatment folder is read phase by phase (spinup, retreat, advance: <phase>_chu
 Writes <first input>_3d.html and opens it. Needs numpy and plotly.
 """
 import glob
+import re
 import os
 import sys
 import webbrowser
@@ -65,6 +67,13 @@ def collect(args):
         if a.endswith(".npz"):
             out.append((os.path.basename(a)[:-4], a))
             continue
+        if a.endswith((".pvtu", ".vtu")):        # one step of a run with ESS_VTU_EVERY (base_t*.pvtu)
+            out.append((os.path.basename(a).split(".")[0], a))
+            continue
+        steps = vtu_steps(a)
+        if steps:                                # a run directory with ESS_VTU_EVERY: every step (base_t*.pvtu)
+            out += [(f"step {int(re.findall(r'_t(\d+)', os.path.basename(f))[0])}", f) for f in steps]
+            continue
         pts = os.path.join(a, "points")
         if os.path.isdir(pts):                   # one phase: <phase>_chunks
             ph = os.path.basename(a.rstrip("/")).replace("_chunks", "")
@@ -76,6 +85,98 @@ def collect(args):
     if not out:
         raise SystemExit(f"no states found in {args}")
     return out
+
+
+def vtu_steps(d):
+    """the per-step base VTUs of a run directory (ESS_VTU_EVERY: base_t0001.pvtu, ...; serial: base_t0001.vtu)"""
+    if not os.path.isdir(d):
+        return []
+    f = sorted(glob.glob(os.path.join(d, "base_t*.pvtu")))
+    return f or sorted(g for g in glob.glob(os.path.join(d, "base_t*.vtu")) if "par" not in os.path.basename(g))
+
+
+def read_vtu(path):
+    """points (n, 3) and point data {lower-case name: (n, components)} of a .vtu (ascii, or raw appended binary with
+    UInt32 or UInt64 block headers, as Elmer's VtuOutputSolver writes) or of all pieces of a .pvtu"""
+    import xml.etree.ElementTree as ET
+    if path.endswith(".pvtu"):
+        root = ET.parse(path).getroot()
+        srcs = [p.get("Source") for p in root.iter("Piece")]
+        parts = [read_vtu(os.path.join(os.path.dirname(path), q)) for q in srcs]
+        parts = [q for q in parts if len(q[0])]
+        if not parts:
+            return np.zeros((0, 3)), {}
+        names = set.intersection(*[set(q[1]) for q in parts])
+        return (np.concatenate([q[0] for q in parts]),
+                {n: np.concatenate([q[1][n] for q in parts]) for n in names})
+    raw = open(path, "rb").read()
+    k = raw.find(b"<AppendedData")
+    head = raw if k < 0 else raw[:k]
+    data0 = -1
+    if k >= 0:
+        data0 = raw.index(b"_", k) + 1
+    txt = head.decode("latin-1")
+    hdr = np.uint64 if 'header_type="UInt64"' in txt else np.uint32
+    order = ">" if 'byte_order="BigEndian"' in txt else "<"
+    types = {"Float32": "f4", "Float64": "f8", "Int32": "i4", "Int64": "i8", "UInt8": "u1", "UInt32": "u4",
+             "UInt64": "u8", "Int8": "i1"}
+    pieces = re.findall(r"<Piece[^>]*NumberOfPoints=\"(\d+)\"", txt)
+    npts = int(pieces[0]) if pieces else 0
+
+    def array(tag, body):
+        typ = types[re.search(r'type="(\w+)"', tag).group(1)]
+        nc = int(re.search(r'NumberOfComponents="(\d+)"', tag).group(1)) if "NumberOfComponents" in tag else 1
+        if 'format="appended"' in tag:
+            off = int(re.search(r'offset="(\d+)"', tag).group(1))
+            hs = np.dtype(hdr).itemsize
+            nb = int(np.frombuffer(raw, dtype=order + np.dtype(hdr).str[1:], count=1, offset=data0 + off)[0])
+            v = np.frombuffer(raw, dtype=order + typ, count=nb // np.dtype(typ).itemsize, offset=data0 + off + hs)
+        else:
+            v = np.array(body.split(), dtype=typ)
+        return v.astype(float).reshape(-1, nc)
+    pts = np.zeros((0, 3))
+    m = re.search(r"<Points>\s*(<DataArray[^>]*>)(.*?)</DataArray>|<Points>\s*(<DataArray[^>]*/>)", txt, re.S)
+    if m:
+        pts = array(m.group(1) or m.group(3), m.group(2) or "")
+    pdata = {}
+    pd = re.search(r"<PointData[^>]*>(.*?)</PointData>", txt, re.S)
+    if pd:
+        for mm in re.finditer(r"(<DataArray[^>]*?)(/>|>(.*?)</DataArray>)", pd.group(1), re.S):
+            tag = mm.group(1)
+            name = re.search(r'Name="([^"]*)"', tag).group(1).lower()
+            pdata[name] = array(tag, mm.group(3) or "")
+    return pts[:npts] if npts else pts, pdata
+
+
+def vtu_surfaces(path):
+    """top and base of one step from its base_t*.(p)vtu and surface_t*.(p)vtu (ESS_VTU_EVERY), as surfaces()"""
+    def surf(p, base):
+        X, D = read_vtu(p)
+        if not len(X):
+            return None
+        _, first = np.unique(np.c_[np.round(X[:, 0], 0), np.round(X[:, 1], 0)], axis=0, return_index=True)
+        first = np.sort(first)           # nodes shared between partitions once
+        X = X[first]
+        D = {k: v[first] for k, v in D.items()}
+        get = lambda *names: next((D[n] for n in names if n in D), None)
+        u = get("velocity")
+        d = dict(g=np.arange(len(X)), x=X[:, 0], y=X[:, 1], v=X[:, 2])
+        if u is not None:
+            d["vx"], d["vy"], d["vz"] = (u[:, c] for c in range(3))
+            d["speed"] = np.hypot(u[:, 0], u[:, 1]) if u.shape[1] >= 2 else np.abs(u[:, 0])
+            d["speed"] = np.sqrt(np.sum(u[:, :3] ** 2, axis=1))
+        if base:
+            gm = get("groundedmask")
+            if gm is not None:
+                d["mask"] = gm[:, 0]
+            b = get("bedrock")
+            if b is not None:
+                d["bed"] = b[:, 0]
+        return d
+    base = surf(path, True)
+    top = surf(path.replace("base_t", "surface_t"), False)
+    step = re.findall(r"_t(\d+)", os.path.basename(path))
+    return top, base, float(step[0]) if step else np.nan
 
 
 def _rec(s, name):
@@ -92,6 +193,8 @@ def _rec(s, name):
 
 def surfaces(path):
     """the footprint grid and the fields on it for one state"""
+    if path.endswith((".pvtu", ".vtu")):
+        return vtu_surfaces(path)
     s = load_state(path)
     g1, X = _rec(s, "coordinate 1")
     Y = dict(zip(g1.tolist(), _rec(s, "coordinate 2")[1].tolist()))

@@ -618,26 +618,31 @@ End
         return text
 
     def _vtu_every(self, text, every):
-        """ESS_VTU_EVERY=N (testing, e.g. jobs/scaling_tests.cmd VTU_EVERY=1): a VTU of the BOUNDARIES (ice base and
-        surface, sides, bed: small) every N time steps in the run directory (steps_t*.pvtu): velocity, grounded mask
-        and the distance to the grounding line (fs_ssa_km: > fs_ssa_km is the passive SSA shelf), to watch a run
-        step by step in ParaView"""
+        """ESS_VTU_EVERY=N (testing, e.g. jobs/scaling_tests.cmd VTU_EVERY=1): every N time steps a VTU of the ice
+        base (base_t*.pvtu: velocity, grounded mask, bedrock, distance to the grounding line) and of the surface
+        (surface_t*.pvtu: velocity) in the run directory, for plots/plot_state_3d.py RUNDIR (step slider)"""
         text = text.replace('Variable = -nooutput "GL Distance"', 'Variable = "GL Distance"')
+        # the base (Boundary Condition "interface", the one after "bedrock - filler") and the surface ("free surface")
+        for name, key in (('Name = "interface"\n', "ESS Save Base"), ('Name = "free surface"', "ESS Save Surface")):
+            k = text.rindex(name) if key == "ESS Save Base" else text.index(name)
+            text = text[:k] + f"{key} = Logical True\n  " + text[k:]
         n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M)) + 1
-        fields = ["GroundedMask"] + (["GL Distance"] if self.fs_ssa_x is not None else [])
-        sec = (f"\nSolver {n}\n"
-               '  Exec Solver = "After Timestep"\n'
-               f"  Exec Intervals = {every}\n"
-               '  Equation = "vtu every"\n'
-               '  Procedure = "ResultOutputSolve" "ResultOutputSolver"\n'
-               '  Output File Name = "steps"\n'
-               '  Output Format = String "vtu"\n'
-               "  Save Boundaries Only = Logical True\n"
-               "  Single Precision = Logical True\n"
-               '  Vector Field 1 = String "Velocity"\n'
-               + "".join(f'  Scalar Field {k} = String "{f}"\n' for k, f in enumerate(fields, 1))
-               + "End\n")
-        return text.rstrip() + "\n" + sec
+        base = ["GroundedMask", "bedrock"] + (["GL Distance"] if self.fs_ssa_x is not None else [])
+        out = ""
+        for m, (fname, key, fields) in enumerate((("base", "ESS Save Base", base), ("surface", "ESS Save Surface", []))):
+            out += (f"\nSolver {n + m}\n"
+                    '  Exec Solver = "After Timestep"\n'
+                    f"  Exec Intervals = {every}\n"
+                    f'  Equation = "vtu {fname}"\n'
+                    '  Procedure = "ResultOutputSolve" "ResultOutputSolver"\n'
+                    f'  Output File Name = "{fname}"\n'
+                    '  Output Format = String "vtu"\n'
+                    "  Save Boundaries Only = Logical True\n"
+                    f'  Mask Name = String "{key}"\n'
+                    '  Vector Field 1 = String "Velocity"\n'
+                    + "".join(f'  Scalar Field {k} = String "{f}"\n' for k, f in enumerate(fields, 1))
+                    + "End\n")
+        return text.rstrip() + "\n" + out
 
     def _periodic_sides(self, text):
         """marine template: side 2 the periodic image of side 1 (bedrock, filler, ice), free ice sides"""
