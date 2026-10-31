@@ -22,7 +22,11 @@ set -e
 cd "$(dirname "$0")/.."
 POINTS=${*:-m96 m192 m384 m768 w192 w384 l72 l144 l288 l576}
 BASE="ALL,ELMER_MODULE=${ELMER_MODULE:-elmerfem/2026-10-28},ELMER_PREFIX=${ELMER_PREFIX:-/SCRATCH/$USER/elmer/install2},BED=none,TOL=1e-5,STEPS=${STEPS:-20},DT=1,TIMING=1,RECOMPUTE=200,WARMUP_ILU=0"
-MAR="SET=F,SLIDING=subtemperate,GLMODE=contact,NL=2,WARMUP=1e-2:0.1*3:1*3,SPRING_DT=1,FS_SSA=10,FS_SSA_SHELF=ssa,FS_SSA_UPDATE=1,REBUILD_PREC=ILU0"
+# MAR_SET (default F): the marine runs per point, e.g. FPQ = GCR + ILU0, ILU2, ILU3 (land showed ILU0 breaking down
+# below ~300 columns per rank: 5 -> 60-89 iterations from 288 to 576 ranks, ILU4 stayed at 2-3). MAR_REBUILD_PREC (default
+# ILU0): the level of the forced rebuilds on ranks whose grounded mask changed; "same" = each run's own level
+MRP=${MAR_REBUILD_PREC:-ILU0}; [ "$MRP" = same ] && MRP= || MRP=",REBUILD_PREC=$MRP"
+MAR="SET=${MAR_SET:-F},SLIDING=subtemperate,GLMODE=contact,NL=2,WARMUP=1e-2:0.1*3:1*3,SPRING_DT=1,FS_SSA=10,FS_SSA_SHELF=ssa,FS_SSA_UPDATE=1$MRP"
 # LAND_SET (default FW: GCR + ILU0 and GCR + ILU4 per point). ILU0 wins at 288 ranks (1.9 vs 2.5 s Stokes) but its
 # iterations grow and it gets slower at 576 (3.2 s); ILU4 keeps 2-3 iterations (1.5 s at 576) but overflows Elmer's
 # integers on the large partitions (72, 144 ranks)
