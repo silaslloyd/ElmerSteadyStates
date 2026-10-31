@@ -8,8 +8,8 @@
 # the ranks whose grounded mask changed and no scheduled refresh (RECOMPUTE=200), the bedrock/filler mesh update only at
 # the first step (the marine default). Land: GCR + ILU4 (SET=W: 3 iterations per solve on the nearly steady land case,
 # ILU0 needs 60-100), the same refresh setting.
-# Every point: (mesh setup and partitioning the first time), a ramped warm-up (R0, scaling_<ranks>_R0.npz in the
-# config's work dir), then STEPS warm 1-yr steps whose summary gives the mean Stokes time, the whole Elmer time per step
+# Every point: (mesh setup and partitioning the first time), a ramped warm-up with ILU0 (R0, scaling_<ranks>_R0.npz in the
+# config's work dir; ILU4 overflowed on the 96-rank partitions), then STEPS warm 1-yr steps whose summary gives the mean Stokes time, the whole Elmer time per step
 # ("Elmer ... s per step") and every solver's time per step (TIMING=1). Points are chained (afterany: one at a time, a
 # failed point does not stop the rest), so at most one point holds nodes (<= 6 nodes at 768 ranks).
 #
@@ -22,7 +22,7 @@
 set -e
 cd "$(dirname "$0")/.."
 POINTS=${*:-m96 m192 m384 m768 w192 w384 l72 l144 l288 l576}
-BASE="ALL,ELMER_MODULE=${ELMER_MODULE:-elmerfem/2026-10-28},ELMER_PREFIX=${ELMER_PREFIX:-/SCRATCH/$USER/elmer/install2},BED=none,TOL=1e-5,STEPS=${STEPS:-20},DT=1,TIMING=1,RECOMPUTE=200"
+BASE="ALL,ELMER_MODULE=${ELMER_MODULE:-elmerfem/2026-10-28},ELMER_PREFIX=${ELMER_PREFIX:-/SCRATCH/$USER/elmer/install2},BED=none,TOL=1e-5,STEPS=${STEPS:-20},DT=1,TIMING=1,RECOMPUTE=200,WARMUP_ILU=0"
 MAR="SET=F,SLIDING=subtemperate,GLMODE=contact,NL=2,WARMUP=1e-2:0.1*3:1*3,SPRING_DT=1,FS_SSA=10,FS_SSA_SHELF=ssa,FS_SSA_UPDATE=1,REBUILD_PREC=ILU0"
 LAND="SET=W,WARMUP=1*3"
 dep=${AFTER:+--dependency=afterany:$AFTER}

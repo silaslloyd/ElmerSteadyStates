@@ -443,11 +443,13 @@ fi
 if [ -n "$WARMUP" ] || [ -n "$WARMUP_STATE" ]; then
     R0S=${WARMUP_STATE:-$WORK/scaling_${RANKS}_R0.npz}
     if [ -z "$WARMUP_STATE" ]; then
-        mkGCR $V/R0.sif.in 4
+        # WARMUP_ILU (default 4): the warm-up's ILU level. ILU4 on few large 3D partitions (e.g. 96 ranks for the
+        # 50 km mesh) overflows Elmer's integers or the memory; the sweep uses 0 (ILU0 converges here)
+        mkGCR $V/R0.sif.in ${WARMUP_ILU:-4}
         printf '%s\n' "  Linear System Timing = Logical True" "  Solver Timing = Logical True" "! ESS scaling R0 ${SLURM_JOB_ID:-local}" >> $V/R0.sif.in
         n0=$(python3 -c "import re; print(sum(int(i.partition('*')[2] or 1) for i in re.split(r'[,:;\s]+', '$WARMUP') if i))")
         o0=$(echo "$opts" | sed "s/--steps [0-9]*/--steps $n0/")
-        echo "$(date +%T) start R0: the ramp-up $WARMUP yr ($n0 steps), GCR + ILU4 (log ${L}_R0.log)"
+        echo "$(date +%T) start R0: the ramp-up $WARMUP yr ($n0 steps), GCR + ILU${WARMUP_ILU:-4} (log ${L}_R0.log)"
         ESS_DT_RAMP=$WARMUP python3 -u -m ess run $GL_CONFIG --state $RSTART $o0 --rotate-guess --add-diag Pressure \
             --out $R0S --stokes-block-file $PWD/$V/R0.sif.in > ${L}_R0.log 2>&1 || { echo "R0 failed: ${L}_R0.log"; exit 1; }
     fi
