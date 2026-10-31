@@ -353,6 +353,9 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   CHARACTER(LEN=MAX_NAME_LEN), SAVE :: precOwn = ''
   CHARACTER(:), ALLOCATABLE :: precReb
   LOGICAL :: gotReb
+  LOGICAL, SAVE :: lowFill = .FALSE.     ! this rank's factors have the low (rebuild) fill pattern
+  INTEGER :: nrec
+  TYPE(Matrix_t), POINTER :: Mloc
   TYPE(Variable_t), POINTER :: gmVar
   INTEGER, ALLOCATABLE, SAVE :: prevGM(:)      ! grounded (1) / floating (-1) at the previous solve
   LOGICAL, SAVE :: gmFirst = .TRUE.
@@ -510,15 +513,32 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   ! solves) were built for the old one, with the then-passive rows fixed; rebuild them for this solve (the
   ! partition-local ILU needs no other rank). Elmer refactorises when the matrix's solve count is a multiple of
   ! the recompute interval: in parallel the counter of the partition's inside matrix, which carries the factors.
+  ! the matrix carrying this rank's ILU factors (the partition's inside matrix in parallel)
+  Mloc => A
+  IF ( ASSOCIATED( A % ParMatrix ) ) THEN
+    IF ( ASSOCIATED( A % ParMatrix % SplittedMatrix ) ) THEN
+      IF ( ASSOCIATED( A % ParMatrix % SplittedMatrix % InsideMatrix ) ) Mloc => A % ParMatrix % SplittedMatrix % InsideMatrix
+    END IF
+  END IF
   precReb = ListGetString( Solver % Values, 'FS SSA Rebuild Preconditioning', gotReb )
   IF ( gotReb ) THEN
     IF ( LEN_TRIM( precOwn ) == 0 ) precOwn = ListGetString( Solver % Values, 'Linear System Preconditioning', Found )
-    ! a forced rebuild with the cheap one; otherwise the solver's own (used only when Elmer refactorises: the
-    ! scheduled recompute, every "Linear System Precondition Recompute" solves)
-    IF ( rebuild ) THEN
+    nrec = ListGetInteger( Solver % Values, 'Linear System Precondition Recompute', Found )
+    IF ( nrec <= 0 ) nrec = 1
+    ! Elmer computes the ILU fill pattern only at the first factorisation (CRS_IncompleteLU: while ILUValues is not
+    ! allocated) and refactorises on it ever after, so a lower level takes effect only after freeing the pattern:
+    ! here at this rank's first forced rebuild; the rank keeps the low fill from then on (its scheduled recomputes
+    ! refactorise on it), unless "FS SSA Rebuild Restore" = True: the solver's own fill again at the next scheduled
+    ! recompute (a full symbolic + numeric ILU4 on that rank, which the others wait for)
+    IF ( rebuild .AND. .NOT. lowFill ) THEN
       CALL ListAddString( Solver % Values, 'Linear System Preconditioning', precReb )
-    ELSE
+      CALL FreeILU( Mloc )
+      lowFill = .TRUE.
+    ELSE IF ( lowFill .AND. .NOT. rebuild .AND. MOD( Mloc % SolveCount, nrec ) == 0 .AND. &
+        ListGetLogical( Solver % Values, 'FS SSA Rebuild Restore', Found ) ) THEN
       CALL ListAddString( Solver % Values, 'Linear System Preconditioning', TRIM(precOwn) )
+      CALL FreeILU( Mloc )
+      lowFill = .FALSE.
     END IF
   END IF
   IF ( rebuild ) THEN
@@ -765,6 +785,25 @@ CONTAINS
     cr(3) = a1(1)*a2(2) - a1(2)*a2(1)
   END FUNCTION essCross
 !------------------------------------------------------------------------------
+
+  ! drop a matrix's ILU factors and fill pattern (the pattern arrays only where they are not the matrix's own)
+  SUBROUTINE FreeILU( M )
+    TYPE(Matrix_t), POINTER :: M
+    IF ( ASSOCIATED( M % ILUValues ) ) DEALLOCATE( M % ILUValues )
+    NULLIFY( M % ILUValues )
+    IF ( ASSOCIATED( M % ILURows ) ) THEN
+      IF ( .NOT. ASSOCIATED( M % ILURows, M % Rows ) ) DEALLOCATE( M % ILURows )
+    END IF
+    NULLIFY( M % ILURows )
+    IF ( ASSOCIATED( M % ILUCols ) ) THEN
+      IF ( .NOT. ASSOCIATED( M % ILUCols, M % Cols ) ) DEALLOCATE( M % ILUCols )
+    END IF
+    NULLIFY( M % ILUCols )
+    IF ( ASSOCIATED( M % ILUDiag ) ) THEN
+      IF ( .NOT. ASSOCIATED( M % ILUDiag, M % Diag ) ) DEALLOCATE( M % ILUDiag )
+    END IF
+    NULLIFY( M % ILUDiag )
+  END SUBROUTINE FreeILU
 END FUNCTION FSSSALinsolve
 !------------------------------------------------------------------------------
 
