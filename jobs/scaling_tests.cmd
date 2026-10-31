@@ -46,7 +46,8 @@
 # With y_elements > 1 the cut's start state is laterally averaged (ess transfer works on columns along x), so
 # the whole-shelf runs (R, F, S, T, U) start from the same average, carried onto the full mesh.
 # SET=CDE (any letters): only those runs (C, D, E also run R for their velocity comparison if R is not in SET).
-# Plain GCR + ILUn on the whole Stokes system: b ILU0, F ILU1, P ILU2, Q ILU3, W ILU4, X ILU6.
+# Plain GCR + ILUn on the whole Stokes system: F ILU0, 1 ILU1, P ILU2, Q ILU3, W ILU4, X ILU6 (every letter is
+# taken: check a new one is not already a case below before adding it).
 # Run the two jobs one after the other or at the same time (the mesh steps are locked).
 # Summary at the end of slurms/scaling_<job>.out; per-run logs slurms/scaling_<job>_<letter>.log.
 set -e
@@ -394,7 +395,7 @@ for t in $(echo $SET | fold -w1); do
         j) mkCC $V/j.sif.in ILU4 True; echo "  Linear System Column Coarse Pre Smoothing = Logical True" >> $V/j.sif.in;;
         m) mkCC $V/m.sif.in ILU0 True; echo "  Linear System ILU Factor = Real 0.01" >> $V/m.sif.in;;
         Y) mkHILU $V/Y.sif.in 30;;  Z) mkHILU $V/Z.sif.in 10;;  V) mkHILU $V/V.sif.in 31;;  I) mkHILU $V/I.sif.in 11;;
-        b) mkGCR $V/b.sif.in 0;;  F) mkGCR $V/F.sif.in 1;;
+        1) mkGCR $V/1.sif.in 1;;
         P) mkGCR $V/P.sif.in 2;;  Q) mkGCR $V/Q.sif.in 3;;  W) mkGCR $V/W.sif.in 4;;  X) mkGCR $V/X.sif.in 6;;
         J) mkGCR $V/J.sif.in 0; sed -i 's/Linear System Preconditioning = ILU0/Linear System Preconditioning = Diagonal/' $V/J.sif.in;;
         C) mkGCR $V/C.sif.in 8;;  D) mkGCR $V/D.sif.in 0;;  E) mkGCR $V/E.sif.in 1;;
@@ -504,7 +505,7 @@ for t in $([ "$WARM" = 1 ] || [ -n "$WARMUP" ] && echo R0) $(echo $SET | fold -w
                Y) what="Hypre FlexGMRES + RAS-ILU(0) (overlapping partitions)";;
                Z) what="Hypre FlexGMRES + GMRES-ILU(0) (partitions coupled through a Schur complement)";;
                V) what="Hypre FlexGMRES + RAS-ILUT";; I) what="Hypre FlexGMRES + GMRES-ILUT";;
-               b) what="GCR + ILU0";; F) what="GCR + ILU1";;
+               1) what="GCR + ILU1";;
                P) what="GCR + ILU2";; Q) what="GCR + ILU3";; W) what="GCR + ILU4";; X) what="GCR + ILU6";;
                J) what="GCR + Jacobi (diagonal), whole shelf: progress where ILU0 makes none = ILU0 broken";;
                S) what="block, velocity block BiCGStab + ParaSails";; T) what="block, velocity block BiCGStab + FSAI";;
