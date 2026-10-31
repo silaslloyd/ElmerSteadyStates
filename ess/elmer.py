@@ -845,7 +845,9 @@ End
             sec = re.sub(r"\n *Before Linsolve = .*", "", sec)
             sec += (f'\n  Before Linsolve = File "{lib}" "FSSSALinsolve"   ! [elmer] fs_ssa_km: the shelf force on the interface'
                     f"\n  FS SSA Distance = Real {self.fs_ssa_x!r}"
-                    + ("\n  FS SSA Rotate Guess = Logical True" if rot else ""))
+                    + ("\n  FS SSA Rotate Guess = Logical True" if rot else "")
+                    + ("" if self.periodic_sides else
+                       "\n  FS SSA Walls = Logical True   ! the walls take the y component of the interface force"))
             # ESS_FS_SSA_REBUILD="elements:grounding" (TESTING): the per-rank thresholds of the ILU rebuild after the
             # active set or the grounded mask changed (default 1:1, any change)
             # ESS_FS_SSA_REBUILD_PREC (e.g. ILU1): the preconditioner of a forced rebuild on a rank whose active set or

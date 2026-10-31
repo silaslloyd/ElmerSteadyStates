@@ -340,8 +340,8 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   ! face, though on an unstructured mesh all its nodes can belong to passive elements too (an active element at the
   ! wall whose wall edge has both ends on the active/passive boundary); it got the shelf stress, on the wall
   REAL(KIND=dp), SAVE :: ysMin = 0.0_dp, ysMax = -1.0_dp
-  REAL(KIND=dp) :: ytol, nside
-  LOGICAL :: onSide
+  REAL(KIND=dp) :: ytol, nside, nwall
+  LOGICAL :: onSide, wallsLS
   ! periodic sides: Elmer has already folded each slave node's row into its master rows and replaced it by the
   ! periodic constraint (SetPeriodicBoundariesPass1/2), so a slave node's force goes to its masters, by the
   ! projector weights (pStart/pCnt/pNode/pW: per slave node, its masters)
@@ -578,7 +578,8 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
     END IF
   END IF
   ytol = 1.0e-6_dp * MAX( ysMax - ysMin, 1.0_dp )
-  nside = 0.0_dp
+  nside = 0.0_dp; nwall = 0.0_dp
+  wallsLS = ListGetLogical( Solver % Values, 'FS SSA Walls', Found )
   DO pass = 1, 2
   nfaces = 0; ftot = 0.0_dp
   ! diagnostics: sum of face x-areas, area-weighted H, expected force, min/max H, x range of face centres
@@ -662,6 +663,17 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
               Fxyz(3) = -rhoi*g*dep*av(3) / 4.0_dp
               nssa = nssa + 1
             END IF
+          END IF
+        END IF
+        ! walls (free slip, v = 0): the wall takes the y component, so it is left out. Added and rotated into the
+        ! normal-tangential frame of a base node on the wall, whose wall condition (Velocity 2 = 0) then holds a
+        ! tangent of the sloping base, not exactly y, a fraction of it went into the normal (vertical) component:
+        ! the base node where the active/passive boundary meets the wall (the boundary leaves the wall obliquely on a
+        ! triangle mesh) rose ever faster and the run blew up
+        IF ( wallsLS ) THEN
+          IF ( ABS( Mesh % Nodes % y(nd) - ysMin ) < ytol .OR. ABS( Mesh % Nodes % y(nd) - ysMax ) < ytol ) THEN
+            Fxyz(2) = 0.0_dp
+            nwall = nwall + 1.0_dp
           END IF
         END IF
         Fr = Fxyz
@@ -758,7 +770,13 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
         '  (free-floating shelf formula ', funi, '; ', NINT(npas), ' node contributions from the SSA)'
     CALL Info( 'FSSSALinsolve', Message, Level=3 )
   END IF
-  IF ( ParEnv % PEs > 1 ) nside = ParallelReduction( nside )
+  IF ( ParEnv % PEs > 1 ) THEN
+    nside = ParallelReduction( nside ); nwall = ParallelReduction( nwall )
+  END IF
+  IF ( nwall > 0.0_dp ) THEN
+    WRITE( Message, '(A,I0,A)' ) 'interface force: y component left to the walls at ', NINT(nwall), ' node contributions'
+    CALL Info( 'FSSSALinsolve', Message, Level=3 )
+  END IF
   IF ( nside > 0.0_dp ) THEN
     WRITE( Message, '(A,I0,A)' ) 'faces on the sides with all nodes on the active/passive boundary, skipped: ', &
         NINT(nside), ' (wall or seam faces, not the interface)'
