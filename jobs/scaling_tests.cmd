@@ -528,7 +528,14 @@ for t in $([ "$WARM" = 1 ] || [ -n "$WARMUP" ] && echo R0) $(echo $SET | fold -w
             grep "SolveHypre: Required iterations" $el | head -4 | sed 's/^/      /'
             # Stokes cost per time step (Elmer's own timers, start-up excluded): the whole solver (assembly, nonlinear
             # iterations, linear solves) and the linear solves alone, wall-clock seconds
-            st=$(grep "Solver time (CPU,REAL)" $el | awk '{print $NF == "(s)" ? $(NF-1) : $NF}' | tr '\n' ' ')
+            # (the Stokes solver only: with TIMING=1 every solver prints such a line, "... for <equation>: cpu real (s)")
+            st=$(grep "Solver time (CPU,REAL)" $el | grep -v " for " ; grep "Solver time (CPU,REAL) for Stokes" $el)
+            st=$(echo "$st" | grep . | awk '{print $NF == "(s)" ? $(NF-1) : $NF}' | tr '\n' ' ')
+            if [ -n "$TIMING" ]; then     # every solver: mean wall time per step (steps 2+), largest first
+                echo "      time per step by solver (s, steps 2+):"
+                grep "Solver time (CPU,REAL) for" $el | sed 's/.* for \(.*\): *[0-9.]* *\([0-9.]*\) (s)/\1|\2/' | \
+                    awk -F'|' '{n[$1]++; if (n[$1] > 1) {s[$1] += $2; c[$1]++}} END {for (k in s) printf "        %8.2f  %s\n", s[k]/c[k], k}' | sort -rn | head -12
+            fi
             ls=$(grep "Linear system time (CPU,REAL)" $el | awk '{print $(NF-1)}' | tr '\n' ' ')
             [ -n "$st" ] && echo "      Stokes solver per step (s): $st"
             [ -n "$ls" ] && echo "      linear solves (s):           $ls"
