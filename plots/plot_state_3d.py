@@ -14,6 +14,7 @@ slider through the states.
     python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --no-temp # the velocity panel only
     python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --tmin 255  # temperature colour range from 255 K
     python plots/plot_state_3d.py STATE.npz --fs-ssa 10 [--walls]          # the full-Stokes | SSA boundary (magenta)
+    python plots/plot_state_3d.py STATE.npz --mesh                         # the mesh on the ice base, in white
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
 Speed colours max out at the surface speed on the grounding line (--vmax V, or --vmax-all for the largest speed).
 Structured footprints and the unstructured triangle ones (configs/*_tri.toml; Delaunay, needs scipy).
@@ -336,20 +337,36 @@ def main():
     W = max(float(np.ptp(tp["y"])) for _, tp, _, _ in data if tp is not None)      # strip width (m)
 
     def mesh_lines(base, P):
-        """the element edges of the base (rows along x, columns along y), just below it, for every copy"""
-        xr, yr = np.round(base["x"], 0), np.round(base["y"], 0)
+        """the element edges of the base (white), just below it, for every copy: the rows and columns of a structured
+        footprint, the triangle edges of an unstructured one"""
         lx, ly, lz = [], [], []
-        for c in range(TILE):
-            dy = c * W / 1e3
-            for key, other in ((yr, xr), (xr, yr)):        # lines of constant y (along x), then of constant x
-                for v in np.unique(key):
-                    m = np.where(key == v)[0]
-                    o = m[np.argsort(other[m])]
-                    lx += list(base["x"][o] / 1e3) + [None]
-                    ly += list(base["y"][o] / 1e3 + dy) + [None]
-                    lz += list(base["v"][o] - 3.0) + [None]
-        return go.Scatter3d(x=lx, y=ly, z=lz, mode="lines", line=dict(color="#222222", width=1),
-                            name="base mesh", hoverinfo="skip", scene=P[6], showlegend=P[6] == "scene")
+        if structured(base["x"], base["y"]):
+            xr, yr = np.round(base["x"], 0), np.round(base["y"], 0)
+            for c in range(TILE):
+                dy = c * W / 1e3
+                for key, other in ((yr, xr), (xr, yr)):    # lines of constant y (along x), then of constant x
+                    for v in np.unique(key):
+                        m = np.where(key == v)[0]
+                        o = m[np.argsort(other[m])]
+                        lx += list(base["x"][o] / 1e3) + [None]
+                        ly += list(base["y"][o] / 1e3 + dy) + [None]
+                        lz += list(base["v"][o] - 3.0) + [None]
+        else:
+            i, j, k = triangles(base["x"], base["y"])
+            e = np.sort(np.r_[np.c_[i, j], np.c_[j, k], np.c_[k, i]], axis=1)
+            e = np.unique(e, axis=0)
+            n = len(e)
+            for c in range(TILE):
+                dy = c * W / 1e3
+                X = np.full((n, 3), np.nan); Y = np.full((n, 3), np.nan); Z = np.full((n, 3), np.nan)
+                X[:, :2] = base["x"][e] / 1e3; Y[:, :2] = base["y"][e] / 1e3 + dy; Z[:, :2] = base["v"][e] - 3.0
+                lx += [None if np.isnan(v) else round(float(v), 3) for v in X.ravel()]
+                ly += [None if np.isnan(v) else round(float(v), 3) for v in Y.ravel()]
+                lz += [None if np.isnan(v) else round(float(v), 1) for v in Z.ravel()]
+            print(f"  base mesh: {n} edges per copy")
+        return go.Scatter3d(x=lx, y=ly, z=lz, mode="lines", line=dict(color="white", width=1),
+                            name="base mesh", hoverinfo="skip", scene=P[6], showlegend=P[6] == "scene",
+                            connectgaps=False)
 
     def walls(top, base, P):
         """side walls between the base and the surface: the x-window ends of every copy and the two outer y sides,
