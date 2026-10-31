@@ -59,7 +59,7 @@ diff --git a/elmergrid/src/egparallel.c b/elmergrid/src/egparallel.c
 index 61d0c0ecd..20b621929 100644
 --- a/elmergrid/src/egparallel.c
 +++ b/elmergrid/src/egparallel.c
-@@ -2615,6 +2615,214 @@ int PartitionMetisMesh(struct FemType *data,struct ElmergridType *eg,
+@@ -2615,6 +2615,215 @@ int PartitionMetisMesh(struct FemType *data,struct ElmergridType *eg,
  
  
  
@@ -129,7 +129,8 @@ index 61d0c0ecd..20b621929 100644
 +    indxper = Ivector(1,noknots);
 +    for(i=1;i<=noknots;i++) indxper[i] = i;
 +  }
-+  ncommon = (data->dim >= 3) ? 3 : 2;
++  for(e=1,k=0;e<=noelements;e++) if(data->elementtypes[e] > k) k = data->elementtypes[e];  /* by element type: */
++  ncommon = (k/100 >= 5) ? 3 : 2;                     /* data->dim is 3 for gmsh's flat 2D meshes */
 +  if(info) printf("Periodic Metis: %d elements, %d partitions, neighbours share %d nodes\n",
 +		  noelements,partitions,ncommon);
 +
@@ -199,7 +200,7 @@ index 61d0c0ecd..20b621929 100644
 +  mpart = (idx_t*) malloc(noelements*sizeof(idx_t));
 +  SetMetisOptions(options,eg,info);
 +  options[METIS_OPTION_DBGLVL] = 0;
-+  if(info) printf("Starting METIS_PartGraphKway on the periodic dual graph (%d edges)\n",nnb/2);
++  printf("Starting METIS_PartGraphKway on the periodic dual graph (%d edges)\n",nnb/2);
 +  METIS_PartGraphKway(&nvtxs,&ncon,xadj,adjncy,NULL,NULL,NULL,&nparts,NULL,NULL,options,&objval,mpart);
 +  if(info) printf("Edge cut %d\n",(int)objval);
 +
