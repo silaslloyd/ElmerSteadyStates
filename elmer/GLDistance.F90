@@ -829,7 +829,7 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
   REAL(KIND=dp), ALLOCATABLE :: Hc(:), ubar(:), vbar(:), zbc(:), STIFF(:,:), FORCE(:), Basis(:), dBasisdx(:,:)
   REAL(KIND=dp), ALLOCATABLE :: nodal(:,:), wsum(:)
   REAL(KIND=dp) :: Dcut, mu, rhoi, rhow, g, r, detJ, Hg, Pg, ymin, ymax, tolw, wq, uq(2), dux(2), duy(2), &
-      dzb(2), ar, zb, zs, H, divu, wb, su, sv, umax, Norm, relax, dhh(2)
+      dzb(2), ar, zb, zs, H, divu, wb, su, sv, umax, Norm, relax, dhh(2), umaxL, xm, ym
   LOGICAL :: Found, walls, stat, ssaEl
   CHARACTER(*), PARAMETER :: Caller = 'FSSSAShelf'
 !------------------------------------------------------------------------------
@@ -1087,6 +1087,7 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
   ! the passive columns: plug flow from the SSA solution in Flow Solution (Elmer keeps it on passive nodes, but in
   ! the normal-tangential frame on the base nodes: FSSSAAfterLinsolve writes it back after every Stokes solve)
   umax = 0.0_dp
+  xm = -HUGE(1.0_dp); ym = -HUGE(1.0_dp)
   IF ( ALLOCATED( plugIdx ) ) DEALLOCATE( plugIdx, plugVal )
   ALLOCATE( plugIdx( MAX( 1, COUNT(inner) * (Lt-Lb+1) * fVar % DOFs ) ) )
   ALLOCATE( plugVal( SIZE(plugIdx) ) )
@@ -1099,6 +1100,9 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
     IF ( q <= 0 ) CYCLE
     uq(1) = Solver % Variable % Values( 2*(q-1)+1 )
     uq(2) = Solver % Variable % Values( 2*(q-1)+2 )
+    IF ( SQRT( SUM( uq**2 ) ) > umax ) THEN       ! where (for the log: a spike's position)
+      xm = Mesh % Nodes % x(ib); ym = Mesh % Nodes % y(ib)
+    END IF
     umax = MAX( umax, SQRT( SUM( uq**2 ) ) )
     divu = nodal(ib,4)
     ! the base takes its floating share of the dynamic thickness change: dz_b/dt = r div(u H) (the surface the rest
@@ -1126,12 +1130,17 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
   END DO
   IF ( ParEnv % PEs > 1 ) THEN
     su = ParallelReduction( REAL( ninner, dp ) )
+    umaxL = umax
     umax = ParallelReduction( umax, 2 )
+    IF ( umaxL < umax ) THEN
+      xm = -HUGE(1.0_dp); ym = -HUGE(1.0_dp)
+    END IF
+    xm = ParallelReduction( xm, 2 ); ym = ParallelReduction( ym, 2 )
   ELSE
     su = REAL( ninner, dp )
   END IF
-  WRITE( Message, '(A,I0,A,ES11.4,A)' ) 'shelf columns by SSA (floated, plug flow): ', NINT(su), &
-      ', largest SSA speed ', umax, ' m/a'
+  WRITE( Message, '(A,I0,A,ES11.4,A,F9.2,A,F7.2,A)' ) 'shelf columns by SSA (floated, plug flow): ', NINT(su), &
+      ', largest SSA speed ', umax, ' m/a at x ', xm / 1.0e3_dp, ' km, y ', ym / 1.0e3_dp, ' km'
   CALL Info( Caller, Message, Level=3 )
 
 CONTAINS
