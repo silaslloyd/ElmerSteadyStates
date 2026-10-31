@@ -88,17 +88,24 @@ def _columns(s: SavedState):
     sx, szs = _surface(s)
     zs = np.interp(x, sx, szs)
     xr = np.round(x, 3)
+    # grouped by sorting (one pass): an unstructured footprint has a column per node, and a mask per column over all
+    # nodes (as before) is O(columns x nodes), hours on a 3D triangle mesh
+    ux, inv = np.unique(xr, return_inverse=True)
+    order = np.argsort(inv, kind="stable")
+    bounds = np.searchsorted(inv[order], np.arange(len(ux) + 1))
+    isice = z >= b - 1e-3
+    zeta = np.clip((z - b) / np.maximum(zs - b, 1e-6), 0, 1)
+    depth = b - z
     cols = {}
-    for xc in np.unique(xr):
-        m = xr == xc
-        ice = m & (z >= b - 1e-3)
-        rock = m & (z < b - 1e-3)
-        zi = np.clip((z[ice] - b[ice]) / np.maximum(zs[ice] - b[ice], 1e-6), 0, 1)
+    for k, xc in enumerate(ux):
+        m = order[bounds[k]:bounds[k + 1]]
+        ice, rock = m[isice[m]], m[~isice[m]]
+        zi = zeta[ice]
         o = np.argsort(zi)
-        di = b[rock] - z[rock]
+        di = depth[rock]
         q = np.argsort(di)
         cols[xc] = (zi[o], T[ice][o], di[q], T[rock][q])
-    return np.array(sorted(cols)), cols
+    return ux, cols
 
 
 def _sample(xs, cols, x, ice, c):
