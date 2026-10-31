@@ -817,6 +817,12 @@ End
                     + ("\n  FS SSA Rotate Guess = Logical True" if rot else ""))
             # ESS_FS_SSA_REBUILD="elements:grounding" (TESTING): the per-rank thresholds of the ILU rebuild after the
             # active set or the grounded mask changed (default 1:1, any change)
+            # ESS_FS_SSA_REBUILD_PREC (e.g. ILU1): the preconditioner of a forced rebuild on a rank whose active set or
+            # grounded mask changed (cheaper to factorise than the solver's ILU4; that one again at the scheduled
+            # recompute)
+            rp = os.environ.get("ESS_FS_SSA_REBUILD_PREC")
+            if rp:
+                sec += f'\n  FS SSA Rebuild Preconditioning = String "{rp}"'
             rb = os.environ.get("ESS_FS_SSA_REBUILD")
             if rb:
                 el, _, gm = rb.partition(":")

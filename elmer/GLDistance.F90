@@ -347,6 +347,12 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   REAL(KIND=dp) :: nmiss, wsl
   INTEGER :: thrEl, thrGm
   LOGICAL :: rebuild
+  ! "FS SSA Rebuild Preconditioning" (e.g. "ILU1"): the preconditioner of a FORCED rebuild (this rank's active set or
+  ! grounded mask changed), cheaper to factorise than the solver's own (ILU4: every rank waits for the slowest
+  ! factorisation); the solver's own one again at the next scheduled recompute. Per rank (the ILU is partition-local).
+  CHARACTER(LEN=MAX_NAME_LEN), SAVE :: precOwn = ''
+  CHARACTER(:), ALLOCATABLE :: precReb
+  LOGICAL :: gotReb
   TYPE(Variable_t), POINTER :: gmVar
   INTEGER, ALLOCATABLE, SAVE :: prevGM(:)      ! grounded (1) / floating (-1) at the previous solve
   LOGICAL, SAVE :: gmFirst = .TRUE.
@@ -504,6 +510,17 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   ! solves) were built for the old one, with the then-passive rows fixed; rebuild them for this solve (the
   ! partition-local ILU needs no other rank). Elmer refactorises when the matrix's solve count is a multiple of
   ! the recompute interval: in parallel the counter of the partition's inside matrix, which carries the factors.
+  precReb = ListGetString( Solver % Values, 'FS SSA Rebuild Preconditioning', gotReb )
+  IF ( gotReb ) THEN
+    IF ( LEN_TRIM( precOwn ) == 0 ) precOwn = ListGetString( Solver % Values, 'Linear System Preconditioning', Found )
+    ! a forced rebuild with the cheap one; otherwise the solver's own (used only when Elmer refactorises: the
+    ! scheduled recompute, every "Linear System Precondition Recompute" solves)
+    IF ( rebuild ) THEN
+      CALL ListAddString( Solver % Values, 'Linear System Preconditioning', precReb )
+    ELSE
+      CALL ListAddString( Solver % Values, 'Linear System Preconditioning', TRIM(precOwn) )
+    END IF
+  END IF
   IF ( rebuild ) THEN
     IF ( ASSOCIATED( A % ParMatrix ) ) THEN
       IF ( ASSOCIATED( A % ParMatrix % SplittedMatrix ) ) THEN

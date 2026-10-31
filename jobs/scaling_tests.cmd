@@ -225,6 +225,9 @@ fi
 [ -n "$FS_SSA_UPDATE" ] && export ESS_FS_SSA_UPDATE=$FS_SSA_UPDATE && echo "  full-Stokes region renewed when the grounding line moved $FS_SSA_UPDATE km"
 # REBUILD=elements:grounding: per-rank thresholds of the ILU rebuild after the active set / grounded mask changed
 # (FSSSALinsolve; default 1:1, any change)
+# REBUILD_PREC=ILU1 (or ILU0, ILU2): a rank whose active set / grounded mask changed rebuilds with this cheaper
+# preconditioner instead of the solver's (ILU4); every rank waits for the slowest factorisation
+[ -n "$REBUILD_PREC" ] && export ESS_FS_SSA_REBUILD_PREC=$REBUILD_PREC && echo "  forced ILU rebuilds with $REBUILD_PREC"
 [ -n "$REBUILD" ] && export ESS_FS_SSA_REBUILD=$REBUILD && echo "  ILU rebuild thresholds per rank (elements:grounding changes): $REBUILD"
 # TAG=name: the whole-shelf runs write <work>/scaling_<ranks><TAG>_<letter>.npz (keeps runs apart, e.g. TAG=_fsssa10)
 # TOL: the GCR runs' convergence tolerance (default 1e-8)
