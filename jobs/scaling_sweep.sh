@@ -41,7 +41,9 @@ for p in $POINTS; do
     [ -f "$w/start.npz" ] && extra=$(echo "$extra" | sed 's/,FROM=[^,]*//')
     # a warm-up already done at this rank count is reused (WARMUP_STATE) instead of ramping again
     [ -f "$w/scaling_${n}_R0.npz" ] && extra=$(echo "$extra" | sed "s/,WARMUP=[^,]*//"),WARMUP_STATE=$w/scaling_${n}_R0.npz
-    j=$(sbatch --parsable $dep --ntasks=$n --time=03:00:00 --export=$BASE,GL_CONFIG=$cfg,RANKS=$n,$extra,TAG=_sweep jobs/scaling_tests.cmd)
+    # wall-time limit: fewer ranks take longer (a 768-rank point ~25 min incl. warm-up; 96 ranks ~8x the work per rank)
+    tl=03:00:00; [ "$n" -le 192 ] && tl=06:00:00; [ "$n" -le 96 ] && tl=10:00:00
+    j=$(sbatch --parsable $dep --ntasks=$n --time=$tl --export=$BASE,GL_CONFIG=$cfg,RANKS=$n,$extra,TAG=_sweep jobs/scaling_tests.cmd)
     echo "$p: $j ($cfg, $n ranks)"
     dep="--dependency=afterany:$j"
 done
