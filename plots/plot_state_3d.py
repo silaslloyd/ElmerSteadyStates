@@ -177,6 +177,14 @@ def mesh_triangles(mdir, x, y):
 
 
 _MESH = {}
+_SAID = set()
+
+
+def once(msg):
+    """print a message only the first time (the panels are built several times: page, slider frames, buttons)"""
+    if msg not in _SAID:
+        _SAID.add(msg)
+        print(msg)
 
 
 def mesh_elements(mdir, x, y):
@@ -208,7 +216,7 @@ def mesh_elements(mdir, x, y):
         if min(q) >= 0:
             t.append(q)
             p.append(part[e])
-    print(f"  mesh: {len(t)} of the {len(els)} triangles of {mdir} in the window")
+    once(f"  mesh: {len(t)} of the {len(els)} triangles of {mdir} in the window")
     return np.array(t, int).reshape(-1, 3), np.array(p, int)
 
 
@@ -612,7 +620,7 @@ def main():
                 if first_panel:
                     px = [v for v in cx if v is not None]
                     if px:
-                        print(f"  full-Stokes | SSA boundary: x {min(px):.2f} .. {max(px):.2f} km")
+                        once(f"  full-Stokes | SSA boundary: x {min(px):.2f} .. {max(px):.2f} km")
         if top is not None and TILE > 1:
             m = np.abs(top["y"] - W) < 1
             o = np.argsort(top["x"][m])
