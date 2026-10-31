@@ -14,6 +14,8 @@ slider through the states.
     python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --no-temp # the velocity panel only
     python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --tmin 255  # temperature colour range from 255 K
     python plots/plot_state_3d.py STATE.npz --fs-ssa 10 [--walls]          # the full-Stokes | SSA boundary (magenta)
+    python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
+Speed colours max out at the surface speed on the grounding line (--vmax V, or --vmax-all for the largest speed).
 Structured footprints and the unstructured triangle ones (configs/*_tri.toml; Delaunay, needs scipy).
 With a Temperature field: a second panel next to it, the same geometry coloured by temperature (surface, base and
 side walls; the base shows the bed temperature, where a seam stripe from wrong loads would show).
@@ -41,6 +43,8 @@ BASE_COLOUR = "speed"    # "speed" (basal speed, the same colour scale as the su
 SHOW_MESH = False        # the element edges on the base (--mesh to show)
 SIDES = True             # side walls (base to surface) at the window ends and the two outer sides
 TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
+VMAX_GL = True           # speed colours up to the surface speed on the grounding line (--vmax-all: the largest)
+VMAX = None              # speed colour maximum (m/yr), --vmax V
 FS_SSA = 0.0             # km: draw the full-Stokes | SSA boundary this far beyond the grounding line (--fs-ssa 10)
 WALLS = False            # walled sides: the distance to the grounding line not wrapped across y (--walls)
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
@@ -223,8 +227,18 @@ def gl_line(base, top=None):
 
 def main():
     import plotly.graph_objects as go
-    global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS
+    global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL
     args = sys.argv[1:]
+    if "--vmax-all" in args:
+        VMAX_GL = False
+        args.remove("--vmax-all")
+    if "--vmax" in args:
+        k = args.index("--vmax")
+        VMAX = float(args[k + 1])
+        args = args[:k] + args[k + 2:]
+    if "--full" in args:                          # the whole ice sheet, divide to front
+        X_WINDOW = (-1.0, 1e9)
+        args.remove("--full")
     if "--walls" in args:
         WALLS = True
         args.remove("--walls")
@@ -280,6 +294,7 @@ def main():
         x0 = (min(float(np.min(g)) for g in gls if len(g)) - 60.0) if gls else 0.0
         x1 = xmax
     xall = np.concatenate([tp["x"] for _, tp, _, _ in data if tp is not None]) / 1e3
+    x0, x1 = max(x0, float(xall.min())), min(x1, float(xall.max()))
     print(f"x window {x0:.0f} .. {x1:.0f} km (domain {xall.min():.0f} .. {xall.max():.0f} km; --x XMIN XMAX to change)")
 
     def crop(d):
@@ -289,6 +304,22 @@ def main():
         return {k: (v[m] if isinstance(v, np.ndarray) and v.shape == d["x"].shape else v) for k, v in d.items()}
     data = [(l, crop(tp), crop(b), t) for l, tp, b, t in data]
     smax = max(float(np.nanmax(tp["speed"])) for _, tp, _, _ in data if tp is not None)
+    if VMAX is not None:
+        smax = VMAX
+    elif VMAX_GL:                                 # the colour maxes out at the surface speed on the grounding line
+        sgl = []
+        for _, tp, b, _ in data:
+            if tp is None or b is None or "mask" not in b:
+                continue
+            tzd = {(round(x, 0), round(y, 0)): v for x, y, v in zip(tp["x"], tp["y"], tp["speed"])}
+            sp_ = np.array([tzd.get((round(x, 0), round(y, 0)), np.nan) for x, y in zip(b["x"], b["y"])])
+            v = [q for q in contour(b["x"], b["y"], b["mask"], 0.0, [sp_])[2] if q is not None and np.isfinite(q)]
+            if v:
+                sgl.append(max(v))
+        if sgl:
+            smax = max(sgl)
+            print(f"speed colours 0 .. {smax:.0f} m/yr: the largest surface speed on the grounding line (faster ice "
+                  f"saturates; --vmax V to set it, --vmax-all for the largest speed)")
     temp = TEMP and all(d is not None and "T" in d for _, tp, b, _ in data for d in (tp, b))
     if TEMP and not temp:
         print("no Temperature in the states (slimmed before it was kept? re-run plots/slim_states.py): velocity only")
