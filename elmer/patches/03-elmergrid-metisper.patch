@@ -1,5 +1,5 @@
 diff --git a/elmergrid/src/egnative.c b/elmergrid/src/egnative.c
-index b97823e23..9c9765f96 100644
+index b97823e..9c9765f 100644
 --- a/elmergrid/src/egnative.c
 +++ b/elmergrid/src/egnative.c
 @@ -241,6 +241,11 @@ void Instructions()
@@ -56,10 +56,10 @@ index b97823e23..9c9765f96 100644
        eg->timeron = TRUE;
        if(arg+1 >= argc) {
 diff --git a/elmergrid/src/egparallel.c b/elmergrid/src/egparallel.c
-index 61d0c0ecd..20b621929 100644
+index 61d0c0e..4f5255b 100644
 --- a/elmergrid/src/egparallel.c
 +++ b/elmergrid/src/egparallel.c
-@@ -2615,6 +2615,215 @@ int PartitionMetisMesh(struct FemType *data,struct ElmergridType *eg,
+@@ -2615,6 +2615,303 @@ int PartitionMetisMesh(struct FemType *data,struct ElmergridType *eg,
  
  
  
@@ -106,6 +106,29 @@ index 61d0c0ecd..20b621929 100644
 +
 +
 +#if USE_METIS
++/* node lookup by coordinates for PartitionMetisPeriodic's mirror rule */
++static Real *mp_x, *mp_y, mp_tol;
++static int MirrorNodeCompare(const void *a, const void *b)
++{
++  int i = *(const int*)a, j = *(const int*)b;
++  if(mp_x[i] < mp_x[j] - mp_tol) return(-1);
++  if(mp_x[i] > mp_x[j] + mp_tol) return(1);
++  if(mp_y[i] < mp_y[j] - mp_tol) return(-1);
++  if(mp_y[i] > mp_y[j] + mp_tol) return(1);
++  return(0);
++}
++static int MirrorNodeFind(int *ord, int n, Real x, Real y)
++{
++  int lo = 1, hi = n, mid, k;
++  while(lo <= hi) {
++    mid = (lo + hi) / 2; k = ord[mid];
++    if(mp_x[k] < x - mp_tol || (fabs(mp_x[k] - x) <= mp_tol && mp_y[k] < y - mp_tol)) lo = mid + 1;
++    else if(mp_x[k] > x + mp_tol || (fabs(mp_x[k] - x) <= mp_tol && mp_y[k] > y + mp_tol)) hi = mid - 1;
++    else return(k);
++  }
++  return(0);
++}
++
 +int PartitionMetisPeriodic(struct FemType *data,struct ElmergridType *eg,int partitions,int info)
 +/* Metis on the dual graph (elements, neighbours sharing a face) of a periodic mesh: the periodic counterparts are
 +   merged first (FindPeriodicNodes; -periodic), so elements across the seam are neighbours and Metis partitions the
@@ -114,6 +137,7 @@ index 61d0c0ecd..20b621929 100644
 +   is only in partitions that also hold its master: Elmer's periodic conditions need the master where the slave is.
 +   The node ownership follows the elements. Without periodic nodes: plain Metis on the dual graph. */
 +{
++  int mirrored, nomirror, *mirrorof;
 +  int passi,i,j,k,l,e,e2,r,noelements,noknots,nl,ncommon,nnb,changed,viol,best,bestn,ok;
 +  int *indxper,*mcnt,*mstart,*mlist,*rcnt,*rstart,*rlist,*shared,*touched,*part;
 +  idx_t *xadj,*adjncy,nvtxs,ncon,nparts,objval,*mpart;
@@ -212,10 +236,73 @@ index 61d0c0ecd..20b621929 100644
 +  data->nopartitions = partitions;
 +  part = data->elempart;
 +  for(e=1;e<=noelements;e++) part[e] = mpart[e-1]+1;
++  mirrorof = Ivector(1,noelements);
++  for(e=1;e<=noelements;e++) mirrorof[e] = 0;
 +
-+  /* the seam: an element with slave nodes takes a partition that all their masters' elements have */
++  /* the seam, mirror-symmetric meshes (ElmerStreams' template.geo: the y = W side the reflection of the y = 0 side
++     about the middle, so each element touching the slave side has a mirror element touching the master side): an
++     element with slave nodes takes its mirror element's partition. Then a slave node is used in exactly the
++     partitions that use its master. ElmerGrid lists a slave in every partition using its master (the partition table
++     is made on the masters and copied to the slaves), so a master used where its slave is not gave a slave node
++     listed without an element there: Elmer's internal extrusion then built broken columns (StructuredProjectToPlane:
++     Conflicting BotNodes vs. MidNodes) and crashed. Elements without a mirror (other meshes): the rule below. */
++  mirrored = 0; nomirror = 0;
++  {
++    Real ymin = 1e30, ymax = -1e30, xmin = 1e30, xmax = -1e30, tol;
++    int nk = 0, *ord, a;
++    for(i=1;i<=noknots;i++) {
++      if(data->y[i] < ymin) ymin = data->y[i];
++      if(data->y[i] > ymax) ymax = data->y[i];
++      if(data->x[i] < xmin) xmin = data->x[i];
++      if(data->x[i] > xmax) xmax = data->x[i];
++    }
++    tol = 1.0e-6 * ((xmax - xmin) > (ymax - ymin) ? (xmax - xmin) : (ymax - ymin));
++    /* nodes sorted by (x, y) for the mirror lookup */
++    ord = Ivector(1,noknots);
++    for(i=1;i<=noknots;i++) ord[i] = i;
++    mp_x = data->x; mp_y = data->y; mp_tol = tol;
++    qsort(&ord[1], noknots, sizeof(int), MirrorNodeCompare);
++    for(e=1;e<=noelements;e++) {
++      int hasslave = FALSE, mnodes[64], ok2 = TRUE, e2, cand;
++      nl = LinearNodes(data->elementtypes[e]);
++      for(j=0;j<nl;j++) if(indxper[data->topology[e][j]] != data->topology[e][j]) hasslave = TRUE;
++      if(!hasslave) continue;
++      /* the mirror node of each node: (x, ymin + ymax - y) */
++      for(j=0;j<nl && ok2;j++) {
++        k = data->topology[e][j];
++        a = MirrorNodeFind(ord, noknots, data->x[k], ymin + ymax - data->y[k]);
++        if(a <= 0) ok2 = FALSE; else mnodes[j] = a;
++      }
++      cand = 0;
++      if(ok2) {
++        /* the element containing all mirror nodes (from the elements on the first one) */
++        for(l=rstart[mnodes[0]];l<rstart[mnodes[0]+1] && !cand;l++) {
++          int jj, kk, found;
++          e2 = rlist[l];
++          if(e2 == e || LinearNodes(data->elementtypes[e2]) != nl) continue;
++          found = TRUE;
++          for(jj=0;jj<nl && found;jj++) {
++            found = FALSE;
++            for(kk=0;kk<nl;kk++) if(data->topology[e2][kk] == mnodes[jj]) found = TRUE;
++          }
++          if(found) cand = e2;
++        }
++      }
++      if(cand) {
++        if(part[e] != part[cand]) { part[e] = part[cand]; mirrored++; }
++        mirrorof[e] = cand;
++      }
++      else nomirror++;
++    }
++    free_Ivector(ord,1,noknots);
++  }
++  if(info) printf("Periodic Metis: %d seam elements given their mirror element's partition, %d without a mirror\n",
++                  mirrored,nomirror);
++
++  /* the seam, other elements: an element with slave nodes takes a partition that all their masters' elements have */
 +  changed = 0;
 +  for(e=1;e<=noelements;e++) {
++    if(mirrorof[e]) continue;
 +    nl = LinearNodes(data->elementtypes[e]);
 +    best = -1; bestn = -1;
 +    for(j=0;j<nl;j++) {
@@ -267,6 +354,7 @@ index 61d0c0ecd..20b621929 100644
 +  free_Ivector(mcnt,1,noknots); free_Ivector(rcnt,1,noknots);
 +  free_Ivector(mstart,1,noknots+1); free_Ivector(rstart,1,noknots+1);
 +  free_Ivector(shared,1,noelements); free_Ivector(touched,0,noelements);
++  free_Ivector(mirrorof,1,noelements);
 +  return(viol ? 2 : 0);
 +}
 +#endif
@@ -276,7 +364,7 @@ index 61d0c0ecd..20b621929 100644
  int PartitionMetisGraph(struct FemType *data,struct BoundaryType *bound,
  			struct ElmergridType *eg,int partitions,int metisopt,
 diff --git a/elmergrid/src/egparallel.h b/elmergrid/src/egparallel.h
-index 730111554..97a7a1c7d 100644
+index 7301115..97a7a1c 100644
 --- a/elmergrid/src/egparallel.h
 +++ b/elmergrid/src/egparallel.h
 @@ -21,6 +21,10 @@ int PartitionConnectedElements1D(struct FemType *data,struct BoundaryType *bound
@@ -291,7 +379,7 @@ index 730111554..97a7a1c7d 100644
  		       int partitions,int dual,int info);
  int PartitionMetisGraph(struct FemType *data,struct BoundaryType *bound,
 diff --git a/elmergrid/src/egtypes.h b/elmergrid/src/egtypes.h
-index a167ff0cc..1d08b6533 100644
+index a167ff0..1d08b65 100644
 --- a/elmergrid/src/egtypes.h
 +++ b/elmergrid/src/egtypes.h
 @@ -299,6 +299,7 @@ struct ElmergridType {
@@ -312,7 +400,7 @@ index a167ff0cc..1d08b6533 100644
  };
  
 diff --git a/elmergrid/src/fempre.c b/elmergrid/src/fempre.c
-index 9b638e638..617600911 100644
+index 9b638e6..6176009 100644
 --- a/elmergrid/src/fempre.c
 +++ b/elmergrid/src/fempre.c
 @@ -729,7 +729,7 @@ int main(int argc, char *argv[])
