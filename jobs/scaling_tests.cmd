@@ -529,7 +529,7 @@ for t in $([ "$WARM" = 1 ] || [ -n "$WARMUP" ] && echo R0) $(echo $SET | fold -w
             # Stokes cost per time step (Elmer's own timers, start-up excluded): the whole solver (assembly, nonlinear
             # iterations, linear solves) and the linear solves alone, wall-clock seconds
             # (the Stokes solver only: with TIMING=1 every solver prints such a line, "... for <equation>: cpu real (s)")
-            st=$(grep "Solver time (CPU,REAL)" $el | grep -v " for " ; grep "Solver time (CPU,REAL) for Stokes" $el)
+            st=$(grep "Solver time (CPU,REAL)" $el | grep -iv " for " ; grep -i "Solver time (CPU,REAL) for .*stokes" $el || true)
             st=$(echo "$st" | grep . | awk '{print $NF == "(s)" ? $(NF-1) : $NF}' | tr '\n' ' ')
             if [ -n "$TIMING" ]; then     # every solver: mean wall time per step (steps 2+), largest first
                 echo "      time per step by solver (s, steps 2+):"
