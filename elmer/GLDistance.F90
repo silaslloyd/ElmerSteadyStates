@@ -32,6 +32,7 @@ END MODULE FSSSAShared
 SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   USE DefUtils
   USE SParIterComm      ! MPI (Elmer's own module, built with MPI; elmerf90 has no MPI module path)
+  USE MeshBasics, ONLY : CommunicateParallelSystemTag
   IMPLICIT NONE
   TYPE(Model_t) :: Model
   TYPE(Solver_t) :: Solver
@@ -48,6 +49,8 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   INTEGER, ALLOCATABLE :: cnts(:), displs(:)
   REAL(KIND=dp), ALLOCATABLE :: colgm(:), glx(:), gly(:), allx(:), ally(:)
   LOGICAL, ALLOCATABLE :: isgl(:)
+  INTEGER, ALLOCATABLE :: seamEl(:)
+  TYPE(ParallelInfo_t), POINTER :: parInfo
   LOGICAL :: Found, hasg, hasf
   REAL(KIND=dp) :: d2, dmin, m, dmax, dy, pw, srows
   CHARACTER(:), ALLOCATABLE :: mname
@@ -141,6 +144,29 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
     allx(1:ntot) = glx(1:ntot); ally(1:ntot) = gly(1:ntot)
   END IF
 
+  ! periodic sides: the nodes of elements that touch the seam (a node at y = 0 or y = width), exchanged between ranks.
+  ! They take the smaller of their own and their mirror point's distance (below). The meshes are mirror-symmetric
+  ! about y = width/2 (ElmerStreams' template.geo: Periodic Surface with a reflection; the structured test meshes
+  ! too), so the elements touching the seam on its two sides are mirror images, with the same distances.
+  ALLOCATE( seamEl(nn) )
+  seamEl = 0
+  IF ( pw > 0.0_dp ) THEN
+    DO t = 1, Mesh % NumberOfBulkElements
+      El => Mesh % Elements(t)
+      n = El % TYPE % NumberOfNodes
+      hasg = .FALSE.
+      DO j = 1, n
+        k = El % NodeIndexes(j)
+        IF ( MIN( ABS( Mesh % Nodes % y(k) ), ABS( pw - Mesh % Nodes % y(k) ) ) < 1.0e-6_dp * pw ) hasg = .TRUE.
+      END DO
+      IF ( hasg ) seamEl( El % NodeIndexes(1:n) ) = 1
+    END DO
+    IF ( ParEnv % PEs > 1 ) THEN
+      parInfo => Mesh % ParallelInfo
+      CALL CommunicateParallelSystemTag( parInfo, Itag=seamEl, ParOper=2 )
+    END IF
+  END IF
+
   ! the distance: 0 in grounded (and undefined) columns, to the nearest grounding-line node in floating ones
   dmax = 0.0_dp
   DO i = 1, nn
@@ -158,8 +184,8 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
     ! so a seam node and its periodic image could differ (one pinned at its old value, which the periodic constraint
     ! then imposed on the other); with the rows next to the seam symmetric (the mesh is structured across y), the
     ! seam elements on both sides are active or passive together
-    IF ( pw > 0.0_dp .AND. srows > 0.0_dp ) THEN
-      IF ( MIN( Mesh % Nodes % y(i), pw - Mesh % Nodes % y(i) ) <= srows ) &
+    IF ( pw > 0.0_dp ) THEN
+      IF ( seamEl(i) > 0 .OR. ( srows > 0.0_dp .AND. MIN( Mesh % Nodes % y(i), pw - Mesh % Nodes % y(i) ) <= srows ) ) &
           dVal(q) = MIN( dVal(q), glDist( Mesh % Nodes % x(i), pw - Mesh % Nodes % y(i) ) )
     END IF
     dmax = MAX( dmax, dVal(q) )
