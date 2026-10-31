@@ -227,6 +227,8 @@ fi
 [ -n "$FS_SSA_UPDATE" ] && export ESS_FS_SSA_UPDATE=$FS_SSA_UPDATE && echo "  full-Stokes region renewed when the grounding line moved $FS_SSA_UPDATE km"
 # REBUILD=elements:grounding: per-rank thresholds of the ILU rebuild after the active set / grounded mask changed
 # (FSSSALinsolve; default 1:1, any change)
+# TIMING=1: every Elmer solver timed in the log (Solver Timing); the summary lists the time per solver per step
+[ -n "$TIMING" ] && export ESS_SOLVER_TIMING=1 && echo "  every solver timed"
 # VTU_EVERY=N: a VTU of the boundaries (base, surface: velocity, grounded mask, distance to the grounding line) every N
 # steps in each run's directory (work/<config>/runs/<run>/steps_t*.pvtu), to watch it in ParaView
 [ -n "$VTU_EVERY" ] && export ESS_VTU_EVERY=$VTU_EVERY && echo "  boundary VTU every $VTU_EVERY step(s) in the run directories"

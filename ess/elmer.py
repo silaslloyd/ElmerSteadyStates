@@ -609,6 +609,8 @@ End
             text = self._sliding_temperate(text)
         elif self.sliding != "subtemperate":
             raise ValueError(f"[elmer] sliding must be 'subtemperate' or 'temperate', not {self.sliding!r}")
+        if os.environ.get("ESS_SOLVER_TIMING"):     # every solver's time per call in the log ("Solver time ... for")
+            text = re.sub(r"^(Solver \d+\s*\n)", r"\1  Solver Timing = Logical True\n", text, flags=re.M)
         every = os.environ.get("ESS_VTU_EVERY")
         if every and int(every) > 0:
             text = self._vtu_every(text, int(every))
