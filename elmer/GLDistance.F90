@@ -672,7 +672,8 @@ END FUNCTION FSSSALinsolve
 ! thickness kept: nothing else holds them there, Stokes being passive). After it, the passive columns' nodes get
 ! the SSA velocity as plug flow in "Flow Solution", which Elmer keeps fixed on passive nodes: the free surfaces
 ! advect the passive shelf with it, and ice that becomes active again starts from it. The vertical velocity:
-! w = u . grad(z_b) - (z - z_b) div(u) (incompressible; the thickness then changes as dH/dt = a - div(u H)), the
+! w = w_b - (z - z_b) div(u) (incompressible; the thickness then changes as dH/dt = a - div(u H)) with
+! w_b = u . grad(z_b) + (rho_i/rho_w) div(u H) (the base takes its floating share of the dynamic change), the
 ! pressure cryostatic plus the SSA's vertical normal stress, p = rho_i g (z_s - z) - 2 mu div(u).
 ! "SSA Strain" (exported, 4 DOFs on the base nodes: e_xx, e_yy, e_xy and 1 where defined) is the nodal average of
 ! the SSA strain rate over the domain's faces: FSSSALinsolve's interface stress ("FS SSA Shelf Stress").
@@ -712,7 +713,7 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
   REAL(KIND=dp), ALLOCATABLE :: Hc(:), ubar(:), vbar(:), zbc(:), STIFF(:,:), FORCE(:), Basis(:), dBasisdx(:,:)
   REAL(KIND=dp), ALLOCATABLE :: nodal(:,:), wsum(:)
   REAL(KIND=dp) :: Dcut, mu, rhoi, rhow, g, r, detJ, Hg, Pg, ymin, ymax, tolw, wq, uq(2), dux(2), duy(2), &
-      dzb(2), ar, zb, zs, H, divu, wb, su, sv, umax, Norm, relax
+      dzb(2), ar, zb, zs, H, divu, wb, su, sv, umax, Norm, relax, dhh(2)
   LOGICAL :: Found, walls, stat, ssaEl
   CHARACTER(*), PARAMETER :: Caller = 'FSSSAShelf'
 !------------------------------------------------------------------------------
@@ -892,7 +893,7 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
   Norm = DefaultSolve()
 
   ! nodal averages over the SSA faces: the strain rate, div(u) and grad(z_b) (area weighted), summed over ranks
-  ALLOCATE( nodal(nn,7) )
+  ALLOCATE( nodal(nn,9) )
   nodal = 0.0_dp
   DO t = 1, Solver % NumberOfActiveElements
     IF ( .NOT. elS(t) ) CYCLE
@@ -902,7 +903,7 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
     Nodes % y(1:n) = Mesh % Nodes % y( El % NodeIndexes(1:n) )
     Nodes % z(1:n) = 0.0_dp
     IP = GaussPoints( El )
-    ar = 0.0_dp; dux = 0.0_dp; duy = 0.0_dp; dzb = 0.0_dp
+    ar = 0.0_dp; dux = 0.0_dp; duy = 0.0_dp; dzb = 0.0_dp; dhh = 0.0_dp
     DO k = 1, IP % n
       stat = ElementInfo( El, Nodes, IP % U(k), IP % V(k), IP % W(k), detJ, Basis, dBasisdx )
       wq = IP % s(k) * detJ
@@ -917,6 +918,8 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
         duy = duy + wq * uq * dBasisdx(p,2)        ! (u_y, v_y)
         dzb(1) = dzb(1) + wq * zbc( MOD(nd-1, nbl) + 1 ) * dBasisdx(p,1)
         dzb(2) = dzb(2) + wq * zbc( MOD(nd-1, nbl) + 1 ) * dBasisdx(p,2)
+        dhh(1) = dhh(1) + wq * Hc( MOD(nd-1, nbl) + 1 ) * dBasisdx(p,1)
+        dhh(2) = dhh(2) + wq * Hc( MOD(nd-1, nbl) + 1 ) * dBasisdx(p,2)
       END DO
     END DO
     IF ( ar <= 0.0_dp ) CYCLE
@@ -929,15 +932,20 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
       nodal(nd,5) = nodal(nd,5) + dzb(1)
       nodal(nd,6) = nodal(nd,6) + dzb(2)
       nodal(nd,7) = nodal(nd,7) + ar
+      nodal(nd,8) = nodal(nd,8) + dhh(1)
+      nodal(nd,9) = nodal(nd,9) + dhh(2)
     END DO
   END DO
   IF ( ParEnv % PEs > 1 ) THEN
-    DO k = 1, 7
+    DO k = 1, 9
       CALL ParallelSumNodalVector( Mesh, nodal(:,k), idPerm, Solver % Matrix )
     END DO
   END IF
   DO i = 1, nn
-    IF ( nodal(i,7) > 0.0_dp ) nodal(i,1:6) = nodal(i,1:6) / nodal(i,7)
+    IF ( nodal(i,7) > 0.0_dp ) THEN
+      nodal(i,1:6) = nodal(i,1:6) / nodal(i,7)
+      nodal(i,8:9) = nodal(i,8:9) / nodal(i,7)
+    END IF
   END DO
   ! the strain rate for the interface stress, relaxed in time ("FS SSA Stress Relaxation" w, default 0.25:
   ! e = e_previous + w (e_SSA - e_previous) where the node had one). The coupling is explicit (the SSA's inflow is the
@@ -977,7 +985,11 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
     uq(2) = Solver % Variable % Values( 2*(q-1)+2 )
     umax = MAX( umax, SQRT( SUM( uq**2 ) ) )
     divu = nodal(ib,4)
-    wb = uq(1) * nodal(ib,5) + uq(2) * nodal(ib,6)
+    ! the base takes its floating share of the dynamic thickness change: dz_b/dt = r div(u H) (the surface the rest
+    ! and the accumulation). With w_b = u . grad(z_b) alone the surface took all of it, thin ice near the interface
+    ! reached the Min Zs limit within a step and the clamp added ice (4 m too thick 15 km out after 80 yr)
+    wb = uq(1) * nodal(ib,5) + uq(2) * nodal(ib,6) &
+        + r * ( Hc(lc) * divu + uq(1) * nodal(ib,8) + uq(2) * nodal(ib,9) )
     DO L = Lb, Lt
       i = (L-1)*nbl + lc
       k = 0
