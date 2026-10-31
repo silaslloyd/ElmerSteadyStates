@@ -611,10 +611,13 @@ End
             raise ValueError(f"[elmer] sliding must be 'subtemperate' or 'temperate', not {self.sliding!r}")
         if os.environ.get("ESS_SOLVER_TIMING"):     # every solver's time per call in the log ("Solver time ... for")
             text = re.sub(r"^(Solver \d+\s*\n)", r"\1  Solver Timing = Logical True\n", text, flags=re.M)
-        if os.environ.get("ESS_PARTIAL_UPDATE_ONCE") and "partial update" in text:
+        once = os.environ.get("ESS_PARTIAL_UPDATE_ONCE", "1" if self.marine else "0") != "0"
+        if once and "partial update" in text:
             # the bedrock/filler mesh update maps the filler layer's base to bed - minh; bedrock is frozen, so after
             # the first step every solve repeats the same displacement (7 s per step at 768 ranks): only at the
-            # first time step of each Elmer run (Exec Intervals per Timestep Interval: ramps have several)
+            # first time step of each Elmer run (Exec Intervals per Timestep Interval: ramps have several).
+            # Default for the marine template (ESS_PARTIAL_UPDATE_ONCE=0: every step); checked against every step
+            # over 20 yr: Zs/Zb within 9 cm, velocity within 0.04 (horizontal) / 0.12 (vertical) m/a
             k = text.index('Equation = "partial update"')
             j = text.index("\nEnd", k)
             text = (text[:j] + "\n  Exec Intervals(10) = Integer " + " ".join(["100000000"] * 10)

@@ -229,7 +229,9 @@ fi
 # (FSSSALinsolve; default 1:1, any change)
 # MESHUPDATE=once: the bedrock/filler mesh update ("partial update") only at the first step of each Elmer run (the
 # bedrock is frozen, so later solves repeat the same displacement; 7 s per step at 768 ranks)
+# (default for marine; MESHUPDATE=every: every step)
 [ "$MESHUPDATE" = once ] && export ESS_PARTIAL_UPDATE_ONCE=1 && echo "  bedrock/filler mesh update only at the first step"
+[ "$MESHUPDATE" = every ] && export ESS_PARTIAL_UPDATE_ONCE=0 && echo "  bedrock/filler mesh update every step"
 # TIMING=1: every Elmer solver timed in the log (Solver Timing); the summary lists the time per solver per step
 [ -n "$TIMING" ] && export ESS_SOLVER_TIMING=1 && echo "  every solver timed"
 # VTU_EVERY=N: a VTU of the boundaries (base, surface: velocity, grounded mask, distance to the grounding line) every N
