@@ -72,7 +72,7 @@ def collect(args):
             continue
         steps = vtu_steps(a)
         if steps:                                # a run directory with ESS_VTU_EVERY: every step (base_t*.pvtu)
-            out += [(f"step {int(re.findall(r'_t(\d+)', os.path.basename(f))[0])}", f) for f in steps]
+            out += [("step %d" % int(re.findall(r"_t(\d+)", os.path.basename(f))[0]), f) for f in steps]
             continue
         pts = os.path.join(a, "points")
         if os.path.isdir(pts):                   # one phase: <phase>_chunks
