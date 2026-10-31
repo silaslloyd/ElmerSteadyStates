@@ -4,6 +4,7 @@ Slim copies of chunk states for plots/plot_state_3d.py: only the top and bottom 
 mask, the bedrock, the temperature, and the coordinates and velocities of those nodes), a few % of a 3D state.
 
     python plots/slim_states.py work/test_periodic_gl_50km  [OUT]
+    python plots/slim_states.py STATE.npz [OUT.npz]        (one state; default STATE_slim.npz)
 Copies every <folder>/<phase>_chunks/points/state_*.npz (and <phase>.npz) under the work dir to the same paths
 under OUT (default <work dir>_slim). Files already slimmed (newer than their source) are skipped.
 Run it on the cluster as a small job, e.g.  sbatch --ntasks=1 --time=01:00:00 --wrap "python3 plots/slim_states.py work/test_periodic_gl_50km"
@@ -58,6 +59,11 @@ def slim(src, dst):
 
 
 def main():
+    if sys.argv[1].endswith(".npz"):              # one state: STATE.npz [OUT.npz] (default STATE_slim.npz)
+        d = sys.argv[2] if len(sys.argv) > 2 else sys.argv[1][:-4] + "_slim.npz"
+        sa, sb = slim(sys.argv[1], d)
+        print(f"{sys.argv[1]}: {sa / 1e6:.0f} MB -> {d} {sb / 1e6:.1f} MB")
+        return
     work = sys.argv[1].rstrip("/")
     out = sys.argv[2] if len(sys.argv) > 2 else work + "_slim"
     files = sorted(glob.glob(os.path.join(work, "*", "*_chunks", "points", "state_*.npz"))

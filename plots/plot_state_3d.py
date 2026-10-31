@@ -13,6 +13,8 @@ slider through the states.
                                                                             # anything not periodic shows at the seam)
     python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --no-temp # the velocity panel only
     python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --tmin 255  # temperature colour range from 255 K
+    python plots/plot_state_3d.py STATE.npz --fs-ssa 10 [--walls]          # the full-Stokes | SSA boundary (magenta)
+Structured footprints and the unstructured triangle ones (configs/*_tri.toml; Delaunay, needs scipy).
 With a Temperature field: a second panel next to it, the same geometry coloured by temperature (surface, base and
 side walls; the base shows the bed temperature, where a seam stripe from wrong loads would show).
 A treatment folder is read phase by phase (spinup, retreat, advance: <phase>_chunks/points/state_*.npz).
@@ -39,6 +41,8 @@ BASE_COLOUR = "speed"    # "speed" (basal speed, the same colour scale as the su
 SHOW_MESH = False        # the element edges on the base (--mesh to show)
 SIDES = True             # side walls (base to surface) at the window ends and the two outer sides
 TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
+FS_SSA = 0.0             # km: draw the full-Stokes | SSA boundary this far beyond the grounding line (--fs-ssa 10)
+WALLS = False            # walled sides: the distance to the grounding line not wrapped across y (--walls)
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
 T_RANGE = (None, None)   # temperature colour range (K); None: all temperatures in the window (--tmin / --tmax)
 SHOW = True
@@ -117,8 +121,18 @@ def surfaces(path):
     return top, base, float(s.meta.get("time", np.nan))
 
 
+def structured(x, y):
+    """a structured footprint (rows of equal y, the same x positions in every row), not unstructured triangles"""
+    return len(np.unique(np.round(x, 1))) * len(np.unique(np.round(y, 1))) == len(x)
+
+
 def triangles(x, y):
-    """triangles of the structured footprint: rows of equal y, the same x positions in every row"""
+    """triangles of the footprint: of the rows and columns of a structured one, else Delaunay (the unstructured
+    triangle meshes: their footprint is a rectangle, so Delaunay covers it like the mesh)"""
+    if not structured(x, y):
+        from scipy.spatial import Delaunay
+        t = Delaunay(np.c_[x, y] / 1e3).simplices
+        return t[:, 0], t[:, 1], t[:, 2]
     ys = np.unique(np.round(y, 1))
     xs = np.unique(np.round(x, 1))
     iy = np.searchsorted(ys, np.round(y, 1))
@@ -137,12 +151,64 @@ def triangles(x, y):
     return np.array(I), np.array(J), np.array(K)
 
 
+def contour(x, y, f, level, zs):
+    """the level line of the nodal field f on the footprint triangles, as segments (x, y in km, then each of the
+    nodal fields zs interpolated onto it), segments separated by None (plotly lines)"""
+    i, j, k = triangles(x, y)
+    out = [[] for _ in range(2 + len(zs))]
+    for t in zip(i, j, k):
+        pts = []
+        for a, b in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
+            fa, fb = f[a] - level, f[b] - level
+            if (fa < 0) != (fb < 0) and np.isfinite(fa) and np.isfinite(fb):
+                w = fa / (fa - fb)
+                pts.append([x[a] + w * (x[b] - x[a]), y[a] + w * (y[b] - y[a])]
+                           + [z[a] + w * (z[b] - z[a]) for z in zs])
+        if len(pts) == 2:
+            for c in range(len(out)):
+                out[c] += [pts[0][c] / (1e3 if c < 2 else 1), pts[1][c] / (1e3 if c < 2 else 1), None]
+    return out
+
+
+def gl_distance(base, periodic=True):
+    """km from the grounding line (the GroundedMask 0 line) for the floating base nodes, 0 for the grounded ones
+    (as elmer/GLDistance.F90, the distance wrapped across the periodic sides)"""
+    gx, gy = (np.array([v for v in c if v is not None]) for c in contour(base["x"], base["y"], base["mask"], 0.0, [])[:2])
+    d = np.zeros(len(base["x"]))
+    fl = np.where(base["mask"] < -0.5)[0]
+    if not len(gx) or not len(fl):
+        return d
+    W = (base["y"].max() - base["y"].min()) / 1e3
+    pts = np.c_[gx, gy]
+    if periodic:
+        pts = np.r_[pts, pts + [0, W], pts - [0, W]]
+    q = np.c_[base["x"][fl], base["y"][fl]] / 1e3
+    try:
+        from scipy.spatial import cKDTree
+        d[fl] = cKDTree(pts).query(q)[0]
+    except ImportError:
+        for c in np.array_split(np.arange(len(fl)), max(1, len(fl) // 2000)):
+            d[fl[c]] = np.sqrt(((q[c, None, :] - pts[None, :, :]) ** 2).sum(-1)).min(1)
+    return d
+
+
+def gl_x(base):
+    """the grounding line's x positions (km)"""
+    return np.array([v for v in gl_line(base)[0] if v is not None], float)
+
+
 def gl_line(base, top=None):
-    """per row across y: the last grounded node (mask >= 0): x, y (km), base z and surface z there"""
+    """per row across y: the last grounded node (mask >= 0): x, y (km), base z and surface z there. On an
+    unstructured footprint: the GroundedMask 0 line through the triangles (segments separated by None)."""
     xs, ys, zb, zt = [], [], [], []
     tz = {}
     if top is not None:
         tz = {(round(x, 0), round(y, 0)): v for x, y, v in zip(top["x"], top["y"], top["v"])}
+    if not structured(base["x"], base["y"]):
+        zt_ = np.array([tz.get((round(x, 0), round(y, 0)), v) for x, y, v in zip(base["x"], base["y"], base["v"])])
+        cx, cy, cb, ct = contour(base["x"], base["y"], base["mask"], 0.0, [base["v"], zt_])
+        return (np.array(cx, dtype=object), np.array(cy, dtype=object), np.array(cb, dtype=object),
+                np.array(ct, dtype=object))
     for yj in np.unique(np.round(base["y"], 1)):
         m = (np.abs(base["y"] - yj) < 1) & (base["mask"] > -0.5)
         if m.any():
@@ -157,8 +223,15 @@ def gl_line(base, top=None):
 
 def main():
     import plotly.graph_objects as go
-    global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED
+    global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS
     args = sys.argv[1:]
+    if "--walls" in args:
+        WALLS = True
+        args.remove("--walls")
+    if "--fs-ssa" in args:                        # --fs-ssa KM: the full-Stokes | SSA boundary
+        k = args.index("--fs-ssa")
+        FS_SSA = float(args[k + 1])
+        args = args[:k] + args[k + 2:]
     if "--bed" in args:
         SHOW_BED = True
         args.remove("--bed")
@@ -193,7 +266,7 @@ def main():
         if base is None or "mask" not in base:
             print(f"  {label}: no GroundedMask / Zb in {f}")
         else:
-            gx = gl_line(base)[0]
+            gx = gl_x(base)
             per = (f"per row {np.round(gx, 2)}" if len(gx) <= 6 else
                    f"min {np.min(gx):.2f} mean {np.mean(gx):.2f} max {np.max(gx):.2f} over {len(gx)} rows")
             print(f"  {label}: grounding line {per} km; mask values {np.unique(base['mask'])}")
@@ -201,7 +274,7 @@ def main():
     if X_WINDOW:
         x0, x1 = X_WINDOW
     else:
-        gls = [gl_line(b)[0] for _, _, b, _ in data if b is not None and "mask" in b]
+        gls = [gl_x(b) for _, _, b, _ in data if b is not None and "mask" in b]
         gls = [g for g in gls if len(g)]
         xmax = max(float(np.max(top["x"])) for _, top, _, _ in data if top is not None) / 1e3
         x0 = (min(float(np.min(g)) for g in gls if len(g)) - 60.0) if gls else 0.0
@@ -342,15 +415,56 @@ def main():
             # the base (just outside each, so neither surface hides it)
             gx, gy, gzb, gzt = gl_line(base, top)
             ax, ay, at, ab = [], [], [], []
+            add = lambda v, a: None if v is None else v + a
             for c in range(TILE):
-                ax += list(gx)
-                ay += list(gy + c * W / 1e3)
-                at += list(gzt + 5.0)
-                ab += list(gzb - 5.0)
+                ax += list(gx) + [None]
+                ay += [add(v, c * W / 1e3) for v in gy] + [None]
+                at += [add(v, 5.0) for v in gzt] + [None]
+                ab += [add(v, -5.0) for v in gzb] + [None]
+            unstr = not structured(base["x"], base["y"])
             for z_, nm in ((at, "grounding line (surface)"), (ab, "grounding line (base)")):
-                tr.append(go.Scatter3d(x=ax, y=ay, z=z_, mode="lines+markers", line=dict(color="red", width=8),
-                                       marker=dict(size=3, color="red"), name=nm, scene=sc, showlegend=first_panel,
+                tr.append(go.Scatter3d(x=ax, y=ay, z=z_, mode="lines" if unstr else "lines+markers",
+                                       line=dict(color="red", width=8), marker=dict(size=3, color="red"), name=nm,
+                                       scene=sc, showlegend=first_panel, connectgaps=False,
                                        hovertemplate="GL x %{x:.2f} km at y %{y:.2f} km<extra></extra>"))
+            if FS_SSA:
+                # the boundary between the full-Stokes region and the SSA shelf: floating ice more than FS_SSA km from
+                # the grounding line is the passive SSA shelf (elmer/GLDistance.F90, FSSSAShelf); magenta on the
+                # surface and the base, and a curtain through the ice
+                tzd = {(round(x, 0), round(y, 0)): v for x, y, v in zip(top["x"], top["y"], top["v"])} if top else {}
+                zt_ = np.array([tzd.get((round(x, 0), round(y, 0)), v) for x, y, v in
+                                zip(base["x"], base["y"], base["v"])])
+                dist = gl_distance(base, periodic=not WALLS)
+                cx, cy, cb, ct = contour(base["x"], base["y"], np.where(base["mask"] < -0.5, dist, 0.0), FS_SSA,
+                                         [base["v"], zt_])
+                bx, by, btop, bbot = [], [], [], []
+                for c in range(TILE):
+                    bx += cx + [None]
+                    by += [add(v, c * W / 1e3) for v in cy] + [None]
+                    btop += [add(v, 5.0) for v in ct] + [None]
+                    bbot += [add(v, -5.0) for v in cb] + [None]
+                nm = f"full-Stokes | SSA boundary ({FS_SSA:g} km beyond the GL)"
+                for z_, show in ((btop, first_panel), (bbot, False)):
+                    tr.append(go.Scatter3d(x=bx, y=by, z=z_, mode="lines", line=dict(color="magenta", width=9),
+                                           name=nm, legendgroup="fsssa", scene=sc, showlegend=show, connectgaps=False,
+                                           hovertemplate="FS | SSA x %{x:.2f} km at y %{y:.2f} km<extra></extra>"))
+                # the curtain: each segment a quad from the base to the surface
+                X, Y, Z, I, J, K = [], [], [], [], [], []
+                for q in range(0, len(bx) - 1):
+                    if bx[q] is None or bx[q + 1] is None:
+                        continue
+                    n0 = len(X)
+                    X += [bx[q], bx[q], bx[q + 1], bx[q + 1]]
+                    Y += [by[q], by[q], by[q + 1], by[q + 1]]
+                    Z += [bbot[q], btop[q], bbot[q + 1], btop[q + 1]]
+                    I += [n0, n0 + 1]; J += [n0 + 1, n0 + 3]; K += [n0 + 2, n0 + 2]
+                if X:
+                    tr.append(go.Mesh3d(x=X, y=Y, z=Z, i=I, j=J, k=K, color="magenta", opacity=0.35, name=nm,
+                                        legendgroup="fsssa", showlegend=False, hoverinfo="skip", scene=sc))
+                if first_panel:
+                    px = [v for v in cx if v is not None]
+                    if px:
+                        print(f"  full-Stokes | SSA boundary: x {min(px):.2f} .. {max(px):.2f} km")
         if top is not None and TILE > 1:
             m = np.abs(top["y"] - W) < 1
             o = np.argsort(top["x"][m])
