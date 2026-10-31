@@ -810,10 +810,18 @@ End
                     "  FS SSA Viscosity = Real #viscosity\n"
                     f"  FS SSA Walls = Logical {walls}\n"
                     f"  FS SSA Stress Relaxation = Real {float(os.environ.get('ESS_FS_SSA_RELAX', '0.25'))!r}\n"
-                    "  Linear System Solver = Direct\n"
-                    "  Linear System Direct Method = $directsolver\n"
-                    "  Linear System Abort Not Converged = Logical True\n"
-                    "  Linear System Convergence Tolerance = 1.0e-12\n"
+                    + (("  Linear System Solver = Direct\n"
+                        "  Linear System Direct Method = $directsolver\n")
+                       if os.environ.get("ESS_FS_SSA_LINSYS") == "direct" else
+                       # iterative (default): a fresh parallel MUMPS factorisation of the whole base every step took
+                       # 10 s per step at 768 ranks, more than Stokes; the SSA operator is a well-conditioned 2D one
+                       ("  Linear System Solver = Iterative\n"
+                        "  Linear System Iterative Method = BiCGStab\n"
+                        "  Linear System Preconditioning = ILU0\n"
+                        "  Linear System Max Iterations = 2000\n"
+                        "  Linear System Residual Output = 0\n"))
+                    + "  Linear System Abort Not Converged = Logical True\n"
+                    "  Linear System Convergence Tolerance = 1.0e-10\n"
                     "  Nonlinear System Max Iterations = 1\n"
                     "  Steady State Convergence Tolerance = 1.0e-5\n"
                     "End\n")
