@@ -609,10 +609,35 @@ End
             text = self._sliding_temperate(text)
         elif self.sliding != "subtemperate":
             raise ValueError(f"[elmer] sliding must be 'subtemperate' or 'temperate', not {self.sliding!r}")
+        every = os.environ.get("ESS_VTU_EVERY")
+        if every and int(every) > 0:
+            text = self._vtu_every(text, int(every))
         left = sorted(set(PLACEHOLDER.findall(text)))
         if left:
             raise ValueError(f"unfilled placeholders in {self.template}: {', '.join(left)}")
         return text
+
+    def _vtu_every(self, text, every):
+        """ESS_VTU_EVERY=N (testing, e.g. jobs/scaling_tests.cmd VTU_EVERY=1): a VTU of the BOUNDARIES (ice base and
+        surface, sides, bed: small) every N time steps in the run directory (steps_t*.pvtu): velocity, grounded mask
+        and the distance to the grounding line (fs_ssa_km: > fs_ssa_km is the passive SSA shelf), to watch a run
+        step by step in ParaView"""
+        text = text.replace('Variable = -nooutput "GL Distance"', 'Variable = "GL Distance"')
+        n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M)) + 1
+        fields = ["GroundedMask"] + (["GL Distance"] if self.fs_ssa_x is not None else [])
+        sec = (f"\nSolver {n}\n"
+               '  Exec Solver = "After Timestep"\n'
+               f"  Exec Intervals = {every}\n"
+               '  Equation = "vtu every"\n'
+               '  Procedure = "ResultOutputSolve" "ResultOutputSolver"\n'
+               '  Output File Name = "steps"\n'
+               '  Output Format = String "vtu"\n'
+               "  Save Boundaries Only = Logical True\n"
+               "  Single Precision = Logical True\n"
+               '  Vector Field 1 = String "Velocity"\n'
+               + "".join(f'  Scalar Field {k} = String "{f}"\n' for k, f in enumerate(fields, 1))
+               + "End\n")
+        return text.rstrip() + "\n" + sec
 
     def _periodic_sides(self, text):
         """marine template: side 2 the periodic image of side 1 (bedrock, filler, ice), free ice sides"""

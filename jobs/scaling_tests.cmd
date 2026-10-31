@@ -225,6 +225,9 @@ fi
 [ -n "$FS_SSA_UPDATE" ] && export ESS_FS_SSA_UPDATE=$FS_SSA_UPDATE && echo "  full-Stokes region renewed when the grounding line moved $FS_SSA_UPDATE km"
 # REBUILD=elements:grounding: per-rank thresholds of the ILU rebuild after the active set / grounded mask changed
 # (FSSSALinsolve; default 1:1, any change)
+# VTU_EVERY=N: a VTU of the boundaries (base, surface: velocity, grounded mask, distance to the grounding line) every N
+# steps in each run's directory (work/<config>/runs/<run>/steps_t*.pvtu), to watch it in ParaView
+[ -n "$VTU_EVERY" ] && export ESS_VTU_EVERY=$VTU_EVERY && echo "  boundary VTU every $VTU_EVERY step(s) in the run directories"
 # REBUILD_PREC=ILU1 (or ILU0, ILU2): a rank whose active set / grounded mask changed rebuilds with this cheaper
 # preconditioner instead of the solver's (ILU4); every rank waits for the slowest factorisation
 [ -n "$REBUILD_PREC" ] && export ESS_FS_SSA_REBUILD_PREC=$REBUILD_PREC && echo "  forced ILU rebuilds with $REBUILD_PREC"
