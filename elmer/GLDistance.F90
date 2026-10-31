@@ -336,6 +336,12 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   LOGICAL, ALLOCATABLE, SAVE :: prevP(:)       ! passive state of each active element at the previous solve
   INTEGER, SAVE :: ncall = 0
   REAL(KIND=dp) :: npas, nchg, nchgLoc, ngm, nreb
+  ! the side boundaries (y = ymin, y = ymax: walls, or the periodic seam): a face lying on them is never an interface
+  ! face, though on an unstructured mesh all its nodes can belong to passive elements too (an active element at the
+  ! wall whose wall edge has both ends on the active/passive boundary); it got the shelf stress, on the wall
+  REAL(KIND=dp), SAVE :: ysMin = 0.0_dp, ysMax = -1.0_dp
+  REAL(KIND=dp) :: ytol, nside
+  LOGICAL :: onSide
   ! periodic sides: Elmer has already folded each slave node's row into its master rows and replaced it by the
   ! periodic constraint (SetPeriodicBoundariesPass1/2), so a slave node's force goes to its masters, by the
   ! projector weights (pStart/pCnt/pNode/pW: per slave node, its masters)
@@ -565,6 +571,14 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   ! "height" variable is ambiguous in the template, the Zs solver exports one too); pass 2: the loads
   ALLOCATE( onIF(nn), zTop(nn), zBot(nn) )
   onIF = .FALSE.; zTop = 0.0_dp; zBot = 0.0_dp
+  IF ( ysMax < ysMin ) THEN
+    ysMin = MINVAL( Mesh % Nodes % y ); ysMax = MAXVAL( Mesh % Nodes % y )
+    IF ( ParEnv % PEs > 1 ) THEN
+      ysMin = ParallelReduction( ysMin, 1 ); ysMax = ParallelReduction( ysMax, 2 )
+    END IF
+  END IF
+  ytol = 1.0e-6_dp * MAX( ysMax - ysMin, 1.0_dp )
+  nside = 0.0_dp
   DO pass = 1, 2
   nfaces = 0; ftot = 0.0_dp
   ! diagnostics: sum of face x-areas, area-weighted H, expected force, min/max H, x range of face centres
@@ -604,6 +618,11 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
       ! area vector of the quadrilateral: half the cross product of its diagonals
       av = 0.5_dp * essCross( pts(:,3) - pts(:,1), pts(:,4) - pts(:,2) )
       IF ( ABS(av(3)) > 0.5_dp * SQRT( SUM(av**2) ) ) CYCLE        ! a horizontal face (top/base): not the interface
+      onSide = ALL( ABS( pts(2,:) - ysMin ) < ytol ) .OR. ALL( ABS( pts(2,:) - ysMax ) < ytol )
+      IF ( onSide ) THEN                                             ! a face on a wall / the seam: not the interface
+        IF ( pass == 2 ) nside = nside + 1.0_dp
+        CYCLE
+      END IF
       IF ( pass == 1 ) THEN
         onIF( El % NodeIndexes( fn(:,f) ) ) = .TRUE.
         CYCLE
@@ -737,6 +756,12 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
     END IF
     WRITE( Message, '(A,ES12.4,A,ES12.4,A,I0,A)' ) 'interface force x: SSA shelf ', fssa, &
         '  (free-floating shelf formula ', funi, '; ', NINT(npas), ' node contributions from the SSA)'
+    CALL Info( 'FSSSALinsolve', Message, Level=3 )
+  END IF
+  IF ( ParEnv % PEs > 1 ) nside = ParallelReduction( nside )
+  IF ( nside > 0.0_dp ) THEN
+    WRITE( Message, '(A,I0,A)' ) 'faces on the sides with all nodes on the active/passive boundary, skipped: ', &
+        NINT(nside), ' (wall or seam faces, not the interface)'
     CALL Info( 'FSSSALinsolve', Message, Level=3 )
   END IF
   IF ( .NOT. Reported ) THEN
