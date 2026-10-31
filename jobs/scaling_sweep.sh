@@ -24,7 +24,8 @@ cd "$(dirname "$0")/.."
 POINTS=${*:-m96 m192 m384 m768 w192 w384 l72 l144 l288 l576}
 BASE="ALL,ELMER_MODULE=${ELMER_MODULE:-elmerfem/2026-10-28},ELMER_PREFIX=${ELMER_PREFIX:-/SCRATCH/$USER/elmer/install2},BED=none,TOL=1e-5,STEPS=${STEPS:-20},DT=1,TIMING=1,RECOMPUTE=200,WARMUP_ILU=0"
 MAR="SET=F,SLIDING=subtemperate,GLMODE=contact,NL=2,WARMUP=1e-2:0.1*3:1*3,SPRING_DT=1,FS_SSA=10,FS_SSA_SHELF=ssa,FS_SSA_UPDATE=1,REBUILD_PREC=ILU0"
-LAND="SET=W,WARMUP=1*3"
+# LAND_SET (default W): the land runs per point; FW = ILU0 and ILU4 (ILU4 overflows Elmer's integers on large partitions)
+LAND="SET=${LAND_SET:-W},WARMUP=1*3"
 dep=${AFTER:+--dependency=afterany:$AFTER}
 for p in $POINTS; do
     n=${p:1}
