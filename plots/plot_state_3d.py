@@ -14,7 +14,8 @@ slider through the states.
     python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --no-temp # the velocity panel only
     python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --tmin 255  # temperature colour range from 255 K
     python plots/plot_state_3d.py STATE.npz --fs-ssa 10 [--walls]          # the full-Stokes | SSA boundary (magenta)
-    python plots/plot_state_3d.py STATE.npz --mesh                         # the mesh on the ice base, in white
+    python plots/plot_state_3d.py STATE.npz --mesh --mesh-dir CASE/footprint   # the mesh's elements on the ice base,
+                                                                            # white (without --mesh-dir: Delaunay)
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
 Speed colours max out at the surface speed on the grounding line (--vmax V, or --vmax-all for the largest speed).
 Structured footprints and the unstructured triangle ones (configs/*_tri.toml; Delaunay, needs scipy).
@@ -46,6 +47,7 @@ SIDES = True             # side walls (base to surface) at the window ends and t
 TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
 VMAX_GL = True           # speed colours up to the surface speed on the grounding line (--vmax-all: the largest)
 VMAX = None              # speed colour maximum (m/yr), --vmax V
+MESH_DIR = None          # --mesh-dir DIR: the footprint mesh (ElmerGrid directory) whose elements --mesh draws
 FS_SSA = 0.0             # km: draw the full-Stokes | SSA boundary this far beyond the grounding line (--fs-ssa 10)
 WALLS = False            # walled sides: the distance to the grounding line not wrapped across y (--walls)
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
@@ -156,6 +158,33 @@ def triangles(x, y):
     return np.array(I), np.array(J), np.array(K)
 
 
+def mesh_triangles(mdir, x, y):
+    """the triangles of the footprint mesh in mdir (an ElmerGrid mesh directory, its mesh.* or its partitioning's
+    part.*), as indices into the nodes (x, y); triangles with a node outside them (the x window) dropped"""
+    if os.path.exists(os.path.join(mdir, "mesh.nodes")):
+        nf = [os.path.join(mdir, "mesh.nodes")]
+    else:
+        nf = sorted(glob.glob(os.path.join(sorted(glob.glob(os.path.join(mdir, "partitioning.*")))[0],
+                                           "part.*.nodes")))
+    xy, els = {}, {}
+    for f in nf:
+        for line in open(f):
+            s = line.split()
+            xy[int(s[0])] = (round(float(s[2]), 0), round(float(s[3]), 0))
+        for line in open(f.replace(".nodes", ".elements")):
+            s = line.split()
+            if s[2] == "303":
+                els[int(s[0])] = [int(v) for v in s[3:6]]
+    here = {(round(a, 0), round(b, 0)): n for n, (a, b) in enumerate(zip(x, y))}
+    t = [[here.get(xy[v], -1) for v in e] for e in els.values()]
+    t = np.array([q for q in t if min(q) >= 0], int).reshape(-1, 3)
+    print(f"  base mesh: {len(t)} of the {len(els)} triangles of {mdir} in the window")
+    if not len(t):
+        print(f"  (none of its nodes match the state's: not this state's mesh? Delaunay instead)")
+        return triangles(x, y)
+    return t[:, 0], t[:, 1], t[:, 2]
+
+
 def contour(x, y, f, level, zs):
     """the level line of the nodal field f on the footprint triangles, as segments (x, y in km, then each of the
     nodal fields zs interpolated onto it), segments separated by None (plotly lines)"""
@@ -228,7 +257,7 @@ def gl_line(base, top=None):
 
 def main():
     import plotly.graph_objects as go
-    global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL
+    global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR
     args = sys.argv[1:]
     if "--vmax-all" in args:
         VMAX_GL = False
@@ -240,6 +269,10 @@ def main():
     if "--full" in args:                          # the whole ice sheet, divide to front
         X_WINDOW = (-1.0, 1e9)
         args.remove("--full")
+    if "--mesh-dir" in args:
+        k = args.index("--mesh-dir")
+        MESH_DIR = args[k + 1]
+        args = args[:k] + args[k + 2:]
     if "--walls" in args:
         WALLS = True
         args.remove("--walls")
@@ -352,7 +385,11 @@ def main():
                         ly += list(base["y"][o] / 1e3 + dy) + [None]
                         lz += list(base["v"][o] - 3.0) + [None]
         else:
-            i, j, k = triangles(base["x"], base["y"])
+            if MESH_DIR:                          # the real elements (the Delaunay triangles are only for drawing)
+                i, j, k = mesh_triangles(MESH_DIR, base["x"], base["y"])
+            else:
+                i, j, k = triangles(base["x"], base["y"])
+                print("  base mesh: Delaunay triangles of the nodes, NOT the mesh's elements (--mesh-dir for those)")
             e = np.sort(np.r_[np.c_[i, j], np.c_[j, k], np.c_[k, i]], axis=1)
             e = np.unique(e, axis=0)
             n = len(e)
