@@ -16,6 +16,8 @@ slider through the states.
     python plots/plot_state_3d.py STATE.npz --fs-ssa 10 [--walls]          # the full-Stokes | SSA boundary (magenta)
     python plots/plot_state_3d.py STATE.npz --mesh --mesh-dir CASE/footprint   # the mesh's elements on the ice base,
                                                                             # white (without --mesh-dir: Delaunay)
+    python plots/plot_state_3d.py STATE.npz --partitions --mesh-dir CASE/footprint   # partition outlines, white
+Buttons above the velocity panel switch its colours between speed, vx, vy and vz.
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
 Speed colours max out at the surface speed on the grounding line (--vmax V, or --vmax-all for the largest speed).
 Structured footprints and the unstructured triangle ones (configs/*_tri.toml; Delaunay, needs scipy).
@@ -47,6 +49,7 @@ SIDES = True             # side walls (base to surface) at the window ends and t
 TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
 VMAX_GL = True           # speed colours up to the surface speed on the grounding line (--vmax-all: the largest)
 VMAX = None              # speed colour maximum (m/yr), --vmax V
+SHOW_PARTS = False       # --partitions: the partition outlines in white (needs --mesh-dir with a partitioning)
 MESH_DIR = None          # --mesh-dir DIR: the footprint mesh (ElmerGrid directory) whose elements --mesh draws
 FS_SSA = 0.0             # km: draw the full-Stokes | SSA boundary this far beyond the grounding line (--fs-ssa 10)
 WALLS = False            # walled sides: the distance to the grounding line not wrapped across y (--walls)
@@ -100,6 +103,7 @@ def surfaces(path):
     if all(r is not None for r in u):
         d = [dict(zip(r[0].tolist(), r[1].tolist())) for r in u]
         sp = {g: float(np.sqrt(sum(dk.get(g, 0.0) ** 2 for dk in d))) for g in d[0]}
+    comps = [dict(zip(r[0].tolist(), np.asarray(r[1], float).tolist())) if r is not None else {} for r in u]
 
     def grid(name):
         r = _rec(s, name)
@@ -122,6 +126,10 @@ def surfaces(path):
         base["speed"] = np.array([sp.get(g, np.nan) for g in base["g"].tolist()])
     if top is not None:
         top["speed"] = np.array([sp.get(g, np.nan) for g in top["g"].tolist()])
+    for d in (top, base):                          # the velocity components (the colour switch)
+        if d is not None:
+            for n, c in zip(("vx", "vy", "vz"), comps):
+                d[n] = np.array([c.get(g, np.nan) for g in d["g"].tolist()])
     for d in (top, base):
         if d is not None and Td is not None:
             d["T"] = np.array([Td.get(g, np.nan) for g in d["g"].tolist()])
@@ -161,28 +169,58 @@ def triangles(x, y):
 def mesh_triangles(mdir, x, y):
     """the triangles of the footprint mesh in mdir (an ElmerGrid mesh directory, its mesh.* or its partitioning's
     part.*), as indices into the nodes (x, y); triangles with a node outside them (the x window) dropped"""
-    if os.path.exists(os.path.join(mdir, "mesh.nodes")):
-        nf = [os.path.join(mdir, "mesh.nodes")]
-    else:
-        nf = sorted(glob.glob(os.path.join(sorted(glob.glob(os.path.join(mdir, "partitioning.*")))[0],
-                                           "part.*.nodes")))
-    xy, els = {}, {}
-    for f in nf:
-        for line in open(f):
-            s = line.split()
-            xy[int(s[0])] = (round(float(s[2]), 0), round(float(s[3]), 0))
-        for line in open(f.replace(".nodes", ".elements")):
-            s = line.split()
-            if s[2] == "303":
-                els[int(s[0])] = [int(v) for v in s[3:6]]
-    here = {(round(a, 0), round(b, 0)): n for n, (a, b) in enumerate(zip(x, y))}
-    t = [[here.get(xy[v], -1) for v in e] for e in els.values()]
-    t = np.array([q for q in t if min(q) >= 0], int).reshape(-1, 3)
-    print(f"  base mesh: {len(t)} of the {len(els)} triangles of {mdir} in the window")
+    t, _ = mesh_elements(mdir, x, y)
     if not len(t):
         print(f"  (none of its nodes match the state's: not this state's mesh? Delaunay instead)")
         return triangles(x, y)
     return t[:, 0], t[:, 1], t[:, 2]
+
+
+_MESH = {}
+
+
+def mesh_elements(mdir, x, y):
+    """the triangles of the mesh in mdir as node indices into (x, y) (triangles with a node outside dropped), and the
+    partition of each (0 for a serial mesh). Read once per directory."""
+    if mdir not in _MESH:
+        if os.path.exists(os.path.join(mdir, "mesh.nodes")):
+            nf = [os.path.join(mdir, "mesh.nodes")]
+        else:
+            nf = sorted(glob.glob(os.path.join(sorted(glob.glob(os.path.join(mdir, "partitioning.*")))[0],
+                                               "part.*.nodes")))
+        xy, els, part = {}, {}, {}
+        for f in nf:
+            pn = int(os.path.basename(f).split(".")[1]) if os.path.basename(f).startswith("part.") else 0
+            for line in open(f):
+                s = line.split()
+                xy[int(s[0])] = (round(float(s[2]), 0), round(float(s[3]), 0))
+            for line in open(f.replace(".nodes", ".elements")):
+                s = line.split()
+                if s[2] == "303":
+                    els[int(s[0])] = [int(v) for v in s[3:6]]
+                    part[int(s[0])] = pn
+        _MESH[mdir] = (xy, els, part)
+    xy, els, part = _MESH[mdir]
+    here = {(round(a, 0), round(b, 0)): n for n, (a, b) in enumerate(zip(x, y))}
+    t, p = [], []
+    for e, nodes in els.items():
+        q = [here.get(xy[v], -1) for v in nodes]
+        if min(q) >= 0:
+            t.append(q)
+            p.append(part[e])
+    print(f"  mesh: {len(t)} of the {len(els)} triangles of {mdir} in the window")
+    return np.array(t, int).reshape(-1, 3), np.array(p, int)
+
+
+def partition_edges(t, p):
+    """the edges between triangles of different partitions (node index pairs)"""
+    e = np.r_[t[:, [0, 1]], t[:, [1, 2]], t[:, [2, 0]]]
+    pe = np.r_[p, p, p]
+    e = np.sort(e, axis=1)
+    o = np.lexsort((e[:, 1], e[:, 0]))
+    e, pe = e[o], pe[o]
+    same = np.all(e[1:] == e[:-1], axis=1) & (pe[1:] != pe[:-1])
+    return e[1:][same]
 
 
 def contour(x, y, f, level, zs):
@@ -257,7 +295,7 @@ def gl_line(base, top=None):
 
 def main():
     import plotly.graph_objects as go
-    global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR
+    global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS
     args = sys.argv[1:]
     if "--vmax-all" in args:
         VMAX_GL = False
@@ -269,6 +307,9 @@ def main():
     if "--full" in args:                          # the whole ice sheet, divide to front
         X_WINDOW = (-1.0, 1e9)
         args.remove("--full")
+    if "--partitions" in args:
+        SHOW_PARTS = True
+        args.remove("--partitions")
     if "--mesh-dir" in args:
         k = args.index("--mesh-dir")
         MESH_DIR = args[k + 1]
@@ -304,6 +345,8 @@ def main():
         k = args.index("--tile")
         TILE = max(1, int(args[k + 1]))
         args = args[:k] + args[k + 2:]
+    if SHOW_PARTS and not MESH_DIR:
+        raise SystemExit("--partitions needs --mesh-dir CASE/footprint (with its partitioning.N)")
     sys.argv = [sys.argv[0]] + args
     items = collect(args or ["work/test_periodic_gl/fix"])
     print(f"{len(items)} states")
@@ -459,7 +502,7 @@ def main():
         """TILE copies side by side, copy c shifted by c W in y: at each seam y = c W the image side (y = W) of
         one copy meets the master side (y = 0) of the next, so anything not periodic shows as a step there"""
         f, lo, hi, cs, ctitle, cx, sc = P
-        unit = "m/yr" if f == "speed" else "K"
+        unit = "K" if f == "T" else "m/yr"
         first_panel = sc == "scene"
         tr = []
         # all copies as ONE surface each (the seam rows shared): separate surfaces are lit with one-sided normals at
@@ -476,7 +519,7 @@ def main():
         if B_ is not None:
             i, j, k = triangles(B_["x"], B_["y"])
             mask = B_.get("mask", np.zeros_like(B_["v"]))
-            if f == "T" or BASE_COLOUR == "speed":
+            if f != "speed" or BASE_COLOUR == "speed":
                 col = dict(intensity=B_[f], colorscale=cs, cmin=lo, cmax=hi, showscale=False)
             else:
                 col = dict(intensity=np.where(mask > -0.5, 1.0, 0.0), cmin=0, cmax=1,
@@ -485,7 +528,7 @@ def main():
                                 customdata=np.stack([B_[f], mask], 1), scene=sc,
                                 name="base Zb", opacity=1.0, showlegend=False,
                                 hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>"
-                                              f"{'speed' if f == 'speed' else 'bed T'} %{{customdata[0]:.2f}} {unit}"
+                                              f"{'bed T' if f == 'T' else f} %{{customdata[0]:.2f}} {unit}"
                                               "<br>mask %{customdata[1]}<extra></extra>"))
             if SHOW_BED and "bed" in B_:
                 tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["bed"] - 1.0, i=i, j=j,
@@ -493,6 +536,26 @@ def main():
                                     showlegend=False, scene=sc))
         if SHOW_MESH and base is not None:
             tr.append(mesh_lines(base, P))
+        if SHOW_PARTS and base is not None and top is not None:
+            t_, p_ = mesh_elements(MESH_DIR, base["x"], base["y"])
+            e = partition_edges(t_, p_)
+            tzd = {(round(x, 0), round(y, 0)): v for x, y, v in zip(top["x"], top["y"], top["v"])}
+            zt_ = np.array([tzd.get((round(x, 0), round(y, 0)), v) for x, y, v in
+                            zip(base["x"], base["y"], base["v"])])
+            for zz, off, show in ((zt_, 8.0, first_panel), (base["v"], -6.0, False)):
+                lx, ly, lz = [], [], []
+                for c in range(TILE):
+                    n = len(e)
+                    X = np.full((n, 3), np.nan); Y = np.full((n, 3), np.nan); Z = np.full((n, 3), np.nan)
+                    X[:, :2] = base["x"][e] / 1e3; Y[:, :2] = base["y"][e] / 1e3 + c * W / 1e3
+                    Z[:, :2] = zz[e] + off
+                    lx += [None if np.isnan(v) else round(float(v), 3) for v in X.ravel()]
+                    ly += [None if np.isnan(v) else round(float(v), 3) for v in Y.ravel()]
+                    lz += [None if np.isnan(v) else round(float(v), 1) for v in Z.ravel()]
+                tr.append(go.Scatter3d(x=lx, y=ly, z=lz, mode="lines", line=dict(color="white", width=3),
+                                       name=f"partitions ({len(np.unique(p_))} in the window)",
+                                       legendgroup="parts", hoverinfo="skip", scene=sc, showlegend=show,
+                                       connectgaps=False))
         if SIDES and top is not None and base is not None:
             tr += walls(top, base, P)
         if base is not None and "mask" in base:
@@ -565,6 +628,38 @@ def main():
                                    scene=sc, showlegend=first_panel))
         return tr
     first = traces(data[0][1], data[0][2])
+    # the colour switch of the velocity panel: speed, vx, vy, vz (the first state; the slider's states show speed)
+    tp0, b0 = data[0][1], data[0][2]
+    menus = []
+    if tp0 is not None and b0 is not None and "vz" in tp0:
+        P0 = panels[0]
+        ref = panel_traces(tp0, b0, P0)
+        get = lambda t_, k: t_[k] if k in t_ else None
+        idx = [n for n, t_ in enumerate(ref) if get(t_, "intensity") is not None]
+        both = np.concatenate([tp0["vz"], b0["vz"]])
+        buttons = []
+        for fld, title in (("speed", "speed (m/yr)"), ("vx", "vx, along the flow (m/yr)"),
+                           ("vy", "vy, across (m/yr)"), ("vz", "vz, vertical (m/yr)")):
+            if fld == "speed":
+                lo, hi, cs = P0[1], P0[2], P0[3]
+            else:
+                v = np.abs(np.concatenate([tp0[fld], b0[fld]]))
+                v = v[np.isfinite(v)]
+                hi = float(np.percentile(v, 99)) if len(v) else 1.0
+                if fld == "vx":
+                    hi = P0[2]
+                hi = max(hi, 1e-6)
+                lo, cs = -hi, "RdBu_r"
+            tf = panel_traces(tp0, b0, (fld, lo, hi, cs, title, P0[5], P0[6]))
+            tf = [tf[n] for n in idx]
+            buttons.append(dict(label=fld, method="restyle", args=[dict(
+                intensity=[get(t_, "intensity") for t_ in tf], customdata=[get(t_, "customdata") for t_ in tf],
+                cmin=[lo] * len(tf), cmax=[hi] * len(tf), colorscale=[cs] * len(tf),
+                **{"colorbar.title.text": [title] * len(tf)}), idx]))
+            print(f"  colour switch {fld}: {lo:.3g} .. {hi:.3g} m/yr")
+        del both
+        menus = [dict(type="buttons", direction="right", buttons=buttons, x=0.0, y=1.06, xanchor="left",
+                      yanchor="bottom", showactive=True, pad=dict(r=4, t=0))]
     frames = [go.Frame(data=traces(tp, b), name=str(n)) for n, (_, tp, b, _) in enumerate(data)]
     steps = [dict(method="animate", label=l, args=[[str(n)], dict(mode="immediate", frame=dict(duration=0, redraw=True),
                                                                   transition=dict(duration=0))])
@@ -587,7 +682,7 @@ def main():
     fig.update_layout(
         title=f"{sys.argv[1] if len(sys.argv) > 1 else ''}: {data[0][0]}", **scenes, annotations=ann,
         sliders=[dict(steps=steps, currentvalue=dict(prefix="state: "), pad=dict(t=30))],
-        autosize=True, template="plotly_white", legend=dict(x=0, y=1),
+        autosize=True, template="plotly_white", legend=dict(x=0, y=1), updatemenus=menus,
         margin=dict(l=10, r=10, t=60, b=10))
     out = os.path.splitext(sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "plot_state_3d")[0] + "_3d.html"
     sync = ("""
