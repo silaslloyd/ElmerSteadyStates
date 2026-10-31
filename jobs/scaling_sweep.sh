@@ -6,8 +6,7 @@
 # Marine (the settled setup, 2026-10-31): 10 km full-Stokes region renewed per 1 km of grounding-line motion, SSA
 # shelf (iterative), contact grounding line, 2 Stokes solves per step, 1e-5, GCR + ILU0 (SET=F) with ILU0 rebuilds on
 # the ranks whose grounded mask changed and no scheduled refresh (RECOMPUTE=200), the bedrock/filler mesh update only at
-# the first step (the marine default). Land: GCR + ILU4 (SET=W: 3 iterations per solve on the nearly steady land case,
-# ILU0 needs 60-100), the same refresh setting.
+# the first step (the default for both). Land: GCR + ILU0 (SET=F), the same refresh setting, iterative free surface.
 # Every point: (mesh setup and partitioning the first time), a ramped warm-up with ILU0 (R0, scaling_<ranks>_R0.npz in the
 # config's work dir; ILU4 overflowed on the 96-rank partitions), then STEPS warm 1-yr steps whose summary gives the mean Stokes time, the whole Elmer time per step
 # ("Elmer ... s per step") and every solver's time per step (TIMING=1). Points are chained (afterany: one at a time, a
@@ -24,8 +23,9 @@ cd "$(dirname "$0")/.."
 POINTS=${*:-m96 m192 m384 m768 w192 w384 l72 l144 l288 l576}
 BASE="ALL,ELMER_MODULE=${ELMER_MODULE:-elmerfem/2026-10-28},ELMER_PREFIX=${ELMER_PREFIX:-/SCRATCH/$USER/elmer/install2},BED=none,TOL=1e-5,STEPS=${STEPS:-20},DT=1,TIMING=1,RECOMPUTE=200,WARMUP_ILU=0"
 MAR="SET=F,SLIDING=subtemperate,GLMODE=contact,NL=2,WARMUP=1e-2:0.1*3:1*3,SPRING_DT=1,FS_SSA=10,FS_SSA_SHELF=ssa,FS_SSA_UPDATE=1,REBUILD_PREC=ILU0"
-# LAND_SET (default W): the land runs per point; FW = ILU0 and ILU4 (ILU4 overflows Elmer's integers on large partitions)
-LAND="SET=${LAND_SET:-W},WARMUP=1*3"
+# LAND_SET (default F = GCR + ILU0, as marine: on this mesh ILU0 beats ILU4, 1.9 vs 2.5 s per solve at 288 ranks, and ILU4
+# overflows Elmer's integers on large partitions); FW = both
+LAND="SET=${LAND_SET:-F},WARMUP=1*3"
 dep=${AFTER:+--dependency=afterany:$AFTER}
 for p in $POINTS; do
     n=${p:1}

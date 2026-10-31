@@ -45,6 +45,7 @@ strain_heat = false                     # true: strain heating 2 eta e:e in the 
 linear_stokes = "block"                 # ess init only: the cheap solve below (the benchmark runs set their own)
 stokes_block_file = "elmer/stokes_cheap.sif.in"
 linear_heat = "iterative"               # BiCGStabL(4) + ILU1 (heat and strain heating)
+linear_free_surface = "iterative"       # BiCGStab + ILU1, as the marine tests (the direct solve: 2.6 s per step at 288 ranks)
 iterative_tol = 1e-10                   # relative residual
 stokes_preconditioner = "ILU0"          # (unused: block file above)
                                         # or "ILUT" (drop tolerance ilut_tolerance; often best for Stokes)
