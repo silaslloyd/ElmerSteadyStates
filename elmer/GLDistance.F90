@@ -28,6 +28,8 @@ END MODULE FSSSAShared
 !   Variable = -nooutput "GL Distance"
 !   Mask Variable = String "GroundedMask"            (default)
 !   Extruded Mesh Levels = Integer                   (default: the Simulation's)
+!   FS SSA Update Distance = Real (m)                (default 0: the distance from the current grounding line every
+!                                                     step; > 0: from a reference one, renewed when it moved this far)
 !------------------------------------------------------------------------------
 SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   USE DefUtils
@@ -52,7 +54,10 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   INTEGER, ALLOCATABLE :: seamEl(:)
   TYPE(ParallelInfo_t), POINTER :: parInfo
   LOGICAL :: Found, hasg, hasf
-  REAL(KIND=dp) :: d2, dmin, m, dmax, dy, pw, srows
+  REAL(KIND=dp) :: d2, dmin, m, dmax, dy, pw, srows, dupd, moved
+  REAL(KIND=dp), ALLOCATABLE, SAVE :: refx(:), refy(:)   ! the grounding line the distance is measured from
+  INTEGER, SAVE :: nref = -1, nupd = 0, nkept = 0
+  LOGICAL :: upd
   CHARACTER(:), ALLOCATABLE :: mname
   CHARACTER(*), PARAMETER :: Caller = 'GLDistance'
 !------------------------------------------------------------------------------
@@ -74,6 +79,16 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   IF ( .NOT. Found ) pw = 0.0_dp
   srows = ListGetConstReal( Params, 'Periodic Seam Rows', Found )
   IF ( .NOT. Found ) srows = 0.0_dp
+  ! "FS SSA Update Distance" (m, default 0: every step): the distance is measured from a REFERENCE grounding line,
+  ! replaced by the current one only when the two differ by more than this (Hausdorff distance: some current
+  ! grounding-line node this far from every reference node, or the other way round). In between, the floating
+  ! columns keep their distances and the active/passive set stays fixed, so the Stokes ILU factors are not rebuilt
+  ! for a boundary that creeps by a few metres per step: on an unstructured mesh some nodes cross any fixed distance
+  ! every step, however slowly the grounding line moves (on a structured one only when it crosses a row). The
+  ! full-Stokes region then reaches between FS SSA Distance - this and FS SSA Distance + this beyond the grounding
+  ! line. Grounded columns are 0 from the current mask as before. The reference is per Elmer run (one chunk).
+  dupd = ListGetConstReal( Params, 'FS SSA Update Distance', Found )
+  IF ( .NOT. Found ) dupd = 0.0_dp
   nlev = ListGetInteger( Params, 'Extruded Mesh Levels', Found )
   IF ( .NOT. Found ) nlev = ListGetInteger( Model % Simulation, 'Extruded Mesh Levels', Found )
   IF ( .NOT. Found .OR. nlev < 2 ) CALL Fatal( Caller, 'Extruded Mesh Levels unknown' )
@@ -144,6 +159,51 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
     allx(1:ntot) = glx(1:ntot); ally(1:ntot) = gly(1:ntot)
   END IF
 
+  ! the reference grounding line: kept while the current one is within dupd of it (the same decision on every rank:
+  ! all have the same gathered points)
+  upd = ( dupd <= 0.0_dp .OR. nref < 0 )
+  moved = 0.0_dp
+  IF ( .NOT. upd ) THEN
+    IF ( ntot == 0 .OR. nref == 0 ) THEN
+      upd = ( ntot /= nref )
+    ELSE
+      DO k = 1, ntot
+        moved = MAX( moved, glNear( allx(k), ally(k), refx, refy, nref ) )
+        IF ( moved > dupd ) EXIT
+      END DO
+      IF ( moved <= dupd ) THEN
+        DO k = 1, nref
+          moved = MAX( moved, glNear( refx(k), refy(k), allx, ally, ntot ) )
+          IF ( moved > dupd ) EXIT
+        END DO
+      END IF
+      upd = ( moved > dupd )
+    END IF
+  END IF
+  IF ( upd ) THEN
+    IF ( ALLOCATED( refx ) ) DEALLOCATE( refx, refy )
+    ALLOCATE( refx(MAX(ntot,1)), refy(MAX(ntot,1)) )
+    refx(1:ntot) = allx(1:ntot); refy(1:ntot) = ally(1:ntot)
+    IF ( nref >= 0 .AND. dupd > 0.0_dp ) nupd = nupd + 1
+    nref = ntot
+  ELSE
+    nkept = nkept + 1
+    DEALLOCATE( allx, ally )
+    ALLOCATE( allx(MAX(nref,1)), ally(MAX(nref,1)) )
+    allx(1:nref) = refx(1:nref); ally(1:nref) = refy(1:nref)
+    ntot = nref
+  END IF
+  IF ( dupd > 0.0_dp ) THEN
+    IF ( upd ) THEN
+      WRITE( Message, '(A,ES9.2,A,I0,A,I0,A)' ) 'reference grounding line UPDATED (moved ', moved, &
+          ' m; updates ', nupd, ', steps kept ', nkept, ')'
+    ELSE
+      WRITE( Message, '(A,ES9.2,A,ES9.2,A,I0,A,I0,A)' ) 'reference grounding line kept (moved ', moved, &
+          ' m <= ', dupd, ' m; updates ', nupd, ', steps kept ', nkept, ')'
+    END IF
+    CALL Info( Caller, Message, Level=3 )
+  END IF
+
   ! periodic sides: the nodes of elements that touch the seam (a node at y = 0 or y = width), exchanged between ranks.
   ! They take the smaller of their own and their mirror point's distance (below). The meshes are mirror-symmetric
   ! about y = width/2 (ElmerStreams' template.geo: Periodic Surface with a reflection; the structured test meshes
@@ -197,6 +257,19 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   CALL Info( Caller, Message, Level=3 )
 
 CONTAINS
+
+  ! the distance from (xp, yp) to the nearest of the points (px, py)(1:np) (periodic in y when pw > 0)
+  FUNCTION glNear( xp, yp, px, py, np ) RESULT( dd )
+    REAL(KIND=dp) :: xp, yp, px(:), py(:), dd, ddy, dd2
+    INTEGER :: np, kk
+    dd2 = HUGE(1.0_dp)
+    DO kk = 1, np
+      ddy = ABS( yp - py(kk) )
+      IF ( pw > 0.0_dp ) ddy = MIN( ddy, ABS( pw - ddy ) )
+      dd2 = MIN( dd2, (xp - px(kk))**2 + ddy**2 )
+    END DO
+    dd = SQRT( dd2 )
+  END FUNCTION glNear
 
   ! the distance from (x, y) to the nearest grounding-line node (periodic in y when pw > 0)
   FUNCTION glDist( xp, yp ) RESULT( dd )

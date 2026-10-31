@@ -183,6 +183,15 @@ class ElmerModel(Model):
         # velocities (no SSA solve yet), so its geometry evolves with them.
         fs = os.environ.get("ESS_FS_SSA_KM") or e.get("fs_ssa_km")
         self.fs_ssa_x = None if fs in (None, "") else float(fs) * 1e3
+        # [elmer] fs_ssa_update_km (env ESS_FS_SSA_UPDATE, default 1; 0: every step): the full-Stokes region is measured
+        # from a reference grounding line, renewed only when the grounding line has moved this far from it (anywhere).
+        # In between the active/passive set stays fixed, so the Stokes ILU factors are not rebuilt every step for a
+        # boundary creeping by metres (on an unstructured mesh some nodes cross any fixed distance every step). The
+        # region then reaches fs_ssa_km -+ this beyond the grounding line.
+        up = os.environ.get("ESS_FS_SSA_UPDATE")
+        if up in (None, ""):
+            up = e.get("fs_ssa_update_km", 1.0)
+        self.fs_ssa_update = float(up) * 1e3
         # [elmer] fs_ssa_shelf (env ESS_FS_SSA_SHELF): "frozen" (default: stage 1 above) or "ssa": the passive shelf
         # solved by the shallow-shelf approximation every step (GLDistance.F90 FSSSAShelf: inflow from the
         # depth-averaged Stokes velocity on the interface, natural calving front, linear viscous ice), kept in
@@ -743,6 +752,8 @@ End
                '  Variable = -nooutput "GL Distance"\n'
                "  Variable DOFs = 1\n"
                "  No Matrix = Logical True\n"
+               + (f"  FS SSA Update Distance = Real {self.fs_ssa_update!r}   ! the full-Stokes region renewed when the "
+                  "grounding line moved this far (m)\n" if self.fs_ssa_update > 0 else "")
                + (f"  Periodic Width = Real {self.width!r}   ! periodic sides: the distance wraps across the seam\n"
                   f"  Periodic Seam Rows = Real {1.01 * self.width / max(self.y_elements, 1)!r}   "
                   "! the node rows next to the seam take the smaller of their own and their mirror distance\n"

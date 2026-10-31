@@ -220,6 +220,9 @@ fi
 # FS_SSA_SHELF=frozen (default) | ssa: the passive shelf by the shallow-shelf approximation every step ([elmer]
 # fs_ssa_shelf: floated, moved with the SSA velocity, the interface stress from its strain rate)
 [ -n "$FS_SSA_SHELF" ] && export ESS_FS_SSA_SHELF=$FS_SSA_SHELF && echo "  passive shelf: $FS_SSA_SHELF"
+# FS_SSA_UPDATE=km (default 1, [elmer] fs_ssa_update_km; 0: every step): the full-Stokes region renewed only when the
+# grounding line has moved this far from where it was last set (fewer ILU rebuilds on unstructured meshes)
+[ -n "$FS_SSA_UPDATE" ] && export ESS_FS_SSA_UPDATE=$FS_SSA_UPDATE && echo "  full-Stokes region renewed when the grounding line moved $FS_SSA_UPDATE km"
 # REBUILD=elements:grounding: per-rank thresholds of the ILU rebuild after the active set / grounded mask changed
 # (FSSSALinsolve; default 1:1, any change)
 [ -n "$REBUILD" ] && export ESS_FS_SSA_REBUILD=$REBUILD && echo "  ILU rebuild thresholds per rank (elements:grounding changes): $REBUILD"
