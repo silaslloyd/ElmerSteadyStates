@@ -18,11 +18,11 @@ mkdir -p slurms
 module load ${ELMER_MODULE:-elmerfem/2026-07-13}   # ELMER_MODULE=elmerfem sbatch ...: another build
 if [ -n "$ELMER_PREFIX" ]; then        # a self-built Elmer (jobs/build_elmer.cmd) in front of the module's
     export PATH=$ELMER_PREFIX/bin:$PATH ELMER_HOME=$ELMER_PREFIX
-    # the solver modules (HeatSolve, IncompressibleNSVec, ElmerIceSolvers, ...) from the same build: the module sets
-    # ELMER_LIB / ELMER_SOLVER_HOME to its own, which Elmer searches first (heat crashed in the module's HeatSolve.so
-    # under this build's libelmersolver)
+    # the solver modules from the same build (Elmer's search after the bare name)
     export ELMER_LIB=$ELMER_PREFIX/share/elmersolver/lib ELMER_SOLVER_HOME=$ELMER_PREFIX/share/elmersolver
-    export LD_LIBRARY_PATH=$ELMER_PREFIX/lib:$ELMER_PREFIX/lib/elmersolver:$LD_LIBRARY_PATH
+    # share/elmersolver/lib too: Elmer dlopens a solver by its bare name first (LD_LIBRARY_PATH), and the module puts its
+    # own solver directory there (the heat run got the module's HeatSolveVec/HeatSolve.so and crashed)
+    export LD_LIBRARY_PATH=$ELMER_PREFIX/lib:$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/share/elmersolver/lib:$LD_LIBRARY_PATH
 fi
 echo "Elmer: ${ELMER_MODULE:-elmerfem/2026-07-13} -> $(command -v ElmerSolver)"
 build_libs() {
