@@ -201,7 +201,7 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # [elmer] thermal; T is not capped (no limiter; with BED=cold the grounded bed has the flux condition everywhere, so it
 # may go above T0, where subtemperate sliding saturates at the temperate value); T0 under the shelf
 [ -n "$HEAT" ] && opts="${opts/--stokes-only /}" && echo "heat and strain heating on"
-[ "${CHUNKS:-1}" -gt 1 ] && opts="$opts --save-every ${SAVE_EVERY:-1}" && echo "long run: $CHUNKS chunks of ${STEPS:-2} steps, states every ${SAVE_EVERY:-1} chunk(s)"
+[ "${CHUNKS:-1}" -gt 1 ] && opts="$opts --save-every ${SAVE_EVERY:-1} --add-diag Pressure" && echo "long run: $CHUNKS chunks of ${STEPS:-2} steps, states every ${SAVE_EVERY:-1} chunk(s)"
 # HEAT_LEGACY=1: the heat solver's legacy assembly (HeatSolveLegacy.so) instead of the vectorised HeatSolve
 [ -n "$HEAT_LEGACY" ] && export ESS_HEAT_LEGACY=1 && echo "  heat: legacy assembly"
 # HEAT_SOLVER=METHOD:PREC or direct: the heat solve's linear solver (default BiCGStabL:ILU1), e.g. GCR:ILU0, GCR:ILU0:0.1 (ILU factor: diagonal shift), direct (MUMPS), hypre (BiCGStab + BoomerAMG)
