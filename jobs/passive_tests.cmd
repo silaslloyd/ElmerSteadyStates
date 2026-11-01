@@ -41,6 +41,8 @@ if [ -n "$ELMER_PREFIX" ]; then        # a self-built Elmer (jobs/build_elmer.cm
     # share/elmersolver/lib too: Elmer dlopens a solver by its bare name first (LD_LIBRARY_PATH), and the module puts its
     # own solver directory there (the heat run got the module's HeatSolveVec/HeatSolve.so and crashed)
     export LD_LIBRARY_PATH=$ELMER_PREFIX/lib:$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/share/elmersolver/lib:$LD_LIBRARY_PATH
+    # link time too: this build's elmerf90 passes -L share/elmersolver/lib, libelmersolver is in lib/elmersolver
+    export LIBRARY_PATH=$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}
 fi
 echo "Elmer: $ELMER_MODULE -> $(command -v ElmerSolver)"
 export ESS_NPROCS=32 ESS_MPIRUN="mpirun -np {n} --bind-to none"
