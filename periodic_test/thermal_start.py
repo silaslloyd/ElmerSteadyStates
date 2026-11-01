@@ -2,7 +2,8 @@
 """The thermal side of a state file: where it came from (meta), the temperature over the whole mesh and on the bed
 (the ColdTempMask nodes), grounded vs floating, and the frozen cold/temperate mask.
 
-  python3 periodic_test/thermal_start.py STATE.npz [--dT 0.15 --cap 1e6]
+  python3 periodic_test/thermal_start.py STATE.npz [--ref START.npz] [--dT 0.15 --cap 1e6]
+--ref: also the temperature change from START (same mesh): everywhere, on the grounded and floating bed
 --dT / --cap: the subtemperate sliding law (TDepSliding: factor exp(-(T - T0)/dT), capped at --cap) to say how many
 grounded bed nodes are in its temperature-dependent range (T0 - dT ln(cap) .. T0) and how many above T0."""
 import argparse, os, sys
@@ -13,6 +14,7 @@ from ess.masks import _on
 
 ap = argparse.ArgumentParser()
 ap.add_argument("state")
+ap.add_argument("--ref")
 ap.add_argument("--dT", type=float, default=0.15)
 ap.add_argument("--cap", type=float, default=1e6)
 a = ap.parse_args()
@@ -45,3 +47,13 @@ if gr.any():
           f"({Tw:.2f} .. 0 K): {((d > Tw) & (d <= 0)).sum()}, colder (sliding at the cap): {(d <= Tw).sum()}")
 if (~gr).any():
     print(f"  floating bed T - T0 (K; min 5% median 95% max): {q(Tb[~gr] - T0)}")
+if a.ref:
+    r = load_state(a.ref)
+    rb = next(b for b in r.layout.blocks if b.name.lower() == "temperature")
+    dTall = T - _on(rb.gids, r.layout.split(r.x)[rb.name], tb.gids)
+    print(f"change from {a.ref} (K; min 5% median 95% max): all {q(dTall[np.isfinite(dTall)])}")
+    db = _on(tb.gids, dTall, g)
+    for name, m in (("grounded bed", gr), ("floating bed", ~gr)):
+        if m.any():
+            print(f"  {name}: {q(db[m][np.isfinite(db[m])])}")
+print(f"non-finite temperatures: {(~np.isfinite(T)).sum()}")
