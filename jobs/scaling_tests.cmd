@@ -204,6 +204,8 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 [ "${CHUNKS:-1}" -gt 1 ] && opts="$opts --save-every ${SAVE_EVERY:-1}" && echo "long run: $CHUNKS chunks of ${STEPS:-2} steps, states every ${SAVE_EVERY:-1} chunk(s)"
 # HEAT_LEGACY=1: the heat solver's legacy assembly (HeatSolveLegacy.so) instead of the vectorised HeatSolve
 [ -n "$HEAT_LEGACY" ] && export ESS_HEAT_LEGACY=1 && echo "  heat: legacy assembly"
+# HEAT_SOLVER=METHOD:PREC: the heat solve's linear solver (default BiCGStabL:ILU1), e.g. GCR:ILU2, GMRES:ILU1
+[ -n "$HEAT_SOLVER" ] && export ESS_HEAT_SOLVER=$HEAT_SOLVER && echo "  heat linear solver: $HEAT_SOLVER"
 # BED=cold (default) | temperate (sliding everywhere) | none (the start state's own bed temperatures: the land
 # benchmark's temperature-dependent sliding)
 [ "${BED:-cold}" != none ] && opts="$opts --bed ${BED:-cold}"

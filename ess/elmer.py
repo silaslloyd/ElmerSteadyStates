@@ -398,7 +398,22 @@ class ElmerModel(Model):
                     f'  Linear System Convergence Tolerance = {tol}\n'
                     f'  Linear System Abort Not Converged = {"True" if self.stokes_abort else "False"}\n'
                     '  Linear System Residual Output = 200')
-        # heat (advection-diffusion, non-symmetric) and strain heating (mass matrix)
+        # heat (advection-diffusion, non-symmetric) and strain heating (mass matrix). ESS_HEAT_SOLVER=METHOD:PREC (e.g.
+        # GCR:ILU2, GMRES:ILU1) for the heat solve only: BiCGStabL + ILU1 diverged (residual 1e21) in the first 5-yr step
+        # of fast temperate sliding on the 50 km marine mesh, with Stokes converged
+        hs = os.environ.get("ESS_HEAT_SOLVER") if which == "heat" else None
+        if hs:
+            meth, prec = (hs.split(":") + ["ILU1"])[:2]
+            extra = {"GCR": "  Linear System GCR Restart = Integer 200\n",
+                     "GMRES": "  Linear System GMRES Restart = Integer 200\n",
+                     "BICGSTABL": "  Linear System BiCGStabL Polynomial Degree = Integer 4\n"}.get(meth.upper(), "")
+            return ('  Linear System Solver = Iterative\n'
+                    f'  Linear System Iterative Method = {meth}\n' + extra +
+                    '  Linear System Max Iterations = 2000\n'
+                    f'  Linear System Preconditioning = {prec}\n'
+                    f'  Linear System Convergence Tolerance = {tol}\n'
+                    '  Linear System Abort Not Converged = True\n'
+                    '  Linear System Residual Output = 200   ! ESS_HEAT_SOLVER')
         return ('  Linear System Solver = Iterative\n'
                 '  Linear System Iterative Method = BiCGStabL\n'
                 '  Linear System BiCGStabL Polynomial Degree = Integer 4\n'
