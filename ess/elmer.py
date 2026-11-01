@@ -417,7 +417,7 @@ class ElmerModel(Model):
                     '  Linear System Abort Not Converged = True\n'
                     '  Linear System Residual Output = 200   ! ESS_HEAT_SOLVER=hypre')
         if hs:
-            meth, prec = (hs.split(":") + ["ILU1"])[:2]
+            meth, prec, fac = (hs.split(":") + ["ILU1", ""])[:3]     # METHOD:PREC[:ILU factor, a diagonal shift]
             extra = {"GCR": "  Linear System GCR Restart = Integer 200\n",
                      "GMRES": "  Linear System GMRES Restart = Integer 200\n",
                      "BICGSTABL": "  Linear System BiCGStabL Polynomial Degree = Integer 4\n"}.get(meth.upper(), "")
@@ -425,6 +425,7 @@ class ElmerModel(Model):
                     f'  Linear System Iterative Method = {meth}\n' + extra +
                     '  Linear System Max Iterations = 2000\n'
                     f'  Linear System Preconditioning = {prec}\n'
+                    + (f'  Linear System ILU Factor = Real {float(fac)}\n' if fac else '') +
                     f'  Linear System Convergence Tolerance = {tol}\n'
                     '  Linear System Abort Not Converged = True\n'
                     '  Linear System Residual Output = 200   ! ESS_HEAT_SOLVER')
