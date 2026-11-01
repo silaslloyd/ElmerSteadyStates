@@ -13,6 +13,8 @@ L=$(ls -td $w/runs/*/ 2>/dev/null | head -1)elmer.log
 grep -h "run: chunk" slurms/scaling_${j}_*.log 2>/dev/null | tail -1 | sed 's/.*run: /  /'
 echo "  Elmer run $(basename $(dirname $L)): $(grep 'MAIN: Time:' $L 2>/dev/null | tail -1 | sed 's/MAIN: //')"
 echo "  Stokes per step (s), last 10: $(grep 'Solver time.*stokes-vec' $L 2>/dev/null | tail -10 | awk '{printf "%.0f ", $(NF-1)}')"
+# the whole step: every solver's time (Solver Timing, TIMING=1) summed between the MAIN: Time lines (complete steps only)
+echo "  whole step (s, all solvers), last 10: $(awk '/MAIN: Time:/ {if (n) print t; n = 1; t = 0} /Solver time/ {t += $(NF-1)}' $L 2>/dev/null | tail -10 | awk '{printf "%.0f ", $1}')"
 echo "  heat per step (s), last 5:    $(grep 'Solver time.*homologous' $L 2>/dev/null | tail -5 | awk '{printf "%.1f ", $(NF-1)}')"
 echo "  GCR iterations, last 10 solves (the current one last, still counting): $(grep 'gcr:' $L 2>/dev/null | awk '$2 < prev {print prev} {prev=$2} END {print prev}' | tail -10 | tr '\n' ' ')"
 m=$(grep 'NoWaterSheet.*bed nodes' $L 2>/dev/null | tail -1 | sed 's/.*bed nodes: //')
