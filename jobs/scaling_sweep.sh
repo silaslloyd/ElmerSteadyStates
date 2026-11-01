@@ -23,7 +23,7 @@
 set -e
 cd "$(dirname "$0")/.."
 POINTS=${*:-m96 m192 m384 m768 w192 w384 l72 l144 l288 l576}
-BASE="ALL,ELMER_MODULE=${ELMER_MODULE:-elmerfem/2026-10-28},ELMER_PREFIX=${ELMER_PREFIX:-/SCRATCH/$USER/elmer/install2},BED=${BED:-none}${HEAT:+,HEAT=1}${HEAT_LEGACY:+,HEAT_LEGACY=1},TOL=1e-5,STEPS=${STEPS:-20},DT=1,TIMING=1,RECOMPUTE=200,WARMUP_ILU=0"
+BASE="ALL,ELMER_MODULE=${ELMER_MODULE:-elmerfem/2026-10-28},ELMER_PREFIX=${ELMER_PREFIX:-/SCRATCH/$USER/elmer/install2},BED=${BED:-none}${HEAT:+,HEAT=1}${HEAT_LEGACY:+,HEAT_LEGACY=1},TOL=1e-5,STEPS=${STEPS:-20},DT=1,TIMING=1,RECOMPUTE=${RECOMPUTE:-200},WARMUP_ILU=0"
 # MAR_SET (default F): the marine runs per point, e.g. FPQ = GCR + ILU0, ILU2, ILU3 (land showed ILU0 breaking down
 # below ~300 columns per rank: 5 -> 60-89 iterations from 288 to 576 ranks, ILU4 stayed at 2-3). MAR_REBUILD_PREC (default
 # ILU0): the level of the forced rebuilds on ranks whose grounded mask changed; "same" = each run's own level
