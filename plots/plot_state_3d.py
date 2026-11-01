@@ -17,7 +17,8 @@ slider through the states.
     python plots/plot_state_3d.py STATE.npz --mesh --mesh-dir CASE/footprint   # the mesh's elements on the ice base,
                                                                             # white (without --mesh-dir: Delaunay)
     python plots/plot_state_3d.py STATE.npz --partitions --mesh-dir CASE/footprint   # partition outlines, white
-Buttons above the velocity panel switch its colours between speed, vx, vy and vz.
+Buttons above the velocity panel switch its colours between speed, vx, vy and vz; above the temperature panel,
+"T capped at melting" makes 273.15 K the top colour (everything at or above melting the same).
     python plots/plot_state_3d.py work/<config>/runs/<run>                  # a run with ESS_VTU_EVERY: every step
     python plots/plot_state_3d.py A.npz --diff B.npz                      # colours: A minus B (same mesh)
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
@@ -31,6 +32,7 @@ Writes <first input>_3d.html and opens it. Needs numpy and plotly.
 """
 import base64
 import glob
+import json
 import re
 import os
 import sys
@@ -778,7 +780,6 @@ def main():
     tp0, b0 = data[0][1], data[0][2]
     menus, switch_js = [], None
     if SWITCH and tp0 is not None and b0 is not None and "vz" in tp0:
-        import json
         from plotly.colors import get_colorscale
         P0 = panels[0]
         ref = panel_traces(tp0, b0, P0)
@@ -875,6 +876,30 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
             else:
                 out.append(t_)
         return out
+    # temperature colour cap: "T full range" / "T ≤ melting" (cmax = T0, everything at or above melting the top
+    # colour), kept through the slider
+    tcap_js = None
+    if temp and not DIFF and data[0][1] is not None and data[0][2] is not None:
+        n0 = len(panel_traces(data[0][1], data[0][2], panels[0]))
+        tidx = [n0 + n for n, t_ in enumerate(panel_traces(data[0][1], data[0][2], panels[1]))
+                if getattr(t_, "intensity", None) is not None]
+        T0 = 273.15
+        menus = menus + [dict(type="buttons", direction="right", x=0.52, y=1.06, xanchor="left", yanchor="bottom",
+                              showactive=True, pad=dict(r=4, t=0), active=0,
+                              buttons=[dict(label="T full range", method="skip", args=[None]),
+                                       dict(label="T capped at melting", method="skip", args=[None])])]
+        tcap_js = ("""
+var gdt = document.getElementsByClassName('plotly-graph-div')[0];
+var TIDX = %s, TMAX = %s, TCAP = %s, tcap = false;
+function applyCap() { Plotly.restyle(gdt, {cmax: Array(TIDX.length).fill(tcap ? TCAP : TMAX)}, TIDX); }
+gdt.on('plotly_buttonclicked', function (e) {
+  if (!e.button) return;
+  if (e.button.label === 'T capped at melting') { tcap = true; applyCap(); }
+  else if (e.button.label === 'T full range') { tcap = false; applyCap(); }
+});
+gdt.on('plotly_animated', function () { if (tcap) applyCap(); });
+""" % (json.dumps(tidx), json.dumps(float(panels[1][2])), json.dumps(T0)))
+        print(f"  temperature cap button: colours up to {T0} K on {len(tidx)} traces")
     frames = [go.Frame(data=lean(tidy(traces(tp, b))), name=str(n)) for n, (_, tp, b, _) in enumerate(data)]
     steps = [dict(method="animate", label=l, args=[[str(n)], dict(mode="immediate", frame=dict(duration=0, redraw=True),
                                                                   transition=dict(duration=0))])
@@ -909,7 +934,7 @@ gd.on('plotly_relayout', function (e) {
   if (e['scene2.camera']) u['scene.camera'] = e['scene2.camera'];
   if (Object.keys(u).length) { busy = true; Plotly.relayout(gd, u).then(function () { busy = false; }); }
 });""" if temp else None)
-    post = "\n".join(x for x in (sync, switch_js) if x) or None
+    post = "\n".join(x for x in (sync, switch_js, tcap_js) if x) or None
     # the page width and height (no fixed size: no sideways scrolling; resizes with the window)
     fig.write_html(out, include_plotlyjs="cdn", post_script=post, config=dict(responsive=True),
                    default_width="100%", default_height="95vh")
