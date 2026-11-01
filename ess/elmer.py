@@ -102,6 +102,8 @@ class ElmerModel(Model):
         self.vtu = bool(e.get("vtu", False))
         self.friction_heat = str(e.get("friction_heat", "flux"))
         self.strain_heat = bool(e.get("strain_heat", False))
+        if os.environ.get("ESS_STRAIN_HEAT") is not None:     # env (tests): 0 / 1 overrides [elmer] strain_heat
+            self.strain_heat = os.environ["ESS_STRAIN_HEAT"] not in ("0", "", "false", "False")
         # heat-only runs (`ess temperate-sweep --heat-only`): the free surface is not solved, so the geometry
         # stays as in the input state; Stokes still runs (same velocity every step on a frozen geometry
         # when nothing in the flow depends on temperature)
