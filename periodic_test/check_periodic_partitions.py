@@ -56,6 +56,27 @@ print(f"{len(files)} partitions: elements per partition {nel.min()}..{nel.max()}
       f"shared nodes per partition {min(nshared)}..{max(nshared)} (total {sum(nshared)})")
 print(f"periodic pairs {len(pairs)} (unpaired top nodes {unpaired}): slave in a partition without its master: {len(bad)}; "
       f"pairs with different partition sets: {split}; ghost node copies (listed, no element): {ghosts}")
+# a partition touching a periodic side at a single node, with no side edge there (none of its elements has a second
+# node on that side next to it): Elmer builds the periodic constraint from the boundary elements of each partition, so
+# that partition has none for the pair (720 ranks, 50 km mesh: the one non-periodic column)
+side = lambda g: abs(xy[g][1] - ymin) < eps or abs(xy[g][1] - ymax) < eps
+edgep = {}                                   # side node -> partitions with an element having a side edge there
+vtouch = {}                                  # side node -> partitions using it only through single-node elements
+for f in files:
+    p = int(re.findall(r"part\.(\d+)\.nodes", f)[0])
+    for line in open(f.replace(".nodes", ".elements")):
+        ns = [int(q) for q in line.split()[3:]]
+        sn = [g for g in ns if g in xy and side(g)]
+        if len(sn) >= 2:
+            for g in sn:
+                edgep.setdefault(g, set()).add(p)
+        elif len(sn) == 1:
+            vtouch.setdefault(sn[0], set()).add(p)
+vonly = [(g, sorted(ps - edgep.get(g, set()))) for g, ps in vtouch.items() if ps - edgep.get(g, set())]
+print(f"side nodes used by a partition without a side edge there (vertex-only touch): {len(vonly)}"
+      + ("".join(f"\n   node {g} at x {xy[g][0] / 1e3:.2f} km, y {'0' if abs(xy[g][1] - ymin) < eps else 'W'}: partitions {ps}"
+                 for g, ps in sorted(vonly)[:10])))
+bad = bad if not vonly else bad + [(g, g) for g, _ in vonly]
 ncomp = np.array(ncomp)
 print(f"connected pieces per partition: max {ncomp.max()}; partitions in more than one piece: {(ncomp > 1).sum()}"
       + (f" ({', '.join(str(i + 1) + ':' + str(c) for i, c in enumerate(ncomp) if c > 1)[:200]})" if (ncomp > 1).any() else ""))

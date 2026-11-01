@@ -1,5 +1,5 @@
 diff --git a/elmergrid/src/egnative.c b/elmergrid/src/egnative.c
-index b97823e..9c9765f 100644
+index b97823e2..9c9765f9 100644
 --- a/elmergrid/src/egnative.c
 +++ b/elmergrid/src/egnative.c
 @@ -241,6 +241,11 @@ void Instructions()
@@ -56,10 +56,10 @@ index b97823e..9c9765f 100644
        eg->timeron = TRUE;
        if(arg+1 >= argc) {
 diff --git a/elmergrid/src/egparallel.c b/elmergrid/src/egparallel.c
-index 61d0c0e..4f5255b 100644
+index 61d0c0ec..151ed8d5 100644
 --- a/elmergrid/src/egparallel.c
 +++ b/elmergrid/src/egparallel.c
-@@ -2615,6 +2615,303 @@ int PartitionMetisMesh(struct FemType *data,struct ElmergridType *eg,
+@@ -2615,6 +2615,340 @@ int PartitionMetisMesh(struct FemType *data,struct ElmergridType *eg,
  
  
  
@@ -239,6 +239,43 @@ index 61d0c0e..4f5255b 100644
 +  mirrorof = Ivector(1,noelements);
 +  for(e=1;e<=noelements;e++) mirrorof[e] = 0;
 +
++  /* elements touching a periodic side (y = ymin or ymax) at a single node: if no element of their partition has a side
++     edge at that node (a second node on the same side), they take the partition of an element that has. Elmer builds
++     a partition's periodic conditions from its own boundary elements, so a partition that only touches the side at a
++     vertex has none for that node pair, and the pair was not periodic there (720 partitions of the 50 km mirror mesh:
++     one column with its own Zs and velocities on the two sides). Done before the mirror rule, which copies the
++     result to the slave side. */
++  {
++    Real ymin = 1e30, ymax = -1e30, tol2;
++    int vfix = 0;
++    for(i=1;i<=noknots;i++) {
++      if(data->y[i] < ymin) ymin = data->y[i];
++      if(data->y[i] > ymax) ymax = data->y[i];
++    }
++    tol2 = 1.0e-6 * (ymax - ymin);
++    for(e=1;e<=noelements;e++) {
++      int nside = 0, kv = 0, jj, has = FALSE, pnew = 0;
++      nl = LinearNodes(data->elementtypes[e]);
++      for(j=0;j<nl;j++) {
++        k = data->topology[e][j];
++        if(fabs(data->y[k] - ymin) < tol2 || fabs(data->y[k] - ymax) < tol2) { nside++; kv = k; }
++      }
++      if(nside != 1) continue;
++      for(l=rstart[kv];l<rstart[kv+1] && !has;l++) {
++        int e2 = rlist[l], m2 = 0, nl2 = LinearNodes(data->elementtypes[e2]);
++        for(jj=0;jj<nl2;jj++) {
++          int k2 = data->topology[e2][jj];
++          if(k2 != kv && fabs(data->y[k2] - data->y[kv]) < tol2) m2++;
++        }
++        if(!m2) continue;
++        if(part[e2] == part[e]) has = TRUE;
++        else if(!pnew) pnew = part[e2];
++      }
++      if(!has && pnew) { part[e] = pnew; vfix++; }
++    }
++    if(info) printf("Periodic Metis: %d elements touching a periodic side at one node moved to a partition with a side edge there\n",vfix);
++  }
++
 +  /* the seam, mirror-symmetric meshes (ElmerStreams' template.geo: the y = W side the reflection of the y = 0 side
 +     about the middle, so each element touching the slave side has a mirror element touching the master side): an
 +     element with slave nodes takes its mirror element's partition. Then a slave node is used in exactly the
@@ -364,7 +401,7 @@ index 61d0c0e..4f5255b 100644
  int PartitionMetisGraph(struct FemType *data,struct BoundaryType *bound,
  			struct ElmergridType *eg,int partitions,int metisopt,
 diff --git a/elmergrid/src/egparallel.h b/elmergrid/src/egparallel.h
-index 7301115..97a7a1c 100644
+index 73011155..97a7a1c7 100644
 --- a/elmergrid/src/egparallel.h
 +++ b/elmergrid/src/egparallel.h
 @@ -21,6 +21,10 @@ int PartitionConnectedElements1D(struct FemType *data,struct BoundaryType *bound
@@ -379,7 +416,7 @@ index 7301115..97a7a1c 100644
  		       int partitions,int dual,int info);
  int PartitionMetisGraph(struct FemType *data,struct BoundaryType *bound,
 diff --git a/elmergrid/src/egtypes.h b/elmergrid/src/egtypes.h
-index a167ff0..1d08b65 100644
+index a167ff0c..1d08b653 100644
 --- a/elmergrid/src/egtypes.h
 +++ b/elmergrid/src/egtypes.h
 @@ -299,6 +299,7 @@ struct ElmergridType {
@@ -400,7 +437,7 @@ index a167ff0..1d08b65 100644
  };
  
 diff --git a/elmergrid/src/fempre.c b/elmergrid/src/fempre.c
-index 9b638e6..6176009 100644
+index 9b638e63..61760091 100644
 --- a/elmergrid/src/fempre.c
 +++ b/elmergrid/src/fempre.c
 @@ -729,7 +729,7 @@ int main(int argc, char *argv[])
