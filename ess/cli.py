@@ -379,9 +379,39 @@ def cmd_run(args):
                 log.warning(f"run: {int(warm.sum())} grounded bed nodes are warmer than {Tw:.2f} K, where the sliding "
                             f"factor still depends on temperature" + (" (--stokes-only keeps their temperature fixed)"
                                                                        if args.stokes_only else ""))
+    if getattr(model, "thermal", "frozen") == "nowater" and not args.stokes_only:
+        # the no-water sheet: Elmer reads it from the state (ColdTempMaskSolver uses last step's value); from the
+        # state's own sheet if it has one, otherwise from the mask (temperate: 1, cold: 0: the mask stays as it is)
+        from .masks import _on
+        kc = find_name(saved.frozen, "ColdTempMask")
+        g_ct, ct0 = saved.frozen[kc]
+        hw0, src = None, "the cold/temperate mask (temperate 1, cold 0)"
+        for recs in (saved.frozen, getattr(saved, "diag", None) or {}):
+            try:
+                kh = find_name(recs, "Water Sheet Thickness")
+            except KeyError:
+                continue
+            hw0 = _on(*recs[kh], g_ct, fill=np.nan)
+            if np.isnan(hw0).any():
+                hw0 = None
+                continue
+            src = "the state's own sheet"
+            break
+        if hw0 is None:
+            hw0 = np.where(np.asarray(ct0) > 0, 1.0, 0.0)
+        for k in [k for k in saved.frozen if k.lower() == "water sheet thickness"]:
+            del saved.frozen[k]
+        saved.frozen["Water Sheet Thickness"] = (g_ct, hw0)
+        model.frozen = saved.frozen
+        log.info(f"run: thermal = nowater: the cold/temperate mask moves every step (ColdTempMaskSolver), sheet = "
+                 f"sign(melt); start sheet from {src}; mask temperate {int((np.asarray(ct0) > 0).sum())} / cold "
+                 f"{int((np.asarray(ct0) <= 0).sum())} bed nodes")
     y = prob.scale(saved.x)
     on, _ = _masks_auto(cfg, model)
     remask = on if args.remask is None else args.remask
+    if remask and getattr(model, "thermal", "frozen") == "nowater" and not args.stokes_only:
+        log.info("run: thermal = nowater: Elmer moves the cold/temperate mask; no remask between chunks")
+        remask = False
     if args.bed and remask:
         log.info("run: --bed: no remask of the cold/temperate mask (the grounding line still moves with --gl contact)")
         remask = False
@@ -413,8 +443,8 @@ def cmd_run(args):
             if np.any((gm_new > -0.5) != (gm_old > -0.5)):
                 log.info(f"run: contact grounding line {xg[gm_old > -0.5].max() / 1e3:.2f} -> "
                          f"{xg[gm_new > -0.5].max() / 1e3:.2f} km")
-        if getattr(model, "thermal", "frozen") == "elmerstreams":
-            # ElmerStreams thermal chain: Elmer moves the cold/temperate mask and the water sheet every step;
+        if getattr(model, "thermal", "frozen") in ("elmerstreams", "nowater"):
+            # ElmerStreams thermal chain (or the no-water sheet): Elmer moves the cold/temperate mask and the water sheet every step;
             # carry what it ended the chunk with into the next chunk (as the grounded mask above)
             from .masks import _on
             for nm in ("ColdTempMask", "Water Sheet Thickness"):

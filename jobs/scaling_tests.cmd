@@ -208,6 +208,9 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 [ -n "$STRAIN_HEAT" ] && export ESS_STRAIN_HEAT=$STRAIN_HEAT && echo "  strain heating: $STRAIN_HEAT"
 # HEAT_SOLVER=METHOD:PREC or direct: the heat solve's linear solver (default BiCGStabL:ILU1), e.g. GCR:ILU0, GCR:ILU0:0.1 (ILU factor: diagonal shift), direct (MUMPS), hypre (BiCGStab + BoomerAMG)
 [ -n "$HEAT_SOLVER" ] && export ESS_HEAT_SOLVER=$HEAT_SOLVER && echo "  heat linear solver: $HEAT_SOLVER"
+# THERMAL=loads|nowater: [elmer] thermal; nowater: the cold/temperate mask moved every step (ColdTempMaskSolver) with the
+# no-water sheet hw = sign(melt) (elmer/NoWaterSheet.F90); needs HEAT=1
+[ -n "$THERMAL" ] && export ESS_THERMAL=$THERMAL && echo "  thermal: $THERMAL"
 # BED=cold (default) | temperate (sliding everywhere) | none (the start state's own bed temperatures: the land
 # benchmark's temperature-dependent sliding)
 [ "${BED:-cold}" != none ] && opts="$opts --bed ${BED:-cold}"

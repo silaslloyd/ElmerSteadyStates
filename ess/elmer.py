@@ -266,9 +266,20 @@ class ElmerModel(Model):
         # "elmerstreams" the friction heating and melt are halved on the y < 1 side. Needs elmer/ColdTempMask
         # and elmer/SheetSolverhw (make -C elmer thermal), friction_heat = "loads", strain_heat = true, and
         # "Water Sheet Thickness" among the [state] frozen fields (carried from chunk to chunk).
-        self.thermal = str(e.get("thermal", "frozen"))
+        # [elmer] thermal = "nowater": the cold/temperate mask moved every step by ColdTempMaskSolver (as
+        # "elmerstreams") with the no-water limit of the sheet instead of SheetSolverhw: hw = sign(melt) on grounded
+        # temperate nodes (elmer/NoWaterSheet.F90: no storage, no transport), so a temperate node turns cold at the
+        # next step as soon as its heat balance at T0 freezes, and a cold one turns temperate when T >= T0 + 1e-3.
+        # Friction heating from the periodic Stokes loads as "loads"; strain heating optional. ColdTempMask and
+        # Water Sheet Thickness are carried from chunk to chunk (the sheet made from the mask if the state has none).
+        # Env ESS_THERMAL overrides (tests).
+        self.thermal = str(os.environ.get("ESS_THERMAL") or e.get("thermal", "frozen"))
         self.thermal_libs = {k: cfg["_path"](e.get(f"{k}_lib", f"elmer/{v}")) for k, v in
-                             (("coldtemp", "ColdTempMask"), ("sheet", "SheetSolverhw"))}
+                             (("coldtemp", "ColdTempMask"), ("sheet", "SheetSolverhw"), ("nowater", "NoWaterSheet"))}
+        if self.thermal == "nowater":       # the mask and the sheet in the written state (carried between chunks)
+            for nm in ("ColdTempMask", "Water Sheet Thickness", "Melt Rate"):
+                if nm not in self.diagnostics:
+                    self.diagnostics.append(nm)
         self.hydro_lua = cfg["_path"](e.get("hydro_lua", "elmer/ess_hydro.lua"))
         # thermal = "loads": only the friction heating from the Stokes loads made periodic-aware (fix: from the
         # periodic copy, run by the heat solver first; elmerstreams: halved at y < 1; none: raw), the frozen
@@ -529,6 +540,8 @@ End
     def build_sif(self, spec: MapSpec, *, state_in="state_in.bin", state_out="state_out.bin",
                   state_out0="none", write0=(), restart=None, restart_before_ics=True, runname="ess") -> str:
         out_vars = list(dict.fromkeys(self.state_vars + self.diagnostics))
+        if self.thermal == "nowater" and self.stokes_only:   # no sheet solver without the heat solve
+            out_vars = [v for v in out_vars if v not in ("Water Sheet Thickness", "Melt Rate")]
         rb = ""
         if restart:
             rb = (f'  Restart File = "{restart}"\n  Restart Position = 0\n'
@@ -610,6 +623,14 @@ End
             text = self._cartesian_bed(text)
         if self.periodic_sides:
             text = self._periodic_sides(text)
+            # Zs and Zb: ESS's copy of FreeSurfaceSolver whose limiter keeps the periodic tie (elmer/ESSFreeSurface.F90:
+            # the stock one cut it when an image node hit Min Zs and the master ran away); ESS_STOCK_FREESURFACE=1: Elmer's
+            if os.environ.get("ESS_STOCK_FREESURFACE") != "1":
+                fs = '"FreeSurfaceSolver" "FreeSurfaceSolver"'
+                if text.count(fs) != 2:
+                    raise ValueError("periodic_sides: expected the two FreeSurfaceSolver instances (Zb, Zs) in the template")
+                lib = os.path.join(os.path.dirname(self.periodic_lib), "ESSFreeSurface")
+                text = text.replace(fs, f'"{lib}" "FreeSurfaceSolver"   ! periodic-aware limiter')
         if self.linear_free_surface == "iterative":
             text = self._fs_iterative(text)
         if self.surface_bc == "dirichlet":
@@ -638,8 +659,10 @@ End
             text = self._thermal_elmerstreams(text)
         elif self.thermal == "loads":
             text = self._thermal_loads(text)
+        elif self.thermal == "nowater":
+            text = self._thermal_nowater(self._thermal_loads(text))
         elif self.thermal != "frozen":
-            raise ValueError(f"[elmer] thermal must be 'frozen', 'loads' or 'elmerstreams', not {self.thermal!r}")
+            raise ValueError(f"[elmer] thermal must be 'frozen', 'loads', 'nowater' or 'elmerstreams', not {self.thermal!r}")
         if self.sliding == "temperate":
             text = self._sliding_temperate(text)
         elif self.sliding != "subtemperate":
@@ -1016,6 +1039,70 @@ End
                 "the heat solver first (Pre Solvers)\n" + fpl(a, "Before All", "Periodic Flow Solution Loads Init") + "\n" + fpl(b, "Never", "Periodic Flow Solution Loads") + text[k:])
         text = self._add_active(text, "ice equations", [a, b])
         return self._insert_in(text, 'Equation = String "Homologous Temperature Equation"', f"  Pre Solvers(1) = {b}")
+
+    def _thermal_nowater(self, text):
+        """the cold/temperate mask moved every step with the no-water sheet (see [elmer] thermal = "nowater"); after
+        _thermal_loads (the periodic friction loads)"""
+        if self.stokes_only:
+            return text
+        if not self.marine or self.gl_mode != "contact":
+            raise ValueError("[elmer] thermal = 'nowater': marine template with the contact grounding line only")
+        n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M))
+        ct = n + 1
+        fixL = fixW = None
+        nxt = n + 2
+        if self.periodic_sides:
+            fixL, fixW, nxt = n + 2, n + 3, n + 4
+        sheet = nxt
+        lib = self.periodic_lib
+        blocks = [f"""
+! ---- cold/temperate mask with the no-water sheet ([elmer] thermal = "nowater")
+Solver {ct}
+  Exec Solver = "Before Timestep"
+  Equation = "ColdTempMask"
+  Procedure = "{self.thermal_libs['coldtemp']}" "ColdTempMaskSolver"
+  Variable = "ColdTempMask"
+  Variable DOFs = 1
+  Toler = Real 1e-3
+End
+"""]
+        if self.periodic_sides:
+            fpl = lambda num, src, mode: (
+                f'Solver {num}\n  Exec Solver = "After Timestep"\n  Equation = "Periodic {src}"\n'
+                f'  Procedure = "{lib}" "FixPeriodicLoads"\n  Source Variable = String "{src}"\n'
+                f'  Target Variable = String "Periodic {src}"\n  Periodic Mode = String "{mode}"\nEnd\n')
+            blocks.append("\n! periodic copies of the heat loads and weights (the melt; after the heat solve, before the "
+                          "sheet)\n" + fpl(fixL, "Temperature Loads", "folded") + "\n"
+                          + fpl(fixW, "Temperature Boundary Weights", "split"))
+        pre = "Periodic " if self.periodic_sides else ""
+        blocks.append(f"""
+Solver {sheet}
+  Exec Solver = "After Timestep"
+  Equation = "No-water sheet"
+  Procedure = "{self.thermal_libs['nowater']}" "NoWaterSheet"
+  Variable = "Water Sheet Thickness"
+  Variable DOFs = 1
+  Loads Variable = String "{pre}Temperature Loads"
+  Weights Variable = String "{pre}Temperature Boundary Weights"
+  Ice Density = Real #rhoi
+  Latent Heat = Real #Lw
+  Exported Variable 1 = -dofs 1 "Melt Rate"
+End
+""")
+        k = text.index("!---------------- BOUNDARY CONDITIONS")
+        k = text.rindex("\n", 0, k - 1)
+        text = text[:k] + "\n" + "".join(blocks) + text[k:]
+        # the mask now belongs to its solver: not exported by the frozen-field owner any more
+        j = self._section_end(text, '"ESSNoOp"')
+        i = text.rindex("Solver ", 0, j)
+        sec = text[i:j]
+        if '"ColdTempMask"' not in sec:
+            raise ValueError("thermal = nowater: ColdTempMask is not exported by the frozen-field owner (ESSNoOp)")
+        sec = re.sub(r'\n  Exported Variable (\d+) = -dofs 1 "ColdTempMask"', "", sec)
+        text = text[:i] + sec + text[j:]
+        if self.periodic_sides:
+            text = self._add_active(text, "ice equations", [fixL, fixW])
+        return self._add_active(text, "interface equations", [ct, sheet])
 
     def _thermal_elmerstreams(self, text):
         """ElmerStreams Marine_Term's thermal chain (see [elmer] thermal)"""
