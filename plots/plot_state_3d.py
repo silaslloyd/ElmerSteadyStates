@@ -836,6 +836,27 @@ gdv.on('plotly_buttonclicked', function (e) { if (e.button && R[e.button.label])
 gdv.on('plotly_sliderchange', function (e) { cur.s = parseInt(e.step.args[0][0]); });
 gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
 """ % (json.dumps(vals, allow_nan=False), json.dumps(ranges), json.dumps(idx), json.dumps(P0[0])))
+    def tidy(tr):
+        """compact copies of the big arrays: plotly >= 6 writes numpy arrays as binary (base64 of their dtype), so
+        float32 / int32 halve them; plotly < 6 writes every float as text in full (~18 characters), so rounded:
+        positions to 1 m, heights to 0.1 m, colours to 0.01"""
+        import plotly
+        f32 = int(plotly.__version__.split(".")[0]) >= 6
+        cast = (lambda a: a.astype(np.float32)) if f32 else (lambda a: a)
+        for t_ in tr:
+            if getattr(t_, "type", None) != "mesh3d" or t_.x is None or len(t_.x) < 1000:
+                continue
+            t_.x = cast(np.round(np.asarray(t_.x, float), 3)); t_.y = cast(np.round(np.asarray(t_.y, float), 3))
+            t_.z = cast(np.round(np.asarray(t_.z, float), 1))
+            for k in ("i", "j", "k"):
+                if t_[k] is not None:
+                    t_[k] = np.asarray(t_[k], dtype=np.int32)
+            for k in ("intensity", "customdata"):
+                if t_[k] is not None:
+                    t_[k] = cast(np.round(np.asarray(t_[k], float), 2))
+        return tr
+    tidy(first)
+
     def lean(tr):
         """a frame's traces: the surfaces (Mesh3d with the first state's x, y and triangles: the same mesh) as their
         z and colours only, so the page holds the geometry once, not once per state"""
@@ -854,7 +875,7 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
             else:
                 out.append(t_)
         return out
-    frames = [go.Frame(data=lean(traces(tp, b)), name=str(n)) for n, (_, tp, b, _) in enumerate(data)]
+    frames = [go.Frame(data=lean(tidy(traces(tp, b))), name=str(n)) for n, (_, tp, b, _) in enumerate(data)]
     steps = [dict(method="animate", label=l, args=[[str(n)], dict(mode="immediate", frame=dict(duration=0, redraw=True),
                                                                   transition=dict(duration=0))])
              for n, (l, _, _, _) in enumerate(data)]
