@@ -234,6 +234,7 @@ SUBROUTINE FreeSurfaceSolver( Model,Solver,dt,TransientSimulation )
   USE Differentials
   USE MaterialModels
   USE PeriodicUtils     ! ESS periodic
+  USE ParallelUtils, ONLY : ParallelReduction   ! ESS periodic
   IMPLICIT NONE
 
   !------------------------------------------------------------------------------
@@ -891,8 +892,10 @@ SUBROUTINE FreeSurfaceSolver( Model,Solver,dt,TransientSimulation )
          DO pgI = 1, pgN
            IF ( pgImage(pgI) ) pgMaster(pgI) = pgRootMaster( PGRoot( pgParent, pgI ) )
          END DO
-         WRITE( Message, '(A,I0,A,I0,A)' ) 'periodic limiter: ', pgPairs, ' periodic pairs, ', &
-             COUNT( pgMaster > 0 ), ' image nodes tied to their master'
+         ! totals over all ranks (Info prints rank 0 only, which may not touch the seam)
+         WRITE( Message, '(A,I0,A,I0,A)' ) 'periodic limiter: ', &
+             NINT( ParallelReduction( REAL( pgPairs, dp ) ) ), ' periodic pairs, ', &
+             NINT( ParallelReduction( REAL( COUNT( pgMaster > 0 ), dp ) ) ), ' image nodes tied to their master (all ranks)'
          CALL Info( SolverName, Message, Level=4 )
          DEALLOCATE( pgParent, pgImage, pgIn, pgRootMaster )
        END IF
