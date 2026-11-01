@@ -21,6 +21,7 @@ Buttons above the velocity panel switch its colours between speed, vx, vy and vz
     python plots/plot_state_3d.py work/<config>/runs/<run>                  # a run with ESS_VTU_EVERY: every step
     python plots/plot_state_3d.py A.npz --diff B.npz                      # colours: A minus B (same mesh)
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
+    python plots/plot_state_3d.py STATES... --no-switch                    # no vx/vy/vz buttons (a smaller page)
 Speed colours max out at the surface speed on the grounding line (--vmax V, or --vmax-all for the largest speed).
 Structured footprints and the unstructured triangle ones (configs/*_tri.toml; Delaunay, needs scipy).
 With a Temperature field: a second panel next to it, the same geometry coloured by temperature (surface, base and
@@ -57,6 +58,7 @@ MESH_DIR = None          # --mesh-dir DIR: the footprint mesh (ElmerGrid directo
 FS_SSA = 0.0             # km: draw the full-Stokes | SSA boundary this far beyond the grounding line (--fs-ssa 10)
 WALLS = False            # walled sides: the distance to the grounding line not wrapped across y (--walls)
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
+SWITCH = True            # the speed/vx/vy/vz buttons (their values for every state go into the page; --no-switch: smaller)
 T_RANGE = (None, None)   # temperature colour range (K); None: all temperatures in the window (--tmin / --tmax)
 SHOW = True
 
@@ -410,7 +412,7 @@ def gl_line(base, top=None):
 
 def main():
     import plotly.graph_objects as go
-    global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS
+    global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
     args = sys.argv[1:]
     if "--vmax-all" in args:
         VMAX_GL = False
@@ -450,6 +452,9 @@ def main():
     if "--no-temp" in args:
         TEMP = False
         args.remove("--no-temp")
+    if "--no-switch" in args:
+        SWITCH = False
+        args.remove("--no-switch")
     for opt, i in (("--tmin", 0), ("--tmax", 1)):
         if opt in args:
             k = args.index(opt)
@@ -771,7 +776,7 @@ def main():
     # Colour ranges over all states.
     tp0, b0 = data[0][1], data[0][2]
     menus, switch_js = [], None
-    if tp0 is not None and b0 is not None and "vz" in tp0:
+    if SWITCH and tp0 is not None and b0 is not None and "vz" in tp0:
         import json
         from plotly.colors import get_colorscale
         P0 = panels[0]
