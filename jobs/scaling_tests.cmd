@@ -194,11 +194,14 @@ SLOTS=${SLOTS:-$(( ${SLURM_NTASKS:-128} / RANKS ))}; [ $SLOTS -ge 1 ] || SLOTS=1
 # GLMODE=contact: the grounding line by contact every step (Elmer/Ice's SlidCoef_Contact: the sliding coefficient
 # depends on the normal stress, so the Stokes problem is nonlinear; ElmerStreams' marine production, with NL=2);
 # default frozen (not GL: that is the grounding-line position of the cut runs)
-opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --gl ${GLMODE:-frozen} --linear-stokes block --output-level 4"
+# CHUNKS=N: N Elmer runs of STEPS steps each (a long run), the state after every chunk saved (SAVE_EVERY, default 1)
+# to <run output>_chunks/points/state_XXXX.npz; the summary then covers the last chunk only
+opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl ${GLMODE:-frozen} --linear-stokes block --output-level 4"
 # HEAT=1: heat and strain heating on (no --stokes-only): friction heating from the Stokes loads, the config's
 # [elmer] thermal; T is not capped (no limiter; with BED=cold the grounded bed has the flux condition everywhere, so it
 # may go above T0, where subtemperate sliding saturates at the temperate value); T0 under the shelf
 [ -n "$HEAT" ] && opts="${opts/--stokes-only /}" && echo "heat and strain heating on"
+[ "${CHUNKS:-1}" -gt 1 ] && opts="$opts --save-every ${SAVE_EVERY:-1}" && echo "long run: $CHUNKS chunks of ${STEPS:-2} steps, states every ${SAVE_EVERY:-1} chunk(s)"
 # HEAT_LEGACY=1: the heat solver's legacy assembly (HeatSolveLegacy.so) instead of the vectorised HeatSolve
 [ -n "$HEAT_LEGACY" ] && export ESS_HEAT_LEGACY=1 && echo "  heat: legacy assembly"
 # BED=cold (default) | temperate (sliding everywhere) | none (the start state's own bed temperatures: the land
