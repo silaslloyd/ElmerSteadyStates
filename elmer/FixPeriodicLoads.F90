@@ -22,6 +22,7 @@ SUBROUTINE FixPeriodicLoads( Model, Solver, dt, Transient )
 !------------------------------------------------------------------------------
   USE DefUtils
   USE PeriodicUtils
+  USE ParallelUtils, ONLY : ParallelReduction
   IMPLICIT NONE
   TYPE(Model_t) :: Model
   TYPE(Solver_t) :: Solver
@@ -32,6 +33,7 @@ SUBROUTINE FixPeriodicLoads( Model, Solver, dt, Transient )
   TYPE(ValueList_t), POINTER :: Params
   TYPE(Variable_t), POINTER :: Src, Tgt
   INTEGER :: dofs, npairs, norphan
+  REAL(KIND=dp) :: ntot
   REAL(KIND=dp), POINTER :: NewValues(:)
   CHARACTER(LEN=MAX_NAME_LEN) :: sname, tname, pmode
   CHARACTER(*), PARAMETER :: Caller = 'FixPeriodicLoads'
@@ -73,7 +75,10 @@ SUBROUTINE FixPeriodicLoads( Model, Solver, dt, Transient )
   END IF
 
   CALL PeriodicSymmetrize( Model, Tgt % Values, Src % Perm, dofs, TRIM(pmode), npairs, norphan )
-  CALL Info( Caller, '"'//TRIM(tname)//'" ('//TRIM(pmode)//'): '//I2S(npairs)//' periodic pairs', Level=4 )
+  ! summed over the ranks (the log is rank 0's: with METIS partitions rank 0 may hold no seam node)
+  ntot = REAL( npairs, dp )
+  IF ( ParEnv % PEs > 1 ) ntot = ParallelReduction( ntot )
+  CALL Info( Caller, '"'//TRIM(tname)//'" ('//TRIM(pmode)//'): '//I2S(NINT(ntot))//' periodic pairs (all ranks)', Level=4 )
 !------------------------------------------------------------------------------
 END SUBROUTINE FixPeriodicLoads
 !------------------------------------------------------------------------------
