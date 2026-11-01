@@ -253,7 +253,18 @@ def structured(x, y):
     return len(np.unique(np.round(x, 1))) * len(np.unique(np.round(y, 1))) == len(x)
 
 
+_TRI_CACHE = {}
+
+
 def triangles(x, y):
+    """triangles of the footprint (cached: every state and panel of a plot has the same footprint)"""
+    key = (len(x), float(np.sum(x)), float(np.sum(y)), float(np.sum(np.asarray(x) * np.asarray(y))))
+    if key not in _TRI_CACHE:
+        _TRI_CACHE[key] = _triangles(x, y)
+    return _TRI_CACHE[key]
+
+
+def _triangles(x, y):
     """triangles of the footprint: of the rows and columns of a structured one, else Delaunay (the unstructured
     triangle meshes: their footprint is a rectangle, so Delaunay covers it like the mesh)"""
     if not structured(x, y):
@@ -345,20 +356,36 @@ def partition_edges(t, p):
 
 def contour(x, y, f, level, zs):
     """the level line of the nodal field f on the footprint triangles, as segments (x, y in km, then each of the
-    nodal fields zs interpolated onto it), segments separated by None (plotly lines)"""
+    nodal fields zs interpolated onto it), segments separated by None (plotly lines). Vectorised over the triangles."""
     i, j, k = triangles(x, y)
-    out = [[] for _ in range(2 + len(zs))]
-    for t in zip(i, j, k):
-        pts = []
-        for a, b in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
-            fa, fb = f[a] - level, f[b] - level
-            if (fa < 0) != (fb < 0) and np.isfinite(fa) and np.isfinite(fb):
-                w = fa / (fa - fb)
-                pts.append([x[a] + w * (x[b] - x[a]), y[a] + w * (y[b] - y[a])]
-                           + [z[a] + w * (z[b] - z[a]) for z in zs])
-        if len(pts) == 2:
-            for c in range(len(out)):
-                out[c] += [pts[0][c] / (1e3 if c < 2 else 1), pts[1][c] / (1e3 if c < 2 else 1), None]
+    T = np.c_[i, j, k]
+    A, B = T, T[:, [1, 2, 0]]                     # edges (t0, t1), (t1, t2), (t2, t0)
+    f = np.asarray(f, float)
+    fa, fb = f[A] - level, f[B] - level
+    with np.errstate(invalid="ignore"):
+        cr = ((fa < 0) != (fb < 0)) & np.isfinite(fa) & np.isfinite(fb)
+    keep = cr.sum(1) == 2
+    A, B, fa, fb, cr = A[keep], B[keep], fa[keep], fb[keep], cr[keep]
+    r = np.arange(len(A))
+    e1 = np.argmax(cr, 1)
+    cr2 = cr.copy()
+    cr2[r, e1] = False
+    e2 = np.argmax(cr2, 1)
+    vals = [np.asarray(x, float), np.asarray(y, float)] + [np.asarray(z, float) for z in zs]
+
+    def at(e):
+        a, b = A[r, e], B[r, e]
+        w = fa[r, e] / (fa[r, e] - fb[r, e])
+        return [v[a] + w * (v[b] - v[a]) for v in vals]
+    p, q = at(e1), at(e2)
+    out = []
+    for c in range(len(vals)):
+        sc = 1e3 if c < 2 else 1.0
+        arr = np.empty(3 * len(r), dtype=object)
+        arr[0::3] = (p[c] / sc).tolist()
+        arr[1::3] = (q[c] / sc).tolist()
+        arr[2::3] = None
+        out.append(arr.tolist())
     return out
 
 
