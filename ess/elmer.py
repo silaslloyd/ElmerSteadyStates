@@ -609,6 +609,10 @@ End
             text = self._sliding_temperate(text)
         elif self.sliding != "subtemperate":
             raise ValueError(f"[elmer] sliding must be 'subtemperate' or 'temperate', not {self.sliding!r}")
+        if os.environ.get("ESS_HEAT_LEGACY"):       # the heat solver's legacy (non-vectorised) assembly (HeatSolveLegacy.so)
+            k = text.index('Procedure =  File "HeatSolveVec" "HeatSolver"')
+            j = text.index('  Variable = String "Temperature"\n', k) + len('  Variable = String "Temperature"\n')
+            text = text[:j] + "  Legacy Assembly = Logical True   ! ESS_HEAT_LEGACY\n" + text[j:]
         if os.environ.get("ESS_SOLVER_TIMING"):     # every solver's time per call in the log ("Solver time ... for")
             text = re.sub(r"^(Solver \d+\s*\n)", r"\1  Solver Timing = Logical True\n", text, flags=re.M)
         once = os.environ.get("ESS_PARTIAL_UPDATE_ONCE", "1") != "0"

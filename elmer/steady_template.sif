@@ -161,13 +161,17 @@ End
 Equation 1
   Name = "bedrock equation"
   Active Solvers(4) = 2 4 5 11
-  Convection = "Computed"
+  ! no flow solution in this body (Stokes not active): "Computed" gave the old HeatSolve zero velocity; the
+  ! vectorised HeatSolve of elmerfem dd6aef5e2 segfaulted in its first assembly with it (suspected)
+  Convection = "None"
 End
 
 Equation 2
   Name = "filler equation"
   Active Solvers(4) = 2 4 5 11
-  Convection = "Computed"
+  ! no flow solution in this body (Stokes not active): "Computed" gave the old HeatSolve zero velocity; the
+  ! vectorised HeatSolve of elmerfem dd6aef5e2 segfaulted in its first assembly with it (suspected)
+  Convection = "None"
 End
 
 Equation 3
@@ -518,11 +522,6 @@ Solver 11
   Equation = String "Homologous Temperature Equation"
   Procedure =  File "HeatSolveVec" "HeatSolver"__HEAT_EXEC__
   Variable = String "Temperature"
-  ! the legacy (non-vectorised) assembly: with elmerfem dd6aef5e2 (2026-10-28) HeatSolveVec hands over to a
-  ! rewritten HeatSolve.so, which segfaulted in its first bulk assembly here (null pointer, every rank; 3D
-  ! marine, 720 ranks; perhaps "Convection = Computed" in the bedrock/filler bodies, which have no flow solution);
-  ! HeatSolveLegacy.so is the long-standing HeatSolve. Older Elmers ignore the keyword.
-  Legacy Assembly = Logical True
   ! no bubbles: condensed bubbles carry their own time history, which is not
   ! part of the state the driver saves and restores (it would restart from zero
   ! in every run, so the map would not be a function of the state alone).

@@ -199,6 +199,8 @@ opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --gl ${GLMODE:-fr
 # [elmer] thermal; T is not capped (no limiter; with BED=cold the grounded bed has the flux condition everywhere, so it
 # may go above T0, where subtemperate sliding saturates at the temperate value); T0 under the shelf
 [ -n "$HEAT" ] && opts="${opts/--stokes-only /}" && echo "heat and strain heating on"
+# HEAT_LEGACY=1: the heat solver's legacy assembly (HeatSolveLegacy.so) instead of the vectorised HeatSolve
+[ -n "$HEAT_LEGACY" ] && export ESS_HEAT_LEGACY=1 && echo "  heat: legacy assembly"
 # BED=cold (default) | temperate (sliding everywhere) | none (the start state's own bed temperatures: the land
 # benchmark's temperature-dependent sliding)
 [ "${BED:-cold}" != none ] && opts="$opts --bed ${BED:-cold}"
