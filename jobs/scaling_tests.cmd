@@ -189,6 +189,10 @@ SLOTS=${SLOTS:-$(( ${SLURM_NTASKS:-128} / RANKS ))}; [ $SLOTS -ge 1 ] || SLOTS=1
 # depends on the normal stress, so the Stokes problem is nonlinear; ElmerStreams' marine production, with NL=2);
 # default frozen (not GL: that is the grounding-line position of the cut runs)
 opts="--stokes-only --chunks 1 --steps ${STEPS:-2} --no-remask --gl ${GLMODE:-frozen} --linear-stokes block --output-level 4"
+# HEAT=1: heat and strain heating on (no --stokes-only): friction heating from the Stokes loads, the config's
+# [elmer] thermal; T is not capped (no limiter; with BED=cold the grounded bed has the flux condition everywhere, so it
+# may go above T0, where subtemperate sliding saturates at the temperate value); T0 under the shelf
+[ -n "$HEAT" ] && opts="${opts/--stokes-only /}" && echo "heat and strain heating on"
 # BED=cold (default) | temperate (sliding everywhere) | none (the start state's own bed temperatures: the land
 # benchmark's temperature-dependent sliding)
 [ "${BED:-cold}" != none ] && opts="$opts --bed ${BED:-cold}"

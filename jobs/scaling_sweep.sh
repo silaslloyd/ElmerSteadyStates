@@ -17,11 +17,13 @@
 #          w192 w384            weak, marine: 12.5 km at 192, 25 km at 384 (the 50 km at 768 is m768)
 #          l72 l144 l288 l576   strong, land, configs/test_wall_land_50km_tri.toml (~0.7x the marine domain: the
 #                               marine's nodes per rank at 0.75x the ranks)
-# AFTER=<jobid>: the first point waits for that job. STEPS (default 20).
+# AFTER=<jobid>: the first point waits for that job. STEPS (default 20). HEAT=1: heat + strain heating on (with BED=cold:
+# the grounded bed's temperature free, may exceed T0). BED (default none: the start state's cold/temperate mask). TAG
+# (default _sweep): the runs' output names
 set -e
 cd "$(dirname "$0")/.."
 POINTS=${*:-m96 m192 m384 m768 w192 w384 l72 l144 l288 l576}
-BASE="ALL,ELMER_MODULE=${ELMER_MODULE:-elmerfem/2026-10-28},ELMER_PREFIX=${ELMER_PREFIX:-/SCRATCH/$USER/elmer/install2},BED=none,TOL=1e-5,STEPS=${STEPS:-20},DT=1,TIMING=1,RECOMPUTE=200,WARMUP_ILU=0"
+BASE="ALL,ELMER_MODULE=${ELMER_MODULE:-elmerfem/2026-10-28},ELMER_PREFIX=${ELMER_PREFIX:-/SCRATCH/$USER/elmer/install2},BED=${BED:-none}${HEAT:+,HEAT=1},TOL=1e-5,STEPS=${STEPS:-20},DT=1,TIMING=1,RECOMPUTE=200,WARMUP_ILU=0"
 # MAR_SET (default F): the marine runs per point, e.g. FPQ = GCR + ILU0, ILU2, ILU3 (land showed ILU0 breaking down
 # below ~300 columns per rank: 5 -> 60-89 iterations from 288 to 576 ranks, ILU4 stayed at 2-3). MAR_REBUILD_PREC (default
 # ILU0): the level of the forced rebuilds on ranks whose grounded mask changed; "same" = each run's own level
@@ -49,7 +51,7 @@ for p in $POINTS; do
     [ -f "$w/scaling_${n}_R0.npz" ] && extra=$(echo "$extra" | sed "s/,WARMUP=[^,]*//"),WARMUP_STATE=$w/scaling_${n}_R0.npz
     # wall-time limit: fewer ranks take longer (a 768-rank point ~25 min incl. warm-up; 96 ranks ~8x the work per rank)
     tl=03:00:00; [ "$n" -le 192 ] && tl=06:00:00; [ "$n" -le 96 ] && tl=10:00:00
-    j=$(sbatch --parsable $dep --ntasks=$n --time=$tl --export=$BASE,GL_CONFIG=$cfg,RANKS=$n,$extra,TAG=_sweep jobs/scaling_tests.cmd)
+    j=$(sbatch --parsable $dep --ntasks=$n --time=$tl --export=$BASE,GL_CONFIG=$cfg,RANKS=$n,$extra,TAG=${TAG:-_sweep} jobs/scaling_tests.cmd)
     echo "$p: $j ($cfg, $n ranks)"
     dep="--dependency=afterany:$j"
 done
