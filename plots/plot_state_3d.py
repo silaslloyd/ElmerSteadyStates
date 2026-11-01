@@ -29,6 +29,7 @@ side walls; the base shows the bed temperature, where a seam stripe from wrong l
 A treatment folder is read phase by phase (spinup, retreat, advance: <phase>_chunks/points/state_*.npz).
 Writes <first input>_3d.html and opens it. Needs numpy and plotly.
 """
+import base64
 import glob
 import re
 import os
@@ -804,8 +805,8 @@ def main():
                 if len(tf) != len(idx):              # a state drawn with other traces: no switch there
                     vals[n][fld] = None
                     continue
-                vals[n][fld] = [[None if not np.isfinite(x) else round(float(x), 2) for x in np.asarray(t_["intensity"])]
-                                for t_ in tf]
+                vals[n][fld] = [base64.b64encode(np.asarray(t_["intensity"], dtype="<f4").tobytes()).decode()
+                                for t_ in tf]           # float32, base64 (decoded in the page: dec())
             print(f"  colour switch {fld}: {lo:.3g} .. {hi:.3g} m/yr")
         buttons = [dict(label=fld, method="skip", args=[None]) for fld in ranges]
         menus = [dict(type="buttons", direction="right", buttons=buttons, x=0.0, y=1.06, xanchor="left",
@@ -814,11 +815,15 @@ def main():
         switch_js = ("""
 var gdv = document.getElementsByClassName('plotly-graph-div')[0];
 var V = %s, R = %s, IDX = %s, OWN = %s, cur = {s: 0, f: OWN};
+function dec(b) { var s = atob(b), u = new Uint8Array(s.length);
+  for (var i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
+  return Array.from(new Float32Array(u.buffer)); }
 function showField() {
-  var d = V[cur.s][cur.f], r = R[cur.f], cd = [];
-  if (!d) return;
+  var e = V[cur.s][cur.f], r = R[cur.f], cd = [], d = [];
+  if (!e) return;
   for (var q = 0; q < IDX.length; q++) {
-    var old = gdv.data[IDX[q]].customdata, a = d[q];
+    var old = gdv.data[IDX[q]].customdata, a = dec(e[q]);
+    d.push(a);
     if (old && old.length && Array.isArray(old[0])) cd.push(a.map(function (x, k) { return [x, old[k][1]]; }));
     else cd.push(a);
   }
@@ -831,7 +836,25 @@ gdv.on('plotly_buttonclicked', function (e) { if (e.button && R[e.button.label])
 gdv.on('plotly_sliderchange', function (e) { cur.s = parseInt(e.step.args[0][0]); });
 gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
 """ % (json.dumps(vals, allow_nan=False), json.dumps(ranges), json.dumps(idx), json.dumps(P0[0])))
-    frames = [go.Frame(data=traces(tp, b), name=str(n)) for n, (_, tp, b, _) in enumerate(data)]
+    def lean(tr):
+        """a frame's traces: the surfaces (Mesh3d with the first state's x, y and triangles: the same mesh) as their
+        z and colours only, so the page holds the geometry once, not once per state"""
+        out = []
+        for q, t_ in enumerate(tr):
+            f0 = first[q] if q < len(first) else None
+            same = (f0 is not None and t_.type == "mesh3d" and f0.type == "mesh3d" and t_.i is not None
+                    and len(t_.x) == len(f0.x) and len(t_.i) == len(f0.i)
+                    and all(np.array_equal(np.asarray(t_[k]), np.asarray(f0[k])) for k in ("x", "y", "i", "j", "k")))
+            if same:
+                d = dict(type="mesh3d", z=t_.z)
+                for k in ("intensity", "customdata", "cmin", "cmax"):
+                    if t_[k] is not None:
+                        d[k] = t_[k]
+                out.append(d)
+            else:
+                out.append(t_)
+        return out
+    frames = [go.Frame(data=lean(traces(tp, b)), name=str(n)) for n, (_, tp, b, _) in enumerate(data)]
     steps = [dict(method="animate", label=l, args=[[str(n)], dict(mode="immediate", frame=dict(duration=0, redraw=True),
                                                                   transition=dict(duration=0))])
              for n, (l, _, _, _) in enumerate(data)]
