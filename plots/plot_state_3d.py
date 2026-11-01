@@ -166,6 +166,9 @@ def vtu_surfaces(path):
             d["vx"], d["vy"], d["vz"] = (u[:, c] for c in range(3))
             d["speed"] = np.hypot(u[:, 0], u[:, 1]) if u.shape[1] >= 2 else np.abs(u[:, 0])
             d["speed"] = np.sqrt(np.sum(u[:, :3] ** 2, axis=1))
+        T = get("temperature")
+        if T is not None:
+            d["T"] = T[:, 0]
         if base:
             gm = get("groundedmask")
             if gm is not None:

@@ -646,8 +646,10 @@ End
             text = text[:k] + f"{key} = Logical True\n  " + text[k:]
         n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M)) + 1
         base = ["GroundedMask", "bedrock"] + (["GL Distance"] if self.fs_ssa_x is not None else [])
+        heat = [] if self.stokes_only else ["Temperature"]       # the temperature panel of plots/plot_state_3d.py
         out = ""
-        for m, (fname, key, fields) in enumerate((("base", "ESS Save Base", base), ("surface", "ESS Save Surface", []))):
+        for m, (fname, key, fields) in enumerate((("base", "ESS Save Base", base + heat),
+                                                  ("surface", "ESS Save Surface", heat))):
             out += (f"\nSolver {n + m}\n"
                     '  Exec Solver = "After Timestep"\n'
                     f"  Exec Intervals(10) = Integer {' '.join([str(every)] * 10)}   ! per Timestep Interval (ramps)\n"
