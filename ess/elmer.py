@@ -407,6 +407,15 @@ class ElmerModel(Model):
                     '  Linear System Direct Method = $directsolver\n'
                     '  Linear System Abort Not Converged = True\n'
                     '  Linear System Convergence Tolerance = 1.0e-12   ! ESS_HEAT_SOLVER=direct')
+        if hs and hs.lower() == "hypre":            # Hypre BiCGStab + BoomerAMG (thin anisotropic columns)
+            return ('  Linear System Solver = Iterative\n'
+                    '  Linear System Use Hypre = Logical True\n'
+                    '  Linear System Iterative Method = BiCGStab\n'
+                    '  Linear System Preconditioning = BoomerAMG\n'
+                    '  Linear System Max Iterations = 2000\n'
+                    f'  Linear System Convergence Tolerance = {tol}\n'
+                    '  Linear System Abort Not Converged = True\n'
+                    '  Linear System Residual Output = 200   ! ESS_HEAT_SOLVER=hypre')
         if hs:
             meth, prec = (hs.split(":") + ["ILU1"])[:2]
             extra = {"GCR": "  Linear System GCR Restart = Integer 200\n",
