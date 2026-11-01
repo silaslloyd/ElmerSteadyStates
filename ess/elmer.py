@@ -402,6 +402,11 @@ class ElmerModel(Model):
         # GCR:ILU2, GMRES:ILU1) for the heat solve only: BiCGStabL + ILU1 diverged (residual 1e21) in the first 5-yr step
         # of fast temperate sliding on the 50 km marine mesh, with Stokes converged
         hs = os.environ.get("ESS_HEAT_SOLVER") if which == "heat" else None
+        if hs and hs.lower() == "direct":           # MUMPS (segfaulted on the periodic mesh with an older Elmer)
+            return ('  Linear System Solver = Direct\n'
+                    '  Linear System Direct Method = $directsolver\n'
+                    '  Linear System Abort Not Converged = True\n'
+                    '  Linear System Convergence Tolerance = 1.0e-12   ! ESS_HEAT_SOLVER=direct')
         if hs:
             meth, prec = (hs.split(":") + ["ILU1"])[:2]
             extra = {"GCR": "  Linear System GCR Restart = Integer 200\n",
