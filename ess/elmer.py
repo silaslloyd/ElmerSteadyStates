@@ -248,7 +248,8 @@ class ElmerModel(Model):
         self.y_elements = int(c.get("y_elements", 1))
         # [case] slide_ybump: the sliding coefficient times 1 + slide_ybump sin(2 pi y / width) (periodic), so the
         # grounding line is not straight across the flow (tests of the periodic sides); 0: off
-        self.slide_ybump = float(c.get("slide_ybump", 0.0))
+        self.slide_ybump = float(os.environ.get("ESS_SLIDE_YBUMP") or c.get("slide_ybump", 0.0))   # env: runs continuing
+        # from a state spun up with another value (the sliding coefficient changed at once breaks Stokes)
         # [elmer] periodic_gl (contact grounding line with periodic sides; `ess run --periodic-gl`):
         #   "none"          Elmer/Ice SlidCoef_Contact (hydrostatic loads Fw)
         #   "elmerstreams"  ElmerStreams' contact.f90: the original test on the raw Stokes loads, with the

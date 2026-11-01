@@ -211,6 +211,9 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # THERMAL=loads|nowater: [elmer] thermal; nowater: the cold/temperate mask moved every step (ColdTempMaskSolver) with the
 # no-water sheet hw = sign(melt) (elmer/NoWaterSheet.F90); needs HEAT=1
 [ -n "$THERMAL" ] && export ESS_THERMAL=$THERMAL && echo "  thermal: $THERMAL"
+# SLIDE_YBUMP=A: the sliding coefficient times 1 + A sin(2 pi y / width) ([case] slide_ybump; states spun up with 0.8
+# need it: switching it off at once leaves Stokes far from the new flow, GCR at the iteration cap)
+[ -n "$SLIDE_YBUMP" ] && export ESS_SLIDE_YBUMP=$SLIDE_YBUMP && echo "  sliding y bump: $SLIDE_YBUMP"
 # BED=cold (default) | temperate (sliding everywhere) | none (the start state's own bed temperatures: the land
 # benchmark's temperature-dependent sliding)
 [ "${BED:-cold}" != none ] && opts="$opts --bed ${BED:-cold}"
