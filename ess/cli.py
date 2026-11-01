@@ -426,7 +426,19 @@ def cmd_run(args):
         log.info(f"run: states every {args.save_every} chunk(s) to {sdir}/state_XXXX.npz "
                  f"(plots/plot_branch_states.py with BRANCH = {os.path.dirname(sdir)})")
     t_end = 0.0
+    ramp = None
+    if args.ybump_ramp:             # the sliding y bump taken down linearly to 0 over the first N chunks
+        a0, _, nr = args.ybump_ramp.partition(":")
+        ramp = (float(a0), max(1, int(nr or 1)))
+        log.info(f"run: sliding y bump {ramp[0]:g} -> 0 linearly over the first {ramp[1]} chunk(s) "
+                 f"({ramp[1] * prob.spec.horizon:g} yr), uniform after")
     for c in range(args.chunks):
+        if ramp:
+            A0, nr = ramp
+            model.slide_ybump = A0 * max(0.0, 1 - c / nr)
+            model.slide_ybump_end = A0 * max(0.0, 1 - (c + 1) / nr)
+            model.slide_ybump_horizon = prob.spec.horizon
+            log.info(f"run: chunk {c + 1}: sliding y bump {model.slide_ybump:.4g} -> {model.slide_ybump_end:.4g}")
         yn = prob.phi(y, p, tag=f"run{c}", want_diag=True)
         t = (c + 1) * prob.spec.horizon
         dy = rms(yn - y)
@@ -1196,6 +1208,9 @@ def main(argv=None):
     s.add_argument("--heat-only", action="store_true",
                    help="no free surface: the geometry stays as in the start state, Stokes and heat run (with --dt 1e6 "
                         "--steps 2 --chunks 1: the steady temperature on that geometry in one run)")
+    s.add_argument("--ybump-ramp", metavar="A:N",
+                   help="the sliding coefficient's y bump (1 + a sin(2 pi y / width)) from A down to 0, linearly in "
+                        "time over the first N chunks (continuous within each chunk), uniform friction after")
     s.add_argument("--until-tol", type=float,
                    help="stop when the rms change of the (scaled) state over one chunk is below this; --chunks is "
                         "then the maximum")

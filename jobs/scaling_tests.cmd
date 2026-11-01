@@ -214,6 +214,9 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # SLIDE_YBUMP=A: the sliding coefficient times 1 + A sin(2 pi y / width) ([case] slide_ybump; states spun up with 0.8
 # need it: switching it off at once leaves Stokes far from the new flow, GCR at the iteration cap)
 [ -n "$SLIDE_YBUMP" ] && export ESS_SLIDE_YBUMP=$SLIDE_YBUMP && echo "  sliding y bump: $SLIDE_YBUMP"
+# YBUMP_RAMP=A:N: the y bump from A to 0 linearly over the first N chunks (ess run --ybump-ramp; long runs): a state spun
+# up with the bump taken to uniform friction without a jump
+[ -n "$YBUMP_RAMP" ] && opts="$opts --ybump-ramp $YBUMP_RAMP" && echo "  sliding y bump ramp: $YBUMP_RAMP"
 # BED=cold (default) | temperate (sliding everywhere) | none (the start state's own bed temperatures: the land
 # benchmark's temperature-dependent sliding)
 [ "${BED:-cold}" != none ] && opts="$opts --bed ${BED:-cold}"

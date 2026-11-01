@@ -1272,9 +1272,16 @@ End
              '    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2])"')
         if a not in text:
             raise ValueError("slide_ybump: the Weertman Friction Coefficient lines of the template changed")
-        b = ('  Weertman Friction Coefficient = Variable Temperature, Coordinate 1, GroundedMask, Coordinate 2\n'
-             f'    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2]) * (1 + {self.slide_ybump!r} '
-             f'* math.sin(2 * math.pi * tx[3] / {self.width!r}))"')
+        end = getattr(self, "slide_ybump_end", None)
+        if end is None or end == self.slide_ybump:
+            b = ('  Weertman Friction Coefficient = Variable Temperature, Coordinate 1, GroundedMask, Coordinate 2\n'
+                 f'    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2]) * (1 + {self.slide_ybump!r} '
+                 f'* math.sin(2 * math.pi * tx[3] / {self.width!r}))"')
+        else:       # ess run --ybump-ramp: the amplitude linear in this Elmer run's time from slide_ybump to slide_ybump_end
+            H = float(self.slide_ybump_horizon)
+            b = ('  Weertman Friction Coefficient = Variable Temperature, Coordinate 1, GroundedMask, Coordinate 2, Time\n'
+                 f'    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2]) * (1 + ({self.slide_ybump!r} + '
+                 f'({end - self.slide_ybump!r}) * math.min(tx[4] / {H!r}, 1)) * math.sin(2 * math.pi * tx[3] / {self.width!r}))"')
         return text.replace(a, b)
 
     def _cartesian_bed(self, text):
