@@ -19,7 +19,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from ess.statefile import StateLayout, find_name, load_state, save_state  # noqa: E402
 
-KEEP_DIAG = ["coordinate 1", "coordinate 2", "coordinate 3", "Velocity 1", "Velocity 2", "Velocity 3", "GroundedMask"]
+KEEP_DIAG = ["coordinate 1", "coordinate 2", "coordinate 3", "Velocity 1", "Velocity 2", "Velocity 3", "GroundedMask",
+             "ColdTempMask", "Water Sheet Thickness", "Melt Rate"]     # the last three: THERMAL=nowater runs
 KEEP_FROZEN = ["GroundedMask", "bedrock"]
 
 
