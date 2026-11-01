@@ -15,5 +15,8 @@ echo "  Elmer run $(basename $(dirname $L)): $(grep 'MAIN: Time:' $L 2>/dev/null
 echo "  Stokes per step (s), last 10: $(grep 'Solver time.*stokes-vec' $L 2>/dev/null | tail -10 | awk '{printf "%.0f ", $(NF-1)}')"
 echo "  heat per step (s), last 5:    $(grep 'Solver time.*homologous' $L 2>/dev/null | tail -5 | awk '{printf "%.1f ", $(NF-1)}')"
 echo "  GCR iterations, last 10 solves (the current one last, still counting): $(grep 'gcr:' $L 2>/dev/null | awk '$2 < prev {print prev} {prev=$2} END {print prev}' | tail -10 | tr '\n' ' ')"
+m=$(grep 'NoWaterSheet.*bed nodes' $L 2>/dev/null | tail -1 | sed 's/.*bed nodes: //')
+[ -n "$m" ] && echo "  mask (THERMAL=nowater): $m"
+grep -q 'periodic limiter' $L 2>/dev/null && echo "  free surface: $(grep -m1 'periodic limiter' $L | sed 's/.*periodic limiter: //')"
 grep -m1 -i "segmentation\|nan\b\|error termination" $L 2>/dev/null | head -1 | sed 's/^/  PROBLEM: /'
 echo "  last output: $(tail -1 $f 2>/dev/null | cut -c1-100)"
