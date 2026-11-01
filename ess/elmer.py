@@ -417,7 +417,10 @@ class ElmerModel(Model):
                     '  Linear System Abort Not Converged = True\n'
                     '  Linear System Residual Output = 200   ! ESS_HEAT_SOLVER=hypre')
         if hs:
-            meth, prec, fac = (hs.split(":") + ["ILU1", ""])[:3]     # METHOD:PREC[:ILU factor, a diagonal shift]
+            parts = hs.split(":")                    # METHOD[:PREC[:ILU factor, a diagonal shift]]
+            meth = parts[0]
+            prec = parts[1] if len(parts) > 1 else "ILU1"
+            fac = parts[2] if len(parts) > 2 else ""
             extra = {"GCR": "  Linear System GCR Restart = Integer 200\n",
                      "GMRES": "  Linear System GMRES Restart = Integer 200\n",
                      "BICGSTABL": "  Linear System BiCGStabL Polynomial Degree = Integer 4\n"}.get(meth.upper(), "")
