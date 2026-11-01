@@ -765,38 +765,67 @@ def main():
                                    scene=sc, showlegend=first_panel))
         return tr
     first = traces(data[0][1], data[0][2])
-    # the colour switch of the velocity panel: speed, vx, vy, vz (the first state; the slider's states show speed)
+    # the colour switch of the velocity panel: speed, vx, vy, vz. The slider's frames draw the panel's own field; the
+    # buttons and the slider share one script (switch_js) that keeps the chosen field and puts that field of the state
+    # on show into the surfaces and walls, so a button acts on the current state and the choice survives the slider.
+    # Colour ranges over all states.
     tp0, b0 = data[0][1], data[0][2]
-    menus = []
+    menus, switch_js = [], None
     if tp0 is not None and b0 is not None and "vz" in tp0:
+        import json
+        from plotly.colors import get_colorscale
         P0 = panels[0]
         ref = panel_traces(tp0, b0, P0)
         get = lambda t_, k: t_[k] if k in t_ else None
         idx = [n for n, t_ in enumerate(ref) if get(t_, "intensity") is not None]
-        both = np.concatenate([tp0["vz"], b0["vz"]])
-        buttons = []
+        allv = lambda fld: np.concatenate([d[fld] for _, tp, b, _ in data for d in (tp, b) if d is not None and fld in d])
+        ranges, vals = {}, [dict() for _ in data]
         for fld, title in (("speed", "speed (m/yr)"), ("vx", "vx, along the flow (m/yr)"),
                            ("vy", "vy, across (m/yr)"), ("vz", "vz, vertical (m/yr)")):
             if fld == "speed" and not DIFF:
                 lo, hi, cs = P0[1], P0[2], P0[3]
             else:
-                v = np.abs(np.concatenate([tp0[fld], b0[fld]]))
+                v = np.abs(allv(fld))
                 v = v[np.isfinite(v)]
                 hi = float(np.percentile(v, 99)) if len(v) else 1.0
-                if fld == "vx":
+                if fld == "vx" and not DIFF:
                     hi = P0[2]
                 hi = max(hi, 1e-6)
                 lo, cs = -hi, "RdBu_r"
-            tf = panel_traces(tp0, b0, (fld, lo, hi, cs, title, P0[5], P0[6]))
-            tf = [tf[n] for n in idx]
-            buttons.append(dict(label=fld, method="restyle", args=[dict(
-                intensity=[get(t_, "intensity") for t_ in tf], customdata=[get(t_, "customdata") for t_ in tf],
-                cmin=[lo] * len(tf), cmax=[hi] * len(tf), colorscale=[cs] * len(tf),
-                **{"colorbar.title.text": [title] * len(tf)}), idx]))
+            ranges[fld] = dict(lo=lo, hi=hi, cs=get_colorscale(cs), title=title)
+            for n, (_, tp, b, _) in enumerate(data):
+                tf = [t_ for t_ in panel_traces(tp, b, (fld, lo, hi, cs, title, P0[5], P0[6]))
+                      if get(t_, "intensity") is not None]
+                if len(tf) != len(idx):              # a state drawn with other traces: no switch there
+                    vals[n][fld] = None
+                    continue
+                vals[n][fld] = [[None if not np.isfinite(x) else round(float(x), 2) for x in np.asarray(t_["intensity"])]
+                                for t_ in tf]
             print(f"  colour switch {fld}: {lo:.3g} .. {hi:.3g} m/yr")
-        del both
+        buttons = [dict(label=fld, method="skip", args=[None]) for fld in ranges]
         menus = [dict(type="buttons", direction="right", buttons=buttons, x=0.0, y=1.06, xanchor="left",
-                      yanchor="bottom", showactive=True, pad=dict(r=4, t=0))]
+                      yanchor="bottom", showactive=True, pad=dict(r=4, t=0),
+                      active=list(ranges).index(P0[0]) if P0[0] in ranges else 0)]
+        switch_js = ("""
+var gdv = document.getElementsByClassName('plotly-graph-div')[0];
+var V = %s, R = %s, IDX = %s, OWN = %s, cur = {s: 0, f: OWN};
+function showField() {
+  var d = V[cur.s][cur.f], r = R[cur.f], cd = [];
+  if (!d) return;
+  for (var q = 0; q < IDX.length; q++) {
+    var old = gdv.data[IDX[q]].customdata, a = d[q];
+    if (old && old.length && Array.isArray(old[0])) cd.push(a.map(function (x, k) { return [x, old[k][1]]; }));
+    else cd.push(a);
+  }
+  var n = IDX.length, u = {intensity: d, customdata: cd, cmin: Array(n).fill(r.lo), cmax: Array(n).fill(r.hi),
+           colorscale: Array(n).fill(r.cs)};
+  u['colorbar.title.text'] = Array(n).fill(r.title);
+  Plotly.restyle(gdv, u, IDX);
+}
+gdv.on('plotly_buttonclicked', function (e) { if (e.button && R[e.button.label]) { cur.f = e.button.label; showField(); } });
+gdv.on('plotly_sliderchange', function (e) { cur.s = parseInt(e.step.args[0][0]); });
+gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
+""" % (json.dumps(vals, allow_nan=False), json.dumps(ranges), json.dumps(idx), json.dumps(P0[0])))
     frames = [go.Frame(data=traces(tp, b), name=str(n)) for n, (_, tp, b, _) in enumerate(data)]
     steps = [dict(method="animate", label=l, args=[[str(n)], dict(mode="immediate", frame=dict(duration=0, redraw=True),
                                                                   transition=dict(duration=0))])
@@ -831,8 +860,9 @@ gd.on('plotly_relayout', function (e) {
   if (e['scene2.camera']) u['scene.camera'] = e['scene2.camera'];
   if (Object.keys(u).length) { busy = true; Plotly.relayout(gd, u).then(function () { busy = false; }); }
 });""" if temp else None)
+    post = "\n".join(x for x in (sync, switch_js) if x) or None
     # the page width and height (no fixed size: no sideways scrolling; resizes with the window)
-    fig.write_html(out, include_plotlyjs="cdn", post_script=sync, config=dict(responsive=True),
+    fig.write_html(out, include_plotlyjs="cdn", post_script=post, config=dict(responsive=True),
                    default_width="100%", default_height="95vh")
     print(f"wrote {out}")
     if SHOW:
