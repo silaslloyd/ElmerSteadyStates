@@ -361,6 +361,20 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   LOGICAL :: gotReb
   LOGICAL, SAVE :: lowFill = .FALSE.     ! this rank's factors have the low (rebuild) fill pattern
   INTEGER :: nrec
+  ! "FS SSA Adaptive Preconditioning" = String "ILU0 ILU1 ILU2": the preconditioner by how hard the last solve was
+  ! (its real time, "Linear System Timing", and whether it converged; the same decision on every rank): one level
+  ! up after a solve that did not converge or took more than "FS SSA Adaptive Slow Factor" (default 5) times the
+  ! running mean of the easy solves at the first level, back to the first level after "FS SSA Adaptive Calm Solves"
+  ! (default 20) easy solves in a row. A level change frees the ILU factors and their fill pattern on every rank
+  ! (refactorised at the new level for this solve).
+  CHARACTER(:), ALLOCATABLE :: adaStr
+  LOGICAL :: gotAda, adaSlow, adaChange
+  CHARACTER(LEN=16), SAVE :: adaLev(8)
+  INTEGER, SAVE :: adaN = 0, adaK = 1, adaCalm = 0
+  REAL(KIND=dp), SAVE :: adaRef = -1.0_dp
+  LOGICAL, SAVE :: adaFirst = .TRUE.
+  REAL(KIND=dp) :: adaT, adaConv, adaFac
+  INTEGER :: adaCalmN, ia0, ia1
   TYPE(Matrix_t), POINTER :: Mloc
   TYPE(Variable_t), POINTER :: gmVar
   INTEGER, ALLOCATABLE, SAVE :: prevGM(:)      ! grounded (1) / floating (-1) at the previous solve
@@ -526,7 +540,66 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
       IF ( ASSOCIATED( A % ParMatrix % SplittedMatrix % InsideMatrix ) ) Mloc => A % ParMatrix % SplittedMatrix % InsideMatrix
     END IF
   END IF
-  precReb = ListGetString( Solver % Values, 'FS SSA Rebuild Preconditioning', gotReb )
+  adaStr = ListGetString( Solver % Values, 'FS SSA Adaptive Preconditioning', gotAda )
+  IF ( gotAda ) THEN
+    IF ( adaN == 0 ) THEN                     ! the levels, blank separated
+      ia0 = 1
+      DO WHILE ( ia0 <= LEN_TRIM( adaStr ) .AND. adaN < 8 )
+        IF ( adaStr(ia0:ia0) == ' ' ) THEN; ia0 = ia0 + 1; CYCLE; END IF
+        ia1 = INDEX( adaStr(ia0:), ' ' )
+        ia1 = MERGE( LEN_TRIM( adaStr ), ia0 + ia1 - 2, ia1 == 0 )
+        adaN = adaN + 1
+        adaLev(adaN) = adaStr(ia0:ia1)
+        ia0 = ia1 + 1
+      END DO
+      IF ( adaN == 0 ) CALL Fatal( 'FSSSALinsolve', 'FS SSA Adaptive Preconditioning: no levels' )
+      CALL ListAddString( Solver % Values, 'Linear System Preconditioning', TRIM( adaLev(1) ) )
+    END IF
+    adaFac = ListGetConstReal( Solver % Values, 'FS SSA Adaptive Slow Factor', Found )
+    IF ( .NOT. Found ) adaFac = 5.0_dp
+    adaCalmN = ListGetInteger( Solver % Values, 'FS SSA Adaptive Calm Solves', Found )
+    IF ( .NOT. Found ) adaCalmN = 20
+    adaChange = .FALSE.
+    IF ( .NOT. adaFirst ) THEN                ! the previous solve of this solver
+      adaT = ListGetConstReal( Model % Simulation, 'res: linsys real time '//TRIM( GetVarName( Solver % Variable ) ), Found )
+      IF ( .NOT. Found ) adaT = 0.0_dp
+      adaConv = REAL( Solver % Variable % LinConverged, dp )
+      IF ( ParEnv % PEs > 1 ) THEN
+        adaT = ParallelReduction( adaT, 2 ); adaConv = ParallelReduction( adaConv, 1 )
+      END IF
+      IF ( adaK == 1 .AND. adaConv > 0.5_dp .AND. ( adaRef < 0.0_dp .OR. adaT <= adaFac * adaRef ) ) &
+          adaRef = MERGE( adaT, 0.8_dp * adaRef + 0.2_dp * adaT, adaRef < 0.0_dp )
+      adaSlow = adaConv < 0.5_dp .OR. ( adaRef > 0.0_dp .AND. adaT > adaFac * adaRef )
+      IF ( adaSlow .AND. adaK < adaN ) THEN
+        WRITE( Message, '(A,A,A,A,A,F8.2,A,F8.2,A,L1,A)' ) 'adaptive preconditioning: ', TRIM(adaLev(adaK)), ' -> ', &
+            TRIM(adaLev(adaK+1)), ' (last solve ', adaT, ' s, easy-solve mean ', adaRef, ' s, converged ', &
+            adaConv > 0.5_dp, ')'
+        CALL Info( 'FSSSALinsolve', Message, Level=3 )
+        adaK = adaK + 1; adaCalm = 0; adaChange = .TRUE.
+      ELSE IF ( adaK > 1 ) THEN
+        IF ( adaSlow ) THEN
+          adaCalm = 0
+        ELSE
+          adaCalm = adaCalm + 1
+          IF ( adaCalm >= adaCalmN ) THEN
+            WRITE( Message, '(A,A,A,A,A,I0,A)' ) 'adaptive preconditioning: ', TRIM(adaLev(adaK)), ' -> ', &
+                TRIM(adaLev(1)), ' (', adaCalm, ' easy solves)'
+            CALL Info( 'FSSSALinsolve', Message, Level=3 )
+            adaK = 1; adaCalm = 0; adaChange = .TRUE.
+          END IF
+        END IF
+      END IF
+    END IF
+    adaFirst = .FALSE.
+    IF ( adaChange ) THEN
+      CALL ListAddString( Solver % Values, 'Linear System Preconditioning', TRIM( adaLev(adaK) ) )
+      CALL FreeILU( Mloc )
+      rebuild = .TRUE.
+    END IF
+    gotReb = .FALSE.                          ! the adaptive levels replace the forced-rebuild preconditioner
+  ELSE
+    precReb = ListGetString( Solver % Values, 'FS SSA Rebuild Preconditioning', gotReb )
+  END IF
   IF ( gotReb ) THEN
     IF ( LEN_TRIM( precOwn ) == 0 ) precOwn = ListGetString( Solver % Values, 'Linear System Preconditioning', Found )
     nrec = ListGetInteger( Solver % Values, 'Linear System Precondition Recompute', Found )

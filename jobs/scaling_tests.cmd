@@ -224,6 +224,11 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # the Elmer run itself has no time limit of its own here (the config's timeout, 6 h, would stop a long single run):
 # the job's wall-time limit (TL) is the limit
 export ESS_ELMER_TIMEOUT=${ELMER_TIMEOUT:-604800}
+# ADAPTIVE_PREC=ILU0:ILU1:ILU2: the Stokes ILU level adapted to the last solve (one up after a slow or unconverged
+# solve, back to the first after 20 easy ones; FSSSALinsolve, marine FS-SSA runs); ADAPTIVE_PREC_FACTOR (default 5):
+# "slow" = that many times the mean time of the easy solves
+[ -n "$ADAPTIVE_PREC" ] && export ESS_ADAPTIVE_PREC=$ADAPTIVE_PREC && echo "  adaptive Stokes preconditioner: $ADAPTIVE_PREC"
+[ -n "$ADAPTIVE_PREC_FACTOR" ] && export ESS_ADAPTIVE_PREC_FACTOR=$ADAPTIVE_PREC_FACTOR
 # STEP_CHECK=1: elmer/StepCheck.F90 after every step ([elmer] step_check): the advective CFL of the surface and the
 # floating base, the largest change per step, the free-surface relaxation number, in the Elmer log ("step check")
 [ "$STEP_CHECK" = 1 ] && export ESS_STEP_CHECK=1 && echo "  step check on"
