@@ -11,6 +11,7 @@
 #
 #   DT=10 YEARS=500 FSSA=full sbatch jobs/flowline_fssa.cmd
 #   DT=10 YEARS=500 FSSA=adapted FS_COUPLED=1 COUPLED_ITERS=3 sbatch jobs/flowline_fssa.cmd
+#   CFG=configs/land_margin_3d.toml DT=50 YEARS=1000 FSSA=adapted FS_COUPLED=1 sbatch jobs/flowline_fssa.cmd   (3D)
 #
 # DT (yr, default 10), YEARS (default 500), FSSA = full | normal | transposed | none | adapted ([elmer] fssa),
 # FS_COUPLED=1: mesh mapping + free surfaces in the coupled loop with Stokes, COUPLED_ITERS (default 1; 3 with
@@ -31,8 +32,10 @@ if [ -n "$ELMER_PREFIX" ]; then        # the self-built Elmer in front of the mo
     export LD_LIBRARY_PATH=$ELMER_PREFIX/lib:$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/share/elmersolver/lib:$LD_LIBRARY_PATH
     export LIBRARY_PATH=$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}
 fi
-CFG=configs/marine_flowline.toml
-WORK=work/marine_flowline
+CFG=${CFG:-configs/marine_flowline.toml}   # CFG=...: another case (3D tests: configs/land_margin_3d.toml, ...)
+WORK=$(python3 -c "import os; from ess.config import load_config as L; print(os.path.relpath(L('$CFG')['_work']))")
+GLARG=$(grep -q '^geometry *= *"marine"' $CFG && echo "--gl contact" || true)   # land: no grounding line
+CASE=$(basename $CFG .toml); [ $CASE = marine_flowline ] && CASE= || CASE=${CASE}_   # tag prefix (not the flowline)
 N=${SLURM_NTASKS:-32}
 export ESS_NPROCS=$N ESS_MPIRUN="mpirun -np {n} --bind-to none"
 START=${START:-$WORK/fssa_start.npz}   # START=STATE: another start (e.g. a spun-up flowline state on this mesh)
@@ -40,20 +43,20 @@ START=${START:-$WORK/fssa_start.npz}   # START=STATE: another start (e.g. a spun
   if [ ! -d $WORK/case/footprint/partitioning.$N ] || { [ ! -f $START ] && [ $START = $WORK/fssa_start.npz ]; }; then
       echo "$(date +%T) setting up $CFG for $N ranks"
       python3 -u -m ess setup $CFG && python3 -u -m ess init $CFG --out $WORK/fssa_start.npz
-  fi ) 9> slurms/.fssa_setup.lock
+  fi ) 9> slurms/.fssa_setup_$(basename $CFG .toml).lock
 DT=${DT:-10}; YEARS=${YEARS:-500}
 STEPS=$(python3 -c "print(max(1, round($YEARS / $DT)))")
 export ESS_FSSA=${FSSA:-full}
 if [ "$FS_COUPLED" = 1 ]; then export ESS_FS_COUPLED=1; COUPLED_ITERS=${COUPLED_ITERS:-3}; fi
 export ESS_COUPLED_ITERS=${COUPLED_ITERS:-1}
-[ "$FSSA_PREV_TIMESTEP" = 1 ] && export ESS_FSSA_PREV_TIMESTEP=1 && TAG=${TAG:-dt${DT}_adaptedts_coupled${ESS_COUPLED_ITERS}}
+[ "$FSSA_PREV_TIMESTEP" = 1 ] && export ESS_FSSA_PREV_TIMESTEP=1 && TAG=${TAG:-${CASE}dt${DT}_adaptedts_coupled${ESS_COUPLED_ITERS}}
 export ESS_STEP_CHECK=1 ESS_KEEP_RUNS=1 ESS_NO_CACHE=1 ESS_ELMER_TIMEOUT=604800
 export ESS_VTU_EVERY=${VTU_EVERY:-$(python3 -c "print(max(1, $STEPS // 10))")}
-TAG=${TAG:-dt${DT}_${ESS_FSSA}$([ "$FS_COUPLED" = 1 ] && echo _coupled${ESS_COUPLED_ITERS} || true)}
-echo "$(date +%T) flowline FSSA test $TAG: dt $DT yr x $STEPS steps, FSSA $ESS_FSSA, coupled free surface ${FS_COUPLED:-0}," \
+TAG=${TAG:-${CASE}dt${DT}_${ESS_FSSA}$([ "$FS_COUPLED" = 1 ] && echo _coupled${ESS_COUPLED_ITERS} || true)}
+echo "$(date +%T) FSSA test $TAG ($CFG): dt $DT yr x $STEPS steps, FSSA $ESS_FSSA, coupled free surface ${FS_COUPLED:-0}," \
      "coupled iterations $ESS_COUPLED_ITERS, VTU every $ESS_VTU_EVERY steps, $N ranks"
 export ESS_RUN_LABEL=fssa${SLURM_JOB_ID:-local}
-python3 -u -m ess run $CFG --state $START --gl contact --stokes-only --dt $DT --steps $STEPS \
+python3 -u -m ess run $CFG --state $START $GLARG --stokes-only --dt $DT --steps $STEPS \
     --out $WORK/fssa_$TAG.npz --output-level 4 > slurms/fssa_${SLURM_JOB_ID:-local}_$TAG.log 2>&1 \
     || echo "$(date +%T) run failed (log slurms/fssa_${SLURM_JOB_ID:-local}_$TAG.log)"
 RUN=$(ls -d $WORK/runs/*_${ESS_RUN_LABEL}_*/ | head -1)
