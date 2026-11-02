@@ -7,7 +7,7 @@ j=${1:-$(squeue -u $USER -h -t R -o %i | head -1)}
 [ -n "$j" ] || { echo "no running job"; squeue -u $USER; exit 0; }
 echo "job $j  $(squeue -h -j $j -o '%T %M (limit %l) on %D nodes' 2>/dev/null)"
 f=slurms/scaling_$j.out
-w=$(grep -o "runs continue from [^:]*" $f 2>/dev/null | head -1 | sed 's|runs continue from ||; s|/scaling_.*$||')
+w=$(grep -o "runs continue from [^:]*" $f 2>/dev/null | head -1 | sed 's|runs continue from ||; s|/[^/]*\.npz$||; s|/scaling_.*$||')
 [ -n "$w" ] || w=work
 L=$(ls -td $w/runs/*/ 2>/dev/null | head -1)elmer.log
 grep -h "run: chunk" slurms/scaling_${j}_*.log 2>/dev/null | tail -1 | sed 's/.*run: /  /'
