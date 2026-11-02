@@ -34,10 +34,10 @@ SUBROUTINE StepCheck( Model, Solver, dt, Transient )
   TYPE(Mesh_t), POINTER :: Mesh
   TYPE(ValueList_t), POINTER :: Params
   TYPE(Element_t), POINTER :: Element
-  TYPE(Variable_t), POINTER :: cVar, sVar, u1, u2, zsVar, zbVar, gmVar
+  TYPE(Variable_t), POINTER :: cVar, sVar, u1, u2, zsVar, zbVar, gmVar, tVar
   REAL(KIND=dp), ALLOCATABLE :: h(:), zsN(:), zbN(:)
   INTEGER, ALLOCATABLE :: zsOf(:)
-  REAL(KIND=dp) :: rhoi, grav, mu, uh, c, dz, hmin, e, H, &
+  REAL(KIND=dp) :: rhoi, grav, mu, uh, c, dz, hmin, e, thick, &
       cTop, cBot, dTop, dBot, rFrac, rMax, xs(3), ys(3), loc(5,2), nTop1, nBot1, tnow
   INTEGER :: t, i, j, k, n, a, b, nn, p
   LOGICAL :: Found, top, bot, GotR
@@ -108,9 +108,9 @@ SUBROUTINE StepCheck( Model, Solver, dt, Transient )
       IF ( c > cBot ) THEN; cBot = c; loc(3,1) = Mesh % Nodes % x(i); loc(3,2) = Mesh % Nodes % y(i); END IF
       IF ( dz > dBot ) THEN; dBot = dz; loc(4,1) = Mesh % Nodes % x(i); loc(4,2) = Mesh % Nodes % y(i); END IF
       IF ( zsOf(i) > 0 ) THEN
-        H = zsN( zsOf(i) ) - nval( zbVar, i )
-        IF ( H > 1.0_dp ) THEN
-          IF ( dz / H > rFrac ) THEN; rFrac = dz / H; loc(5,1) = Mesh % Nodes % x(i); loc(5,2) = Mesh % Nodes % y(i); END IF
+        thick = zsN( zsOf(i) ) - nval( zbVar, i )
+        IF ( thick > 1.0_dp ) THEN
+          IF ( dz / thick > rFrac ) THEN; rFrac = dz / thick; loc(5,1) = Mesh % Nodes % x(i); loc(5,2) = Mesh % Nodes % y(i); END IF
         END IF
       END IF
     ELSE
@@ -132,7 +132,8 @@ SUBROUTINE StepCheck( Model, Solver, dt, Transient )
     nTop1 = ParallelReduction( nTop1 ); nBot1 = ParallelReduction( nBot1 )
   END IF
   tnow = 0.0_dp
-  IF ( ASSOCIATED( VariableGet( Mesh % Variables, 'Time' ) ) ) tnow = VariableGet( Mesh % Variables, 'Time' ) % Values(1)
+  tVar => VariableGet( Mesh % Variables, 'Time' )
+  IF ( ASSOCIATED( tVar ) ) tnow = tVar % Values(1)
   WRITE( Message, '(A,F10.3,A,F9.3,A,F8.2,A,F7.2,A,I0,A,F9.3,A,F8.2,A,F7.2,A,I0,A)' ) 'step check t', tnow, &
       ': CFL surface ', cTop, ' (x', loc(1,1)/1e3_dp, ' y', loc(1,2)/1e3_dp, ' km; ', NINT(nTop1), ' nodes > 1), floating base ', &
       cBot, ' (x', loc(3,1)/1e3_dp, ' y', loc(3,2)/1e3_dp, ' km; ', NINT(nBot1), ' nodes > 1)'
