@@ -945,7 +945,7 @@ def main():
             tr += walls(top, base, P)
         if base is not None and "mask" in base:      # both panels (empty without a mask: same traces per state)
             # the cold/temperate boundary of the grounded bed (ColdTempMask +1 temperate, -1 cold; floating counted
-            # cold), pink, on the surface and the base of both panels; hidden until "temperate on" (MASK_IDX)
+            # cold), magenta, on the surface and the base of both panels; hidden until "temperate on" (MASK_IDX)
             tzd = {(round(x, 0), round(y, 0)): v for x, y, v in zip(top["x"], top["y"], top["v"])} if top else {}
             zt_ = np.array([tzd.get((round(x, 0), round(y, 0)), v) for x, y, v in zip(base["x"], base["y"], base["v"])])
             if "ct" in base:
@@ -960,7 +960,7 @@ def main():
                 qt += [None if v is None else v + 6.0 for v in mt] + [None]
                 qb += [None if v is None else v - 6.0 for v in mb] + [None]
             for z_, nm in ((qt, "cold | temperate bed (on the surface)"), (qb, "cold | temperate bed (on the base)")):
-                tr.append(go.Scatter3d(x=qx, y=qy, z=z_, mode="lines", line=dict(color="hotpink", width=6), name=nm,
+                tr.append(go.Scatter3d(x=qx, y=qy, z=z_, mode="lines", line=dict(color="#ff00e0", width=6), name=nm,
                                        legendgroup="ctmask", scene=sc, showlegend=False, connectgaps=False,
                                        hovertemplate="cold | temperate at x %{x:.2f} km, y %{y:.2f} km<extra></extra>"))
         if base is not None and "mask" in base:
@@ -1157,7 +1157,7 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
                               showactive=True, pad=dict(r=4, t=0), active=0,
                               buttons=[dict(label="temperate off", method="restyle", args=[{"visible": False}, ct_idx]),
                                        dict(label="temperate on", method="restyle", args=[{"visible": True}, ct_idx])])]
-        print(f"  cold/temperate boundary toggle on {len(ct_idx)} traces (pink, both panels)")
+        print(f"  cold/temperate boundary toggle on {len(ct_idx)} traces (magenta, both panels)")
     st_idx = [n for n, t_ in enumerate(first) if getattr(t_, "legendgroup", None) == "stream"]
     if st_idx:
         menus = menus + [dict(type="buttons", direction="right", x=0.84, y=1.06, xanchor="left", yanchor="bottom",
