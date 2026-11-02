@@ -993,13 +993,17 @@ End
             # grounded mask changed (cheaper to factorise than the solver's ILU4; that one again at the scheduled
             # recompute)
             # ESS_ADAPTIVE_PREC="ILU0:ILU1:ILU2" (jobs ADAPTIVE_PREC): the Stokes preconditioner one level up after a slow
-            # or unconverged solve, back to the first after 20 easy ones (FSSSALinsolve; needs Linear System Timing)
+            # or unconverged solve, back to the first after 200 easy ones (FSSSALinsolve; needs Linear System Timing)
             ada = os.environ.get("ESS_ADAPTIVE_PREC")
             if ada:
                 sec += f'\n  FS SSA Adaptive Preconditioning = String "{" ".join(re.split(r"[:,; ]+", ada.strip()))}"'
                 fac = os.environ.get("ESS_ADAPTIVE_PREC_FACTOR")
                 if fac:
                     sec += f"\n  FS SSA Adaptive Slow Factor = Real {float(fac)!r}"
+                # back to the first level after this many easy solves in a row (ESS_ADAPTIVE_PREC_CALM; default 200: at
+                # 20 the coarse run kept dropping to an ILU0 that failed, ~45 s every 10 steps)
+                calm = int(os.environ.get("ESS_ADAPTIVE_PREC_CALM") or 200)
+                sec += f"\n  FS SSA Adaptive Calm Solves = Integer {calm}"
                 if not re.search(r"\n *Linear System Timing *=", sec):
                     sec += "\n  Linear System Timing = Logical True"
             rp = os.environ.get("ESS_FS_SSA_REBUILD_PREC")
