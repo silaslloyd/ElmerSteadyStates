@@ -24,6 +24,8 @@ else Delaunay triangles of the nodes).
 Streamlines of the surface velocity on the surface of both panels (black on velocity, white on temperature), one per
 state; "streamlines off" / "streamlines on" hides them; --stream-spacing KM (default 5) between their seeds across the
 flow; --no-streamlines: none.
+Many states make a big page: --every N keeps every N-th state (and the last), --years T0 T1 only frames in that time
+range; --no-switch drops the vx/vy/vz data (a large share of the page).
     python plots/plot_state_3d.py work/<config>/runs/<run>                  # a run with ESS_VTU_EVERY: every step
     python plots/plot_state_3d.py A.npz --diff B.npz                      # colours: A minus B (same mesh)
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
@@ -691,11 +693,26 @@ def main():
         k = args.index("--tile")
         TILE = max(1, int(args[k + 1]))
         args = args[:k] + args[k + 2:]
+    every, tsel = 1, None
+    if "--every" in args:                         # --every N: every N-th state (the last one always kept)
+        k = args.index("--every")
+        every = max(1, int(args[k + 1]))
+        args = args[:k] + args[k + 2:]
+    if "--years" in args:                         # --years T0 T1: only the frames with T0 <= t <= T1 (frames files)
+        k = args.index("--years")
+        tsel = (float(args[k + 1]), float(args[k + 2]))
+        args = args[:k] + args[k + 2 + 1:]
     if SHOW_PARTS and not MESH_DIR:
         raise SystemExit("--partitions needs --mesh-dir CASE/footprint (with its partitioning.N)")
     sys.argv = [sys.argv[0]] + args
     items = collect(args or ["work/test_periodic_gl/fix"])
-    print(f"{len(items)} states")
+    if tsel:
+        tv = lambda lab: float(lab[2:-3]) if lab.startswith("t ") and lab.endswith(" yr") else None
+        items = [it for it in items if tv(it[0]) is None or tsel[0] - 1e-6 <= tv(it[0]) <= tsel[1] + 1e-6]
+    if every > 1 and len(items) > 1:
+        items = [it for n, it in enumerate(items) if n % every == 0 or n == len(items) - 1]
+    print(f"{len(items)} states" + (f" (every {every}-th)" if every > 1 else "")
+          + (f" (years {tsel[0]:g} .. {tsel[1]:g})" if tsel else ""))
     data = []
     for label, f in items:
         top, base, t = surfaces(f)
