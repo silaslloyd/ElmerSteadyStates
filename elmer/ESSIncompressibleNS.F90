@@ -1801,6 +1801,7 @@ CONTAINS
     REAL(KIND=dp) :: PrevSol(dim+1,nd)                   ! ESS adapted FSSA
     TYPE(Variable_t), POINTER :: citer                   ! ESS adapted FSSA
     LOGICAL :: adaptedLater                              ! ESS adapted FSSA: a coupled iteration after the first
+    REAL(KIND=dp) :: ESSupn                              ! ESS adapted FSSA: u_prev . n at the Gauss point
     TYPE(Variable_t), POINTER, SAVE :: SlipCoeffVar, SlipSpeedVar, SlipWeightVar
     LOGICAL, SAVE :: SaveSlipSpeed, SaveSlipCoeff, SaveSlipWeight
 
@@ -2199,6 +2200,16 @@ CONTAINS
       ! Assemble given forces to r.h.s.
       IF( HaveForce .OR. HavePres .OR. HaveFSSA ) THEN
         FSSAaccum = ListGetElementReal( FSSAaccum_h, Basis, Element, GaussPoint = t )
+        ! ESS adapted FSSA: u_prev . n AT THIS GAUSS POINT (interpolated), so that the right-hand side is the same
+        ! consistent boundary mass matrix as the stiffness term and cancels it exactly when the iterations converge
+        ! (a nodal value times Basis(q) is a lumped mass: it leaves (M - M_lumped) u . n behind, which feeds the
+        ! node-to-node zig-zag)
+        ESSupn = 0._dp
+        IF ( HaveFSSA .AND. adaptedLater ) THEN
+          DO q=1,nd
+            ESSupn = ESSupn + Basis(q) * SUM( PrevSol(1:dim,q) * Normal(1:dim) )
+          END DO
+        END IF
         IF ( NormalTangential ) THEN
           DO i=1,dim
             SELECT CASE(i)
@@ -2216,8 +2227,7 @@ CONTAINS
                 FORCE(l) = FORCE(l) + s * Basis(q) * SurfaceTraction(i) * Vect(j)
                 IF(HaveFSSA) THEN
                   IF ( i==1 .AND. adaptedLater ) THEN            ! ESS adapted FSSA
-                    FORCE(l) = FORCE(l) - s * FSSAtheta * dt * SUM( PrevSol(1:dim,q) * Normal(1:dim) ) &
-                        * Basis(q) * LoadVec(j)
+                    FORCE(l) = FORCE(l) - s * FSSAtheta * dt * ESSupn * Basis(q) * LoadVec(j)
                   ELSE IF (i==1) THEN
                     FORCE(l) = FORCE(l) + s * FSSAtheta * dt * FSSAaccum * Basis(q) * LoadVec(j)
                   END IF
@@ -2232,8 +2242,7 @@ CONTAINS
               FORCE(k) = FORCE(k) + s * Basis(q) * SurfaceTraction(i)
               IF(HaveFSSA) THEN
                 IF ( adaptedLater ) THEN                         ! ESS adapted FSSA
-                  FORCE(k) = FORCE(k) - s * FSSAtheta * dt * SUM( PrevSol(1:dim,q) * Normal(1:dim) ) &
-                      * Basis(q) * LoadVec(i)
+                  FORCE(k) = FORCE(k) - s * FSSAtheta * dt * ESSupn * Basis(q) * LoadVec(i)
                 ELSE
                   FORCE(k) = FORCE(k) + s * FSSAtheta * dt *  FSSAaccum * Basis(q) * LoadVec(i)
                 END IF
