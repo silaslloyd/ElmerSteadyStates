@@ -18,7 +18,9 @@ slider through the states.
                                                                             # white (without --mesh-dir: Delaunay)
     python plots/plot_state_3d.py STATE.npz --partitions --mesh-dir CASE/footprint   # partition outlines, white
 Buttons above the velocity panel switch its colours between speed, vx, vy and vz; above the temperature panel,
-"T capped at melting" makes 273.15 K the top colour (everything at or above melting the same).
+"mesh on" / "mesh off" (above the temperature panel) shows the element edges on the base in white (drawn at the first
+state's base; --mesh: on from the start; --no-mesh-toggle: no buttons, a smaller page; --mesh-dir: the real elements,
+else Delaunay triangles of the nodes).
     python plots/plot_state_3d.py work/<config>/runs/<run>                  # a run with ESS_VTU_EVERY: every step
     python plots/plot_state_3d.py A.npz --diff B.npz                      # colours: A minus B (same mesh)
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
@@ -61,6 +63,7 @@ MESH_DIR = None          # --mesh-dir DIR: the footprint mesh (ElmerGrid directo
 FS_SSA = 0.0             # km: draw the full-Stokes | SSA boundary this far beyond the grounding line (--fs-ssa 10)
 WALLS = False            # walled sides: the distance to the grounding line not wrapped across y (--walls)
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
+MESH_TOGGLE = True       # the "mesh off / mesh on" buttons for the base mesh (white); --no-mesh-toggle: none (smaller)
 SWITCH = True            # the speed/vx/vy/vz buttons (their values for every state go into the page; --no-switch: smaller)
 T_RANGE = (None, None)   # temperature colour range (K); None: all temperatures in the window (--tmin / --tmax)
 SHOW = True
@@ -489,6 +492,7 @@ def gl_line(base, top=None):
 def main():
     import plotly.graph_objects as go
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
+    global MESH_TOGGLE
     args = sys.argv[1:]
     if "--vmax-all" in args:
         VMAX_GL = False
@@ -531,6 +535,9 @@ def main():
     if "--no-switch" in args:
         SWITCH = False
         args.remove("--no-switch")
+    if "--no-mesh-toggle" in args:
+        MESH_TOGGLE = False
+        args.remove("--no-mesh-toggle")
     for opt, i in (("--tmin", 0), ("--tmax", 1)):
         if opt in args:
             k = args.index(opt)
@@ -752,8 +759,6 @@ def main():
                 tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["bed"] - 1.0, i=i, j=j,
                                     k=k, color="#999999", opacity=0.35, name="bedrock", hoverinfo="skip",
                                     showlegend=False, scene=sc))
-        if SHOW_MESH and base is not None:
-            tr.append(mesh_lines(base, P))
         if SHOW_PARTS and base is not None and top is not None:
             t_, p_ = mesh_elements(MESH_DIR, base["x"], base["y"])
             e = partition_edges(t_, p_)
@@ -949,30 +954,20 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
             else:
                 out.append(t_)
         return out
-    # temperature colour cap: "T full range" / "T ≤ melting" (cmax = T0, everything at or above melting the top
-    # colour), kept through the slider
-    tcap_js = None
-    if temp and not DIFF and data[0][1] is not None and data[0][2] is not None:
-        n0 = len(panel_traces(data[0][1], data[0][2], panels[0]))
-        tidx = [n0 + n for n, t_ in enumerate(panel_traces(data[0][1], data[0][2], panels[1]))
-                if getattr(t_, "intensity", None) is not None]
-        T0 = 273.15
-        menus = menus + [dict(type="buttons", direction="right", x=0.52, y=1.06, xanchor="left", yanchor="bottom",
-                              showactive=True, pad=dict(r=4, t=0), active=0,
-                              buttons=[dict(label="T full range", method="skip", args=[None]),
-                                       dict(label="T capped at melting", method="skip", args=[None])])]
-        tcap_js = ("""
-var gdt = document.getElementsByClassName('plotly-graph-div')[0];
-var TIDX = %s, TMAX = %s, TCAP = %s, tcap = false;
-function applyCap() { Plotly.restyle(gdt, {cmax: Array(TIDX.length).fill(tcap ? TCAP : TMAX)}, TIDX); }
-gdt.on('plotly_buttonclicked', function (e) {
-  if (!e.button) return;
-  if (e.button.label === 'T capped at melting') { tcap = true; applyCap(); }
-  else if (e.button.label === 'T full range') { tcap = false; applyCap(); }
-});
-gdt.on('plotly_animated', function () { if (tcap) applyCap(); });
-""" % (json.dumps(tidx), json.dumps(float(panels[1][2])), json.dumps(T0)))
-        print(f"  temperature cap button: colours up to {T0} K on {len(tidx)} traces")
+    # the base mesh (white element edges) as a toggle: one trace per panel AFTER the frames' traces (the slider never
+    # touches them: drawn at the first state's base), hidden unless --mesh; buttons "mesh off" / "mesh on"
+    if MESH_TOGGLE and data[0][2] is not None:
+        midx = []
+        for P in panels:
+            t_ = mesh_lines(data[0][2], P)
+            t_.visible = SHOW_MESH
+            midx.append(len(first))
+            first.append(t_)
+        menus = menus + [dict(type="buttons", direction="right", x=0.52 if temp else 0.40, y=1.06, xanchor="left",
+                              yanchor="bottom", showactive=True, pad=dict(r=4, t=0), active=1 if SHOW_MESH else 0,
+                              buttons=[dict(label="mesh off", method="restyle", args=[{"visible": False}, midx]),
+                                       dict(label="mesh on", method="restyle", args=[{"visible": True}, midx])])]
+        print(f"  base mesh toggle on {len(midx)} panel(s) (drawn at the first state's base)")
     frames = [go.Frame(data=lean(tidy(traces(tp, b))), name=str(n)) for n, (_, tp, b, _) in enumerate(data)]
     steps = [dict(method="animate", label=l, args=[[str(n)], dict(mode="immediate", frame=dict(duration=0, redraw=True),
                                                                   transition=dict(duration=0))])
@@ -1007,7 +1002,7 @@ gd.on('plotly_relayout', function (e) {
   if (e['scene2.camera']) u['scene.camera'] = e['scene2.camera'];
   if (Object.keys(u).length) { busy = true; Plotly.relayout(gd, u).then(function () { busy = false; }); }
 });""" if temp else None)
-    post = "\n".join(x for x in (sync, switch_js, tcap_js) if x) or None
+    post = "\n".join(x for x in (sync, switch_js) if x) or None
     # the page width and height (no fixed size: no sideways scrolling; resizes with the window)
     fig.write_html(out, include_plotlyjs="cdn", post_script=post, config=dict(responsive=True),
                    default_width="100%", default_height="95vh")
