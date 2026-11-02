@@ -2,8 +2,10 @@
 ! elmer/ESSIncompressibleNS.so, with ONE ADDITION marked "ESS adapted FSSA": the "adapted" FSSA of a collaborator's
 ! IncompressibleNSVec.F90 (FSSA Flag = "adapted"): the stiffness term of "full", and on the right-hand side the
 ! accumulation term in the first coupled iteration of a time step, from the second on instead
-! - theta dt (u_prev . n) rho g, u_prev the velocity of the previous time step (more coupled iterations: Steady State
-! Max Iterations, [map] coupled_iters; 3 in 2D was quick and accurate for them).
+! - theta dt (u_prev . n) rho g: the simplified subtraction-FSSA (Ahlkrona, Henry, Loefgren, GMD 19, 2333, 2026, Eq. 21)
+! with u_prev the velocity of the previous coupled ITERATION (the collaborator's file used the previous time step's:
+! BC keyword "FSSA Adapted Previous Time Step" = True for that). More coupled iterations: Steady State Max
+! Iterations, [map] coupled_iters (2-3 in the paper).
 !/*****************************************************************************/
 ! *
 ! *  Elmer, A Finite Element Software for Multiphysical Problems
@@ -69,6 +71,11 @@ MODULE IncompressibleLocalForms
   ! mixed tri/quad mesh ("-tri b:1 -quad b:3") the blocks then overlap and
   ! elements read each other's bubbles. Only nb of the MaxBDOFs slots in a
   ! block are written; the rest stay zero.
+
+  ! ESS adapted FSSA: the velocity of the previous coupled (implicit) iteration, saved by IncompressibleNSSolver when
+  ! it is called (before its own nonlinear iterations), for the subtraction-FSSA of Ahlkrona, Henry and Loefgren
+  ! (GMD 19, 2333, 2026, Eq. 21): from the second coupled iteration on, - theta dt rho g (u_{r-1} . n)
+  REAL(KIND=dp), ALLOCATABLE, SAVE :: ESSIterPrev(:)
 
   ! Per-thread handle/cache storage for LocalBulkMatrix and EffectiveViscosityVec.
   ! NOT THREADPRIVATE (Windows/GCC emutls bug inherits master's ALLOCATABLE/POINTER
@@ -1910,7 +1917,15 @@ CONTAINS
     IF ( FSSAFlag == 'adapted' ) THEN
       citer => VariableGet( CurrentModel % Mesh % Variables, 'coupled iter', ThisOnly = .TRUE. )
       IF ( ASSOCIATED( citer ) ) adaptedLater = ( NINT( citer % Values(1) ) > 1 )
-      IF ( adaptedLater ) CALL GetLocalSolution( PrevSol, tStep = -1 )
+      IF ( adaptedLater ) THEN
+        ! the previous ITERATION's velocity (Eq. 21; "FSSA Adapted Previous Time Step" = True: the previous time
+        ! step's, as the collaborator's IncompressibleNSVec.F90: GetLocalSolution(PrevSol, tStep=-1))
+        IF ( ListGetLogical( BC, 'FSSA Adapted Previous Time Step', Found ) .OR. .NOT. ALLOCATED( ESSIterPrev ) ) THEN
+          CALL GetLocalSolution( PrevSol, tStep = -1 )
+        ELSE
+          CALL ESSPrevIterLocal( PrevSol )
+        END IF
+      END IF
     END IF
 
     HaveFrictionW = ListCheckPresent( BC,'Weertman Friction Coefficient')
@@ -2289,6 +2304,25 @@ CONTAINS
 
     CALL DefaultUpdateEquations( STIFF, FORCE )
 
+  CONTAINS
+    ! ESS adapted FSSA: the element's nodal values of the previous coupled iteration (ESSIterPrev)
+    SUBROUTINE ESSPrevIterLocal( X )
+      REAL(KIND=dp) :: X(:,:)
+      TYPE(Variable_t), POINTER :: V
+      INTEGER :: qq, kk, dd, nn0
+      V => CurrentModel % Solver % Variable
+      X = 0._dp
+      IF ( .NOT. ASSOCIATED( V ) ) RETURN
+      dd = V % DOFs
+      nn0 = MIN( SIZE( X, 2 ), SIZE( Element % NodeIndexes ) )
+      DO qq = 1, nn0
+        kk = Element % NodeIndexes(qq)
+        IF ( ASSOCIATED( V % Perm ) ) kk = V % Perm(kk)
+        IF ( kk <= 0 ) CYCLE
+        IF ( kk * dd > SIZE( ESSIterPrev ) ) CYCLE
+        X( 1:MIN(dd, SIZE(X,1)), qq ) = ESSIterPrev( (kk-1)*dd + 1 : (kk-1)*dd + MIN(dd, SIZE(X,1)) )
+      END DO
+    END SUBROUTINE ESSPrevIterLocal
   END SUBROUTINE LocalBoundaryMatrix
 
 
@@ -2802,7 +2836,12 @@ SUBROUTINE IncompressibleNSSolver(Model, Solver, dt, Transient)
     END IF
   END IF
 
-
+  ! ESS adapted FSSA: this call's starting velocity = the previous coupled iteration's (see ESSIterPrev)
+  IF ( ALLOCATED( ESSIterPrev ) ) THEN
+    IF ( SIZE( ESSIterPrev ) /= SIZE( Solver % Variable % Values ) ) DEALLOCATE( ESSIterPrev )
+  END IF
+  IF ( .NOT. ALLOCATED( ESSIterPrev ) ) ALLOCATE( ESSIterPrev( SIZE( Solver % Variable % Values ) ) )
+  ESSIterPrev = Solver % Variable % Values
 
   DO iter=1,maxiter
 
