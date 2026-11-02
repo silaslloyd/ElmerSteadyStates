@@ -15,6 +15,8 @@
 #   bash jobs/scaling_sweep.sh [POINT ...]        (default: all)
 # POINTs:  m96 m192 m384 m768   strong, marine, configs/test_periodic_gl_50km_tri.toml
 #          w192 w384            weak, marine: 12.5 km at 192, 25 km at 384 (the 50 km at 768 is m768)
+#          c384 c512 c768       the Coarse set-up, configs/coarse.toml (1 km, 100 km wide, shelf to 916 km); the first
+#                               time it builds the mesh and carries FROM= (a state of the 50 km mesh) over
 #          l72 l144 l288 l576   strong, land, configs/test_wall_land_50km_tri.toml (~0.7x the marine domain: the
 #                               marine's nodes per rank at 0.75x the ranks)
 # AFTER=<jobid>: the first point waits for that job. STEPS (default 20). HEAT=1: heat + strain heating on (with BED=cold:
@@ -40,6 +42,7 @@ for p in $POINTS; do
         m*) cfg=configs/test_periodic_gl_50km_tri.toml; extra="$MAR,FROM=work/test_periodic_gl_50km/start.npz";;
         w192) cfg=configs/test_periodic_gl_12p5km_tri.toml; extra="$MAR,FROM=work/test_periodic_gl_50km/start.npz";;
         w384) cfg=configs/test_periodic_gl_25km_tri.toml; extra="$MAR,FROM=work/test_periodic_gl_50km/start.npz";;
+        c*) cfg=configs/coarse.toml; extra="$MAR,FROM=${FROM:-work/test_periodic_gl_50km/start.npz}";;   # the Coarse mesh
         l*) cfg=configs/test_wall_land_50km_tri.toml; extra="$LAND,FROM=work/test_wall_land_50km/start.npz";;
         *) echo "unknown point $p"; exit 1;;
     esac
