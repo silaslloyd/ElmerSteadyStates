@@ -63,7 +63,7 @@ stokes_iterative_tol = 1.0e-8
 stokes_abort_not_converged = false
 linear_free_surface = "iterative"      # BiCGStab + ILU1
 vtu = false                             # true: every run also writes a VTU at its end
-friction_heat = "loads"                 # nodal friction heating from the Stokes loads (ElmerStreams)
+friction_heat = "flux"                  # tau_b . u_b = C(T) |u_b|^2 per unit area from the sliding law (smooth node to node; "loads": ElmerStreams nodal Stokes loads)
 # written with every run besides the state, used for the mask checks and plots
 diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "ColdTempMask", "GroundedMask", "Flow Solution Loads 3",
                "Temperature Loads", "Periodic Flow Solution Loads 3"]

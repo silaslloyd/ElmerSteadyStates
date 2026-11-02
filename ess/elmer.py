@@ -352,8 +352,8 @@ class ElmerModel(Model):
                     '  Temperature Load Condition = Equals "GroundedMask"')
         if self.friction_heat == "flux":
             return ('  Heat Flux BC = Logical True\n'
-                    '  Heat Flux = Variable Temperature, Velocity 1, Velocity 2, Velocity 3, Coordinate 1\n'
-                    '    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * (tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
+                    '  Heat Flux = Variable Temperature, Velocity 1, Velocity 2, Velocity 3, Coordinate 1, GroundedMask\n'
+                    '    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * ess_grounded(tx[5]) * (tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
         raise ValueError(f"[elmer] friction_heat must be 'loads' or 'flux', not {self.friction_heat!r}")
 
     @staticmethod
@@ -1007,8 +1007,8 @@ End
             raise ValueError("sliding = temperate: the Weertman Friction Coefficient expression of the template changed")
         text = text.replace(a, "fcoeff * ess_grounded(tx[2])")
         # flux friction heating: the same coefficient (C = fcoeff, the y bump, grounded) times |u_b|^2
-        f = ('  Heat Flux = Variable Temperature, Velocity 1, Velocity 2, Velocity 3, Coordinate 1\n'
-             '    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * (tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
+        f = ('  Heat Flux = Variable Temperature, Velocity 1, Velocity 2, Velocity 3, Coordinate 1, GroundedMask\n'
+             '    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * ess_grounded(tx[5]) * (tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
         if f in text:
             bump = (f" * (1 + {self.slide_ybump!r} * math.sin(2 * math.pi * tx[3] / {self.width!r}))"
                     if self.slide_ybump else "")
@@ -1318,7 +1318,17 @@ End
             b = ('  Weertman Friction Coefficient = Variable Temperature, Coordinate 1, GroundedMask, Coordinate 2, Time\n'
                  f'    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2]) * (1 + ({self.slide_ybump!r} + '
                  f'({end - self.slide_ybump!r}) * math.min(tx[4] / {H!r}, 1)) * math.sin(2 * math.pi * tx[3] / {self.width!r}))"')
-        return text.replace(a, b)
+        text = text.replace(a, b)
+        # flux friction heating: the same y factor as the sliding coefficient (tau_b . u_b = C |u_b|^2)
+        f = ('  Heat Flux = Variable Temperature, Velocity 1, Velocity 2, Velocity 3, Coordinate 1, GroundedMask\n'
+             '    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * ess_grounded(tx[5]) * (tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
+        if f in text and self.sliding != "temperate":    # temperate: _sliding_temperate writes its own (with the bump)
+            fac = b.split("ess_grounded(tx[2]) * ", 1)[1].rstrip('"').replace("tx[3]", "tx[6]").replace("tx[4]", "tx[7]")
+            text = text.replace(f, '  Heat Flux = Variable Temperature, Velocity 1, Velocity 2, Velocity 3, Coordinate 1, GroundedMask, '
+                                   'Coordinate 2' + (", Time" if "Time" in b.splitlines()[0] else "") + '\n'
+                                   f'    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * ess_grounded(tx[5]) * {fac} * '
+                                   '(tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
+        return text
 
     def _cartesian_bed(self, text):
         """the bed boundary condition ("interface") in x/y/z components (see cartesian_bed)"""
