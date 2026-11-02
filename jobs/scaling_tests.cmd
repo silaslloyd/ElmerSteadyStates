@@ -216,6 +216,9 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 [ -n "$SLIDE_YBUMP" ] && export ESS_SLIDE_YBUMP=$SLIDE_YBUMP && echo "  sliding y bump: $SLIDE_YBUMP"
 # CHECKPOINT_EVERY=N: a long single run (CHUNKS=1, many STEPS; output by VTU_EVERY) writes its state every N steps to
 # checkpoint.bin.* in the run directory (periodic_test/checkpoint_state.py RUNDIR START OUT: a state to continue from)
+# default: with VTU output, a checkpoint at every output step (CHECKPOINT_EVERY=0: none)
+[ -z "$CHECKPOINT_EVERY" ] && [ -n "$VTU_EVERY" ] && CHECKPOINT_EVERY=$VTU_EVERY
+[ "$CHECKPOINT_EVERY" = 0 ] && CHECKPOINT_EVERY=
 [ -n "$CHECKPOINT_EVERY" ] && export ESS_CHECKPOINT_EVERY=$CHECKPOINT_EVERY && opts="$opts --add-diag Pressure" \
     && echo "  checkpoint every $CHECKPOINT_EVERY steps"
 # the Elmer run itself has no time limit of its own here (the config's timeout, 6 h, would stop a long single run):
