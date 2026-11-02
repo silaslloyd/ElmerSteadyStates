@@ -58,9 +58,12 @@ SIDES = True             # side walls (base to surface) at the window ends and t
 TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
 VMAX_GL = True           # speed colours up to the surface speed on the grounding line (--vmax-all: the largest)
 VMAX = None              # speed colour maximum (m/yr), --vmax V
-# speed colours: white (slow) to dark purple (fast), as Schoof & Mantelli (2021)
-SPEED_CS = [[0.0, "#ffffff"], [0.125, "#efedf5"], [0.25, "#dadaeb"], [0.375, "#bcbddc"], [0.5, "#9e9ac8"],
-            [0.625, "#807dba"], [0.75, "#6a51a3"], [0.875, "#54278f"], [1.0, "#3f007d"]]
+# speed colours: Schoof & Mantelli (2021, Proc. R. Soc. A 477, 20200870) figs 4-7: pale cyan (slow) through blue to
+# violet (fast), linear; sampled from their colour bar
+SPEED_CS = [[0.0, "#d5fcfe"], [0.0625, "#a4ecfc"], [0.125, "#95ddfb"], [0.1875, "#8bcefa"], [0.25, "#86c0fa"],
+            [0.3125, "#81b1f9"], [0.375, "#7ea2f8"], [0.4375, "#7d94f8"], [0.5, "#7d86f7"], [0.5625, "#7e77f7"],
+            [0.625, "#8068f2"], [0.6875, "#855bf6"], [0.75, "#894df5"], [0.8125, "#8f40f6"], [0.875, "#9536f6"],
+            [0.9375, "#9c2cf6"], [1.0, "#a626f6"]]
 SHOW_PARTS = False       # --partitions: the partition outlines in white (needs --mesh-dir with a partitioning)
 MESH_DIR = None          # --mesh-dir DIR: the footprint mesh (ElmerGrid directory) whose elements --mesh draws
 FS_SSA = 0.0             # km: draw the full-Stokes | SSA boundary this far beyond the grounding line (--fs-ssa 10)
