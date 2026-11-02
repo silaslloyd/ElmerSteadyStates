@@ -1113,6 +1113,10 @@ End
                 text = text.replace("  FSSA Theta = Real 1.0", "  FSSA Theta = Real 0.0   ! [elmer] fssa = none")
             else:
                 text = text.replace(a, f'$fssaflag = "{self.fssa}"   ! [elmer] fssa')
+        if self.fssa == "adapted" and os.environ.get("ESS_FSSA_PREV_TIMESTEP") == "1":
+            # the collaborator's form: u_prev of the previous TIME step (default: the previous iteration, as the paper)
+            text = text.replace("  FSSA Flag = String $fssaflag", "  FSSA Flag = String $fssaflag\n"
+                                "  FSSA Adapted Previous Time Step = Logical True   ! ESS_FSSA_PREV_TIMESTEP")
         if self.fssa == "adapted":
             old = 'Procedure = "IncompressibleNSVec" "IncompressibleNSSolver"'
             if text.count(old) != 1:

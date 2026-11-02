@@ -46,6 +46,7 @@ STEPS=$(python3 -c "print(max(1, round($YEARS / $DT)))")
 export ESS_FSSA=${FSSA:-full}
 if [ "$FS_COUPLED" = 1 ]; then export ESS_FS_COUPLED=1; COUPLED_ITERS=${COUPLED_ITERS:-3}; fi
 export ESS_COUPLED_ITERS=${COUPLED_ITERS:-1}
+[ "$FSSA_PREV_TIMESTEP" = 1 ] && export ESS_FSSA_PREV_TIMESTEP=1 && TAG=${TAG:-dt${DT}_adaptedts_coupled${ESS_COUPLED_ITERS}}
 export ESS_STEP_CHECK=1 ESS_KEEP_RUNS=1 ESS_NO_CACHE=1 ESS_ELMER_TIMEOUT=604800
 export ESS_VTU_EVERY=${VTU_EVERY:-$(python3 -c "print(max(1, $STEPS // 10))")}
 TAG=${TAG:-dt${DT}_${ESS_FSSA}$([ "$FS_COUPLED" = 1 ] && echo _coupled${ESS_COUPLED_ITERS} || true)}
