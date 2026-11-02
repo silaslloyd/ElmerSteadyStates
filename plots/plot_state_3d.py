@@ -70,6 +70,10 @@ def collect(args):
     """[(label, path)] in order"""
     out = []
     for a in args:
+        if a.endswith(".npz") and is_frames(a):   # plots/vtu_frames.py: every output step of one long run
+            t = _frames(a)["frame_times"]
+            out += [(f"t {v:g} yr", f"{a}#{k}") for k, v in enumerate(t)]
+            continue
         if a.endswith(".npz"):
             out.append((os.path.basename(a)[:-4], a))
             continue
@@ -91,6 +95,46 @@ def collect(args):
     if not out:
         raise SystemExit(f"no states found in {args}")
     return out
+
+
+_FRAMES = {}
+
+
+def is_frames(path):
+    """a frames file of plots/vtu_frames.py (not a state file)"""
+    try:
+        with np.load(path, allow_pickle=False) as z:
+            return "frame_times" in z.files
+    except Exception:
+        return False
+
+
+def _frames(path):
+    if path not in _FRAMES:
+        with np.load(path, allow_pickle=False) as z:
+            _FRAMES[path] = {k: z[k] for k in z.files}
+    return _FRAMES[path]
+
+
+def frame_surfaces(path):
+    """top and base of frame k of a frames file ("FILE.npz#k"), as surfaces()"""
+    f, k = path.rsplit("#", 1)
+    F, k = _frames(f), int(k)
+
+    def side(name):
+        x, y = F[f"{name}_x"].astype(float), F[f"{name}_y"].astype(float)
+        d = dict(g=np.arange(len(x)), x=x, y=y, v=F[f"{name}_z"][k].astype(float))
+        if f"{name}_vx" in F:
+            for n in ("vx", "vy", "vz"):
+                d[n] = F[f"{name}_{n}"][k].astype(float)
+            d["speed"] = np.sqrt(d["vx"] ** 2 + d["vy"] ** 2 + d["vz"] ** 2)
+        for n in ("T", "mask", "ct", "hw", "melt", "cfl", "dz"):
+            if f"{name}_{n}" in F:
+                d[n] = F[f"{name}_{n}"][k].astype(float)
+        if f"{name}_bed" in F:
+            d["bed"] = F[f"{name}_bed"].astype(float)
+        return d
+    return side("top"), side("base"), float(F["frame_times"][k])
 
 
 def vtu_steps(d):
@@ -204,6 +248,8 @@ def surfaces(path):
     """the footprint grid and the fields on it for one state"""
     if path.endswith((".pvtu", ".vtu")):
         return vtu_surfaces(path)
+    if "#" in os.path.basename(path):
+        return frame_surfaces(path)
     s = load_state(path)
     g1, X = _rec(s, "coordinate 1")
     Y = dict(zip(g1.tolist(), _rec(s, "coordinate 2")[1].tolist()))

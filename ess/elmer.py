@@ -91,7 +91,8 @@ class ElmerModel(Model):
                         or int(os.environ.get("SLURM_NTASKS", "1")))
         self.mpirun = os.environ.get("ESS_MPIRUN") or e.get("mpirun", "mpirun -np {n}")
         self.solver = e.get("solver", "ElmerSolver")
-        self.timeout = float(e.get("timeout", 6 * 3600))
+        # seconds per Elmer run; env ESS_ELMER_TIMEOUT (long single runs with VTU output instead of chunks)
+        self.timeout = float(os.environ.get("ESS_ELMER_TIMEOUT") or e.get("timeout", 6 * 3600))
         self.keep_runs = bool(e.get("keep_runs", False)) or os.environ.get("ESS_KEEP_RUNS") == "1"
         self.use_cache = bool(e.get("cache", True)) and os.environ.get("ESS_NO_CACHE") != "1"
         # warm start (ess run --warm-start): records (e.g. Velocity 1..3, Pressure) set by StateRead at the start
@@ -699,6 +700,9 @@ End
         every = os.environ.get("ESS_VTU_EVERY")
         if every and int(every) > 0:
             text = self._vtu_every(text, int(every))
+        ck = os.environ.get("ESS_CHECKPOINT_EVERY")
+        if ck and int(ck) > 0:
+            text = self._checkpoint_every(text, int(ck))
         left = sorted(set(PLACEHOLDER.findall(text)))
         if left:
             raise ValueError(f"unfilled placeholders in {self.template}: {', '.join(left)}")
@@ -716,9 +720,12 @@ End
         n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M)) + 1
         base = ["GroundedMask", "bedrock"] + (["GL Distance"] if self.fs_ssa_x is not None else [])
         heat = [] if self.stokes_only else ["Temperature"]       # the temperature panel of plots/plot_state_3d.py
+        if self.thermal == "nowater" and not self.stokes_only:    # the mask and the sheet (plots/vtu_frames.py)
+            base += ["ColdTempMask", "Water Sheet Thickness", "Melt Rate"]
+        sc = ["CFL", "Step Change"] if self.step_check else []
         out = ""
-        for m, (fname, key, fields) in enumerate((("base", "ESS Save Base", base + heat),
-                                                  ("surface", "ESS Save Surface", heat))):
+        for m, (fname, key, fields) in enumerate((("base", "ESS Save Base", base + heat + sc),
+                                                  ("surface", "ESS Save Surface", heat + sc))):
             out += (f"\nSolver {n + m}\n"
                     '  Exec Solver = "After Timestep"\n'
                     f"  Exec Intervals(10) = Integer {' '.join([str(every)] * 10)}   ! per Timestep Interval (ramps)\n"
@@ -733,6 +740,24 @@ End
                     + "".join(f'  Scalar Field {k} = String "{f}"\n' for k, f in enumerate(fields, 1))
                     + "End\n")
         return text.rstrip() + "\n" + out
+
+    def _checkpoint_every(self, text, every):
+        """ESS_CHECKPOINT_EVERY=N (jobs CHECKPOINT_EVERY): every N steps the state written to checkpoint.bin.* in the
+        run directory (overwritten each time), as the run's final state_out.bin: a long single run that dies can be
+        continued from it (periodic_test/checkpoint_state.py RUNDIR START.npz OUT.npz)"""
+        k = text.index('Equation = "StateWrite"')
+        i = text.rindex("\nSolver ", 0, k) + 1
+        j = text.index("\nEnd", k) + len("\nEnd")
+        blk = text[i:j]
+        n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M)) + 1
+        blk = re.sub(r"^Solver \d+", f"Solver {n}", blk)
+        blk = blk.replace('Exec Solver = "After All"', 'Exec Solver = "After Timestep"\n'
+                          f"  Exec Intervals(10) = Integer {' '.join([str(every)] * 10)}   ! per Timestep Interval")
+        blk = blk.replace('Equation = "StateWrite"', 'Equation = "StateWriteCheckpoint"')
+        blk = re.sub(r'State File = File "[^"]*"', 'State File = File "checkpoint.bin"', blk)
+        if "checkpoint.bin" not in blk or "After Timestep" not in blk:
+            raise ValueError("checkpoint: the StateWrite solver of the template changed")
+        return text.rstrip() + "\n\n" + blk + "\n"
 
     def _periodic_sides(self, text):
         """marine template: side 2 the periodic image of side 1 (bedrock, filler, ice), free ice sides"""

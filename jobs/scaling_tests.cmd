@@ -214,6 +214,13 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # SLIDE_YBUMP=A: the sliding coefficient times 1 + A sin(2 pi y / width) ([case] slide_ybump; states spun up with 0.8
 # need it: switching it off at once leaves Stokes far from the new flow, GCR at the iteration cap)
 [ -n "$SLIDE_YBUMP" ] && export ESS_SLIDE_YBUMP=$SLIDE_YBUMP && echo "  sliding y bump: $SLIDE_YBUMP"
+# CHECKPOINT_EVERY=N: a long single run (CHUNKS=1, many STEPS; output by VTU_EVERY) writes its state every N steps to
+# checkpoint.bin.* in the run directory (periodic_test/checkpoint_state.py RUNDIR START OUT: a state to continue from)
+[ -n "$CHECKPOINT_EVERY" ] && export ESS_CHECKPOINT_EVERY=$CHECKPOINT_EVERY && opts="$opts --add-diag Pressure" \
+    && echo "  checkpoint every $CHECKPOINT_EVERY steps"
+# the Elmer run itself has no time limit of its own here (the config's timeout, 6 h, would stop a long single run):
+# the job's wall-time limit (TL) is the limit
+export ESS_ELMER_TIMEOUT=${ELMER_TIMEOUT:-604800}
 # STEP_CHECK=1: elmer/StepCheck.F90 after every step ([elmer] step_check): the advective CFL of the surface and the
 # floating base, the largest change per step, the free-surface relaxation number, in the Elmer log ("step check")
 [ "$STEP_CHECK" = 1 ] && export ESS_STEP_CHECK=1 && echo "  step check on"
