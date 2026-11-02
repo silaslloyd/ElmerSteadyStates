@@ -35,11 +35,11 @@ CFG=configs/marine_flowline.toml
 WORK=work/marine_flowline
 N=${SLURM_NTASKS:-32}
 export ESS_NPROCS=$N ESS_MPIRUN="mpirun -np {n} --bind-to none"
-START=$WORK/fssa_start.npz
+START=${START:-$WORK/fssa_start.npz}   # START=STATE: another start (e.g. a spun-up flowline state on this mesh)
 ( flock 9
-  if [ ! -f $START ] || [ ! -d $WORK/case/footprint/partitioning.$N ]; then
+  if [ ! -d $WORK/case/footprint/partitioning.$N ] || { [ ! -f $START ] && [ $START = $WORK/fssa_start.npz ]; }; then
       echo "$(date +%T) setting up $CFG for $N ranks"
-      python3 -u -m ess setup $CFG && python3 -u -m ess init $CFG --out $START
+      python3 -u -m ess setup $CFG && python3 -u -m ess init $CFG --out $WORK/fssa_start.npz
   fi ) 9> slurms/.fssa_setup.lock
 DT=${DT:-10}; YEARS=${YEARS:-500}
 STEPS=$(python3 -c "print(max(1, round($YEARS / $DT)))")
