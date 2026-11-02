@@ -21,7 +21,7 @@ With --switch, buttons above the velocity panel switch its colours between speed
 "mesh on" / "mesh off" (above the temperature panel) shows the element edges on the base in white (drawn at the first
 state's base; --mesh: on from the start; --no-mesh-toggle: no buttons, a smaller page; --mesh-dir: the real elements,
 else Delaunay triangles of the nodes).
-Streamlines of the surface velocity on the surface of both panels (black on velocity, white on temperature), one per
+Streamlines of the surface velocity on the surface of both panels (white), one per
 state; "streamlines off" / "streamlines on" hides them; --stream-spacing KM (default 5) between their seeds across the
 flow; --no-streamlines: none.
 Many states make a big page: --every N keeps every N-th state (and the last), --years T0 T1 only frames in that time
@@ -30,7 +30,7 @@ range. The speed/vx/vy/vz buttons are off (their data was a large share of the p
     python plots/plot_state_3d.py A.npz --diff B.npz                      # colours: A minus B (same mesh)
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
     python plots/plot_state_3d.py STATES... --no-switch                    # no vx/vy/vz buttons (a smaller page)
-Speed colours max out at the surface speed on the grounding line (--vmax V, or --vmax-all for the largest speed).
+Speed colours max out at 100 m/yr (--vmax V; --vmax-gl: the surface speed on the grounding line; --vmax-all: the largest).
 Structured footprints and the unstructured triangle ones (configs/*_tri.toml; Delaunay, needs scipy).
 With a Temperature field: a second panel next to it, the same geometry coloured by temperature (surface, base and
 side walls; the base shows the bed temperature, where a seam stripe from wrong loads would show).
@@ -62,7 +62,7 @@ SHOW_MESH = False        # the element edges on the base (--mesh to show)
 SIDES = True             # side walls (base to surface) at the window ends and the two outer sides
 TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
 VMAX_GL = True           # speed colours up to the surface speed on the grounding line (--vmax-all: the largest)
-VMAX = None              # speed colour maximum (m/yr), --vmax V
+VMAX = 100.0             # speed colour maximum (m/yr), --vmax V; --vmax-gl: the surface speed on the grounding line
 # speed colours: Schoof & Mantelli (2021, Proc. R. Soc. A 477, 20200870) figs 4-7: pale cyan (slow) through blue to
 # violet (fast), linear; sampled from their colour bar
 SPEED_CS = [[0.0, "#d5fcfe"], [0.0625, "#a4ecfc"], [0.125, "#95ddfb"], [0.1875, "#8bcefa"], [0.25, "#86c0fa"],
@@ -628,8 +628,11 @@ def main():
     global MESH_TOGGLE, STREAM, STREAM_KM
     args = sys.argv[1:]
     if "--vmax-all" in args:
-        VMAX_GL = False
+        VMAX_GL, VMAX = False, None
         args.remove("--vmax-all")
+    if "--vmax-gl" in args:
+        VMAX = None
+        args.remove("--vmax-gl")
     if "--vmax" in args:
         k = args.index("--vmax")
         VMAX = float(args[k + 1])
@@ -940,9 +943,9 @@ def main():
                                        connectgaps=False))
         if SIDES and top is not None and base is not None:
             tr += walls(top, base, P)
-        if sc == "scene2" and base is not None and "mask" in base:      # (empty without a mask: same traces per state)
+        if base is not None and "mask" in base:      # both panels (empty without a mask: same traces per state)
             # the cold/temperate boundary of the grounded bed (ColdTempMask +1 temperate, -1 cold; floating counted
-            # cold), on the surface and the base of the temperature panel; hidden until "temperate on" (MASK_IDX)
+            # cold), pink, on the surface and the base of both panels; hidden until "temperate on" (MASK_IDX)
             tzd = {(round(x, 0), round(y, 0)): v for x, y, v in zip(top["x"], top["y"], top["v"])} if top else {}
             zt_ = np.array([tzd.get((round(x, 0), round(y, 0)), v) for x, y, v in zip(base["x"], base["y"], base["v"])])
             if "ct" in base:
@@ -957,7 +960,7 @@ def main():
                 qt += [None if v is None else v + 6.0 for v in mt] + [None]
                 qb += [None if v is None else v - 6.0 for v in mb] + [None]
             for z_, nm in ((qt, "cold | temperate bed (on the surface)"), (qb, "cold | temperate bed (on the base)")):
-                tr.append(go.Scatter3d(x=qx, y=qy, z=z_, mode="lines", line=dict(color="lime", width=6), name=nm,
+                tr.append(go.Scatter3d(x=qx, y=qy, z=z_, mode="lines", line=dict(color="hotpink", width=6), name=nm,
                                        legendgroup="ctmask", scene=sc, showlegend=False, connectgaps=False,
                                        hovertemplate="cold | temperate at x %{x:.2f} km, y %{y:.2f} km<extra></extra>"))
         if base is not None and "mask" in base:
@@ -1021,7 +1024,7 @@ def main():
             qy = np.concatenate([sy + np.float32(c * W / 1e3) for c in range(TILE)])
             qz = np.concatenate([sz] * TILE)
             tr.append(go.Scatter3d(x=qx, y=qy, z=qz, mode="lines", connectgaps=False,
-                                   line=dict(color="black" if f != "T" else "white", width=2),
+                                   line=dict(color="white", width=2),
                                    name="streamlines (surface velocity)", legendgroup="stream", hoverinfo="skip",
                                    scene=sc, showlegend=first_panel))
         if top is not None and TILE > 1:
@@ -1154,7 +1157,7 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
                               showactive=True, pad=dict(r=4, t=0), active=0,
                               buttons=[dict(label="temperate off", method="restyle", args=[{"visible": False}, ct_idx]),
                                        dict(label="temperate on", method="restyle", args=[{"visible": True}, ct_idx])])]
-        print(f"  cold/temperate boundary toggle on {len(ct_idx)} traces (lime, temperature panel)")
+        print(f"  cold/temperate boundary toggle on {len(ct_idx)} traces (pink, both panels)")
     st_idx = [n for n, t_ in enumerate(first) if getattr(t_, "legendgroup", None) == "stream"]
     if st_idx:
         menus = menus + [dict(type="buttons", direction="right", x=0.84, y=1.06, xanchor="left", yanchor="bottom",
