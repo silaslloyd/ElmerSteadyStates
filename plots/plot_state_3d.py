@@ -307,7 +307,11 @@ _TRI_CACHE = {}
 
 def triangles(x, y):
     """triangles of the footprint (cached: every state and panel of a plot has the same footprint)"""
-    key = (len(x), float(np.sum(x)), float(np.sum(y)), float(np.sum(np.asarray(x) * np.asarray(y))))
+    # keyed on the node ORDER too: a state file (nodes by global id) and a frames file (nodes sorted by x, y) of the same
+    # mesh have the same nodes in another order, and the other's triangles connect the wrong nodes (spikes everywhere)
+    import hashlib
+    key = hashlib.sha1(np.ascontiguousarray(np.round(np.asarray(x, float), 1)).tobytes()
+                       + np.ascontiguousarray(np.round(np.asarray(y, float), 1)).tobytes()).hexdigest()
     if key not in _TRI_CACHE:
         _TRI_CACHE[key] = _triangles(x, y)
     return _TRI_CACHE[key]
