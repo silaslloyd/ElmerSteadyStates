@@ -19,7 +19,9 @@
 #                               time it builds the mesh and carries FROM= (a state of the 50 km mesh) over
 #          l72 l144 l288 l576   strong, land, configs/test_wall_land_50km_tri.toml (~0.7x the marine domain: the
 #                               marine's nodes per rank at 0.75x the ranks)
-# AFTER=<jobid>: the first point waits for that job. STEPS (default 20). HEAT=1: heat + strain heating on (with BED=cold:
+# HERE=1: inside an allocation that holds the nodes (e.g. `salloc --nodes=8 --ntasks=1024 --exclusive --time=72:00:00`
+# in tmux), run the points there one after another instead of submitting them: edit, git pull, run again on the
+# same nodes without queueing. # AFTER=<jobid>: the first point waits for that job. STEPS (default 20). HEAT=1: heat + strain heating on (with BED=cold:
 # the grounded bed's temperature free, may exceed T0). BED (default none: the start state's cold/temperate mask). TAG
 # (default _sweep): the runs' output names
 set -e
@@ -57,6 +59,19 @@ for p in $POINTS; do
     # wall-time limit: fewer ranks take longer (a 768-rank point ~25 min incl. warm-up; 96 ranks ~8x the work per rank)
     tl=03:00:00; [ "$n" -le 192 ] && tl=06:00:00; [ "$n" -le 96 ] && tl=10:00:00
     [ -n "$TL" ] && tl=$TL                       # TL=hh:mm:ss: the wall-time limit (long runs)
+    if [ "$HERE" = 1 ]; then
+        # HERE=1: run the point in THIS allocation (salloc: the nodes held, runs one after another with edits in
+        # between) instead of submitting it; output appended to slurms/scaling_<allocation id>.out (jobs/watch_run.sh)
+        [ -n "$SLURM_JOB_ID" ] || { echo "HERE=1: not inside an allocation (salloc first)"; exit 1; }
+        [ "${SLURM_NTASKS:-0}" -ge "$n" ] || { echo "HERE=1: the allocation has ${SLURM_NTASKS:-0} tasks, $p needs $n"; exit 1; }
+        echo "$p: running here in allocation $SLURM_JOB_ID ($cfg, $n ranks; output slurms/scaling_$SLURM_JOB_ID.out)"
+        set -f                                   # no glob expansion of the settings (WARMUP=...*3)
+        env $(echo "${BASE#ALL,},GL_CONFIG=$cfg,RANKS=$n,$extra,TAG=${TAG:-_sweep}" | tr ',' '\n') SLURM_SUBMIT_DIR=$PWD \
+            bash jobs/scaling_tests.cmd >> slurms/scaling_$SLURM_JOB_ID.out 2>&1 || echo "$p: the run failed"
+        set +f
+        echo "$p: finished ($(tail -1 slurms/scaling_$SLURM_JOB_ID.out))"
+        continue
+    fi
     j=$(sbatch --parsable $dep --ntasks=$n --time=$tl --export=$BASE,GL_CONFIG=$cfg,RANKS=$n,$extra,TAG=${TAG:-_sweep} jobs/scaling_tests.cmd)
     echo "$p: $j ($cfg, $n ranks)"
     dep="--dependency=afterany:$j"
