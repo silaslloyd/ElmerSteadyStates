@@ -32,11 +32,13 @@ EXTRA = {"coldtempmask": "ct", "water sheet thickness": "hw", "melt rate": "melt
 def run_timing(rundir):
     """(output interval in steps, dt in years) from the run's sif"""
     sif = open(os.path.join(rundir, "run.sif")).read()
-    m = re.search(r'Exec Intervals\(\d+\)\s*=\s*Integer\s+(\d+)[^\n]*\n\s*Equation = "vtu base"', sif)
+    m = re.search(r'Exec Intervals\(\d+\)\s*=\s*Integer\s+(\d+)[^\n]*\n(\s*Exec Intervals Offset[^\n]*\n)?'
+                  r'\s*Equation = "vtu base"', sif)
     every = int(m.group(1)) if m else 1
+    offset = bool(m and m.group(2))       # with the offset: output k at step k N; without (older runs): (k-1) N + 1
     m = re.search(r"Timestep Sizes\s*=\s*(?:Real\s*)?([-+0-9.eE]+)", sif)
     dt = float(m.group(1)) if m else 1.0
-    return every, dt
+    return every, dt, offset
 
 
 def surface(path):
@@ -78,7 +80,8 @@ def main():
     steps = vtu_steps(rundir)
     if not steps:
         raise SystemExit(f"{rundir}: no base_t*.pvtu (a run with VTU_EVERY?)")
-    every, dt = run_timing(rundir)
+    every, dt, offset = run_timing(rundir)
+    step_of = (lambda k: k * every) if offset else (lambda k: (k - 1) * every + 1)
     frames = {"top": [], "base": []}
     times = []
     for f in steps:
@@ -96,10 +99,10 @@ def main():
         frames["base"].append(b)
         frames["top"].append(t)
         k = int(re.findall(r"_t(\d+)", os.path.basename(f))[0])
-        if tmax is not None and t0 + k * every * dt > tmax + 1e-9:
+        if tmax is not None and t0 + step_of(k) * dt > tmax + 1e-9:
             frames["base"].pop(); frames["top"].pop()
             break
-        times.append(t0 + k * every * dt)
+        times.append(t0 + step_of(k) * dt)
     if not times:
         raise SystemExit("no readable steps")
     rec = {"frame_times": np.array(times), "frame_every": every, "frame_dt": dt, "frame_run": rundir}

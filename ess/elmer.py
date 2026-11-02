@@ -743,6 +743,8 @@ End
             out += (f"\nSolver {n + m}\n"
                     '  Exec Solver = "After Timestep"\n'
                     f"  Exec Intervals(10) = Integer {' '.join([str(every)] * 10)}   ! per Timestep Interval (ramps)\n"
+                    # at steps N, 2N, ... (Elmer: without the offset 1, N + 1, ...)
+                    f"  Exec Intervals Offset(10) = Integer {' '.join([str(every - 1)] * 10)}\n"
                     f'  Equation = "vtu {fname}"\n'
                     '  Procedure = "ResultOutputSolve" "ResultOutputSolver"\n'
                     f'  Output File Name = "{fname}"\n'
@@ -766,7 +768,8 @@ End
         n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M)) + 1
         blk = re.sub(r"^Solver \d+", f"Solver {n}", blk)
         blk = blk.replace('Exec Solver = "After All"', 'Exec Solver = "After Timestep"\n'
-                          f"  Exec Intervals(10) = Integer {' '.join([str(every)] * 10)}   ! per Timestep Interval")
+                          f"  Exec Intervals(10) = Integer {' '.join([str(every)] * 10)}   ! per Timestep Interval\n"
+                          f"  Exec Intervals Offset(10) = Integer {' '.join([str(every - 1)] * 10)}   ! at steps N, 2N, ...")
         blk = blk.replace('Equation = "StateWrite"', 'Equation = "StateWriteCheckpoint"')
         blk = re.sub(r'State File = File "[^"]*"', 'State File = File "checkpoint.bin"', blk)
         if "checkpoint.bin" not in blk or "After Timestep" not in blk:

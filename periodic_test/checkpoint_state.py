@@ -41,14 +41,17 @@ for nm in ("ColdTempMask", "GroundedMask", "Water Sheet Thickness"):     # the m
         del frozen[k]
     frozen[nm] = rec[kr]
 sif = open(os.path.join(rundir, "run.sif")).read()
-m = re.search(r'Exec Intervals\(\d+\)\s*=\s*Integer\s+(\d+)[^\n]*\n\s*Equation = "StateWriteCheckpoint"', sif)
+m = re.search(r'Exec Intervals\(\d+\)\s*=\s*Integer\s+(\d+)[^\n]*\n(\s*Exec Intervals Offset[^\n]*\n)?'
+              r'\s*Equation = "StateWriteCheckpoint"', sif)
 every = int(m.group(1)) if m else 1
+offset = bool(m and m.group(2))           # with the offset: at steps N, 2N, ...; without (older runs): 1, N + 1, ...
 m = re.search(r"Timestep Sizes\s*=\s*(?:Real\s*)?([-+0-9.eE]+)", sif)
 dt = float(m.group(1)) if m else 1.0
 steps = [int(v) for v in re.findall(r"MAIN: Time:\s*(\d+)/", open(os.path.join(rundir, "elmer.log"), errors="replace").read())]
 done = (steps[-1] if steps else 0)                          # the last step started; finished if the run ended
 ended = "ALL DONE" in open(os.path.join(rundir, "elmer.log"), errors="replace").read()[-5000:]
-k = (done if ended else done - 1) // every * every
+last = done if ended else done - 1        # the last finished step
+k = last // every * every if offset else ((last - 1) // every) * every + 1
 t = k * dt
 save_state(out, s0.layout, x, s0.p, frozen, diag, time=t)
 print(f"{rundir}: checkpoint after step {k} (every {every} x {dt:g} yr: t = {t:g} yr after the run's start; "
