@@ -43,6 +43,10 @@ PeriodicGL.so: PeriodicUtils.F90 FixPeriodicLoads.F90 ContactPeriodic.F90
 	@[ -n "$(ELMERICE_USF)" ] || echo "warning: ElmerIceUSF.so not found; SlidCoef_ContactPeriodic needs it loaded"
 	$(ELMERF90) -o $@ $^ $(ELMERICE_USF)
 
+# Elmer's IncompressibleNS (dd6aef5e2) with the "adapted" implicit FSSA ([elmer] fssa = adapted)
+ESSIncompressibleNS.so: ESSIncompressibleNS.F90
+	$(ELMERF90) -o $@ $<
+
 # the time-step check ([elmer] step_check): CFL, change per step, relaxation number
 StepCheck.so: StepCheck.F90
 	$(ELMERF90) -o $@ $<
@@ -65,4 +69,4 @@ SheetSolverhw.so: SheetSolverhw.F90
 	$(ELMERF90) -o $@ $<
 
 clean:
-	rm -rf checked; rm -f SteadyStateIO.so Buoyancy.so RotateGuess.so GLDistance.so PeriodicGL.so FixPeriodicLoads.so ColdTempMask.so SheetSolverhw.so NoWaterSheet.so ESSFreeSurface.so StepCheck.so *.mod
+	rm -rf checked; rm -f SteadyStateIO.so Buoyancy.so RotateGuess.so GLDistance.so PeriodicGL.so FixPeriodicLoads.so ColdTempMask.so SheetSolverhw.so NoWaterSheet.so ESSFreeSurface.so StepCheck.so ESSIncompressibleNS.so *.mod

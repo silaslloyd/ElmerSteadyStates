@@ -37,8 +37,9 @@ build_libs() {
        || [ ! -f elmer/NoWaterSheet.so ] || [ elmer/NoWaterSheet.F90 -nt elmer/NoWaterSheet.so ] \
        || [ ! -f elmer/ESSFreeSurface.so ] || [ elmer/ESSFreeSurface.F90 -nt elmer/ESSFreeSurface.so ] \
        || [ ! -f elmer/StepCheck.so ] || [ elmer/StepCheck.F90 -nt elmer/StepCheck.so ] \
+       || [ ! -f elmer/ESSIncompressibleNS.so ] || [ elmer/ESSIncompressibleNS.F90 -nt elmer/ESSIncompressibleNS.so ] \
        || [ "$(cat elmer/.built_with 2>/dev/null)" != "$cur" ]; then
-        make -C elmer clean && make -C elmer && make -C elmer PeriodicGL.so ESSFreeSurface.so StepCheck.so thermal && echo "$cur" > elmer/.built_with
+        make -C elmer clean && make -C elmer && make -C elmer PeriodicGL.so ESSFreeSurface.so StepCheck.so ESSIncompressibleNS.so thermal && echo "$cur" > elmer/.built_with
     fi
 }
 # run_gl_ess.sh builds once in its own job ("build") before the others: jobs on several nodes building at the

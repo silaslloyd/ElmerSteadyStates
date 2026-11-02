@@ -95,6 +95,19 @@ class ElmerModel(Model):
         self.timeout = float(os.environ.get("ESS_ELMER_TIMEOUT") or e.get("timeout", 6 * 3600))
         self.keep_runs = bool(e.get("keep_runs", False)) or os.environ.get("ESS_KEEP_RUNS") == "1"
         self.use_cache = bool(e.get("cache", True)) and os.environ.get("ESS_NO_CACHE") != "1"
+        # free-surface time stepping (env overrides for tests):
+        # [elmer] fssa (ESS_FSSA): the FSSA flag on the surface and the base: "full" (default), "normal",
+        #   "transposed", "none" (no stabilisation: FSSA Theta 0), or "adapted" (a collaborator's implicit variant:
+        #   elmer/ESSIncompressibleNS.F90 instead of IncompressibleNSVec; from the second coupled iteration of a step
+        #   on, the accumulation term replaced by - theta dt (u_prev . n) rho g)
+        # [elmer] fs_coupled (ESS_FS_COUPLED=1): the mesh mapping (StructuredMeshMapper) and both free surfaces in the
+        #   coupled loop with Stokes (Exec Always instead of Before / After Timestep), iterated up to [map]
+        #   coupled_iters times per step (env ESS_COUPLED_ITERS) until the Steady State tolerances are met: an
+        #   implicit free surface, kept stable by the FSSA
+        self.fssa = str(os.environ.get("ESS_FSSA") or e.get("fssa", "full")).lower()
+        if self.fssa not in ("full", "normal", "transposed", "none", "adapted"):
+            raise ValueError(f"[elmer] fssa must be full, normal, transposed, none or adapted, not {self.fssa!r}")
+        self.fs_coupled = (os.environ.get("ESS_FS_COUPLED") or str(e.get("fs_coupled", ""))).lower() in ("1", "true")
         # warm start (ess run --warm-start): records (e.g. Velocity 1..3, Pressure) set by StateRead at the start
         # of the run, so the first Stokes solve starts from them instead of zero
         self.warm_records = {}
@@ -572,7 +585,7 @@ End
                            else "  ! no Min Zb ([elmer] zb_limiter = false)"),
             "__NSTEPS__": str(int(spec.n_steps)),
             "__DT__": repr(float(spec.dt)),
-            "__COUPLED_ITERS__": str(int(spec.coupled_iters)),
+            "__COUPLED_ITERS__": str(int(os.environ.get("ESS_COUPLED_ITERS") or spec.coupled_iters)),
             "__ROCK_CAP__": repr(float(spec.rock_heat_capacity)),
             "__STATE_IN__": state_in,
             "__STATE_OUT__": state_out,
@@ -582,7 +595,7 @@ End
             "__RESTART_BLOCK__": rb,
             "__POST_BLOCK__": pb,
             "__FRICTION_HEAT__": self._friction_heat_block(),
-            "__FS_EXEC__": '"Never"' if self.heat_only else '"after Timestep"',
+            "__FS_EXEC__": '"Never"' if self.heat_only else ('"Always"' if self.fs_coupled else '"after Timestep"'),
             "__OUTPUT_LEVEL__": str(self.output_level),
             "__MIN_ZS_EXPR__": self.min_zs_expr,
             "__LS_STOKES__": self._stokes_linear(),
@@ -643,6 +656,7 @@ End
                 text = text.replace(fs, f'"{lib}" "FreeSurfaceSolver"   ! periodic-aware limiter')
         if self.step_check:
             text = self._step_check(text)
+        text = self._fs_time_stepping(text)
         if self.linear_free_surface == "iterative":
             text = self._fs_iterative(text)
         if self.surface_bc == "dirichlet":
@@ -1085,6 +1099,32 @@ End
                 "the heat solver first (Pre Solvers)\n" + fpl(a, "Before All", "Periodic Flow Solution Loads Init") + "\n" + fpl(b, "Never", "Periodic Flow Solution Loads") + text[k:])
         text = self._add_active(text, "ice equations", [a, b])
         return self._insert_in(text, 'Equation = String "Homologous Temperature Equation"', f"  Pre Solvers(1) = {b}")
+
+    def _fs_time_stepping(self, text):
+        """[elmer] fssa and fs_coupled (see __init__)"""
+        if self.fssa != "full":
+            a = '$fssaflag = "full"'
+            if a not in text:
+                raise ValueError("fssa: no $fssaflag line in the template")
+            if self.fssa == "none":
+                text = text.replace("  FSSA Theta = Real 1.0", "  FSSA Theta = Real 0.0   ! [elmer] fssa = none")
+            else:
+                text = text.replace(a, f'$fssaflag = "{self.fssa}"   ! [elmer] fssa')
+        if self.fssa == "adapted":
+            old = 'Procedure = "IncompressibleNSVec" "IncompressibleNSSolver"'
+            if text.count(old) != 1:
+                raise ValueError("fssa = adapted: the Stokes procedure line of the template changed (or stokes_solver set)")
+            lib = os.path.join(os.path.dirname(self.periodic_lib), "ESSIncompressibleNS")
+            text = text.replace(old, f'Procedure = "{lib}" "IncompressibleNSSolver"   ! [elmer] fssa = adapted')
+        if self.fs_coupled:
+            k = text.index('Equation = "MapCoordinate"')
+            j = text.index("\nEnd", k)
+            blk = text[k:j]
+            if 'Exec Solver = "Before Timestep"' not in blk:
+                raise ValueError("fs_coupled: the MapCoordinate solver of the template changed")
+            text = text[:k] + blk.replace('Exec Solver = "Before Timestep"',
+                                          'Exec Solver = "Always"   ! [elmer] fs_coupled: in the coupled loop') + text[j:]
+        return text
 
     def _step_check(self, text):
         """elmer/StepCheck.F90 after every time step on the surface and base (see [elmer] step_check)"""
