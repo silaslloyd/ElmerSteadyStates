@@ -284,6 +284,10 @@ def surfaces(path):
         if bed is not None:
             b = dict(zip(bed[0].tolist(), bed[1].tolist()))
             base["bed"] = np.array([b.get(g, np.nan) for g in base["g"].tolist()])
+        ctr = _rec(s, "ColdTempMask")
+        if ctr is not None:
+            cm = dict(zip(ctr[0].tolist(), ctr[1].tolist()))
+            base["ct"] = np.array([cm.get(g, np.nan) for g in base["g"].tolist()])
         base["speed"] = np.array([sp.get(g, np.nan) for g in base["g"].tolist()])
     if top is not None:
         top["speed"] = np.array([sp.get(g, np.nan) for g in top["g"].tolist()])
@@ -785,6 +789,26 @@ def main():
                                        connectgaps=False))
         if SIDES and top is not None and base is not None:
             tr += walls(top, base, P)
+        if sc == "scene2" and base is not None and "mask" in base:      # (empty without a mask: same traces per state)
+            # the cold/temperate boundary of the grounded bed (ColdTempMask +1 temperate, -1 cold; floating counted
+            # cold), on the surface and the base of the temperature panel; hidden until "temperate on" (MASK_IDX)
+            tzd = {(round(x, 0), round(y, 0)): v for x, y, v in zip(top["x"], top["y"], top["v"])} if top else {}
+            zt_ = np.array([tzd.get((round(x, 0), round(y, 0)), v) for x, y, v in zip(base["x"], base["y"], base["v"])])
+            if "ct" in base:
+                fm = np.where(base["mask"] > -0.5, np.nan_to_num(base["ct"], nan=-1.0), -1.0)
+                mx, my, mb, mt = contour(base["x"], base["y"], fm, 0.0, [base["v"], zt_])
+            else:
+                mx, my, mb, mt = [], [], [], []
+            qx, qy, qt, qb = [], [], [], []
+            for c in range(TILE):
+                qx += mx + [None]
+                qy += [None if v is None else v + c * W / 1e3 for v in my] + [None]
+                qt += [None if v is None else v + 6.0 for v in mt] + [None]
+                qb += [None if v is None else v - 6.0 for v in mb] + [None]
+            for z_, nm in ((qt, "cold | temperate bed (on the surface)"), (qb, "cold | temperate bed (on the base)")):
+                tr.append(go.Scatter3d(x=qx, y=qy, z=z_, mode="lines", line=dict(color="lime", width=6), name=nm,
+                                       legendgroup="ctmask", scene=sc, showlegend=False, connectgaps=False,
+                                       hovertemplate="cold | temperate at x %{x:.2f} km, y %{y:.2f} km<extra></extra>"))
         if base is not None and "mask" in base:
             # the grounding line through all copies (a jump at a seam: not periodic), in red on the surface and on
             # the base (just outside each, so neither surface hides it)
@@ -855,6 +879,11 @@ def main():
                                    scene=sc, showlegend=first_panel))
         return tr
     first = traces(data[0][1], data[0][2])
+    # the cold/temperate boundary toggle ("temperate off" / "temperate on"): those traces are in every frame (they move
+    # with the slider) but hidden in the figure until switched on; the frames do not set "visible", so the choice stays
+    ct_idx = [n for n, t_ in enumerate(first) if getattr(t_, "legendgroup", None) == "ctmask"]
+    for n in ct_idx:
+        first[n].visible = False
     # the colour switch of the velocity panel: speed, vx, vy, vz. The slider's frames draw the panel's own field; the
     # buttons and the slider share one script (switch_js) that keeps the chosen field and puts that field of the state
     # on show into the surfaces and walls, so a button acts on the current state and the choice survives the slider.
@@ -960,6 +989,12 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
         return out
     # the base mesh (white element edges) as a toggle: one trace per panel AFTER the frames' traces (the slider never
     # touches them: drawn at the first state's base), hidden unless --mesh; buttons "mesh off" / "mesh on"
+    if ct_idx:
+        menus = menus + [dict(type="buttons", direction="right", x=0.72, y=1.06, xanchor="left", yanchor="bottom",
+                              showactive=True, pad=dict(r=4, t=0), active=0,
+                              buttons=[dict(label="temperate off", method="restyle", args=[{"visible": False}, ct_idx]),
+                                       dict(label="temperate on", method="restyle", args=[{"visible": True}, ct_idx])])]
+        print(f"  cold/temperate boundary toggle on {len(ct_idx)} traces (lime, temperature panel)")
     if MESH_TOGGLE and data[0][2] is not None:
         midx = []
         for P in panels:
