@@ -23,7 +23,8 @@ state's base; --mesh: on from the start; --no-mesh-toggle: no buttons, a smaller
 else Delaunay triangles of the nodes).
 Streamlines of the surface velocity on the surface of both panels (white), one per
 state; "streamlines off" / "streamlines on" hides them; --stream-spacing KM (default 5) between their seeds across the
-flow; --no-streamlines: none.
+flow; --no-streamlines: none. "play" / "pause" next to the slider runs through the states (--play-ms MS per state,
+default 400).
 Many states make a big page: --every N keeps every N-th state (and the last), --years T0 T1 only frames in that time
 range. The speed/vx/vy/vz buttons are off (their data was a large share of the page); --switch brings them back.
     python plots/plot_state_3d.py work/<config>/runs/<run>                  # a run with ESS_VTU_EVERY: every step
@@ -78,6 +79,7 @@ MESH_TOGGLE = True       # the "mesh off / mesh on" buttons for the base mesh (w
 SWITCH = False           # the speed/vx/vy/vz buttons (their values for every state go into the page: big); --switch
 T_RANGE = (None, None)   # temperature colour range (K); None: all temperatures in the window (--tmin / --tmax)
 SHOW = True
+PLAY_MS = 400            # ms per state when playing (--play-ms MS)
 STREAM = True            # streamlines of the surface velocity on the surface of both panels (--no-streamlines: none)
 STREAM_KM = 5.0          # km between the streamlines' seeds across the flow (--stream-spacing KM)
 
@@ -625,7 +627,7 @@ def _rdp(P, eps):
 def main():
     import plotly.graph_objects as go
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
-    global MESH_TOGGLE, STREAM, STREAM_KM
+    global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS
     args = sys.argv[1:]
     if "--vmax-all" in args:
         VMAX_GL, VMAX = False, None
@@ -674,6 +676,10 @@ def main():
     if "--no-switch" in args:
         SWITCH = False
         args.remove("--no-switch")
+    if "--play-ms" in args:                       # --play-ms MS: the time per state of the play button
+        k = args.index("--play-ms")
+        PLAY_MS = int(float(args[k + 1]))
+        args = args[:k] + args[k + 2:]
     if "--no-streamlines" in args:
         STREAM = False
         args.remove("--no-streamlines")
@@ -1197,10 +1203,19 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
     ann = ([dict(text="velocity", x=0.23, y=1.0, xref="paper", yref="paper", showarrow=False, font=dict(size=16)),
             dict(text="temperature", x=0.75, y=1.0, xref="paper", yref="paper", showarrow=False, font=dict(size=16))]
            if temp else [])
+    # play / pause: through the states in turn from the one on show (PLAY_MS per state, --play-ms)
+    anim = dict(frame=dict(duration=PLAY_MS, redraw=True), transition=dict(duration=0), mode="immediate",
+                fromcurrent=True)
+    play = dict(type="buttons", direction="left", x=0.1, y=0, xanchor="right", yanchor="top", showactive=False,
+                pad=dict(r=10, t=55),
+                buttons=[dict(label="\u25b6 play", method="animate", args=[None, anim]),
+                         dict(label="\u23f8 pause", method="animate",
+                              args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate",
+                                                 transition=dict(duration=0))])])
     fig.update_layout(
         title=f"{sys.argv[1] if len(sys.argv) > 1 else ''}: {data[0][0]}", **scenes, annotations=ann,
-        sliders=[dict(steps=steps, currentvalue=dict(prefix="state: "), pad=dict(t=30))],
-        autosize=True, template="plotly_white", legend=dict(x=0, y=1), updatemenus=menus,
+        sliders=[dict(steps=steps, currentvalue=dict(prefix="state: "), pad=dict(t=30), x=0.1, len=0.9)],
+        autosize=True, template="plotly_white", legend=dict(x=0, y=1), updatemenus=menus + [play],
         margin=dict(l=10, r=10, t=60, b=10))
     out = os.path.splitext(sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "plot_state_3d")[0] + "_3d.html"
     sync = ("""
