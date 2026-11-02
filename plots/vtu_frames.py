@@ -4,7 +4,9 @@ The VTU output of one long Elmer run (ESS_VTU_EVERY / jobs VTU_EVERY=N: base_t*.
 steps, one piece per rank) packed into ONE small file for plots/plot_state_3d.py: the surface and the base of every
 output step, nodes shared between partitions once, in the same (x, y) order in every frame, float32.
 
-    python3 plots/vtu_frames.py RUNDIR [OUT.npz]          (default OUT: RUNDIR/../<run dir name>_frames.npz)
+    python3 plots/vtu_frames.py RUNDIR [OUT.npz] [--t0 YEARS] [--tmax YEARS]
+        (default OUT: RUNDIR/../<run dir name>_frames.npz; --t0: added to the times, e.g. a run continued from a
+        checkpoint at year 1000; --tmax: only the frames up to that time (after --t0), e.g. to join two runs)
     python3 plots/plot_state_3d.py OUT.npz [--full ...]    (on the Mac: one frame per output step on the slider)
 
 Re-running it adds the steps written since (it rereads everything: a few seconds per step). The time of frame k is
@@ -56,8 +58,20 @@ def surface(path):
 
 
 def main():
-    if len(sys.argv) < 2:
+    args = sys.argv[1:]
+    t0, tmax = 0.0, None
+    for opt in ("--t0", "--tmax"):
+        if opt in args:
+            k = args.index(opt)
+            v = float(args[k + 1])
+            args = args[:k] + args[k + 2:]
+            if opt == "--t0":
+                t0 = v
+            else:
+                tmax = v
+    if not args:
         raise SystemExit(__doc__)
+    sys.argv = [sys.argv[0]] + args
     rundir = sys.argv[1].rstrip("/")
     out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(rundir),
                                                              os.path.basename(rundir) + "_frames.npz")
@@ -82,7 +96,10 @@ def main():
         frames["base"].append(b)
         frames["top"].append(t)
         k = int(re.findall(r"_t(\d+)", os.path.basename(f))[0])
-        times.append(k * every * dt)
+        if tmax is not None and t0 + k * every * dt > tmax + 1e-9:
+            frames["base"].pop(); frames["top"].pop()
+            break
+        times.append(t0 + k * every * dt)
     if not times:
         raise SystemExit("no readable steps")
     rec = {"frame_times": np.array(times), "frame_every": every, "frame_dt": dt, "frame_run": rundir}
