@@ -1120,13 +1120,33 @@ End
             lib = os.path.join(os.path.dirname(self.periodic_lib), "ESSIncompressibleNS")
             text = text.replace(old, f'Procedure = "{lib}" "IncompressibleNSSolver"   ! [elmer] fssa = adapted')
         if self.fs_coupled:
+            # the mesh mapped to the new Zs / Zb INSIDE the coupled loop, after the free surfaces (a second instance of
+            # the mapper, numbered after them, so the next iteration's Stokes solve sees the new geometry). The
+            # Before Timestep mapper stays: the step's other Before Timestep solvers (normals, grounding line,
+            # sea pressure) need the mesh at the start of the step. (Moving the first mapper into the loop instead,
+            # it ran after them on the previous step's geometry: unstable even with one iteration.)
             k = text.index('Equation = "MapCoordinate"')
-            j = text.index("\nEnd", k)
-            blk = text[k:j]
+            i = text.rindex("\nSolver ", 0, k) + 1
+            j = text.index("\nEnd", k) + len("\nEnd")
+            blk = text[i:j]
             if 'Exec Solver = "Before Timestep"' not in blk:
                 raise ValueError("fs_coupled: the MapCoordinate solver of the template changed")
-            text = text[:k] + blk.replace('Exec Solver = "Before Timestep"',
-                                          'Exec Solver = "Always"   ! [elmer] fs_coupled: in the coupled loop') + text[j:]
+            n0 = int(re.match(r"Solver (\d+)", blk).group(1))
+            n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M)) + 1
+            loop = re.sub(r"^Solver \d+", f"Solver {n}", blk)
+            loop = loop.replace('Exec Solver = "Before Timestep"', 'Exec Solver = "Always"   ! [elmer] fs_coupled: in the loop')
+            loop = loop.replace('Equation = "MapCoordinate"', 'Equation = "MapCoordinateLoop"')
+            loop = re.sub(r'\n *Variable = -nooutput DummyR', '\n  Variable = -nooutput DummyRLoop', loop)
+            # only the coordinates: no mesh velocity / update variables of its own (the Before Timestep mapper's dS,
+            # dSdt stay as they were: heat's mesh velocity is not right in this mode yet)
+            loop = re.sub(r'\n *(Mesh Velocity Variable|Mesh Update Variable|Mesh Velocity First Zero|Exported Variable \d+)'
+                          r' *=[^\n]*', '', loop)
+            text = text.rstrip() + "\n\n! [elmer] fs_coupled: the mesh mapping inside the coupled loop\n" + loop + "\n"
+            for m in list(re.finditer(r"Active Solvers\s*\((\d+)\)\s*=\s*([\d ]+)", text))[::-1]:
+                ids = m.group(2).split()
+                if str(n0) in ids:
+                    new = ids + [str(n)]
+                    text = text[:m.start()] + f"Active Solvers({len(new)}) = {' '.join(new)}" + text[m.end():]
         return text
 
     def _step_check(self, text):
