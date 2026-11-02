@@ -21,6 +21,9 @@ Buttons above the velocity panel switch its colours between speed, vx, vy and vz
 "mesh on" / "mesh off" (above the temperature panel) shows the element edges on the base in white (drawn at the first
 state's base; --mesh: on from the start; --no-mesh-toggle: no buttons, a smaller page; --mesh-dir: the real elements,
 else Delaunay triangles of the nodes).
+Streamlines of the surface velocity on the surface of both panels (black on velocity, white on temperature), one per
+state; "streamlines off" / "streamlines on" hides them; --stream-spacing KM (default 5) between their seeds across the
+flow; --no-streamlines: none.
     python plots/plot_state_3d.py work/<config>/runs/<run>                  # a run with ESS_VTU_EVERY: every step
     python plots/plot_state_3d.py A.npz --diff B.npz                      # colours: A minus B (same mesh)
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
@@ -73,6 +76,8 @@ MESH_TOGGLE = True       # the "mesh off / mesh on" buttons for the base mesh (w
 SWITCH = True            # the speed/vx/vy/vz buttons (their values for every state go into the page; --no-switch: smaller)
 T_RANGE = (None, None)   # temperature colour range (K); None: all temperatures in the window (--tmin / --tmax)
 SHOW = True
+STREAM = True            # streamlines of the surface velocity on the surface of both panels (--no-streamlines: none)
+STREAM_KM = 5.0          # km between the streamlines' seeds across the flow (--stream-spacing KM)
 
 
 def collect(args):
@@ -503,10 +508,84 @@ def gl_line(base, top=None):
     return np.array(xs)[o], np.array(ys)[o], np.array(zb)[o], np.array(zt)[o]
 
 
+_STREAM_CACHE = {}
+
+
+def streamlines(top, spacing_km, width_m, periodic=True):
+    """streamlines of the surface velocity (vx, vy): seeds every spacing_km across the strip, 20 km downstream of the
+    window's upstream end, followed along the flow direction (RK2, 0.5 km steps, a point kept every 2 km) to the front,
+    a stagnant point or the edge; periodic in y unless walls (a line leaving one side carries on from the other, with a
+    gap). Returns x, y (km) and z (m, just above the surface) with None between the pieces"""
+    key = id(top)
+    if key in _STREAM_CACHE:
+        return _STREAM_CACHE[key]
+    from scipy.interpolate import LinearNDInterpolator
+    from scipy.spatial import Delaunay
+    import hashlib
+    x, y = np.asarray(top["x"], float), np.asarray(top["y"], float)
+    tk = "stream" + hashlib.sha1(np.round(x, 1).tobytes() + np.round(y, 1).tobytes()).hexdigest()
+    if tk not in _TRI_CACHE:
+        _TRI_CACHE[tk] = Delaunay(np.c_[x, y])
+    f = LinearNDInterpolator(_TRI_CACHE[tk], np.c_[top["vx"], top["vy"], top["v"]])
+    x0, x1, y0 = x.min(), x.max(), y.min()
+    W = width_m if width_m > 0 else float(np.ptp(y))
+    n = max(1, int(round(W / (spacing_km * 1e3))))
+    P = np.c_[np.full(n, min(x0 + 20e3, 0.5 * (x0 + x1))), y0 + (np.arange(n) + 0.5) * W / n]
+    ds, keep = 500.0, 4
+    lines = [[tuple(p)] for p in P]
+    alive = np.ones(n, bool)
+
+    def wrap(Q):
+        if periodic:
+            Q[:, 1] = y0 + np.mod(Q[:, 1] - y0, W)
+        return Q
+
+    def direction(Q):
+        u = f(Q)
+        sp = np.hypot(u[:, 0], u[:, 1])
+        ok = np.isfinite(sp) & (sp > 1e-3)
+        d = np.zeros((len(Q), 2))
+        d[ok] = u[ok, :2] / sp[ok, None]
+        return d, ok
+
+    for it in range(int(3 * (x1 - x0) / ds)):
+        if not alive.any():
+            break
+        a = np.where(alive)[0]
+        d1, ok1 = direction(P[a])
+        M = wrap(P[a] + 0.5 * ds * d1)
+        d2, ok2 = direction(M)
+        Q = P[a] + ds * d2
+        jump = periodic & ((Q[:, 1] < y0) | (Q[:, 1] > y0 + W))
+        Q = wrap(Q)
+        stop = ~(ok1 & ok2) | (Q[:, 0] >= x1) | (Q[:, 0] <= x0) | ((not periodic) & ((Q[:, 1] < y0) | (Q[:, 1] > y0 + W)))
+        for q, i in enumerate(a):
+            if stop[q]:
+                alive[i] = False
+                continue
+            if jump[q]:
+                lines[i].append(None)
+            if jump[q] or it % keep == keep - 1:
+                lines[i].append((Q[q, 0], Q[q, 1]))
+        P[a] = np.where(stop[:, None], P[a], Q)
+    pts = np.array([p for ln in lines for p in ln if p is not None])
+    zs = iter(f(pts)[:, 2] + 10.0) if len(pts) else iter(())
+    lx, ly, lz = [], [], []
+    for ln in lines:
+        for p in ln:
+            if p is None:
+                lx.append(None); ly.append(None); lz.append(None)
+            else:
+                lx.append(round(p[0] / 1e3, 2)); ly.append(round(p[1] / 1e3, 2)); lz.append(round(float(next(zs)), 0))
+        lx.append(None); ly.append(None); lz.append(None)
+    _STREAM_CACHE[key] = (lx, ly, lz)
+    return _STREAM_CACHE[key]
+
+
 def main():
     import plotly.graph_objects as go
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
-    global MESH_TOGGLE
+    global MESH_TOGGLE, STREAM, STREAM_KM
     args = sys.argv[1:]
     if "--vmax-all" in args:
         VMAX_GL = False
@@ -549,6 +628,13 @@ def main():
     if "--no-switch" in args:
         SWITCH = False
         args.remove("--no-switch")
+    if "--no-streamlines" in args:
+        STREAM = False
+        args.remove("--no-streamlines")
+    if "--stream-spacing" in args:               # --stream-spacing KM: the streamlines' seed spacing across the flow
+        k = args.index("--stream-spacing")
+        STREAM_KM = float(args[k + 1])
+        args = args[:k] + args[k + 2:]
     if "--no-mesh-toggle" in args:
         MESH_TOGGLE = False
         args.remove("--no-mesh-toggle")
@@ -871,6 +957,17 @@ def main():
                     px = [v for v in cx if v is not None]
                     if px:
                         once(f"  full-Stokes | SSA boundary: x {min(px):.2f} .. {max(px):.2f} km")
+        if STREAM and not DIFF and top is not None and "vx" in top and "vy" in top:
+            sx, sy, sz = streamlines(top, STREAM_KM, W, periodic=not WALLS)
+            qx, qy, qz = [], [], []
+            for c in range(TILE):
+                qx += sx
+                qy += [None if v is None else v + c * W / 1e3 for v in sy]
+                qz += sz
+            tr.append(go.Scatter3d(x=qx, y=qy, z=qz, mode="lines", connectgaps=False,
+                                   line=dict(color="black" if f != "T" else "white", width=2),
+                                   name="streamlines (surface velocity)", legendgroup="stream", hoverinfo="skip",
+                                   scene=sc, showlegend=first_panel))
         if top is not None and TILE > 1:
             m = np.abs(top["y"] - W) < 1
             o = np.argsort(top["x"][m])
@@ -1002,6 +1099,14 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
                               buttons=[dict(label="temperate off", method="restyle", args=[{"visible": False}, ct_idx]),
                                        dict(label="temperate on", method="restyle", args=[{"visible": True}, ct_idx])])]
         print(f"  cold/temperate boundary toggle on {len(ct_idx)} traces (lime, temperature panel)")
+    st_idx = [n for n, t_ in enumerate(first) if getattr(t_, "legendgroup", None) == "stream"]
+    if st_idx:
+        menus = menus + [dict(type="buttons", direction="right", x=0.84, y=1.06, xanchor="left", yanchor="bottom",
+                              showactive=True, pad=dict(r=4, t=0), active=1,
+                              buttons=[dict(label="streamlines off", method="restyle", args=[{"visible": False}, st_idx]),
+                                       dict(label="streamlines on", method="restyle", args=[{"visible": True}, st_idx])])]
+        print(f"  streamlines of the surface velocity: seeds every {STREAM_KM:g} km across (--stream-spacing, "
+              f"--no-streamlines)")
     if MESH_TOGGLE and data[0][2] is not None:
         midx = []
         for P in panels:
