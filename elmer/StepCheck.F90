@@ -9,10 +9,11 @@
 !>                                              surface is then moved further than one element per step)
 !>   step change        |Zs - Zs_prev|, |Zb - Zb_prev| (floating base) per step, and the largest as a fraction of
 !>                                              the ice thickness Zs - Zb
-!>   relaxation number  R = dt rho_i g h / (2 pi mu)
+!>   relaxation number  R = dt rho_i g min(h, H) / (2 pi mu), on the base nodes (H the ice thickness)
 !>                      the shortest resolved surface wave (wavelength 2h) on viscous ice relaxes at the rate
-!>                      gamma = rho_i g / (2 mu k), k = pi / h (thick-ice limit, an upper bound on gamma; thinner
-!>                      ice relaxes slower). An explicit (forward) free-surface update is stable only for
+!>                      gamma = rho_i g / (2 mu k), k = pi / h (thick-ice limit; waves longer than the ice is
+!>                      thick relax slower, ~ H^3 k^2, hence min(h, H): a rough bound). Explicit (forward)
+!>                      free-surface updates are stable only for
 !>                      dt gamma < 2, i.e. R < 2; fully implicit (FSSA theta = 1) has no such limit. Linear ice
 !>                      (Viscosity = mu); with Glen's law it is a rough estimate from the given mu.
 !> The maxima are reduced over all ranks and logged with their position (Info, level 3); the nodal values go to
@@ -38,7 +39,7 @@ SUBROUTINE StepCheck( Model, Solver, dt, Transient )
   REAL(KIND=dp), ALLOCATABLE :: h(:), zsN(:), zbN(:)
   INTEGER, ALLOCATABLE :: zsOf(:)
   REAL(KIND=dp) :: rhoi, grav, mu, uh, c, dz, hmin, e, thick, &
-      cTop, cBot, dTop, dBot, rFrac, rMax, xs(3), ys(3), loc(5,2), nTop1, nBot1, tnow
+      cTop, cBot, dTop, dBot, rFrac, rMax, xs(3), ys(3), loc(6,2), nTop1, nBot1, tnow
   INTEGER :: t, i, j, k, n, a, b, nn, p
   LOGICAL :: Found, top, bot, GotR
   CHARACTER(*), PARAMETER :: Caller = 'StepCheck'
@@ -116,7 +117,17 @@ SUBROUTINE StepCheck( Model, Solver, dt, Transient )
     ELSE
       c = 0.0_dp
     END IF
-    IF ( GotR .AND. ( top .OR. bot ) ) rMax = MAX( rMax, dt * rhoi * grav * h(i) / ( 2.0_dp * PI * mu ) )
+    ! the relaxation number on every base node (grounded too) with a column: the half-space rate holds only for
+    ! wavelengths below the thickness (longer waves relax slower, ~ H^3 k^2), so the length is min(h, H)
+    IF ( GotR .AND. .NOT. top .AND. pval( zbVar, i ) /= 0 ) THEN
+      IF ( zsOf(i) > 0 ) THEN
+        thick = zsN( zsOf(i) ) - nval( zbVar, i )
+        IF ( thick > 1.0_dp ) THEN
+          e = dt * rhoi * grav * MIN( h(i), thick ) / ( 2.0_dp * PI * mu )
+          IF ( e > rMax ) THEN; rMax = e; loc(6,1) = Mesh % Nodes % x(i); loc(6,2) = Mesh % Nodes % y(i); END IF
+        END IF
+      END IF
+    END IF
     IF ( p > 0 ) cVar % Values(p) = c
     IF ( ASSOCIATED( sVar ) ) THEN
       IF ( ASSOCIATED( sVar % Perm ) ) THEN
@@ -127,8 +138,8 @@ SUBROUTINE StepCheck( Model, Solver, dt, Transient )
 
   ! maxima over all ranks, each with the position of the rank that has it
   CALL GMax( cTop, 1 ); CALL GMax( dTop, 2 ); CALL GMax( cBot, 3 ); CALL GMax( dBot, 4 ); CALL GMax( rFrac, 5 )
+  CALL GMax( rMax, 6 )
   IF ( ParEnv % PEs > 1 ) THEN
-    rMax = ParallelReduction( rMax, 2 )
     nTop1 = ParallelReduction( nTop1 ); nBot1 = ParallelReduction( nBot1 )
   END IF
   tnow = 0.0_dp
@@ -138,10 +149,11 @@ SUBROUTINE StepCheck( Model, Solver, dt, Transient )
       ': CFL surface ', cTop, ' (x', loc(1,1)/1e3_dp, ' y', loc(1,2)/1e3_dp, ' km; ', NINT(nTop1), ' nodes > 1), floating base ', &
       cBot, ' (x', loc(3,1)/1e3_dp, ' y', loc(3,2)/1e3_dp, ' km; ', NINT(nBot1), ' nodes > 1)'
   CALL Info( Caller, Message, Level=3 )
-  WRITE( Message, '(A,F10.3,A,F9.3,A,F8.2,A,F7.2,A,F9.3,A,F8.2,A,F7.2,A,ES9.2,A,F8.2,A,F7.2,A,F8.3,A)' ) &
+  WRITE( Message, '(A,F10.3,A,F9.3,A,F8.2,A,F7.2,A,F9.3,A,F8.2,A,F7.2,A,ES9.2,A,F8.2,A,F7.2,A,F8.3,A,F8.2,A,F7.2,A)' ) &
       'step check t', tnow, ': max |dZs| ', dTop, ' m (x', loc(2,1)/1e3_dp, ' y', loc(2,2)/1e3_dp, &
       '), max |dZb| floating ', dBot, ' m (x', loc(4,1)/1e3_dp, ' y', loc(4,2)/1e3_dp, '), max |dZb|/H ', rFrac, &
-      ' (x', loc(5,1)/1e3_dp, ' y', loc(5,2)/1e3_dp, '), relaxation number R ', rMax, ' (explicit stable < 2)'
+      ' (x', loc(5,1)/1e3_dp, ' y', loc(5,2)/1e3_dp, '), relaxation number R ', rMax, &
+      ' (x', loc(6,1)/1e3_dp, ' y', loc(6,2)/1e3_dp, '; explicit stable < 2)'
   CALL Info( Caller, Message, Level=3 )
   DEALLOCATE( h, zsN, zbN, zsOf )
 
