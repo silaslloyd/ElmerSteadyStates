@@ -51,11 +51,11 @@ export ESS_VTU_EVERY=${VTU_EVERY:-$(python3 -c "print(max(1, $STEPS // 10))")}
 TAG=${TAG:-dt${DT}_${ESS_FSSA}$([ "$FS_COUPLED" = 1 ] && echo _coupled${ESS_COUPLED_ITERS})}
 echo "$(date +%T) flowline FSSA test $TAG: dt $DT yr x $STEPS steps, FSSA $ESS_FSSA, coupled free surface ${FS_COUPLED:-0}," \
      "coupled iterations $ESS_COUPLED_ITERS, VTU every $ESS_VTU_EVERY steps, $N ranks"
-STAMP=$(mktemp -p slurms .fssa_stamp_XXXX)
+export ESS_RUN_LABEL=fssa${SLURM_JOB_ID:-local}
 python3 -u -m ess run $CFG --state $START --gl contact --stokes-only --dt $DT --steps $STEPS \
     --out $WORK/fssa_$TAG.npz --output-level 4 > slurms/fssa_${SLURM_JOB_ID:-local}_$TAG.log 2>&1 \
     || echo "$(date +%T) run failed (log slurms/fssa_${SLURM_JOB_ID:-local}_$TAG.log)"
-RUN=$(find $WORK/runs -mindepth 1 -maxdepth 1 -type d -newer $STAMP -name '*run0*' | head -1)/; rm -f $STAMP
+RUN=$(ls -d $WORK/runs/*_${ESS_RUN_LABEL}_*/ | head -1)
 echo "run directory $RUN"
 python3 periodic_test/step_check_summary.py $RUN || true
 python3 plots/vtu_frames.py $RUN $WORK/fssa_${TAG}_frames.npz || true

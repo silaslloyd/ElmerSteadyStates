@@ -1501,7 +1501,9 @@ End
 
     def _new_run_dir(self, tag):
         self.nrun += 1
-        d = os.path.join(self.work, "runs", f"{time.strftime('%Y%m%d-%H%M%S')}_{tag}_{uuid.uuid4().hex[:6]}")
+        lab = os.environ.get("ESS_RUN_LABEL")            # jobs: their run directories findable (e.g. fssa_<job>)
+        d = os.path.join(self.work, "runs", f"{time.strftime('%Y%m%d-%H%M%S')}_{tag}{'_' + lab if lab else ''}_"
+                                            f"{uuid.uuid4().hex[:6]}")
         os.makedirs(d)
         return d
 
