@@ -58,6 +58,9 @@ SIDES = True             # side walls (base to surface) at the window ends and t
 TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
 VMAX_GL = True           # speed colours up to the surface speed on the grounding line (--vmax-all: the largest)
 VMAX = None              # speed colour maximum (m/yr), --vmax V
+# speed colours: white (slow) to dark purple (fast), as Schoof & Mantelli (2021)
+SPEED_CS = [[0.0, "#ffffff"], [0.125, "#efedf5"], [0.25, "#dadaeb"], [0.375, "#bcbddc"], [0.5, "#9e9ac8"],
+            [0.625, "#807dba"], [0.75, "#6a51a3"], [0.875, "#54278f"], [1.0, "#3f007d"]]
 SHOW_PARTS = False       # --partitions: the partition outlines in white (needs --mesh-dir with a partitioning)
 MESH_DIR = None          # --mesh-dir DIR: the footprint mesh (ElmerGrid directory) whose elements --mesh draws
 FS_SSA = 0.0             # km: draw the full-Stokes | SSA boundary this far beyond the grounding line (--fs-ssa 10)
@@ -633,7 +636,7 @@ def main():
         tmax = T_RANGE[1] if T_RANGE[1] is not None else float(np.nanmax(Tv))
         print(f"temperature colours {tmin:.2f} .. {tmax:.2f} K: all temperatures (--tmin / --tmax to narrow)")
     # the panels: (field, colour range, colour scale, colour bar title, colour bar x, scene)
-    panels = [("speed", 0.0, smax, "Viridis", "speed (m/yr)", 0.47 if temp else 1.0, "scene")]
+    panels = [("speed", 0.0, smax, SPEED_CS, "speed (m/yr)", 0.47 if temp else 1.0, "scene")]
     if DIFF:                                      # differences: vz first, symmetric red/blue
         v = np.abs(np.concatenate([d["vz"] for _, tp, b, _ in data for d in (tp, b) if d is not None]))
         m = max(float(np.nanpercentile(v, 99.5)) if np.isfinite(v).any() else 1.0, 1e-9)
@@ -677,7 +680,8 @@ def main():
                 ly += [None if np.isnan(v) else round(float(v), 3) for v in Y.ravel()]
                 lz += [None if np.isnan(v) else round(float(v), 1) for v in Z.ravel()]
             print(f"  base mesh: {n} edges per copy")
-        return go.Scatter3d(x=lx, y=ly, z=lz, mode="lines", line=dict(color="white", width=1),
+        # white edges, dark grey on the speed panel (its slow ice is white)
+        return go.Scatter3d(x=lx, y=ly, z=lz, mode="lines", line=dict(color="#444444" if P[0] == "speed" else "white", width=1),
                             name="base mesh", hoverinfo="skip", scene=P[6], showlegend=P[6] == "scene",
                             connectgaps=False)
 
@@ -783,7 +787,7 @@ def main():
                     lx += [None if np.isnan(v) else round(float(v), 3) for v in X.ravel()]
                     ly += [None if np.isnan(v) else round(float(v), 3) for v in Y.ravel()]
                     lz += [None if np.isnan(v) else round(float(v), 1) for v in Z.ravel()]
-                tr.append(go.Scatter3d(x=lx, y=ly, z=lz, mode="lines", line=dict(color="white", width=3),
+                tr.append(go.Scatter3d(x=lx, y=ly, z=lz, mode="lines", line=dict(color="#444444" if f == "speed" else "white", width=3),
                                        name=f"partitions ({len(np.unique(p_))} in the window)",
                                        legendgroup="parts", hoverinfo="skip", scene=sc, showlegend=show,
                                        connectgaps=False))
@@ -874,7 +878,7 @@ def main():
                 qy += [c * W / 1e3] * len(sx) + [None]
                 qz += list(sz) + [None]
             tr.append(go.Scatter3d(x=qx, y=qy, z=qz, mode="lines",
-                                   line=dict(color="white" if f == "speed" else "black", width=3, dash="dash"),
+                                   line=dict(color="black", width=3, dash="dash"),
                                    name="periodic seam (y = W of one copy = y = 0 of the next)", hoverinfo="skip",
                                    scene=sc, showlegend=first_panel))
         return tr
@@ -910,7 +914,7 @@ def main():
                     hi = P0[2]
                 hi = max(hi, 1e-6)
                 lo, cs = -hi, "RdBu_r"
-            ranges[fld] = dict(lo=lo, hi=hi, cs=get_colorscale(cs), title=title)
+            ranges[fld] = dict(lo=lo, hi=hi, cs=cs if isinstance(cs, list) else get_colorscale(cs), title=title)
             for n, (_, tp, b, _) in enumerate(data):
                 tf = [t_ for t_ in panel_traces(tp, b, (fld, lo, hi, cs, title, P0[5], P0[6]))
                       if get(t_, "intensity") is not None]
