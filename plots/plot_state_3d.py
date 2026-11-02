@@ -568,18 +568,56 @@ def streamlines(top, spacing_km, width_m, periodic=True):
             if jump[q] or it % keep == keep - 1:
                 lines[i].append((Q[q, 0], Q[q, 1]))
         P[a] = np.where(stop[:, None], P[a], Q)
-    pts = np.array([p for ln in lines for p in ln if p is not None])
-    zs = iter(f(pts)[:, 2] + 10.0) if len(pts) else iter(())
-    lx, ly, lz = [], [], []
+    # each piece thinned to the points that matter (Ramer-Douglas-Peucker: within 100 m across and 4 m in height of
+    # the full line; the long straight stretches become a few points), z 15 m above the surface; float32 with NaN
+    # between the pieces (plotly >= 6 writes these as binary: the page stays small with a line set per state)
+    out = []
     for ln in lines:
-        for p in ln:
+        pieces, cur = [], []
+        for p in ln + [None]:
             if p is None:
-                lx.append(None); ly.append(None); lz.append(None)
+                if len(cur) > 1:
+                    pieces.append(np.array(cur))
+                cur = []
             else:
-                lx.append(round(p[0] / 1e3, 2)); ly.append(round(p[1] / 1e3, 2)); lz.append(round(float(next(zs)), 0))
-        lx.append(None); ly.append(None); lz.append(None)
-    _STREAM_CACHE[key] = (lx, ly, lz)
+                cur.append(p)
+        for pc in pieces:
+            z = f(pc)[:, 2]
+            ok = np.isfinite(z)
+            pc, z = pc[ok], z[ok]
+            if len(pc) < 2:
+                continue
+            k = _rdp(np.c_[pc / 100.0, z / 4.0], 1.0)
+            out.append(np.c_[pc[k] / 1e3, z[k] + 15.0])
+            out.append(np.full((1, 3), np.nan))
+    a = np.concatenate(out).astype(np.float32) if out else np.zeros((0, 3), np.float32)
+    _STREAM_CACHE[key] = (a[:, 0], a[:, 1], a[:, 2])
     return _STREAM_CACHE[key]
+
+
+def _rdp(P, eps):
+    """the indices of P (n x d) kept by Ramer-Douglas-Peucker with tolerance eps (iterative)"""
+    keep = np.zeros(len(P), bool)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(P) - 1)]
+    while stack:
+        i, j = stack.pop()
+        if j <= i + 1:
+            continue
+        a, b = P[i], P[j]
+        ab = b - a
+        L = float(ab @ ab)
+        Q = P[i + 1:j] - a
+        if L > 0:
+            t = np.clip(Q @ ab / L, 0, 1)
+            d = np.linalg.norm(Q - t[:, None] * ab, axis=1)
+        else:
+            d = np.linalg.norm(Q, axis=1)
+        m = int(np.argmax(d))
+        if d[m] > eps:
+            keep[i + 1 + m] = True
+            stack += [(i, i + 1 + m), (i + 1 + m, j)]
+    return np.where(keep)[0]
 
 
 def main():
@@ -959,11 +997,9 @@ def main():
                         once(f"  full-Stokes | SSA boundary: x {min(px):.2f} .. {max(px):.2f} km")
         if STREAM and not DIFF and top is not None and "vx" in top and "vy" in top:
             sx, sy, sz = streamlines(top, STREAM_KM, W, periodic=not WALLS)
-            qx, qy, qz = [], [], []
-            for c in range(TILE):
-                qx += sx
-                qy += [None if v is None else v + c * W / 1e3 for v in sy]
-                qz += sz
+            qx = np.concatenate([sx] * TILE)
+            qy = np.concatenate([sy + np.float32(c * W / 1e3) for c in range(TILE)])
+            qz = np.concatenate([sz] * TILE)
             tr.append(go.Scatter3d(x=qx, y=qy, z=qz, mode="lines", connectgaps=False,
                                    line=dict(color="black" if f != "T" else "white", width=2),
                                    name="streamlines (surface velocity)", legendgroup="stream", hoverinfo="skip",
