@@ -214,6 +214,9 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # SLIDE_YBUMP=A: the sliding coefficient times 1 + A sin(2 pi y / width) ([case] slide_ybump; states spun up with 0.8
 # need it: switching it off at once leaves Stokes far from the new flow, GCR at the iteration cap)
 [ -n "$SLIDE_YBUMP" ] && export ESS_SLIDE_YBUMP=$SLIDE_YBUMP && echo "  sliding y bump: $SLIDE_YBUMP"
+# STEP_CHECK=1: elmer/StepCheck.F90 after every step ([elmer] step_check): the advective CFL of the surface and the
+# floating base, the largest change per step, the free-surface relaxation number, in the Elmer log ("step check")
+[ "$STEP_CHECK" = 1 ] && export ESS_STEP_CHECK=1 && echo "  step check on"
 # YBUMP_RAMP=A:N: the y bump from A to 0 linearly over the first N chunks (ess run --ybump-ramp; long runs): a state spun
 # up with the bump taken to uniform friction without a jump
 [ -n "$YBUMP_RAMP" ] && opts="$opts --ybump-ramp $YBUMP_RAMP" && echo "  sliding y bump ramp: $YBUMP_RAMP"

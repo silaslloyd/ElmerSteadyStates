@@ -244,6 +244,14 @@ class ElmerModel(Model):
         # ice (as ElmerStreams' periodic template), no Velocity 2 = 0 on the ice sides; translation [case] width
         # (else parameters.lua Wmesh). The mesh needs ElmerGrid -periodic 0 1 0 (`ess setup` adds it).
         self.periodic_sides = bool(c.get("periodic_sides", False))
+        # [elmer] step_check (env ESS_STEP_CHECK=1): elmer/StepCheck.F90 after every time step: the advective CFL
+        # number of the surface and the floating base, the largest surface / base change per step, and the
+        # free-surface relaxation number (logged with positions; nodal "CFL" and "Step Change" in the states)
+        self.step_check = (os.environ.get("ESS_STEP_CHECK") or str(e.get("step_check", ""))).lower() in ("1", "true")
+        if self.step_check:
+            for nm in ("CFL", "Step Change"):
+                if nm not in self.diagnostics:
+                    self.diagnostics.append(nm)
         self.width = float(c.get("width", P.get("Wmesh", 1000.0)))
         self.y_elements = int(c.get("y_elements", 1))
         # [case] slide_ybump: the sliding coefficient times 1 + slide_ybump sin(2 pi y / width) (periodic), so the
@@ -632,6 +640,8 @@ End
                     raise ValueError("periodic_sides: expected the two FreeSurfaceSolver instances (Zb, Zs) in the template")
                 lib = os.path.join(os.path.dirname(self.periodic_lib), "ESSFreeSurface")
                 text = text.replace(fs, f'"{lib}" "FreeSurfaceSolver"   ! periodic-aware limiter')
+        if self.step_check:
+            text = self._step_check(text)
         if self.linear_free_surface == "iterative":
             text = self._fs_iterative(text)
         if self.surface_bc == "dirichlet":
@@ -1040,6 +1050,32 @@ End
                 "the heat solver first (Pre Solvers)\n" + fpl(a, "Before All", "Periodic Flow Solution Loads Init") + "\n" + fpl(b, "Never", "Periodic Flow Solution Loads") + text[k:])
         text = self._add_active(text, "ice equations", [a, b])
         return self._insert_in(text, 'Equation = String "Homologous Temperature Equation"', f"  Pre Solvers(1) = {b}")
+
+    def _step_check(self, text):
+        """elmer/StepCheck.F90 after every time step on the surface and base (see [elmer] step_check)"""
+        n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M)) + 1
+        lib = os.path.join(os.path.dirname(self.periodic_lib), "StepCheck")
+        blk = f"""
+! ---- time-step check ([elmer] step_check): CFL, change per step, relaxation number
+Solver {n}
+  Exec Solver = "After Timestep"
+  Equation = "Step check"
+  Procedure = "{lib}" "StepCheck"
+  Variable = "CFL"
+  Variable DOFs = 1
+  Exported Variable 1 = -dofs 1 "Step Change"
+  Ice Density = Real #rhoi
+  Gravity = Real #gravity
+  Viscosity = Real #viscosity
+End
+"""
+        k = text.index("!---------------- BOUNDARY CONDITIONS")
+        k = text.rindex("\n", 0, k - 1)
+        text = text[:k] + "\n" + blk + text[k:]
+        for eq in ("freesurface equations", "interface equations"):
+            if f'Name = "{eq}"' in text:
+                text = self._add_active(text, eq, [n])
+        return text
 
     def _thermal_nowater(self, text):
         """the cold/temperate mask moved every step with the no-water sheet (see [elmer] thermal = "nowater"); after
