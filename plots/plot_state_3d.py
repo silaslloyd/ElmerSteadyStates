@@ -17,7 +17,7 @@ slider through the states.
     python plots/plot_state_3d.py STATE.npz --mesh --mesh-dir CASE/footprint   # the mesh's elements on the ice base,
                                                                             # white (without --mesh-dir: Delaunay)
     python plots/plot_state_3d.py STATE.npz --partitions --mesh-dir CASE/footprint   # partition outlines, white
-Buttons above the velocity panel switch its colours between speed, vx, vy and vz; above the temperature panel,
+With --switch, buttons above the velocity panel switch its colours between speed, vx, vy and vz.
 "mesh on" / "mesh off" (above the temperature panel) shows the element edges on the base in white (drawn at the first
 state's base; --mesh: on from the start; --no-mesh-toggle: no buttons, a smaller page; --mesh-dir: the real elements,
 else Delaunay triangles of the nodes).
@@ -25,7 +25,7 @@ Streamlines of the surface velocity on the surface of both panels (black on velo
 state; "streamlines off" / "streamlines on" hides them; --stream-spacing KM (default 5) between their seeds across the
 flow; --no-streamlines: none.
 Many states make a big page: --every N keeps every N-th state (and the last), --years T0 T1 only frames in that time
-range; --no-switch drops the vx/vy/vz data (a large share of the page).
+range. The speed/vx/vy/vz buttons are off (their data was a large share of the page); --switch brings them back.
     python plots/plot_state_3d.py work/<config>/runs/<run>                  # a run with ESS_VTU_EVERY: every step
     python plots/plot_state_3d.py A.npz --diff B.npz                      # colours: A minus B (same mesh)
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
@@ -75,7 +75,7 @@ FS_SSA = 0.0             # km: draw the full-Stokes | SSA boundary this far beyo
 WALLS = False            # walled sides: the distance to the grounding line not wrapped across y (--walls)
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
 MESH_TOGGLE = True       # the "mesh off / mesh on" buttons for the base mesh (white); --no-mesh-toggle: none (smaller)
-SWITCH = True            # the speed/vx/vy/vz buttons (their values for every state go into the page; --no-switch: smaller)
+SWITCH = False           # the speed/vx/vy/vz buttons (their values for every state go into the page: big); --switch
 T_RANGE = (None, None)   # temperature colour range (K); None: all temperatures in the window (--tmin / --tmax)
 SHOW = True
 STREAM = True            # streamlines of the surface velocity on the surface of both panels (--no-streamlines: none)
@@ -665,6 +665,9 @@ def main():
     if "--no-temp" in args:
         TEMP = False
         args.remove("--no-temp")
+    if "--switch" in args:
+        SWITCH = True
+        args.remove("--switch")
     if "--no-switch" in args:
         SWITCH = False
         args.remove("--no-switch")
