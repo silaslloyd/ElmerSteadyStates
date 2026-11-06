@@ -39,8 +39,9 @@ CASE=$(basename $CFG .toml); [ $CASE = marine_flowline ] && CASE= || CASE=${CASE
 N=${SLURM_NTASKS:-32}
 export ESS_NPROCS=$N ESS_MPIRUN="mpirun -np {n} --bind-to none"
 # STOKES_PREC / STOKES_ELEMENT / LINEAR_STOKES: override the config's Stokes setup (3D tests: the configs' P2/P1 +
-# ILU4 is too big in 3D; the defaults below for 3D cases are the coarse model's: P1/P1 + bubbles, ILU0, GCR)
-if [ -n "$CASE" ]; then STOKES_PREC=${STOKES_PREC:-ILU0}; STOKES_ELEMENT=${STOKES_ELEMENT:-Bubbles}; LINEAR_STOKES=${LINEAR_STOKES:-iterative}; fi
+# ILU4 overflowed the ILU in 3D, and GCR + ILU0 stalled at a residual of 0.1; the defaults below for 3D cases: P1/P1 +
+# bubbles (as the coarse model) with GCR + ILU2, the level the coarse runs settle at)
+if [ -n "$CASE" ]; then STOKES_PREC=${STOKES_PREC:-ILU2}; STOKES_ELEMENT=${STOKES_ELEMENT:-Bubbles}; LINEAR_STOKES=${LINEAR_STOKES:-iterative}; fi
 [ -n "$STOKES_PREC" ] && export ESS_STOKES_PREC=$STOKES_PREC
 [ -n "$STOKES_ELEMENT" ] && export ESS_STOKES_ELEMENT=$STOKES_ELEMENT
 [ -n "$LINEAR_STOKES" ] && export ESS_LINEAR_STOKES=$LINEAR_STOKES
@@ -48,7 +49,9 @@ START=${START:-$WORK/fssa_start.npz}   # START=STATE: another start (e.g. a spun
 ( flock 9
   if [ ! -d $WORK/case/footprint/partitioning.$N ] || { [ ! -f $START ] && [ $START = $WORK/fssa_start.npz ]; }; then
       echo "$(date +%T) setting up $CFG for $N ranks"
-      python3 -u -m ess setup $CFG && python3 -u -m ess init $CFG --out $WORK/fssa_start.npz
+      # ess init: a cheap, inexact Stokes solve (its velocity is not kept: the state is temperature and Zs)
+      python3 -u -m ess setup $CFG && ESS_LINEAR_STOKES=block ESS_STOKES_BLOCK_FILE=elmer/stokes_cheap.sif.in \
+          python3 -u -m ess init $CFG --out $WORK/fssa_start.npz
   fi ) 9> slurms/.fssa_setup_$(basename $CFG .toml).lock
 DT=${DT:-10}; YEARS=${YEARS:-500}
 STEPS=$(python3 -c "print(max(1, round($YEARS / $DT)))")

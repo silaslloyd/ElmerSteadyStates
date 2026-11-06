@@ -158,7 +158,7 @@ class ElmerModel(Model):
         # linear solvers: "direct" (MUMPS) or "iterative" (Krylov + ILU, tolerance iterative_tol)
         self.linear_stokes = os.environ.get("ESS_LINEAR_STOKES") or str(e.get("linear_stokes", "direct"))
         # "block": the keywords of this file go into the Stokes solver section verbatim (block preconditioning)
-        self.stokes_block_file = str(e.get("stokes_block_file", "elmer/stokes_block.sif.in"))
+        self.stokes_block_file = os.environ.get("ESS_STOKES_BLOCK_FILE") or str(e.get("stokes_block_file", "elmer/stokes_block.sif.in"))
         self.linear_heat = str(e.get("linear_heat", "direct"))
         # [elmer] mumps_workspace (percent): extra MUMPS workspace for the Stokes solve (Mumps Percentage Increase
         # Working Space); MUMPS stops with INFO(1) = -9 when its estimate is too small, e.g. as the grounding line
