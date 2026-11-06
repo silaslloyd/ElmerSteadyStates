@@ -19,7 +19,7 @@ grounding-line position integrated across the strip (from the divide at x = 0: t
 by Green's theorem along it). In a steady state with no basal melt the grounding-line flux equals it.
 
 Re-running reads NAME.csv and computes only the frames not in it yet (new output of a running job); --recompute
-redoes all of them.
+redoes all of them. The plot opens in a window (and is saved); --no-show only saves it.
 
 Out: NAME.csv (time, flux estimate and bounds and the accumulation in m^3/yr and Gt/yr, grounding-line length,
 grounded area) and NAME.png. NAME defaults to the first file's name + "_glflux". Velocities are taken as m/yr (as
@@ -40,7 +40,8 @@ def main():
     if "--out" in args:
         k = args.index("--out"); out = args[k + 1]; args = args[:k] + args[k + 2:]
     recompute = "--recompute" in args
-    args = [a for a in args if a != "--recompute"]
+    show = "--no-show" not in args                          # --no-show: only save the image (e.g. on tethys)
+    args = [a for a in args if a not in ("--recompute", "--no-show")]
     if "--acc" in args:
         k = args.index("--acc"); acc = float(args[k + 1]); args = args[:k] + args[k + 2:]
     if "--rho" in args:
@@ -50,7 +51,8 @@ def main():
     out = out or os.path.splitext(args[0])[0] + "_glflux"
 
     import matplotlib
-    matplotlib.use("Agg")
+    if not show:
+        matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import matplotlib.tri as mtri
 
@@ -139,6 +141,8 @@ def main():
     ax.grid(True, alpha=0.4); ax.legend()
     fig.tight_layout(); fig.savefig(out + ".png", dpi=200)
     print(f"{out}.csv, {out}.png")
+    if show:
+        plt.show()
 
 
 if __name__ == "__main__":
