@@ -23,15 +23,19 @@ def profile(path):
     gx, X = allf[find_name(allf, "coordinate 1")]
     out = {}
     for name in ("Zs", "Zb"):
-        b = next(b for b in s.layout.blocks if b.name.lower() == name.lower())
+        b = next((b for b in s.layout.blocks if b.name.lower() == name.lower()), None)
+        if b is None:                                  # land: no Zb
+            continue
         x = _on(gx, X, b.gids)
         xr = np.round(x, 0)
         ux = np.unique(xr)
-        v = np.array([blk[b.name][xr == u].mean() for u in ux])     # the strip's width averaged (one element wide)
+        v = np.array([blk[b.name][xr == u].mean() for u in ux])     # averaged across the strip (3D: the mean over y)
         out[name] = (ux, v)
-    g, gm = s.frozen[find_name(s.frozen, "GroundedMask")]
-    xg = _on(gx, X, g)
-    out["gl"] = float(xg[gm > -0.5].max())
+    try:                                               # marine: the grounding line; land: the margin (none)
+        g, gm = s.frozen[find_name(s.frozen, "GroundedMask")]
+        out["gl"] = float(_on(gx, X, g)[gm > -0.5].max())
+    except KeyError:
+        out["gl"] = np.nan
     out["t"] = float(s.meta.get("time", np.nan))
     return out
 
@@ -48,7 +52,7 @@ def rough(x, z, x0):
 
 R = profile(a.ref)
 rr, rx = rough(*R["Zs"], a.x0)
-print(f"reference {os.path.basename(a.ref)}: t {R['t']:g} yr, grounding line {R['gl'] / 1e3:.2f} km, "
+print(f"reference {os.path.basename(a.ref)}: t {R['t']:g} yr, " + (f"grounding line {R['gl'] / 1e3:.2f} km, " if np.isfinite(R['gl']) else "") +
       f"surface roughness max |d2 Zs| {rr:.3g} m at {rx:.1f} km")
 for p in a.runs:
     try:
@@ -56,8 +60,8 @@ for p in a.runs:
     except Exception as e:
         print(f"{os.path.basename(p)}: not readable ({e})")
         continue
-    line = f"{os.path.basename(p)}: t {P['t']:g} yr, grounding line {P['gl'] / 1e3:.2f} km ({(P['gl'] - R['gl']) / 1e3:+.2f})"
-    for name in ("Zs", "Zb"):
+    line = f"{os.path.basename(p)}: t {P['t']:g} yr" + (f", grounding line {P['gl'] / 1e3:.2f} km ({(P['gl'] - R['gl']) / 1e3:+.2f})" if np.isfinite(P['gl']) else "")
+    for name in [n for n in ("Zs", "Zb") if n in P and n in R]:
         x, v = P[name]
         xr_, vr = R[name]
         m = x >= a.x0 * 1e3
