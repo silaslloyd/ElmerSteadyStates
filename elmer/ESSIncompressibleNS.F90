@@ -2863,6 +2863,8 @@ SUBROUTINE IncompressibleNSSolver(Model, Solver, dt, Transient)
 
     Active = GetNOFActive()
     CALL DefaultInitialize()
+    ! ESS rotational periodic: the slave nodes' velocity frames, after Elmer's N-T setup and before assembly
+    CALL ESSRotPeriodicFrames()
     IF (ASSOCIATED(SchurSolver)) THEN
       CALL DefaultInitialize(USolver=SchurSolver)
     END IF
@@ -3068,6 +3070,114 @@ CONTAINS
 !------------------------------------------------------------------------------
   END SUBROUTINE ProbeThisElement
 !------------------------------------------------------------------------------
+
+!------------------------------------------------------------------------------
+!> ESS rotational periodic: sector (wedge) domains whose two side walls are at an angle to each other about a
+!> vertical axis. Scalars (pressure, temperature, Zs, ...) are plainly periodic (Elmer: "Periodic BC = master",
+!> "Periodic BC Rotate(3) = Real 0 0 angle" to pair the nodes, "Periodic BC <var> = True"). The velocity is not:
+!> u(slave) = R u(master), with R the rotation about the axis that takes the master node to its slave, so that the
+!> radial, azimuthal and vertical components are periodic, not vx, vy, vz.
+!>
+!> How: the slave side BC also has "Normal-Tangential Velocity = True", so Elmer assembles each slave node's
+!> velocity in a frame of its own (BoundaryNormals / Tangent1 / Tangent2) and ties the frame components to the
+!> master's (Periodic BC Velocity 1/2/3: component by component). This routine sets that frame to R times the
+!> master's frame: the master's own N-T frame if it has one (a corner node on the base: the base normal and its
+!> tangents), else the Cartesian axes. Then slave component i = (R f_i) . u_s and master component i = f_i . u_m,
+!> and tying them gives u_s = R u_m for any frame f. Overriding Elmer's own slave frames also makes the corner
+!> nodes exact (Elmer would average the side and base normals there, and its tangent rule is not rotation-
+!> equivariant for near-vertical normals).
+!>
+!> Slave side BC keywords:
+!>   ESS Rotational Periodic Velocity = Logical True
+!>   Normal-Tangential Velocity = Logical True
+!>   Rotational Normals = Logical True       (only so that Elmer leaves the master normals alone)
+!>   Rotation Axis Origin(2) = Real x0 y0    (optional, default 0 0: the vertical axis through (x0, y0))
+!> The pairing is Elmer's nodal projector (Model % BCs(i) % PMatrix): conforming sides (each slave has one master
+!> with weight 1); otherwise the master with the largest weight, counted in the log. R is computed per pair from
+!> the two nodes' positions, so it does not depend on the sign convention of Periodic BC Rotate.
+!------------------------------------------------------------------------------
+  SUBROUTINE ESSRotPeriodicFrames()
+    TYPE(ValueList_t), POINTER :: BCv
+    TYPE(Matrix_t), POINTER :: P
+    TYPE(Mesh_t), POINTER :: M
+    INTEGER, POINTER :: Reord(:)
+    REAL(KIND=dp), POINTER :: Nrm(:,:), Tg1(:,:), Tg2(:,:), Org(:,:)
+    REAL(KIND=dp) :: x0, y0, phi, c, sn, wmax, F(3,3), Rm(3,3), G(3,3)
+    INTEGER :: ibc, ii, kk, ks, km, mm, l, nset, nmiss, nnc
+    LOGICAL :: GotIt, AnyRot
+
+    AnyRot = .FALSE.
+    DO ibc = 1, CurrentModel % NumberOfBCs
+      IF ( ListGetLogical( CurrentModel % BCs(ibc) % Values, 'ESS Rotational Periodic Velocity', GotIt ) ) &
+          AnyRot = .TRUE.
+    END DO
+    IF ( .NOT. AnyRot ) RETURN
+    IF ( dim /= 3 ) CALL Fatal( Caller, 'ESS Rotational Periodic Velocity: 3D only' )
+    IF ( Solver % NormalTangential % NormalTangentialNOFNodes <= 0 ) CALL Fatal( Caller, &
+        'ESS Rotational Periodic Velocity: no N-T nodes (Normal-Tangential Velocity on the slave side?)' )
+    Reord => Solver % NormalTangential % BoundaryReorder
+    Nrm => Solver % NormalTangential % BoundaryNormals
+    Tg1 => Solver % NormalTangential % BoundaryTangent1
+    Tg2 => Solver % NormalTangential % BoundaryTangent2
+    M => Solver % Mesh
+    nset = 0; nmiss = 0; nnc = 0
+
+    DO ibc = 1, CurrentModel % NumberOfBCs
+      BCv => CurrentModel % BCs(ibc) % Values
+      IF ( .NOT. ListGetLogical( BCv, 'ESS Rotational Periodic Velocity', GotIt ) ) CYCLE
+      P => CurrentModel % BCs(ibc) % PMatrix
+      IF ( .NOT. ASSOCIATED( P ) ) CYCLE           ! no slave nodes of this BC on this partition
+      x0 = 0.0_dp; y0 = 0.0_dp
+      Org => ListGetConstRealArray( BCv, 'Rotation Axis Origin', GotIt )
+      IF ( GotIt ) THEN
+        x0 = Org(1,1); y0 = Org(2,1)
+      END IF
+
+      DO ii = 1, P % NumberOfRows
+        ks = P % InvPerm(ii)
+        IF ( ks <= 0 ) CYCLE
+        kk = Reord(ks)
+        IF ( kk <= 0 ) THEN
+          nmiss = nmiss + 1                         ! a slave node without an N-T frame: left Cartesian (wrong)
+          CYCLE
+        END IF
+        ! the master: the column with the largest weight (conforming sides: the only one, weight 1)
+        km = 0; wmax = 0.0_dp
+        DO l = P % Rows(ii), P % Rows(ii+1) - 1
+          IF ( P % Cols(l) <= 0 ) CYCLE
+          IF ( ABS( P % Values(l) ) > wmax ) THEN
+            wmax = ABS( P % Values(l) ); km = P % Cols(l)
+          END IF
+        END DO
+        IF ( km <= 0 ) CYCLE
+        IF ( ABS( wmax - 1.0_dp ) > 1.0e-6_dp ) nnc = nnc + 1
+
+        ! R: the rotation about the vertical axis through (x0, y0) that takes the master node to the slave node
+        phi = ATAN2( M % Nodes % y(ks) - y0, M % Nodes % x(ks) - x0 ) &
+            - ATAN2( M % Nodes % y(km) - y0, M % Nodes % x(km) - x0 )
+        c = COS( phi ); sn = SIN( phi )
+        Rm = 0.0_dp
+        Rm(1,1) = c; Rm(1,2) = -sn; Rm(2,1) = sn; Rm(2,2) = c; Rm(3,3) = 1.0_dp
+
+        ! the master's frame (rows: normal, tangent 1, tangent 2), the Cartesian axes if it has none
+        mm = Reord(km)
+        IF ( mm > 0 ) THEN
+          F(1,:) = Nrm(mm,1:3); F(2,:) = Tg1(mm,1:3); F(3,:) = Tg2(mm,1:3)
+        ELSE
+          F = 0.0_dp; F(1,1) = 1.0_dp; F(2,2) = 1.0_dp; F(3,3) = 1.0_dp
+        END IF
+        G = TRANSPOSE( MATMUL( Rm, TRANSPOSE( F ) ) )      ! each frame vector (a row of F) rotated by R
+        Nrm(kk,1:3) = G(1,:); Tg1(kk,1:3) = G(2,:); Tg2(kk,1:3) = G(3,:)
+        nset = nset + 1
+      END DO
+    END DO
+
+    WRITE( Message, '(A,I0,A,I0,A,I0,A)' ) 'ESS rotational periodic: ', nset, ' slave velocity frames set, ', &
+        nmiss, ' slave nodes without an N-T frame, ', nnc, ' non-conforming pairs'
+    CALL Info( Caller, Message, Level = 5 )
+    IF ( nmiss > 0 ) CALL Warn( Caller, 'ESS rotational periodic: slave nodes without an N-T frame (u not rotated)' )
+  END SUBROUTINE ESSRotPeriodicFrames
+
 
 !------------------------------------------------------------------------------
 END SUBROUTINE IncompressibleNSSolver

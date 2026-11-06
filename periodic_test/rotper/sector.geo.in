@@ -1,0 +1,22 @@
+// An annular sector, symmetric about the x-axis: r from R0 to R1 (m), from -ANGLE/2 to +ANGLE/2 (degrees), element
+// size H (m). Side 2 (+ANGLE/2) is the image of side 1 (-ANGLE/2) rotated by ANGLE about the z-axis through the
+// origin, node for node (gmsh Periodic Curve ... Rotate). Physical lines: 1 side 1 (master), 2 side 2 (slave),
+// 3 inner arc (r = R0), 4 outer arc (r = R1); surface 1. Made by run_rotper.sh (sed).
+R0 = @R0@; R1 = @R1@; A = @ANGLE@ * Pi / 180; H = @H@;
+Point(1) = {0, 0, 0, H};
+Point(2) = {R0 * Cos(-A/2), R0 * Sin(-A/2), 0, H};
+Point(3) = {R1 * Cos(-A/2), R1 * Sin(-A/2), 0, H};
+Point(4) = {R1 * Cos( A/2), R1 * Sin( A/2), 0, H};
+Point(5) = {R0 * Cos( A/2), R0 * Sin( A/2), 0, H};
+Line(1) = {2, 3};                 // side 1
+Circle(2) = {3, 1, 4};            // outer arc
+Line(3) = {5, 4};                 // side 2 (same direction as side 1: inner -> outer)
+Circle(4) = {5, 1, 2};            // inner arc
+Curve Loop(1) = {1, 2, -3, 4};
+Plane Surface(1) = {1};
+Periodic Curve {3} = {1} Rotate {{0, 0, 1}, {0, 0, 0}, A};
+Physical Curve(1) = {1};
+Physical Curve(2) = {3};
+Physical Curve(3) = {4};
+Physical Curve(4) = {2};
+Physical Surface(1) = {1};
