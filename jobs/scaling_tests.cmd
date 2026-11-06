@@ -230,6 +230,15 @@ export ESS_ELMER_TIMEOUT=${ELMER_TIMEOUT:-604800}
 [ -n "$ADAPTIVE_PREC" ] && export ESS_ADAPTIVE_PREC=$ADAPTIVE_PREC && echo "  adaptive Stokes preconditioner: $ADAPTIVE_PREC"
 [ -n "$ADAPTIVE_PREC_FACTOR" ] && export ESS_ADAPTIVE_PREC_FACTOR=$ADAPTIVE_PREC_FACTOR
 [ -n "$ADAPTIVE_PREC_CALM" ] && export ESS_ADAPTIVE_PREC_CALM=$ADAPTIVE_PREC_CALM   # easy solves before back to the first (default 200)
+# implicit free surface: FSSA=adapted (elmer/ESSIncompressibleNS: the FSSA term of the previous coupled iteration
+# subtracted, Ahlkrona et al. 2026) with FS_COUPLED=1 (mesh mapping and both free surfaces in the coupled loop with
+# Stokes) and COUPLED_ITERS (default 3 with FS_COUPLED); FSSA=full|normal|transposed|none otherwise ([elmer] fssa)
+[ -n "$FSSA" ] && export ESS_FSSA=$FSSA && echo "  FSSA: $FSSA"
+if [ "$FS_COUPLED" = 1 ]; then
+    export ESS_FS_COUPLED=1 ESS_COUPLED_ITERS=${COUPLED_ITERS:-3}
+    echo "  free surfaces in the coupled loop, up to $ESS_COUPLED_ITERS iterations per step"
+elif [ -n "$COUPLED_ITERS" ]; then export ESS_COUPLED_ITERS=$COUPLED_ITERS; fi
+[ "$FSSA_PREV_TIMESTEP" = 1 ] && export ESS_FSSA_PREV_TIMESTEP=1
 # STEP_CHECK=1: elmer/StepCheck.F90 after every step ([elmer] step_check): the advective CFL of the surface and the
 # floating base, the largest change per step, the free-surface relaxation number, in the Elmer log ("step check")
 [ "$STEP_CHECK" = 1 ] && export ESS_STEP_CHECK=1 && echo "  step check on"
