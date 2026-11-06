@@ -45,7 +45,7 @@ if [ -n "$CASE" ] && [ -z "$LINEAR_STOKES" ]; then
     # the coarse runs' Stokes solve (jobs/scaling_tests.cmd mkGCR): GCR(250) + ILU<level>, at most 2000 iterations,
     # tolerance 1e-8, carrying on when not converged
     STOKES_ELEMENT=${STOKES_ELEMENT:-Bubbles}; LINEAR_STOKES=block
-    mkdir -p $WORK; GCRF=$WORK/stokes_gcr_${STOKES_PREC:-ILU2}.sif.in
+    mkdir -p $WORK; GCRF=$WORK/stokes_gcr_${STOKES_PREC:-ILU2}_${SLURM_JOB_ID:-local}.sif.in   # per job (jobs side by side)
     printf '%s\n' "  Linear System Solver = Iterative" "  Linear System Iterative Method = GCR" \
         "  Linear System GCR Restart = Integer 250" "  Linear System Max Iterations = 2000" \
         "  Linear System Preconditioning = ${STOKES_PREC:-ILU2}" "  Linear System Convergence Tolerance = 1.0e-8" \
