@@ -13,8 +13,14 @@ with f = 0.8 (the shallow-ice shape for n = 3) as the estimate, and f = 0 (all a
 the surface speed) as hard bounds: the true depth average lies between the basal and surface speeds wherever the
 speed decreases with depth. Near the grounding line the ice mostly slides, so the bounds are close.
 
-Out: NAME.csv (time, flux estimate and bounds in m^3/yr and Gt/yr, grounding-line length) and NAME.png. NAME
-defaults to the first file's name + "_glflux". Velocities are taken as m/yr (as the model's).
+With it, the accumulation integrated over the grounded ice: the marine model's surface accumulation is uniform
+(aDIM, case/parameters.lua: 0.0321 m/yr of ice; --acc A for another), so this is a x the grounded area, i.e. a x the
+grounding-line position integrated across the strip (from the divide at x = 0: the area to the left of the line,
+by Green's theorem along it). In a steady state with no basal melt the grounding-line flux equals it.
+
+Out: NAME.csv (time, flux estimate and bounds and the accumulation in m^3/yr and Gt/yr, grounding-line length,
+grounded area) and NAME.png. NAME defaults to the first file's name + "_glflux". Velocities are taken as m/yr (as
+the model's).
 """
 import os
 import sys
@@ -22,13 +28,16 @@ import sys
 import numpy as np
 
 F_SHAPE = 0.8
+A_DIM = 0.03213938607148378      # m/yr of ice: aDIM of case/parameters.lua (ascale with aND = 1)
 
 
 def main():
     args = sys.argv[1:]
-    out, rho = None, 917.0
+    out, rho, acc = None, 917.0, A_DIM
     if "--out" in args:
         k = args.index("--out"); out = args[k + 1]; args = args[:k] + args[k + 2:]
+    if "--acc" in args:
+        k = args.index("--acc"); acc = float(args[k + 1]); args = args[:k] + args[k + 2:]
     if "--rho" in args:
         k = args.index("--rho"); rho = float(args[k + 1]); args = args[:k] + args[k + 2:]
     if not args:
@@ -50,7 +59,7 @@ def main():
         for k, t in enumerate(d["frame_times"]):
             mask = d["base_mask"][k].astype(float)
             if mask.min() > -0.5 or mask.max() < -0.5:
-                rows.append((float(t), np.nan, np.nan, np.nan, 0.0))
+                rows.append((float(t), np.nan, np.nan, np.nan, 0.0, np.nan))
                 continue
             # the grounding line: the -0.5 contour of the mask (between floating and grounding-line/grounded nodes)
             fig = plt.figure()
@@ -58,7 +67,7 @@ def main():
             segs = [p for p in cs.allsegs[0] if len(p) > 1]
             plt.close(fig)
             if not segs:
-                rows.append((float(t), np.nan, np.nan, np.nan, 0.0))
+                rows.append((float(t), np.nan, np.nan, np.nan, 0.0, np.nan))
                 continue
             P = np.concatenate([np.c_[s[:-1], s[1:]] for s in segs])      # x0 y0 x1 y1 per segment
             mid = 0.5 * (P[:, :2] + P[:, 2:])
@@ -83,21 +92,29 @@ def main():
             good = np.isfinite(H) & np.isfinite(us) & np.isfinite(ub)
             q = lambda f: float(np.sum((H * (ub + f * (us - ub)) * L)[good]))
             lo, hi = sorted((q(0.0), q(1.0)))
-            rows.append((float(t), q(F_SHAPE), lo, hi, float(L[good].sum())))
+            # the grounded area: the area between the divide (x = 0) and the line, |sum of x dy| along it
+            area = abs(float(np.sum(mid[:, 0] * dl[:, 1])))
+            rows.append((float(t), q(F_SHAPE), lo, hi, float(L[good].sum()), area))
             print(f"  {os.path.basename(path)} t {t:9.1f} yr: grounding-line flux {q(F_SHAPE):.4e} m^3/yr "
                   f"({q(F_SHAPE) * rho / 1e12:.4f} Gt/yr; bounds {lo * rho / 1e12:.4f} .. {hi * rho / 1e12:.4f}), "
-                  f"line length {L[good].sum() / 1e3:.1f} km", flush=True)
+                  f"line length {L[good].sum() / 1e3:.1f} km; accumulation upstream {acc * area * rho / 1e12:.4f} Gt/yr "
+                  f"(grounded area {area / 1e6:.0f} km^2)", flush=True)
 
     rows.sort()
     R = np.array(rows)
-    hdr = "time_yr,flux_m3_per_yr,flux_low_m3_per_yr,flux_high_m3_per_yr,gl_length_m,flux_Gt_per_yr,flux_low_Gt,flux_high_Gt"
-    np.savetxt(out + ".csv", np.c_[R, R[:, 1:4] * rho / 1e12], delimiter=",", header=hdr, comments="")
+    accq = acc * R[:, 5]                                   # m^3/yr of ice
+    hdr = ("time_yr,flux_m3_per_yr,flux_low_m3_per_yr,flux_high_m3_per_yr,gl_length_m,grounded_area_m2,"
+           "accumulation_m3_per_yr,flux_Gt_per_yr,flux_low_Gt,flux_high_Gt,accumulation_Gt_per_yr")
+    np.savetxt(out + ".csv", np.c_[R, accq, R[:, 1:4] * rho / 1e12, accq * rho / 1e12], delimiter=",", header=hdr,
+               comments="")
     fig, ax = plt.subplots(figsize=(9, 4.5))
     ax.fill_between(R[:, 0], R[:, 2] * rho / 1e12, R[:, 3] * rho / 1e12, color="tab:blue", alpha=0.25,
                     label="bounds (basal .. surface speed)")
     ax.plot(R[:, 0], R[:, 1] * rho / 1e12, "o-", color="tab:blue", ms=3,
             label=f"estimate (u_b + {F_SHAPE:g} (u_s - u_b))")
-    ax.set_xlabel("time (yr)"); ax.set_ylabel("grounding-line flux (Gt/yr)")
+    ax.plot(R[:, 0], accq * rho / 1e12, "s--", color="tab:orange", ms=3,
+            label=f"accumulation upstream (a x grounded area, a = {acc:.4g} m/yr)")
+    ax.set_xlabel("time (yr)"); ax.set_ylabel("Gt/yr")
     ax.grid(True, alpha=0.4); ax.legend()
     fig.tight_layout(); fig.savefig(out + ".png", dpi=200)
     print(f"{out}.csv, {out}.png")
