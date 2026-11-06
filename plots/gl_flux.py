@@ -18,6 +18,9 @@ With it, the accumulation integrated over the grounded ice: the marine model's s
 grounding-line position integrated across the strip (from the divide at x = 0: the area to the left of the line,
 by Green's theorem along it). In a steady state with no basal melt the grounding-line flux equals it.
 
+Re-running reads NAME.csv and computes only the frames not in it yet (new output of a running job); --recompute
+redoes all of them.
+
 Out: NAME.csv (time, flux estimate and bounds and the accumulation in m^3/yr and Gt/yr, grounding-line length,
 grounded area) and NAME.png. NAME defaults to the first file's name + "_glflux". Velocities are taken as m/yr (as
 the model's).
@@ -36,6 +39,8 @@ def main():
     out, rho, acc = None, 917.0, A_DIM
     if "--out" in args:
         k = args.index("--out"); out = args[k + 1]; args = args[:k] + args[k + 2:]
+    recompute = "--recompute" in args
+    args = [a for a in args if a != "--recompute"]
     if "--acc" in args:
         k = args.index("--acc"); acc = float(args[k + 1]); args = args[:k] + args[k + 2:]
     if "--rho" in args:
@@ -49,14 +54,30 @@ def main():
     import matplotlib.pyplot as plt
     import matplotlib.tri as mtri
 
-    rows = []
+    rows, done = [], set()
+    if os.path.exists(out + ".csv") and not recompute:       # the frames already computed (by time)
+        with open(out + ".csv") as fh:
+            head = fh.readline().strip().split(",")
+        if head[:6] == ["time_yr", "flux_m3_per_yr", "flux_low_m3_per_yr", "flux_high_m3_per_yr", "gl_length_m",
+                        "grounded_area_m2"]:
+            old = np.atleast_2d(np.loadtxt(out + ".csv", delimiter=",", skiprows=1))
+            rows = [tuple(r[:6]) for r in old if r.size >= 6]
+            done = {round(r[0], 3) for r in rows}
+            print(f"{out}.csv: {len(rows)} frames already computed (--recompute: all again)")
     for path in args:
         d = np.load(path, allow_pickle=True)
         bx, by = d["base_x"].astype(float), d["base_y"].astype(float)
         tx, ty = d["top_x"].astype(float), d["top_y"].astype(float)
+        if all(round(float(t), 3) in done for t in d["frame_times"]):
+            continue
         bt = mtri.Triangulation(bx, by)
         tt = mtri.Triangulation(tx, ty)
-        for k, t in enumerate(d["frame_times"]):
+        todo = [k for k, t in enumerate(d["frame_times"]) if round(float(t), 3) not in done]
+        if not todo:
+            continue
+        for k in todo:
+            t = d["frame_times"][k]
+            done.add(round(float(t), 3))
             mask = d["base_mask"][k].astype(float)
             if mask.min() > -0.5 or mask.max() < -0.5:
                 rows.append((float(t), np.nan, np.nan, np.nan, 0.0, np.nan))
