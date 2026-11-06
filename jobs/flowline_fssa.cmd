@@ -38,6 +38,12 @@ GLARG=$(grep -q '^geometry *= *"marine"' $CFG && echo "--gl contact" || true)   
 CASE=$(basename $CFG .toml); [ $CASE = marine_flowline ] && CASE= || CASE=${CASE}_   # tag prefix (not the flowline)
 N=${SLURM_NTASKS:-32}
 export ESS_NPROCS=$N ESS_MPIRUN="mpirun -np {n} --bind-to none"
+# STOKES_PREC / STOKES_ELEMENT / LINEAR_STOKES: override the config's Stokes setup (3D tests: the configs' P2/P1 +
+# ILU4 is too big in 3D; the defaults below for 3D cases are the coarse model's: P1/P1 + bubbles, ILU0, GCR)
+if [ -n "$CASE" ]; then STOKES_PREC=${STOKES_PREC:-ILU0}; STOKES_ELEMENT=${STOKES_ELEMENT:-Bubbles}; LINEAR_STOKES=${LINEAR_STOKES:-iterative}; fi
+[ -n "$STOKES_PREC" ] && export ESS_STOKES_PREC=$STOKES_PREC
+[ -n "$STOKES_ELEMENT" ] && export ESS_STOKES_ELEMENT=$STOKES_ELEMENT
+[ -n "$LINEAR_STOKES" ] && export ESS_LINEAR_STOKES=$LINEAR_STOKES
 START=${START:-$WORK/fssa_start.npz}   # START=STATE: another start (e.g. a spun-up flowline state on this mesh)
 ( flock 9
   if [ ! -d $WORK/case/footprint/partitioning.$N ] || { [ ! -f $START ] && [ $START = $WORK/fssa_start.npz ]; }; then

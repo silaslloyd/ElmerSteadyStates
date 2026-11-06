@@ -156,7 +156,7 @@ class ElmerModel(Model):
         if self.surface_temp not in ("constant", "snout"):
             raise ValueError(f"[elmer] surface_temp must be 'constant' or 'snout', not {self.surface_temp!r}")
         # linear solvers: "direct" (MUMPS) or "iterative" (Krylov + ILU, tolerance iterative_tol)
-        self.linear_stokes = str(e.get("linear_stokes", "direct"))
+        self.linear_stokes = os.environ.get("ESS_LINEAR_STOKES") or str(e.get("linear_stokes", "direct"))
         # "block": the keywords of this file go into the Stokes solver section verbatim (block preconditioning)
         self.stokes_block_file = str(e.get("stokes_block_file", "elmer/stokes_block.sif.in"))
         self.linear_heat = str(e.get("linear_heat", "direct"))
@@ -167,11 +167,12 @@ class ElmerModel(Model):
         # [elmer] linear_free_surface: "direct" (the template, default) or "iterative" (BiCGStab + ILU1)
         self.linear_free_surface = str(e.get("linear_free_surface", "direct"))
         self.iterative_tol = float(e.get("iterative_tol", 1e-10))
-        self.stokes_precond = str(e.get("stokes_preconditioner", "ILU2"))
+        # ESS_STOKES_PREC / ESS_STOKES_ELEMENT / ESS_LINEAR_STOKES: override the config's (e.g. a cheaper 3D test)
+        self.stokes_precond = os.environ.get("ESS_STOKES_PREC") or str(e.get("stokes_preconditioner", "ILU2"))
         self.ilut_tol = float(e.get("ilut_tolerance", 1e-4))     # drop tolerance for ILUT
         # "P2/P1" (default) or "Stabilized" (P1/P1 with stabilisation: far easier for ILU-preconditioned
         # Krylov solvers, but a different discretisation, so slightly different steady states)
-        self.stokes_element = str(e.get("stokes_element", "P2/P1"))
+        self.stokes_element = os.environ.get("ESS_STOKES_ELEMENT") or str(e.get("stokes_element", "P2/P1"))
         # [elmer] stokes_solver: Elmer's Stokes module: "nsvec" (IncompressibleNSVec, the default), "flowsolve" (the
         # classic FlowSolve that Elmer/Ice has long used) or "ins" (IncompressibleNS, NSVec's non-vectorised
         # predecessor). Same variable (Flow Solution[Velocity:3 Pressure:1]), boundary conditions and loads.
