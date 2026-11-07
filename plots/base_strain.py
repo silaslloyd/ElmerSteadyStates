@@ -6,7 +6,7 @@ and what each approximation (SIA, SSA, Blatter-Pattyn, full Stokes) keeps and dr
     python3 plots/base_strain.py FRAMES.npz [--every N | --frame K | --t YEARS] [--res KM] [--x XMIN XMAX]
         [--yscale S] [--shear-factor F] [--out FILE.html]
 
-Default: every 5th frame (--every N; the last always), a slider through them and a dropdown for the map; --frame /
+Default: every 5th frame (--every N; the last always; --first N: only the first N frames), a slider through them and a dropdown for the map; --frame /
 --t: one frame. Grounded ice only (the grounding line and the shelf masked out, gradients from grounded triangles);
 --keep-shelf: everything. --res: the map grid in km (default 2 with a slider, 1 for one frame); --x: only that x range.
 
@@ -148,6 +148,7 @@ def main():
     args, frame = opt(args, "--frame", conv=int)
     args, tsel = opt(args, "--t")
     args, every = opt(args, "--every", conv=int, default=5)
+    args, first = opt(args, "--first", conv=int)           # --first N: only the first N frames
     args, res = opt(args, "--res")
     args, xwin = opt(args, "--x", n=2)
     args, yscale = opt(args, "--yscale", default=3.0)
@@ -167,7 +168,8 @@ def main():
     if frame is not None or tsel is not None:      # one frame
         ks = [int(np.argmin(np.abs(times - tsel)))] if tsel is not None else [frame % len(times)]
     else:                                          # every N-th frame, and the last
-        ks = sorted(set(list(range(0, len(times), every)) + [len(times) - 1]))
+        nt = min(first, len(times)) if first else len(times)
+        ks = sorted(set(list(range(0, nt, every)) + [nt - 1]))
     res = res or (1.0 if len(ks) == 1 else 2.0)    # km; coarser with a slider (the page holds every map of every frame)
     x, y = d["base_x"].astype(float), d["base_y"].astype(float)
     tx, ty = d["top_x"].astype(float), d["top_y"].astype(float)
@@ -289,7 +291,7 @@ def main():
     });
     gd.on('plotly_sliderchange', function(e) { cur.k = e.slider.active; show(); });
     """ % (len(ks), nF, json.dumps(labels), json.dumps(tlab), json.dumps(os.path.basename(path)), json.dumps(sides))
-    tag = f"_t{float(times[ks[0]]):.0f}" if len(ks) == 1 else f"_every{every}"
+    tag = f"_t{float(times[ks[0]]):.0f}" if len(ks) == 1 else f"_every{every}" + (f"_first{first}" if first else "")
     out = out or os.path.splitext(path)[0] + f"_strain{tag}.html"
     fig.write_html(out, include_plotlyjs="cdn", post_script=js)
     print(f"{len(ks)} frame(s), {nF} maps each -> {out} ({os.path.getsize(out) / 1e6:.0f} MB)")
