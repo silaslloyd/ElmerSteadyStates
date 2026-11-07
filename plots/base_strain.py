@@ -3,8 +3,11 @@
 Strain rates at the base, map view (plotly), from a frames file (plots/vtu_frames.py): which terms dominate where,
 and what each approximation (SIA, SSA, Blatter-Pattyn, full Stokes) keeps and drops.
 
-    python3 plots/base_strain.py FRAMES.npz [--frame K | --t YEARS] [--res KM] [--x XMIN XMAX] [--yscale S]
-        [--shear-factor F] [--out FILE.html]
+    python3 plots/base_strain.py FRAMES.npz [--every N | --frame K | --t YEARS] [--res KM] [--x XMIN XMAX]
+        [--yscale S] [--shear-factor F] [--out FILE.html]
+
+Default: every 5th frame (--every N; the last always), a slider through them and a dropdown for the map; --frame /
+--t: one frame. --res: the map grid in km (default 2 with a slider, 1 for one frame); --x: only that x range.
 
 From the base velocity (u, v, w) the horizontal derivatives along the base: du/dx, du/dy, dv/dx, dv/dy, dw/dx, dw/dy
 (gradients on the triangulated base nodes, averaged to the nodes). The frames hold no velocity inside the ice, so the
@@ -29,6 +32,7 @@ and the dominant term at each point. The grounding line in black.
 Note: the derivatives are along the base, not at constant z. Where the bed slopes, d/dx along the base = d/dx at fixed
 z + slope x d/dz, so on steep beds the along-base du/dx includes some vertical shear.
 """
+import json
 import os
 import sys
 
@@ -67,11 +71,51 @@ def node_gradients(tri, x, y, fields):
     return out
 
 
+def frame_fields(d, k, x, y, tri, sf, interp_top):
+    """the maps of frame k at the base nodes: [(label, values, kind)], kind: signed | log | share | ratio | cat"""
+    u, v, w = (d[f"base_v{c}"][k].astype(float) for c in "xyz")
+    us, vs, H = interp_top(k)
+    g = node_gradients(tri, x, y, {"u": u, "v": v, "w": w})
+    dudx, dudy = g["u"]; dvdx, dvdy = g["v"]; dwdx, dwdy = g["w"]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        Hs = np.where(H > 1.0, H, np.nan)
+        dudz, dvdz = sf * (us - u) / Hs, sf * (vs - v) / Hs
+    exx, eyy = dudx, dvdy
+    exy = 0.5 * (dudy + dvdx)
+    exz, eyz = 0.5 * (dudz + dwdx), 0.5 * (dvdz + dwdy)
+    memb = np.sqrt(np.maximum(exx ** 2 + eyy ** 2 + exx * eyy + exy ** 2, 0))
+    shear = np.sqrt(exz ** 2 + eyz ** 2)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mshare = memb / (memb + shear)
+        sh = np.hypot(dudz, dvdz)
+        wratio = np.where(sh > 0, np.hypot(dwdx, dwdy) / sh, np.nan)     # no vertical shear (plug flow): undefined
+    A = np.abs(np.c_[tuple(a for _, a in dominant_terms(exx, eyy, exy, dudz, dvdz, dwdx, dwdy))])
+    dom = np.where(np.isfinite(A).all(axis=1), np.argmax(np.nan_to_num(A, nan=-1), axis=1), -1).astype(float)
+    dom[dom < 0] = np.nan
+    return [("e_xx = du/dx", exx, "signed"), ("e_yy = dv/dy", eyy, "signed"),
+            ("e_zz = dw/dz = -(e_xx + e_yy)", -(exx + eyy), "signed"), ("e_xy = (du/dy + dv/dx)/2", exy, "signed"),
+            ("e_xz = (du/dz + dw/dx)/2", exz, "signed"), ("e_yz = (dv/dz + dw/dy)/2", eyz, "signed"),
+            ("du/dz (est.)", dudz, "signed"), ("dv/dz (est.)", dvdz, "signed"), ("dw/dx", dwdx, "signed"),
+            ("dw/dy", dwdy, "signed"), ("du/dy", dudy, "signed"), ("dv/dx", dvdx, "signed"),
+            ("log10 |membrane| (SSA terms)", np.log10(np.maximum(memb, 1e-12)), "log"),
+            ("log10 |shear| (e_xz, e_yz)", np.log10(np.maximum(shear, 1e-12)), "log"),
+            ("membrane share |memb| / (|memb| + |shear|)", mshare, "share"),
+            ("log10 |dw/dx, dw/dy| / |du/dz, dv/dz| (Blatter-Pattyn drops the numerator)",
+             np.log10(np.maximum(wratio, 1e-6)), "ratio"),
+            ("dominant term", dom, "cat")]
+
+
+def dominant_terms(exx, eyy, exy, dudz, dvdz, dwdx, dwdy):
+    return [("e_xx", exx), ("e_yy", eyy), ("e_xy", exy), ("du/dz, dv/dz / 2", 0.5 * np.hypot(dudz, dvdz)),
+            ("dw/dx, dw/dy / 2", 0.5 * np.hypot(dwdx, dwdy))]
+
+
 def main():
     args = sys.argv[1:]
     args, frame = opt(args, "--frame", conv=int)
     args, tsel = opt(args, "--t")
-    args, res = opt(args, "--res", default=1.0)
+    args, every = opt(args, "--every", conv=int, default=5)
+    args, res = opt(args, "--res")
     args, xwin = opt(args, "--x", n=2)
     args, yscale = opt(args, "--yscale", default=3.0)
     args, sf = opt(args, "--shear-factor", default=1.0)
@@ -79,128 +123,120 @@ def main():
     if len(args) != 1:
         raise SystemExit(__doc__)
     path = args[0]
-    from scipy.spatial import Delaunay
+    from scipy.spatial import Delaunay, cKDTree
     from scipy.interpolate import LinearNDInterpolator
     import plotly.graph_objects as go
 
     d = np.load(path, allow_pickle=True)
     times = d["frame_times"]
-    k = len(times) - 1 if frame is None else frame
-    if tsel is not None:
-        k = int(np.argmin(np.abs(times - tsel)))
-    t = float(times[k])
+    if frame is not None or tsel is not None:      # one frame
+        ks = [int(np.argmin(np.abs(times - tsel)))] if tsel is not None else [frame % len(times)]
+    else:                                          # every N-th frame, and the last
+        ks = sorted(set(list(range(0, len(times), every)) + [len(times) - 1]))
+    res = res or (1.0 if len(ks) == 1 else 2.0)    # km; coarser with a slider (the page holds every map of every frame)
     x, y = d["base_x"].astype(float), d["base_y"].astype(float)
-    u, v, w = (d[f"base_v{c}"][k].astype(float) for c in "xyz")
-    mask = d["base_mask"][k].astype(float)
-    H = None
     tx, ty = d["top_x"].astype(float), d["top_y"].astype(float)
-    if len(tx) == len(x) and np.allclose(tx, x) and np.allclose(ty, y):
-        us, vs = d["top_vx"][k].astype(float), d["top_vy"][k].astype(float)
-        H = d["top_z"][k].astype(float) - d["base_z"][k].astype(float)
-    else:                                          # different node sets: the surface interpolated to the base nodes
-        tt = Delaunay(np.c_[tx, ty])
-        us = LinearNDInterpolator(tt, d["top_vx"][k].astype(float))(x, y)
-        vs = LinearNDInterpolator(tt, d["top_vy"][k].astype(float))(x, y)
-        H = LinearNDInterpolator(tt, d["top_z"][k].astype(float))(x, y) - d["base_z"][k].astype(float)
+    same = len(tx) == len(x) and np.allclose(tx, x) and np.allclose(ty, y)
+    tt = None if same else Delaunay(np.c_[tx, ty])
+
+    def interp_top(k):                             # the surface velocity and the thickness at the base nodes
+        if same:
+            return (d["top_vx"][k].astype(float), d["top_vy"][k].astype(float),
+                    d["top_z"][k].astype(float) - d["base_z"][k].astype(float))
+        f = lambda a: LinearNDInterpolator(tt, a.astype(float))(x, y)
+        return f(d["top_vx"][k]), f(d["top_vy"][k]), f(d["top_z"][k]) - d["base_z"][k].astype(float)
 
     tri = Delaunay(np.c_[x, y])
-    g = node_gradients(tri, x, y, {"u": u, "v": v, "w": w})
-    dudx, dudy = g["u"]; dvdx, dvdy = g["v"]; dwdx, dwdy = g["w"]
-    with np.errstate(invalid="ignore", divide="ignore"):
-        dudz = sf * (us - u) / np.where(H > 1.0, H, np.nan)
-        dvdz = sf * (vs - v) / np.where(H > 1.0, H, np.nan)
-    exx, eyy = dudx, dvdy
-    ezz = -(exx + eyy)
-    exy = 0.5 * (dudy + dvdx)
-    exz = 0.5 * (dudz + dwdx)
-    eyz = 0.5 * (dvdz + dwdy)
-    memb = np.sqrt(np.maximum(exx ** 2 + eyy ** 2 + exx * eyy + exy ** 2, 0))
-    shear = np.sqrt(exz ** 2 + eyz ** 2)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        mshare = memb / (memb + shear)
-        sh = np.hypot(dudz, dvdz)
-        wratio = np.where(sh > 0, np.hypot(dwdx, dwdy) / sh, np.nan)     # no vertical shear (plug flow): undefined
-    # the dominant term: the largest of the terms an approximation would keep or drop
-    terms = [("e_xx", exx), ("e_yy", eyy), ("e_xy", exy), ("du/dz, dv/dz / 2", 0.5 * np.hypot(dudz, dvdz)),
-             ("dw/dx, dw/dy / 2", 0.5 * np.hypot(dwdx, dwdy))]
-    A = np.abs(np.c_[tuple(a for _, a in terms)])
-    dom = np.where(np.isfinite(A).all(axis=1), np.nanargmax(np.nan_to_num(A, nan=-1), axis=1), -1).astype(float)
-    dom[dom < 0] = np.nan
-
-    # onto a regular grid (km)
     x0, x1 = (xwin if xwin else (x.min() / 1e3, x.max() / 1e3))
     gx = np.arange(x0, x1 + 1e-9, res)
     gy = np.arange(y.min() / 1e3, y.max() / 1e3 + 1e-9, min(res, (y.max() - y.min()) / 1e3 / 20))
     GX, GY = np.meshgrid(gx, gy)
     pts = np.c_[GX.ravel() * 1e3, GY.ravel() * 1e3]
+    _, near = cKDTree(np.c_[x, y]).query(pts)
 
-    def grid(f):
+    def grid(f, cat=False):
+        if cat:                                    # categorical: the nearest node, not interpolated
+            return f[near].reshape(GX.shape).astype(np.float32)
         return LinearNDInterpolator(tri, f)(pts).reshape(GX.shape).astype(np.float32)
 
-    def gnear(f):                                  # categorical: the nearest node, not interpolated
-        from scipy.spatial import cKDTree
-        _, i = cKDTree(np.c_[x, y]).query(pts)
-        return f[i].reshape(GX.shape).astype(np.float32)
+    maps, glz = [], []                             # maps[frame][field] = (label, grid, kind)
+    for n, k in enumerate(ks):
+        maps.append([(lab, grid(f, kind == "cat"), kind) for lab, f, kind in frame_fields(d, k, x, y, tri, sf, interp_top)])
+        glz.append(grid(d["base_mask"][k].astype(float)))
+        print(f"  frame {k} (t {float(times[k]):g} yr) {n + 1}/{len(ks)}", end="\r", flush=True)
+    print()
+    nF = len(maps[0])
+    labels = [m[0] for m in maps[0]]
+    # one colour range per field, over all the frames shown
+    rng = []
+    for j in range(nF):
+        kind = maps[0][j][2]
+        allz = np.concatenate([m[j][1].ravel() for m in maps])
+        allz = allz[np.isfinite(allz)]
+        if kind == "signed":
+            a = float(np.percentile(np.abs(allz), 99)) if allz.size else 1.0
+            rng.append(dict(colorscale="RdBu_r", zmid=0, zmin=-a, zmax=a, colorbar=dict(title="1/yr")))
+        elif kind == "log":
+            lo, hi = np.percentile(allz, [1, 99.5]) if allz.size else (-6, 0)
+            rng.append(dict(colorscale="Viridis", zmin=float(lo), zmax=float(hi), colorbar=dict(title="log10 1/yr")))
+        elif kind == "share":
+            rng.append(dict(colorscale="Cividis", zmin=0, zmax=1, colorbar=dict(title="0 SIA .. 1 SSA")))
+        elif kind == "ratio":
+            rng.append(dict(colorscale="RdBu_r", zmid=0, zmin=-3, zmax=1, colorbar=dict(title="log10 ratio")))
+        else:
+            names = [n_ for n_, _ in dominant_terms(*([np.zeros(1)] * 7))]
+            cols = ["#1f77b4", "#2ca02c", "#9467bd", "#d62728", "#ff7f0e"]
+            cs = []
+            for i, c in enumerate(cols[:len(names)]):
+                cs += [[i / len(names), c], [(i + 1) / len(names), c]]
+            rng.append(dict(colorscale=cs, zmin=-0.5, zmax=len(names) - 0.5,
+                            colorbar=dict(title="dominant", tickvals=list(range(len(names))), ticktext=names)))
 
-    signed = [("e_xx = du/dx", exx), ("e_yy = dv/dy", eyy), ("e_zz = dw/dz = -(e_xx + e_yy)", ezz),
-              ("e_xy = (du/dy + dv/dx)/2", exy), ("e_xz = (du/dz + dw/dx)/2", exz), ("e_yz = (dv/dz + dw/dy)/2", eyz),
-              ("du/dz (est.)", dudz), ("dv/dz (est.)", dvdz), ("dw/dx", dwdx), ("dw/dy", dwdy),
-              ("du/dy", dudy), ("dv/dx", dvdx)]
-    traces, labels = [], []
-    for name, f in signed:
-        G = grid(f)
-        a = np.nanpercentile(np.abs(G), 99) if np.isfinite(G).any() else 1.0
-        traces.append(go.Heatmap(x=gx, y=gy, z=G, colorscale="RdBu_r", zmid=0, zmin=-a, zmax=a,
-                                 colorbar=dict(title="1/yr"), hovertemplate=f"{name}: %{{z:.3g}} /yr<br>x %{{x:.1f}} "
-                                 "y %{y:.1f} km<extra></extra>"))
-        labels.append(name)
-    for name, f in [("|membrane| (SSA terms)", memb), ("|shear| (e_xz, e_yz)", shear)]:
-        G = grid(np.log10(np.maximum(f, 1e-12)))
-        lo, hi = np.nanpercentile(G, [1, 99.5]) if np.isfinite(G).any() else (-6, 0)
-        traces.append(go.Heatmap(x=gx, y=gy, z=G, colorscale="Viridis", zmin=lo, zmax=hi,
-                                 colorbar=dict(title="log10 1/yr"),
-                                 hovertemplate=f"log10 {name}: %{{z:.2f}}<br>x %{{x:.1f}} y %{{y:.1f}} km<extra></extra>"))
-        labels.append(f"log10 {name}")
-    traces.append(go.Heatmap(x=gx, y=gy, z=grid(mshare), colorscale="Cividis", zmin=0, zmax=1,
-                             colorbar=dict(title="0 SIA .. 1 SSA"),
-                             hovertemplate="membrane share %{z:.2f}<br>x %{x:.1f} y %{y:.1f} km<extra></extra>"))
-    labels.append("membrane share |memb| / (|memb| + |shear|)")
-    G = grid(np.log10(np.maximum(wratio, 1e-6)))
-    traces.append(go.Heatmap(x=gx, y=gy, z=G, colorscale="RdBu_r", zmid=0, zmin=-3, zmax=1,
-                             colorbar=dict(title="log10 ratio"),
-                             hovertemplate="log10 |grad w| / |du/dz|: %{z:.2f}<br>x %{x:.1f} y %{y:.1f} km<extra></extra>"))
-    labels.append("log10 |dw/dx, dw/dy| / |du/dz, dv/dz| (Blatter-Pattyn drops the numerator)")
-    cols = ["#1f77b4", "#2ca02c", "#9467bd", "#d62728", "#ff7f0e"]
-    nT = len(terms)
-    cs = []
-    for i, c in enumerate(cols[:nT]):
-        cs += [[i / nT, c], [(i + 1) / nT, c]]
-    traces.append(go.Heatmap(x=gx, y=gy, z=gnear(dom), colorscale=cs, zmin=-0.5, zmax=nT - 0.5,
-                             colorbar=dict(title="dominant", tickvals=list(range(nT)), ticktext=[n for n, _ in terms]),
-                             hovertemplate="dominant: %{z}<br>x %{x:.1f} y %{y:.1f} km<extra></extra>"))
-    labels.append("dominant term")
-
-    for i, tr in enumerate(traces):
-        tr.visible = (i == 0)
-    gl = go.Contour(x=gx, y=gy, z=grid(mask), contours=dict(start=-0.5, end=-0.5, size=1, coloring="none"),
-                    line=dict(color="black", width=2), showscale=False, hoverinfo="skip", name="grounding line")
-    fig = go.Figure(traces + [gl])
-    n = len(traces)
-    buttons = [dict(label=lab, method="update", args=[{"visible": [j == i for j in range(n)] + [True]},
-                                                     {"title.text": f"{os.path.basename(path)}, t = {t:,.0f} yr: {lab}"}])
-               for i, lab in enumerate(labels)]
-    fig.update_layout(
-        title=f"{os.path.basename(path)}, t = {t:,.0f} yr: {labels[0]}",
-        updatemenus=[dict(buttons=buttons, direction="down", x=0, y=1.12, xanchor="left", yanchor="bottom")],
+    traces = []
+    for n, m in enumerate(maps):                   # frame-major: trace n * nF + j
+        for j, (lab, Z, kind) in enumerate(m):
+            traces.append(go.Heatmap(x=gx, y=gy, z=Z, visible=(n == len(maps) - 1 and j == 0), **rng[j],
+                                     hovertemplate=f"{lab}: %{{z:.3g}}<br>x %{{x:.1f}} y %{{y:.1f}} km<extra></extra>"))
+    for n, Z in enumerate(glz):                    # then the grounding line of each frame
+        traces.append(go.Contour(x=gx, y=gy, z=Z, contours=dict(start=-0.5, end=-0.5, size=1, coloring="none"),
+                                 line=dict(color="black", width=2), showscale=False, hoverinfo="skip",
+                                 visible=(n == len(maps) - 1), name="grounding line"))
+    tlab = [f"t {float(times[k]):,.0f} yr" for k in ks]
+    fig = go.Figure(traces)
+    layout = dict(
+        title=f"{os.path.basename(path)}, {tlab[-1]}: {labels[0]}",
+        updatemenus=[dict(buttons=[dict(label=lab, method="skip", args=[None]) for lab in labels], direction="down",
+                          x=0, y=1.12, xanchor="left", yanchor="bottom", active=0)],
         xaxis=dict(title="x (km)"), yaxis=dict(title=f"y (km, x{yscale:g})", scaleanchor="x", scaleratio=yscale),
         template="plotly_white", margin=dict(t=110),
         annotations=[dict(x=1, y=1.12, xref="paper", yref="paper", xanchor="right", yanchor="bottom", showarrow=False,
                           align="right", font=dict(size=11),
                           text="SIA: du/dz, dv/dz only | SSA: e_xx, e_yy, e_xy | Blatter-Pattyn: all but dw/dx, dw/dy | "
                                f"du/dz = {sf:g} x (u_s - u_b)/H")])
-    out = out or os.path.splitext(path)[0] + f"_strain_t{t:.0f}.html"
-    fig.write_html(out, include_plotlyjs="cdn")
-    print(f"frame {k} (t {t:g} yr) -> {out}")
+    if len(ks) > 1:
+        layout["sliders"] = [dict(active=len(ks) - 1, currentvalue=dict(prefix=""), pad=dict(t=40),
+                                  steps=[dict(label=tl, method="skip", args=[None]) for tl in tlab])]
+    fig.update_layout(**layout)
+    # the dropdown picks the field, the slider the frame: a small script shows the one map of both (plotly's own
+    # buttons can only set a fixed visibility list, which would forget the other control)
+    js = """
+    var gd = document.getElementById('{plot_id}');
+    var nK = %d, nF = %d, labels = %s, tlab = %s, name = %s;
+    var cur = {f: 0, k: nK - 1};
+    function show() {
+      var vis = [];
+      for (var k = 0; k < nK; k++) for (var f = 0; f < nF; f++) vis.push(k == cur.k && f == cur.f);
+      for (var k = 0; k < nK; k++) vis.push(k == cur.k);
+      Plotly.restyle(gd, {visible: vis});
+      Plotly.relayout(gd, {'title.text': name + ', ' + tlab[cur.k] + ': ' + labels[cur.f]});
+    }
+    gd.on('plotly_buttonclicked', function(e) { cur.f = e.active; show(); });
+    gd.on('plotly_sliderchange', function(e) { cur.k = e.slider.active; show(); });
+    """ % (len(ks), nF, json.dumps(labels), json.dumps(tlab), json.dumps(os.path.basename(path)))
+    tag = f"_t{float(times[ks[0]]):.0f}" if len(ks) == 1 else f"_every{every}"
+    out = out or os.path.splitext(path)[0] + f"_strain{tag}.html"
+    fig.write_html(out, include_plotlyjs="cdn", post_script=js)
+    print(f"{len(ks)} frame(s), {nF} maps each -> {out} ({os.path.getsize(out) / 1e6:.0f} MB)")
     try:
         import webbrowser
         webbrowser.open("file://" + os.path.abspath(out))
