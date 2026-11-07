@@ -28,7 +28,15 @@ What the approximations keep:
 The maps (the dropdown): each component; the derivatives dw/dx, dw/dy alone; "membrane share" = |membrane| /
 (|membrane| + |shear|) (0: SIA-like, 1: SSA-like; |membrane| = sqrt(e_xx^2 + e_yy^2 + e_xx e_yy + e_xy^2), |shear| =
 sqrt(e_xz^2 + e_yz^2)); "dw/dx vs du/dz" = |grad w| / |du/dz, dv/dz| (large: Blatter-Pattyn's approximation fails);
-and the dominant term at each point. The grounding line in black.
+and the dominant term at each point. The grounding line in black. "base" / "surface" switches between the horizontal
+derivatives of the base velocity and of the surface velocity (the vertical shear estimate is the same column mean on
+both; at the free surface the true shear is near zero).
+
+Blatter-Pattyn's second approximation, the hydrostatic vertical stress, drops the "bridging" term: sigma_zz(base) +
+rho g H = d/dx int tau_xz dz + d/dy int tau_yz dz. With the shallow-ice shear stress the integrals are
+-rho g H^2/2 grad s, so the map "non-hydrostatic estimate" = |div(H^2 grad s)| / (2H), as a fraction of the
+overburden rho g H: well below 1% (blue), the hydrostatic assumption holds; red, it does not. An estimate from the
+geometry (the frames hold no stress): a check of the model's own stress needs the basal normal stress in the output.
 
 Note: the derivatives are along the base, not at constant z. Where the bed slopes, d/dx along the base = d/dx at fixed
 z + slope x d/dz, so on steep beds the along-base du/dx includes some vertical shear.
@@ -74,10 +82,12 @@ def node_gradients(tri, x, y, fields, use=None):
     return out
 
 
-def frame_fields(d, k, x, y, tri, sf, interp_top, grounded_only=True):
-    """the maps of frame k at the base nodes: [(label, values, kind)], kind: signed | log | share | ratio | cat"""
-    u, v, w = (d[f"base_v{c}"][k].astype(float) for c in "xyz")
-    us, vs, H = interp_top(k)
+def frame_fields(d, k, x, y, tri, sf, interp_top, grounded_only=True, side="base"):
+    """the maps of frame k on the base or the surface (at the base nodes' x, y): [(label, values, kind)], kind: signed |
+    log | share | ratio | nh | cat"""
+    ub, vb, wb = (d[f"base_v{c}"][k].astype(float) for c in "xyz")
+    us, vs, ws, H, s = interp_top(k)
+    u, v, w = (ub, vb, wb) if side == "base" else (us, vs, ws)
     # grounded only: the grounding line (GroundedMask 0) and the shelf (-1) masked out, and the gradients from the
     # grounded triangles only (not across the jump at the grounding line)
     gm = d["base_mask"][k].astype(float)
@@ -86,7 +96,7 @@ def frame_fields(d, k, x, y, tri, sf, interp_top, grounded_only=True):
     dudx, dudy = g["u"]; dvdx, dvdy = g["v"]; dwdx, dwdy = g["w"]
     with np.errstate(invalid="ignore", divide="ignore"):
         Hs = np.where(H > 1.0, H, np.nan)
-        dudz, dvdz = sf * (us - u) / Hs, sf * (vs - v) / Hs
+        dudz, dvdz = sf * (us - ub) / Hs, sf * (vs - vb) / Hs
     exx, eyy = dudx, dvdy
     exy = 0.5 * (dudy + dvdx)
     exz, eyz = 0.5 * (dudz + dwdx), 0.5 * (dvdz + dwdy)
@@ -96,12 +106,22 @@ def frame_fields(d, k, x, y, tri, sf, interp_top, grounded_only=True):
         mshare = memb / (memb + shear)
         sh = np.hypot(dudz, dvdz)
         wratio = np.where(sh > 0, np.hypot(dwdx, dwdy) / sh, np.nan)     # no vertical shear (plug flow): undefined
+    # Blatter-Pattyn's second approximation, the hydrostatic vertical stress: what it drops is the "bridging" term,
+    # sigma_zz(base) + rho g H = d/dx int tau_xz dz + d/dy int tau_yz dz. With the shallow-ice shear stress (tau_xz =
+    # -rho g (s - z) ds/dx) the integrals are -rho g H^2/2 grad s, so relative to the overburden rho g H:
+    #     delta = |div(H^2 grad s)| / (2 H)     (an estimate: << 1, hydrostatic holds; ~0.1 or more, it does not)
+    gs = node_gradients(tri, x, y, {"s": s}, use)
+    with np.errstate(invalid="ignore"):
+        Fx, Fy = H ** 2 * gs["s"][0], H ** 2 * gs["s"][1]
+    gf = node_gradients(tri, x, y, {"Fx": Fx, "Fy": Fy}, use)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        nh = np.abs(gf["Fx"][0] + gf["Fy"][1]) / (2 * Hs)
     A = np.abs(np.c_[tuple(a for _, a in dominant_terms(exx, eyy, exy, dudz, dvdz, dwdx, dwdy))])
     dom = np.where(np.isfinite(A).all(axis=1), np.argmax(np.nan_to_num(A, nan=-1), axis=1), -1).astype(float)
     dom[dom < 0] = np.nan
     if grounded_only:
         off = ~use
-        for a in (exx, eyy, exy, exz, eyz, dudz, dvdz, dwdx, dwdy, dudy, dvdx, memb, shear, mshare, wratio, dom):
+        for a in (exx, eyy, exy, exz, eyz, dudz, dvdz, dwdx, dwdy, dudy, dvdx, memb, shear, mshare, wratio, dom, nh):
             a[off] = np.nan
     return [("e_xx = du/dx", exx, "signed"), ("e_yy = dv/dy", eyy, "signed"),
             ("e_zz = dw/dz = -(e_xx + e_yy)", -(exx + eyy), "signed"), ("e_xy = (du/dy + dv/dx)/2", exy, "signed"),
@@ -113,6 +133,8 @@ def frame_fields(d, k, x, y, tri, sf, interp_top, grounded_only=True):
             ("membrane share |memb| / (|memb| + |shear|)", mshare, "share"),
             ("log10 |dw/dx, dw/dy| / |du/dz, dv/dz| (Blatter-Pattyn drops the numerator)",
              np.log10(np.maximum(wratio, 1e-6)), "ratio"),
+            ("log10 non-hydrostatic estimate |div(H^2 grad s)| / 2H (Blatter-Pattyn's hydrostatic assumption)",
+             np.log10(np.maximum(nh, 1e-8)), "nh"),
             ("dominant term", dom, "cat")]
 
 
@@ -152,12 +174,13 @@ def main():
     same = len(tx) == len(x) and np.allclose(tx, x) and np.allclose(ty, y)
     tt = None if same else Delaunay(np.c_[tx, ty])
 
-    def interp_top(k):                             # the surface velocity and the thickness at the base nodes
+    def interp_top(k):                             # the surface velocity, thickness and elevation at the base nodes
         if same:
-            return (d["top_vx"][k].astype(float), d["top_vy"][k].astype(float),
-                    d["top_z"][k].astype(float) - d["base_z"][k].astype(float))
-        f = lambda a: LinearNDInterpolator(tt, a.astype(float))(x, y)
-        return f(d["top_vx"][k]), f(d["top_vy"][k]), f(d["top_z"][k]) - d["base_z"][k].astype(float)
+            f = lambda a: a.astype(float)
+        else:
+            f = lambda a: LinearNDInterpolator(tt, a.astype(float))(x, y)
+        s = f(d["top_z"][k])
+        return f(d["top_vx"][k]), f(d["top_vy"][k]), f(d["top_vz"][k]), s - d["base_z"][k].astype(float), s
 
     tri = Delaunay(np.c_[x, y])
     x0, x1 = (xwin if xwin else (x.min() / 1e3, x.max() / 1e3))
@@ -172,12 +195,15 @@ def main():
             return f[near].reshape(GX.shape).astype(np.float32)
         return LinearNDInterpolator(tri, f)(pts).reshape(GX.shape).astype(np.float32)
 
-    maps, glz = [], []                             # maps[frame][field] = (label, grid, kind)
-    for n, k in enumerate(ks):
-        maps.append([(lab, grid(f, kind == "cat"), kind) for lab, f, kind in frame_fields(d, k, x, y, tri, sf, interp_top,
-                                                                                   grounded_only)])
+    sides = ["base", "surface"]
+    maps, glz = [], []                             # maps[side * nK + frame][field] = (label, grid, kind)
+    for side in sides:
+        for n, k in enumerate(ks):
+            maps.append([(lab, grid(f, kind == "cat"), kind)
+                         for lab, f, kind in frame_fields(d, k, x, y, tri, sf, interp_top, grounded_only, side)])
+            print(f"  {side} frame {k} (t {float(times[k]):g} yr) {n + 1}/{len(ks)}", end="\r", flush=True)
+    for k in ks:
         glz.append(grid(d["base_mask"][k].astype(float)))
-        print(f"  frame {k} (t {float(times[k]):g} yr) {n + 1}/{len(ks)}", end="\r", flush=True)
     print()
     nF = len(maps[0])
     labels = [m[0] for m in maps[0]]
@@ -201,6 +227,10 @@ def main():
             rng.append(dict(colorscale="Cividis", zmin=0, zmax=1, colorbar=dict(title="0 SIA .. 1 SSA")))
         elif kind == "ratio":
             rng.append(dict(colorscale="RdBu_r", zmid=0, zmin=-3, zmax=1, colorbar=dict(title="log10 ratio")))
+        elif kind == "nh":                         # 1e-4 .. 1 of the overburden; red above 1e-2
+            rng.append(dict(colorscale="RdBu_r", zmid=-2, zmin=-4, zmax=0,
+                            colorbar=dict(title="log10 of rho g H", tickvals=[-4, -3, -2, -1, 0],
+                                          ticktext=["1e-4", "1e-3", "1%", "10%", "100%"])))
         else:
             names = [n_ for n_, _ in dominant_terms(*([np.zeros(1)] * 7))]
             cols = ["#1f77b4", "#2ca02c", "#9467bd", "#d62728", "#ff7f0e"]
@@ -210,21 +240,24 @@ def main():
             rng.append(dict(colorscale=cs, zmin=-0.5, zmax=len(names) - 0.5,
                             colorbar=dict(title="dominant", tickvals=list(range(len(names))), ticktext=names)))
 
+    nK = len(ks)
     traces = []
-    for n, m in enumerate(maps):                   # frame-major: trace n * nF + j
+    for n, m in enumerate(maps):                   # side-major, then frame: trace (side * nK + frame) * nF + field
         for j, (lab, Z, kind) in enumerate(m):
-            traces.append(go.Heatmap(x=gx, y=gy, z=Z, visible=(n == len(maps) - 1 and j == 0), **rng[j],
+            traces.append(go.Heatmap(x=gx, y=gy, z=Z, visible=(n == nK - 1 and j == 0), **rng[j],
                                      hovertemplate=f"{lab}: %{{z:.3g}}<br>x %{{x:.1f}} y %{{y:.1f}} km<extra></extra>"))
     for n, Z in enumerate(glz):                    # then the grounding line of each frame
         traces.append(go.Contour(x=gx, y=gy, z=Z, contours=dict(start=-0.5, end=-0.5, size=1, coloring="none"),
                                  line=dict(color="black", width=2), showscale=False, hoverinfo="skip",
-                                 visible=(n == len(maps) - 1), name="grounding line"))
+                                 visible=(n == nK - 1), name="grounding line"))
     tlab = [f"t {float(times[k]):,.0f} yr" for k in ks]
     fig = go.Figure(traces)
     layout = dict(
-        title=f"{os.path.basename(path)}, {tlab[-1]}: {labels[0]}",
+        title=f"{os.path.basename(path)}, base, {tlab[-1]}: {labels[0]}",
         updatemenus=[dict(buttons=[dict(label=lab, method="skip", args=[None]) for lab in labels], direction="down",
-                          x=0, y=1.12, xanchor="left", yanchor="bottom", active=0)],
+                          x=0.09, y=1.12, xanchor="left", yanchor="bottom", active=0),
+                     dict(buttons=[dict(label=sd, method="skip", args=[None]) for sd in sides], type="buttons",
+                          direction="right", x=0, y=1.12, xanchor="left", yanchor="bottom", active=0, showactive=True)],
         xaxis=dict(title="x (km)"), yaxis=dict(title=f"y (km, x{yscale:g})", scaleanchor="x", scaleratio=yscale),
         template="plotly_white", margin=dict(t=110),
         annotations=[dict(x=1, y=1.12, xref="paper", yref="paper", xanchor="right", yanchor="bottom", showarrow=False,
@@ -239,18 +272,23 @@ def main():
     # buttons can only set a fixed visibility list, which would forget the other control)
     js = """
     var gd = document.getElementById('{plot_id}');
-    var nK = %d, nF = %d, labels = %s, tlab = %s, name = %s;
-    var cur = {f: 0, k: nK - 1};
+    var nK = %d, nF = %d, labels = %s, tlab = %s, name = %s, sides = %s;
+    var cur = {s: 0, f: 0, k: nK - 1};
     function show() {
       var vis = [];
-      for (var k = 0; k < nK; k++) for (var f = 0; f < nF; f++) vis.push(k == cur.k && f == cur.f);
+      for (var s = 0; s < sides.length; s++)
+        for (var k = 0; k < nK; k++) for (var f = 0; f < nF; f++) vis.push(s == cur.s && k == cur.k && f == cur.f);
       for (var k = 0; k < nK; k++) vis.push(k == cur.k);
       Plotly.restyle(gd, {visible: vis});
-      Plotly.relayout(gd, {'title.text': name + ', ' + tlab[cur.k] + ': ' + labels[cur.f]});
+      Plotly.relayout(gd, {'title.text': name + ', ' + sides[cur.s] + ', ' + tlab[cur.k] + ': ' + labels[cur.f]});
     }
-    gd.on('plotly_buttonclicked', function(e) { cur.f = e.active; show(); });
+    gd.on('plotly_buttonclicked', function(e) {
+      var i = sides.indexOf(e.button.label);
+      if (i >= 0) cur.s = i; else cur.f = labels.indexOf(e.button.label);
+      show();
+    });
     gd.on('plotly_sliderchange', function(e) { cur.k = e.slider.active; show(); });
-    """ % (len(ks), nF, json.dumps(labels), json.dumps(tlab), json.dumps(os.path.basename(path)))
+    """ % (len(ks), nF, json.dumps(labels), json.dumps(tlab), json.dumps(os.path.basename(path)), json.dumps(sides))
     tag = f"_t{float(times[ks[0]]):.0f}" if len(ks) == 1 else f"_every{every}"
     out = out or os.path.splitext(path)[0] + f"_strain{tag}.html"
     fig.write_html(out, include_plotlyjs="cdn", post_script=js)
