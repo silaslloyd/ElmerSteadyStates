@@ -3,7 +3,7 @@
 Strain rates at the base, map view (plotly), from a frames file (plots/vtu_frames.py): which terms dominate where,
 and what each approximation (SIA, SSA, Blatter-Pattyn, full Stokes) keeps and drops.
 
-    python3 plots/base_strain.py FRAMES.npz [--every N | --frame K | --t YEARS] [--res KM] [--x XMIN XMAX]
+    python3 plots/base_strain.py FRAMES.npz [FRAMES2.npz ...] [--every N | --frame K | --t YEARS] [--res KM] [--x XMIN XMAX]
         [--yscale S] [--shear-factor F] [--out FILE.html]
 
 Default: every 5th frame (--every N; the last always; --first N: only the first N frames), a slider through them and a dropdown for the map; --frame /
@@ -143,6 +143,54 @@ def dominant_terms(exx, eyy, exy, dudz, dvdz, dwdx, dwdy):
             ("dw/dx, dw/dy / 2", 0.5 * np.hypot(dwdx, dwdy))]
 
 
+class Joined:
+    """several frames files as one: the frames in the order of the files (a later file's frames at or before the
+    previous one's last time are dropped), on the first file's nodes (a file on other nodes, e.g. another
+    partitioning of the same mesh, is mapped node by node by position)"""
+    STATIC = ("base_x", "base_y", "top_x", "top_y")
+
+    def __init__(self, paths):
+        from scipy.spatial import cKDTree
+        self.files = [np.load(p, allow_pickle=True) for p in paths]
+        ref = self.files[0]
+        self.idx, self.ref = [], ref
+        frames, tmax = [], -np.inf
+        for i, f in enumerate(self.files):
+            maps = {}
+            for side in ("base", "top"):
+                if i == 0 or (len(f[f"{side}_x"]) == len(ref[f"{side}_x"]) and np.allclose(f[f"{side}_x"], ref[f"{side}_x"])
+                              and np.allclose(f[f"{side}_y"], ref[f"{side}_y"])):
+                    maps[side] = None
+                else:
+                    dist, j = cKDTree(np.c_[f[f"{side}_x"], f[f"{side}_y"]]).query(np.c_[ref[f"{side}_x"], ref[f"{side}_y"]])
+                    if dist.max() > 1.0:
+                        raise SystemExit(f"{paths[i]}: not the same mesh as {paths[0]} (nodes {dist.max():.0f} m apart)")
+                    maps[side] = j
+            self.idx.append(maps)
+            for j, t in enumerate(f["frame_times"]):
+                if t > tmax + 1e-6:
+                    frames.append((i, j)); tmax = float(t)
+        self.frames = frames
+        self.times = np.array([float(self.files[i]["frame_times"][j]) for i, j in frames])
+
+    def __getitem__(self, key):
+        if key in self.STATIC:
+            return self.ref[key]
+        if key == "frame_times":
+            return self.times
+        side = "base" if key.startswith("base_") else "top"
+        outer = self
+
+        class Per:
+            def __getitem__(self, k):
+                i, j = outer.frames[k]
+                a = outer.files[i][key]
+                a = a[j] if a.ndim == 2 else a
+                m = outer.idx[i][side]
+                return a if m is None else a[m]
+        return Per()
+
+
 def main():
     args = sys.argv[1:]
     args, frame = opt(args, "--frame", conv=int)
@@ -156,15 +204,17 @@ def main():
     args, out = opt(args, "--out", conv=str)
     grounded_only = "--keep-shelf" not in args            # --keep-shelf: the grounding line and the shelf too
     args = [a for a in args if a != "--keep-shelf"]
-    if len(args) != 1:
+    if not args:
         raise SystemExit(__doc__)
-    path = args[0]
+    paths = args
+    path = paths[-1] if len(paths) == 1 else paths[0]
     from scipy.spatial import Delaunay, cKDTree
     from scipy.interpolate import LinearNDInterpolator
     import plotly.graph_objects as go
 
-    d = np.load(path, allow_pickle=True)
+    d = Joined(paths)
     times = d["frame_times"]
+    name = " + ".join(os.path.basename(p) for p in paths)
     if frame is not None or tsel is not None:      # one frame
         ks = [int(np.argmin(np.abs(times - tsel)))] if tsel is not None else [frame % len(times)]
     else:                                          # every N-th frame, and the last
@@ -255,7 +305,7 @@ def main():
     tlab = [f"t {float(times[k]):,.0f} yr" for k in ks]
     fig = go.Figure(traces)
     layout = dict(
-        title=f"{os.path.basename(path)}, base, {tlab[-1]}: {labels[0]}",
+        title=f"{name}, base, {tlab[-1]}: {labels[0]}",
         updatemenus=[dict(buttons=[dict(label=lab, method="skip", args=[None]) for lab in labels], direction="down",
                           x=0.09, y=1.12, xanchor="left", yanchor="bottom", active=0),
                      dict(buttons=[dict(label=sd, method="skip", args=[None]) for sd in sides], type="buttons",
@@ -290,9 +340,9 @@ def main():
       show();
     });
     gd.on('plotly_sliderchange', function(e) { cur.k = e.slider.active; show(); });
-    """ % (len(ks), nF, json.dumps(labels), json.dumps(tlab), json.dumps(os.path.basename(path)), json.dumps(sides))
+    """ % (len(ks), nF, json.dumps(labels), json.dumps(tlab), json.dumps(name), json.dumps(sides))
     tag = f"_t{float(times[ks[0]]):.0f}" if len(ks) == 1 else f"_every{every}" + (f"_first{first}" if first else "")
-    out = out or os.path.splitext(path)[0] + f"_strain{tag}.html"
+    out = out or os.path.splitext(paths[-1])[0] + ("_joined" if len(paths) > 1 else "") + f"_strain{tag}.html"
     fig.write_html(out, include_plotlyjs="cdn", post_script=js)
     print(f"{len(ks)} frame(s), {nF} maps each -> {out} ({os.path.getsize(out) / 1e6:.0f} MB)")
     try:
