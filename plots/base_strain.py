@@ -181,18 +181,22 @@ def main():
     print()
     nF = len(maps[0])
     labels = [m[0] for m in maps[0]]
-    # one colour range per field, over all the frames shown
+    # one colour range per kind of map, over all the frames shown and all the maps of that kind: every strain-rate
+    # component and derivative on the same scale (so their sizes compare directly), and the two log maps on one
+    def pooled(kind):
+        z = np.concatenate([m[j][1].ravel() for m in maps for j in range(nF) if maps[0][j][2] == kind])
+        return z[np.isfinite(z)]
+    zs = pooled("signed")
+    a_signed = float(np.percentile(np.abs(zs), 99)) if zs.size else 1.0
+    zl = pooled("log")
+    lo_log, hi_log = (float(v) for v in np.percentile(zl, [1, 99.5])) if zl.size else (-6.0, 0.0)
     rng = []
     for j in range(nF):
         kind = maps[0][j][2]
-        allz = np.concatenate([m[j][1].ravel() for m in maps])
-        allz = allz[np.isfinite(allz)]
         if kind == "signed":
-            a = float(np.percentile(np.abs(allz), 99)) if allz.size else 1.0
-            rng.append(dict(colorscale="RdBu_r", zmid=0, zmin=-a, zmax=a, colorbar=dict(title="1/yr")))
+            rng.append(dict(colorscale="RdBu_r", zmid=0, zmin=-a_signed, zmax=a_signed, colorbar=dict(title="1/yr")))
         elif kind == "log":
-            lo, hi = np.percentile(allz, [1, 99.5]) if allz.size else (-6, 0)
-            rng.append(dict(colorscale="Viridis", zmin=float(lo), zmax=float(hi), colorbar=dict(title="log10 1/yr")))
+            rng.append(dict(colorscale="Viridis", zmin=lo_log, zmax=hi_log, colorbar=dict(title="log10 1/yr")))
         elif kind == "share":
             rng.append(dict(colorscale="Cividis", zmin=0, zmax=1, colorbar=dict(title="0 SIA .. 1 SSA")))
         elif kind == "ratio":
