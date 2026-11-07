@@ -7,7 +7,8 @@ and what each approximation (SIA, SSA, Blatter-Pattyn, full Stokes) keeps and dr
         [--yscale S] [--shear-factor F] [--out FILE.html]
 
 Default: every 5th frame (--every N; the last always), a slider through them and a dropdown for the map; --frame /
---t: one frame. --res: the map grid in km (default 2 with a slider, 1 for one frame); --x: only that x range.
+--t: one frame. Grounded ice only (the grounding line and the shelf masked out, gradients from grounded triangles);
+--keep-shelf: everything. --res: the map grid in km (default 2 with a slider, 1 for one frame); --x: only that x range.
 
 From the base velocity (u, v, w) the horizontal derivatives along the base: du/dx, du/dy, dv/dx, dv/dy, dw/dx, dw/dy
 (gradients on the triangulated base nodes, averaged to the nodes). The frames hold no velocity inside the ice, so the
@@ -47,7 +48,7 @@ def opt(args, name, n=1, conv=float, default=None):
     return args[:k] + args[k + 1 + n:], (v[0] if n == 1 else v)
 
 
-def node_gradients(tri, x, y, fields):
+def node_gradients(tri, x, y, fields, use=None):
     """d/dx, d/dy of each nodal field: per triangle (linear), then the area-weighted mean over the triangles at a node"""
     T = tri.simplices
     x1, y1 = x[T[:, 0]], y[T[:, 0]]
@@ -56,6 +57,8 @@ def node_gradients(tri, x, y, fields):
     det = dx21 * dy31 - dx31 * dy21
     area = 0.5 * np.abs(det)
     good = area > 1e-6 * np.median(area)
+    if use is not None:                            # only the triangles with all their nodes in use (e.g. grounded)
+        good &= use[T].all(axis=1)
     det = np.where(good, det, np.nan)
     wsum = np.bincount(T[good].ravel(), weights=np.repeat(area[good], 3), minlength=len(x))
     out = {}
@@ -71,11 +74,15 @@ def node_gradients(tri, x, y, fields):
     return out
 
 
-def frame_fields(d, k, x, y, tri, sf, interp_top):
+def frame_fields(d, k, x, y, tri, sf, interp_top, grounded_only=True):
     """the maps of frame k at the base nodes: [(label, values, kind)], kind: signed | log | share | ratio | cat"""
     u, v, w = (d[f"base_v{c}"][k].astype(float) for c in "xyz")
     us, vs, H = interp_top(k)
-    g = node_gradients(tri, x, y, {"u": u, "v": v, "w": w})
+    # grounded only: the grounding line (GroundedMask 0) and the shelf (-1) masked out, and the gradients from the
+    # grounded triangles only (not across the jump at the grounding line)
+    gm = d["base_mask"][k].astype(float)
+    use = gm > 0.5 if grounded_only else None
+    g = node_gradients(tri, x, y, {"u": u, "v": v, "w": w}, use)
     dudx, dudy = g["u"]; dvdx, dvdy = g["v"]; dwdx, dwdy = g["w"]
     with np.errstate(invalid="ignore", divide="ignore"):
         Hs = np.where(H > 1.0, H, np.nan)
@@ -92,6 +99,10 @@ def frame_fields(d, k, x, y, tri, sf, interp_top):
     A = np.abs(np.c_[tuple(a for _, a in dominant_terms(exx, eyy, exy, dudz, dvdz, dwdx, dwdy))])
     dom = np.where(np.isfinite(A).all(axis=1), np.argmax(np.nan_to_num(A, nan=-1), axis=1), -1).astype(float)
     dom[dom < 0] = np.nan
+    if grounded_only:
+        off = ~use
+        for a in (exx, eyy, exy, exz, eyz, dudz, dvdz, dwdx, dwdy, dudy, dvdx, memb, shear, mshare, wratio, dom):
+            a[off] = np.nan
     return [("e_xx = du/dx", exx, "signed"), ("e_yy = dv/dy", eyy, "signed"),
             ("e_zz = dw/dz = -(e_xx + e_yy)", -(exx + eyy), "signed"), ("e_xy = (du/dy + dv/dx)/2", exy, "signed"),
             ("e_xz = (du/dz + dw/dx)/2", exz, "signed"), ("e_yz = (dv/dz + dw/dy)/2", eyz, "signed"),
@@ -120,6 +131,8 @@ def main():
     args, yscale = opt(args, "--yscale", default=3.0)
     args, sf = opt(args, "--shear-factor", default=1.0)
     args, out = opt(args, "--out", conv=str)
+    grounded_only = "--keep-shelf" not in args            # --keep-shelf: the grounding line and the shelf too
+    args = [a for a in args if a != "--keep-shelf"]
     if len(args) != 1:
         raise SystemExit(__doc__)
     path = args[0]
@@ -161,7 +174,8 @@ def main():
 
     maps, glz = [], []                             # maps[frame][field] = (label, grid, kind)
     for n, k in enumerate(ks):
-        maps.append([(lab, grid(f, kind == "cat"), kind) for lab, f, kind in frame_fields(d, k, x, y, tri, sf, interp_top)])
+        maps.append([(lab, grid(f, kind == "cat"), kind) for lab, f, kind in frame_fields(d, k, x, y, tri, sf, interp_top,
+                                                                                   grounded_only)])
         glz.append(grid(d["base_mask"][k].astype(float)))
         print(f"  frame {k} (t {float(times[k]):g} yr) {n + 1}/{len(ks)}", end="\r", flush=True)
     print()
