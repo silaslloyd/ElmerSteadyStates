@@ -26,7 +26,8 @@ state; "streamlines off" / "streamlines on" hides them; --stream-spacing KM (def
 flow; --no-streamlines: none. "play" / "pause" next to the slider runs through the states (--play-ms MS per state,
 default 400).
 --compare FILE [FILE ...] [--]: a second run (e.g. another time step) in the same scene, beside the first along y,
-at the times both have (by frame time), speed coloured the same; the temperature panel is off.
+at the times both have (by frame time), speed coloured the same (--compare-T: temperature); the temperature panel is
+off.
 Many states make a big page: --every N keeps every N-th state (and the last), --years T0 T1 only frames in that time
 range. The speed/vx/vy/vz buttons are off (their data was a large share of the page); --switch brings them back.
     python plots/plot_state_3d.py work/<config>/runs/<run>                  # a run with ESS_VTU_EVERY: every step
@@ -82,6 +83,7 @@ SWITCH = False           # the speed/vx/vy/vz buttons (their values for every st
 T_RANGE = (None, None)   # temperature colour range (K); None: all temperatures in the window (--tmin / --tmax)
 SHOW = True
 COMPARE = []             # --compare FILE [FILE ...] --: a second run's speed beside the first's, at the same times
+CMP_FIELD = "speed"      # --compare-T: both runs coloured by temperature instead of speed
 PLAY_MS = 400            # ms per state when playing (--play-ms MS)
 STREAM = True            # streamlines of the surface velocity on the surface of both panels (--no-streamlines: none)
 STREAM_KM = 5.0          # km between the streamlines' seeds across the flow (--stream-spacing KM)
@@ -630,7 +632,7 @@ def _rdp(P, eps):
 def main():
     import plotly.graph_objects as go
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
-    global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE
+    global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD
     args = sys.argv[1:]
     if "--vmax-all" in args:
         VMAX_GL, VMAX = False, None
@@ -679,6 +681,9 @@ def main():
     if "--no-switch" in args:
         SWITCH = False
         args.remove("--no-switch")
+    if "--compare-T" in args:
+        CMP_FIELD = "T"
+        args.remove("--compare-T")
     if "--compare" in args:                       # --compare FILE [FILE ...] [--]: the files up to "--" or the next option
         k = args.index("--compare")
         j = k + 1
@@ -816,8 +821,9 @@ def main():
     two = temp                                    # two panels side by side (velocity | temperature)
     if TEMP and not temp:
         print("no Temperature in the states (slimmed before it was kept? re-run plots/slim_states.py): velocity only")
-    if temp:
-        Tv = np.concatenate([d["T"] for _, tp, b, _ in data for d in (tp, b)])   # the full range, surface and base
+    if temp or (COMPARE and CMP_FIELD == "T"):
+        Tv = np.concatenate([d["T"] for _, tp, b, _ in data for d in (tp, b) if d is not None and "T" in d] +
+                            [d["T"] for _, tp, _, _ in data for d in tp.get("_cmp", ()) if d is not None and "T" in d])
         tmin = T_RANGE[0] if T_RANGE[0] is not None else float(np.nanmin(Tv))
         tmax = T_RANGE[1] if T_RANGE[1] is not None else float(np.nanmax(Tv))
         print(f"temperature colours {tmin:.2f} .. {tmax:.2f} K: all temperatures (--tmin / --tmax to narrow)")
@@ -832,7 +838,11 @@ def main():
     if temp:
         panels.append(("T", tmin, tmax, "RdBu_r", "temperature (K)", 1.0, "scene2"))
     if COMPARE:                                   # the second run in the same scene, beside the first in y
-        panels.append(("cmp", 0.0, smax, SPEED_CS, "speed (m/yr)", 1.0, "scene"))
+        if CMP_FIELD == "T":                      # both coloured by temperature (one colour bar)
+            panels = [("T", tmin, tmax, "RdBu_r", "temperature (K)", 1.0, "scene"),
+                      ("cmp", tmin, tmax, "RdBu_r", "temperature (K)", 1.0, "scene")]
+        else:
+            panels.append(("cmp", 0.0, smax, SPEED_CS, "speed (m/yr)", 1.0, "scene"))
 
     W = max(float(np.ptp(tp["y"])) for _, tp, _, _ in data if tp is not None)      # strip width (m)
     CMP_SHIFT = 1.25 * W * TILE                   # --compare: the second run this far along y (a gap of W/4)
@@ -936,7 +946,7 @@ def main():
                     sh = lambda d: None if d is None else {k: (v + CMP_SHIFT if k == "y" else v) for k, v in d.items()}
                     top["_cmp_sh"] = tuple(sh(d) for d in top["_cmp"])
                 top, base = top["_cmp_sh"]
-            P = ("speed",) + tuple(P[1:])
+            P = (CMP_FIELD,) + tuple(P[1:])
         f, lo, hi, cs, ctitle, cx, sc = P
         unit = "K" if f == "T" else "m/yr"
         first_panel = sc == "scene" and not cmp
