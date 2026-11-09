@@ -21,7 +21,7 @@ by Green's theorem along it). In a steady state with no basal melt the grounding
 Below it, the surface elevation over time at one point (--point X Y in km; default the centre of the grounded sheet
 in the first frame: halfway from the divide to the grounding line, mid-strip), every frame, also in NAME_surface.csv.
 
---compare FILE: a second run (its own CSVs) over both panels, and the first run cut to the second's time span.
+--compare FILE: a second run (its own CSVs) over both panels (--cut: the first run only over its time span).
 
 Re-running reads NAME.csv and computes only the frames not in it yet (new output of a running job); --recompute
 redoes all of them. The plot opens in a window (and is saved); --no-show only saves it.
@@ -161,7 +161,8 @@ def main():
         k = args.index("--point"); point = (float(args[k + 1]), float(args[k + 2])); args = args[:k] + args[k + 3:]
     if "--rho" in args:
         k = args.index("--rho"); rho = float(args[k + 1]); args = args[:k] + args[k + 2:]
-    compare = None
+    compare, cut = None, "--cut" in args                    # --cut: the first run only over the compared run's span
+    args = [a for a in args if a != "--cut"]
     if "--compare" in args:                                 # --compare FILE: a second run over the same plots
         k = args.index("--compare"); compare = args[k + 1]; args = args[:k] + args[k + 2:]
     if not args:
@@ -180,15 +181,16 @@ def main():
     ts, zs = surface_series(args, point, out)
     fig, (ax, az) = plt.subplots(2, 1, figsize=(9, 7.5), sharex=True)
     lab1 = os.path.basename(args[0])[:-4].replace("_frames", "") if compare else None
-    if compare:                                             # the second run, and only its time span of the first
+    if compare:                                             # the second run (with --cut: only its span of the first)
         out2 = os.path.splitext(compare)[0] + "_glflux"
         R2, accq2 = flux_series([compare], out2, recompute, rho, acc, plt, mtri)
         ts2, zs2 = surface_series([compare], point, out2)
-        t0, t1 = R2[:, 0].min() - 1e-6, R2[:, 0].max() + 1e-6
-        m = (R[:, 0] >= t0) & (R[:, 0] <= t1)
-        R, accq = R[m], accq[m]
-        m = (ts >= t0) & (ts <= t1)
-        ts, zs = ts[m], zs[m]
+        if cut:
+            t0, t1 = R2[:, 0].min() - 1e-6, R2[:, 0].max() + 1e-6
+            m = (R[:, 0] >= t0) & (R[:, 0] <= t1)
+            R, accq = R[m], accq[m]
+            m = (ts >= t0) & (ts <= t1)
+            ts, zs = ts[m], zs[m]
         lab2 = os.path.basename(compare)[:-4].replace("_frames", "")
     ax.fill_between(R[:, 0], R[:, 2] / G, R[:, 3] / G, color="tab:blue", alpha=0.25,
                     label="bounds (basal .. surface speed)" + (f", {lab1}" if lab1 else ""))
