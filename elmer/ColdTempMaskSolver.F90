@@ -66,6 +66,9 @@ SUBROUTINE ColdTempMaskSolver(Model,Solver,dt,TransientSimulation)
 
   TYPE(Variable_t), POINTER :: TempSol, HwSol  ! These all 'point' to memory with different names elsewhere
   REAL(KIND=dp), POINTER :: ColdTempValues(:), ColdTempPrev(:), TempValues(:), TempPrev(:), HwValues(:), HwPrev(:,:)
+  REAL(KIND=dp), POINTER :: HwOld(:)                 ! ESS: the water sheet the decision uses (previous step or current)
+  REAL(KIND=dp), ALLOCATABLE, SAVE :: MaskCopy(:)    ! ESS: the mask as it was (current values: read before overwriting)
+  LOGICAL :: UseCurrent                              ! ESS: "Use Current Values" (the mask in the coupled loop)
   INTEGER, POINTER :: ColdTempPerm(:), TempPerm(:), HwPerm(:)   ! Used to match up node number with solution value at that node (not obvious due to how Elmer stores values)
 
   CHARACTER(LEN=MAX_NAME_LEN) :: SolverName = 'ColdTempMaskSolver'
@@ -120,6 +123,23 @@ SUBROUTINE ColdTempMaskSolver(Model,Solver,dt,TransientSimulation)
   END IF
 
   SolverParams => GetSolverParams()
+  ! ESS "Use Current Values" (Exec Solver = Always, in the coupled loop of a step): decide from the latest iteration's
+  ! temperature, water sheet and mask instead of the previous time step's, so that a cold node heated past melting
+  ! during the step turns temperate within the step (the next iteration's heat solve pins it at Tm), not one step
+  ! later. On the first iteration of a step the current values are still the previous step's, so the first decision
+  ! is the same as Before Timestep.
+  UseCurrent = GetLogical(SolverParams, 'Use Current Values', Found)
+  HwOld => HwPrev(:,1)
+  IF (UseCurrent) THEN
+    TempPrev => TempValues
+    HwOld => HwValues
+    IF (ALLOCATED(MaskCopy)) THEN
+      IF (SIZE(MaskCopy) /= SIZE(ColdTempValues)) DEALLOCATE(MaskCopy)
+    END IF
+    IF (.NOT. ALLOCATED(MaskCopy)) ALLOCATE(MaskCopy(SIZE(ColdTempValues)))
+    MaskCopy = ColdTempValues            ! a node's old mask, unchanged by this pass's updates of shared nodes
+    ColdTempPrev => MaskCopy
+  END IF
   toler = GetConstReal(SolverParams, 'Toler', Found)
   IF (.NOT.Found) THEN
      CALL FATAL(SolverName, 'No tolerance given for the ColdTempMask.')
@@ -151,7 +171,7 @@ CALL INFO( SolverName, 'setting vals', level=1 )
 
       ! If we assumed the node was TEMPERATE (i.e. mask value = +1)....
       IF (ColdTempPrev(ColdTempPerm(j)) .GE. 0.0_dp) THEN 
-       	IF (HwPrev(HwPerm(j),1) .LE. 0) THEN
+       	IF (HwOld(HwPerm(j)) .LE. 0) THEN
           ColdTempValues(ColdTempPerm(j)) = -1.0_dp     ! ... switch the mask to -1 (use COLD BC) for the next iteration/timestep (?) ...
         ELSE
           ColdTempValues(ColdTempPerm(j)) = 1.0_dp    ! ... otherwise, keep as +1 (use TEMP BC again).

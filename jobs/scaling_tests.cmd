@@ -239,6 +239,9 @@ if [ "$FS_COUPLED" = 1 ]; then
     echo "  free surfaces in the coupled loop, up to $ESS_COUPLED_ITERS iterations per step"
 elif [ -n "$COUPLED_ITERS" ]; then export ESS_COUPLED_ITERS=$COUPLED_ITERS; fi
 [ "$FSSA_PREV_TIMESTEP" = 1 ] && export ESS_FSSA_PREV_TIMESTEP=1
+# MASK_IN_LOOP=1 (THERMAL=nowater with FS_COUPLED=1): the cold/temperate mask and the water sheet in the coupled loop,
+# from the latest iteration (a node heated past melting turns temperate within the step, not a step later)
+if [ "$MASK_IN_LOOP" = 1 ]; then export ESS_MASK_IN_LOOP=1; echo "  cold/temperate mask and water sheet in the coupled loop"; fi
 # STEP_CHECK=1: elmer/StepCheck.F90 after every step ([elmer] step_check): the advective CFL of the surface and the
 # floating base, the largest change per step, the free-surface relaxation number, in the Elmer log ("step check")
 [ "$STEP_CHECK" = 1 ] && export ESS_STEP_CHECK=1 && echo "  step check on"

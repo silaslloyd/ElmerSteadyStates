@@ -1201,10 +1201,20 @@ End
             fixL, fixW, nxt = n + 2, n + 3, n + 4
         sheet = nxt
         lib = self.periodic_lib
+        # ESS_MASK_IN_LOOP=1 (with the coupled loop, ESS_FS_COUPLED): the mask, the periodic loads and the sheet in
+        # the coupled iterations of each step, after the heat solve, the mask from the latest iteration's values: a
+        # cold node heated past melting during the step turns temperate within it (and slides in the next Stokes
+        # solve of the step), not a whole step later
+        inloop = os.environ.get("ESS_MASK_IN_LOOP") == "1"
+        if inloop and not (self.fs_coupled or int(os.environ.get("ESS_COUPLED_ITERS") or 1) > 1):
+            raise ValueError("ESS_MASK_IN_LOOP needs coupled iterations (ESS_FS_COUPLED=1 / ESS_COUPLED_ITERS > 1)")
+        ex_ct = '"Always"   ! ESS_MASK_IN_LOOP' if inloop else '"Before Timestep"'
+        ex_after = '"Always"   ! ESS_MASK_IN_LOOP' if inloop else '"After Timestep"'
+        cur = "\n  Use Current Values = Logical True   ! ESS_MASK_IN_LOOP" if inloop else ""
         blocks = [f"""
 ! ---- cold/temperate mask with the no-water sheet ([elmer] thermal = "nowater")
 Solver {ct}
-  Exec Solver = "Before Timestep"
+  Exec Solver = {ex_ct}{cur}
   Equation = "ColdTempMask"
   Procedure = "{self.thermal_libs['coldtemp']}" "ColdTempMaskSolver"
   Variable = "ColdTempMask"
@@ -1214,7 +1224,7 @@ End
 """]
         if self.periodic_sides:
             fpl = lambda num, src, mode: (
-                f'Solver {num}\n  Exec Solver = "After Timestep"\n  Equation = "Periodic {src}"\n'
+                f'Solver {num}\n  Exec Solver = {ex_after}\n  Equation = "Periodic {src}"\n'
                 f'  Procedure = "{lib}" "FixPeriodicLoads"\n  Source Variable = String "{src}"\n'
                 f'  Target Variable = String "Periodic {src}"\n  Periodic Mode = String "{mode}"\nEnd\n')
             blocks.append("\n! periodic copies of the heat loads and weights (the melt; after the heat solve, before the "
@@ -1223,7 +1233,7 @@ End
         pre = "Periodic " if self.periodic_sides else ""
         blocks.append(f"""
 Solver {sheet}
-  Exec Solver = "After Timestep"
+  Exec Solver = {ex_after}
   Equation = "No-water sheet"
   Procedure = "{self.thermal_libs['nowater']}" "NoWaterSheet"
   Variable = "Water Sheet Thickness"
