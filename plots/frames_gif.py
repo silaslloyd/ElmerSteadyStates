@@ -12,6 +12,7 @@ surface velocity (white), the grounding line (red) and the cold/temperate bounda
         --x XMIN XMAX         (km, default the whole strip)            --tile N        copies across y (default 1)
         --fps F               (frames per second, default 4)           --dpi D         (default 100)
         --stream-spacing KM   (default 5)  --no-streamlines  --no-mask  --no-gl
+        --compare FILE        a second run's map below the first's, at the times both have (same colours)
 
 The files are joined in the order given (e.g. a run and its continuation). Needs matplotlib and Pillow.
 """
@@ -52,6 +53,7 @@ def main():
     args, nostream = flag(args, "--no-streamlines")
     args, nomask = flag(args, "--no-mask")
     args, nogl = flag(args, "--no-gl")
+    args, compare = opt(args, "--compare", conv=str)      # --compare FILE: a second run below the first
     files = [a for a in args if a.endswith(".npz")]
     if not files or len(files) != len(args):
         raise SystemExit(__doc__)
@@ -71,8 +73,13 @@ def main():
         items = [it for it in items if years[0] - 1e-6 <= it[2] <= years[1] + 1e-6]
     if every > 1 and len(items) > 1:
         items = [it for n, it in enumerate(items) if n % every == 0 or n == len(items) - 1]
+    C, cidx = None, {}
+    if compare:                                            # only the times the compared run also has
+        C = np.load(compare, allow_pickle=True)
+        cidx = {round(float(t), 0): k for k, t in enumerate(C["frame_times"])}
+        items = [it for it in items if round(it[2], 0) in cidx]
     if not items:
-        raise SystemExit("no frames left (--years / --every)")
+        raise SystemExit("no frames left (--years / --every / --compare)")
 
     if field == "speed":
         cmap = LinearSegmentedColormap.from_list("sm2021", [(v, c) for v, c in P3.SPEED_CS])
@@ -87,51 +94,68 @@ def main():
         raise SystemExit("--field speed | T | vz")
 
     tris = {}
-    W = max(float(np.ptp(d["top_y"])) for d in D)
+    W = max(float(np.ptp(d["top_y"])) for d in D + ([C] if C is not None else []))
     x0 = min(float(d["top_x"].min()) for d in D) / 1e3
     x1 = max(float(d["top_x"].max()) for d in D) / 1e3
     if xwin:
         x0, x1 = xwin
     Lx, Ly = x1 - x0, tile * W / 1e3
     fw = 16.0
-    fh = max(2.5, fw * Ly / Lx * 1.0 + 1.4)          # the map at true aspect, plus room for the title and colour bar
+    nrow = 2 if C is not None else 1
+    mh = fw * 0.86 * Ly / Lx                          # one map's height at true aspect (inches)
+    fh = max(2.5, nrow * mh + 1.0 + 0.6 * nrow)      # plus room for the titles and the x label
     fig = plt.figure(figsize=(fw, fh), dpi=dpi)
-    ax = fig.add_axes([0.05, 0.22, 0.86, 0.64])
-    cax = fig.add_axes([0.93, 0.22, 0.012, 0.64])
+    bot, gap = 0.7 / fh, 0.6 / fh
+    hh = mh / fh
+    axes = [fig.add_axes([0.05, bot + (nrow - 1 - r) * (hh + gap), 0.86, hh]) for r in range(nrow)]
+    cax = fig.add_axes([0.93, bot, 0.012, nrow * hh + (nrow - 1) * gap])
+
+    def draw(ax, d, key, k, title):
+        """one map: the field in colour, streamlines, grounding line, cold/temperate boundary"""
+        tx, ty = d["top_x"], d["top_y"]
+        if ("top", key) not in tris:
+            tris[("top", key)] = mtri.Triangulation(tx / 1e3, ty / 1e3)
+            tris[("base", key)] = mtri.Triangulation(d["base_x"] / 1e3, d["base_y"] / 1e3)
+        vx, vy, vz = d["top_vx"][k], d["top_vy"][k], d["top_vz"][k]
+        val = {"speed": lambda: np.sqrt(vx ** 2 + vy ** 2 + vz ** 2), "T": lambda: d["top_T"][k],
+               "vz": lambda: vz}[field]()
+        pc = None
+        for c in range(tile):
+            tr = mtri.Triangulation(tx / 1e3, ty / 1e3 + c * W / 1e3, tris[("top", key)].triangles)
+            pc = ax.tripcolor(tr, val, shading="gouraud", cmap=cmap, vmin=lo, vmax=hi, rasterized=True)
+        if not nostream:
+            top = dict(x=tx, y=ty, vx=vx, vy=vy, v=d["top_z"][k])
+            P3._STREAM_CACHE.clear()
+            sx, sy, _ = P3.streamlines(top, spacing, W, periodic=True)
+            for c in range(tile):
+                ax.plot(sx, sy + c * W / 1e3, color="white", lw=0.7)
+        bt = tris[("base", key)]
+        for c in range(tile):
+            bc = mtri.Triangulation(bt.x, bt.y + c * W / 1e3, bt.triangles)
+            if not nogl and "base_mask" in d.files:
+                ax.tricontour(bc, d["base_mask"][k], levels=[0.0], colors="red", linewidths=1.6)
+            if not nomask and "base_ct" in d.files and "base_mask" in d.files:
+                fm = np.where(d["base_mask"][k] > -0.5, np.nan_to_num(d["base_ct"][k], nan=-1.0), -1.0)
+                if fm.min() < 0 < fm.max():
+                    ax.tricontour(bc, fm, levels=[0.0], colors="#ff00e0", linewidths=1.2)
+        ax.set_xlim(x0, x1); ax.set_ylim(0, Ly); ax.set_aspect("equal")
+        ax.set_ylabel("y (km)")
+        ax.set_title(title, loc="left", fontsize=11)
+        return pc
+
     writer = PillowWriter(fps=fps)
-    print(f"{len(items)} frames -> {out} ({field}, x {x0:g} .. {x1:g} km, {tile} cop{'y' if tile == 1 else 'ies'})")
+    print(f"{len(items)} frames -> {out} ({field}, x {x0:g} .. {x1:g} km, {tile} cop{'y' if tile == 1 else 'ies'})"
+          + (f", beside {os.path.basename(compare)}" if C is not None else ""))
+    name = lambda f: os.path.basename(f)[:-4].replace("_frames", "")
     with writer.saving(fig, out, dpi):
         for n, (i, k, t) in enumerate(items):
-            d = D[i]
-            ax.clear(); cax.clear()
-            tx, ty = d["top_x"], d["top_y"]
-            if ("top", i) not in tris:
-                tris[("top", i)] = mtri.Triangulation(tx / 1e3, ty / 1e3)
-                tris[("base", i)] = mtri.Triangulation(d["base_x"] / 1e3, d["base_y"] / 1e3)
-            vx, vy, vz = d["top_vx"][k], d["top_vy"][k], d["top_vz"][k]
-            val = {"speed": lambda: np.sqrt(vx ** 2 + vy ** 2 + vz ** 2), "T": lambda: d["top_T"][k],
-                   "vz": lambda: vz}[field]()
-            for c in range(tile):
-                tr = mtri.Triangulation(tx / 1e3, ty / 1e3 + c * W / 1e3, tris[("top", i)].triangles)
-                pc = ax.tripcolor(tr, val, shading="gouraud", cmap=cmap, vmin=lo, vmax=hi, rasterized=True)
-            if not nostream:
-                top = dict(x=tx, y=ty, vx=vx, vy=vy, v=d["top_z"][k])
-                P3._STREAM_CACHE.clear()
-                sx, sy, _ = P3.streamlines(top, spacing, W, periodic=True)
-                for c in range(tile):
-                    ax.plot(sx, sy + c * W / 1e3, color="white", lw=0.7)
-            bt = tris[("base", i)]
-            for c in range(tile):
-                bc = mtri.Triangulation(bt.x, bt.y + c * W / 1e3, bt.triangles)
-                if not nogl and "base_mask" in d.files:
-                    ax.tricontour(bc, d["base_mask"][k], levels=[0.0], colors="red", linewidths=1.6)
-                if not nomask and "base_ct" in d.files and "base_mask" in d.files:
-                    fm = np.where(d["base_mask"][k] > -0.5, np.nan_to_num(d["base_ct"][k], nan=-1.0), -1.0)
-                    if fm.min() < 0 < fm.max():
-                        ax.tricontour(bc, fm, levels=[0.0], colors="#ff00e0", linewidths=1.2)
-            ax.set_xlim(x0, x1); ax.set_ylim(0, Ly); ax.set_aspect("equal")
-            ax.set_xlabel("x (km)"); ax.set_ylabel("y (km)")
-            ax.set_title(f"t = {t:,.0f} yr", loc="left")
+            for a in axes + [cax]:
+                a.clear()
+            lab = name(files[i]) if C is not None else ""
+            pc = draw(axes[0], D[i], ("main", i), k, f"t = {t:,.0f} yr" + (f"   {lab}" if lab else ""))
+            if C is not None:
+                draw(axes[1], C, ("cmp", 0), cidx[round(t, 0)], f"t = {t:,.0f} yr   {name(compare)}")
+            axes[-1].set_xlabel("x (km)")
             fig.colorbar(pc, cax=cax, label=label)
             writer.grab_frame()
             print(f"  {n + 1}/{len(items)}  t {t:g} yr", end="\r", flush=True)
