@@ -21,6 +21,8 @@ by Green's theorem along it). In a steady state with no basal melt the grounding
 Below it, the surface elevation over time at one point (--point X Y in km; default the centre of the grounded sheet
 in the first frame: halfway from the divide to the grounding line, mid-strip), every frame, also in NAME_surface.csv.
 
+--compare FILE: a second run (its own CSVs) over both panels, and the first run cut to the second's time span.
+
 Re-running reads NAME.csv and computes only the frames not in it yet (new output of a running job); --recompute
 redoes all of them. The plot opens in a window (and is saved); --no-show only saves it.
 
@@ -37,31 +39,9 @@ F_SHAPE = 0.8
 A_DIM = 0.03213938607148378      # m/yr of ice: aDIM of case/parameters.lua (ascale with aND = 1)
 
 
-def main():
-    args = sys.argv[1:]
-    out, rho, acc = None, 917.0, A_DIM
-    if "--out" in args:
-        k = args.index("--out"); out = args[k + 1]; args = args[:k] + args[k + 2:]
-    recompute = "--recompute" in args
-    show = "--no-show" not in args                          # --no-show: only save the image (e.g. on tethys)
-    args = [a for a in args if a not in ("--recompute", "--no-show")]
-    if "--acc" in args:
-        k = args.index("--acc"); acc = float(args[k + 1]); args = args[:k] + args[k + 2:]
-    point = None
-    if "--point" in args:                                   # --point X Y (km): where to follow the surface elevation
-        k = args.index("--point"); point = (float(args[k + 1]), float(args[k + 2])); args = args[:k] + args[k + 3:]
-    if "--rho" in args:
-        k = args.index("--rho"); rho = float(args[k + 1]); args = args[:k] + args[k + 2:]
-    if not args:
-        raise SystemExit(__doc__)
-    out = out or os.path.splitext(args[0])[0] + "_glflux"
-
-    import matplotlib
-    if not show:
-        matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import matplotlib.tri as mtri
-
+def flux_series(paths, out, recompute, rho, acc, plt, mtri):
+    """the grounding-line flux of every frame of the files (cached in OUT.csv): rows (t, q, q_low, q_high, length,
+    grounded area), sorted by time"""
     rows, done = [], set()
     if os.path.exists(out + ".csv") and not recompute:       # the frames already computed (by time)
         with open(out + ".csv") as fh:
@@ -72,18 +52,13 @@ def main():
             rows = [tuple(r[:6]) for r in old if r.size >= 6]
             done = {round(r[0], 3) for r in rows}
             print(f"{out}.csv: {len(rows)} frames already computed (--recompute: all again)")
-    for path in args:
+    for path in paths:
         d = np.load(path, allow_pickle=True)
-        bx, by = d["base_x"].astype(float), d["base_y"].astype(float)
-        tx, ty = d["top_x"].astype(float), d["top_y"].astype(float)
         if all(round(float(t), 3) in done for t in d["frame_times"]):
             continue
-        bt = mtri.Triangulation(bx, by)
-        tt = mtri.Triangulation(tx, ty)
-        todo = [k for k, t in enumerate(d["frame_times"]) if round(float(t), 3) not in done]
-        if not todo:
-            continue
-        for k in todo:
+        bt = mtri.Triangulation(d["base_x"].astype(float), d["base_y"].astype(float))
+        tt = mtri.Triangulation(d["top_x"].astype(float), d["top_y"].astype(float))
+        for k in [k for k, t in enumerate(d["frame_times"]) if round(float(t), 3) not in done]:
             t = d["frame_times"][k]
             done.add(round(float(t), 3))
             mask = d["base_mask"][k].astype(float)
@@ -128,7 +103,6 @@ def main():
                   f"({q(F_SHAPE) * rho / 1e12:.4f} Gt/yr; bounds {lo * rho / 1e12:.4f} .. {hi * rho / 1e12:.4f}), "
                   f"line length {L[good].sum() / 1e3:.1f} km; accumulation upstream {acc * area * rho / 1e12:.4f} Gt/yr "
                   f"(grounded area {area / 1e6:.0f} km^2)", flush=True)
-
     rows.sort()
     R = np.array(rows)
     accq = acc * R[:, 5]                                   # m^3/yr of ice
@@ -136,15 +110,22 @@ def main():
            "accumulation_m3_per_yr,flux_Gt_per_yr,flux_low_Gt,flux_high_Gt,accumulation_Gt_per_yr")
     np.savetxt(out + ".csv", np.c_[R, accq, R[:, 1:4] * rho / 1e12, accq * rho / 1e12], delimiter=",", header=hdr,
                comments="")
-    # the surface elevation at one point over time (all frames of all files, read directly: no cache needed)
+    return R, accq
+
+
+def default_point(path):
+    """the centre of the grounded sheet in the first frame: halfway from the divide to the grounding line, mid-strip"""
+    D0 = np.load(path, allow_pickle=True)
+    bx0, m0 = D0["base_x"], D0["base_mask"][0]
+    gx = float(bx0[m0 > -0.5].max()) if (m0 > -0.5).any() else float(bx0.max())
+    return (0.5 * gx / 1e3, 0.5 * float(D0["top_y"].min() + D0["top_y"].max()) / 1e3)
+
+
+def surface_series(paths, point, out):
+    """the surface elevation at POINT (km) in every frame of the files (linear within the mesh), sorted by time"""
     from scipy.spatial import Delaunay
-    D0 = np.load(args[0], allow_pickle=True)
-    if point is None:                                       # the centre of the grounded sheet in the first frame:
-        bx0, m0 = D0["base_x"], D0["base_mask"][0]          # halfway from the divide to the grounding line, mid-strip
-        gx = float(bx0[m0 > -0.5].max()) if (m0 > -0.5).any() else float(bx0.max())
-        point = (0.5 * gx / 1e3, 0.5 * float(D0["top_y"].min() + D0["top_y"].max()) / 1e3)
     ts, zs = [], []
-    for path in args:
+    for path in paths:
         d = np.load(path, allow_pickle=True)
         tri = Delaunay(np.c_[d["top_x"], d["top_y"]])
         P = np.array([[point[0] * 1e3, point[1] * 1e3]])
@@ -158,25 +139,78 @@ def main():
         ts += list(d["frame_times"]); zs += list(d["top_z"][:, nodes].astype(float) @ w)
     ts, first = np.unique(np.round(np.array(ts, float), 3), return_index=True)   # sorted, each time once
     zs = np.array(zs)[first]
-    np.savetxt(out + "_surface.csv", np.c_[ts, zs], delimiter=",", header=f"time_yr,surface_m_at_x{point[0]:g}_y{point[1]:g}_km",
-               comments="")
+    np.savetxt(out + "_surface.csv", np.c_[ts, zs], delimiter=",",
+               header=f"time_yr,surface_m_at_x{point[0]:g}_y{point[1]:g}_km", comments="")
     print(f"surface elevation at x {point[0]:.1f} y {point[1]:.1f} km: {zs.min():.1f} .. {zs.max():.1f} m "
           f"({len(ts)} frames) -> {out}_surface.csv")
+    return ts, zs
 
+
+def main():
+    args = sys.argv[1:]
+    out, rho, acc = None, 917.0, A_DIM
+    if "--out" in args:
+        k = args.index("--out"); out = args[k + 1]; args = args[:k] + args[k + 2:]
+    recompute = "--recompute" in args
+    show = "--no-show" not in args                          # --no-show: only save the image (e.g. on tethys)
+    args = [a for a in args if a not in ("--recompute", "--no-show")]
+    if "--acc" in args:
+        k = args.index("--acc"); acc = float(args[k + 1]); args = args[:k] + args[k + 2:]
+    point = None
+    if "--point" in args:                                   # --point X Y (km): where to follow the surface elevation
+        k = args.index("--point"); point = (float(args[k + 1]), float(args[k + 2])); args = args[:k] + args[k + 3:]
+    if "--rho" in args:
+        k = args.index("--rho"); rho = float(args[k + 1]); args = args[:k] + args[k + 2:]
+    compare = None
+    if "--compare" in args:                                 # --compare FILE: a second run over the same plots
+        k = args.index("--compare"); compare = args[k + 1]; args = args[:k] + args[k + 2:]
+    if not args:
+        raise SystemExit(__doc__)
+    out = out or os.path.splitext(args[0])[0] + "_glflux"
+
+    import matplotlib
+    if not show:
+        matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.tri as mtri
+
+    G = 1e12 / rho                                          # m^3/yr of ice per Gt/yr
+    R, accq = flux_series(args, out, recompute, rho, acc, plt, mtri)
+    point = point or default_point(args[0])
+    ts, zs = surface_series(args, point, out)
     fig, (ax, az) = plt.subplots(2, 1, figsize=(9, 7.5), sharex=True)
-    ax.fill_between(R[:, 0], R[:, 2] * rho / 1e12, R[:, 3] * rho / 1e12, color="tab:blue", alpha=0.25,
-                    label="bounds (basal .. surface speed)")
-    ax.plot(R[:, 0], R[:, 1] * rho / 1e12, "o-", color="tab:blue", ms=3,
-            label=f"estimate (u_b + {F_SHAPE:g} (u_s - u_b))")
-    ax.plot(R[:, 0], accq * rho / 1e12, "s--", color="tab:orange", ms=3,
-            label=f"accumulation upstream (a x grounded area, a = {acc:.4g} m/yr)")
+    lab1 = os.path.basename(args[0])[:-4].replace("_frames", "") if compare else None
+    if compare:                                             # the second run, and only its time span of the first
+        out2 = os.path.splitext(compare)[0] + "_glflux"
+        R2, accq2 = flux_series([compare], out2, recompute, rho, acc, plt, mtri)
+        ts2, zs2 = surface_series([compare], point, out2)
+        t0, t1 = R2[:, 0].min() - 1e-6, R2[:, 0].max() + 1e-6
+        m = (R[:, 0] >= t0) & (R[:, 0] <= t1)
+        R, accq = R[m], accq[m]
+        m = (ts >= t0) & (ts <= t1)
+        ts, zs = ts[m], zs[m]
+        lab2 = os.path.basename(compare)[:-4].replace("_frames", "")
+    ax.fill_between(R[:, 0], R[:, 2] / G, R[:, 3] / G, color="tab:blue", alpha=0.25,
+                    label="bounds (basal .. surface speed)" + (f", {lab1}" if lab1 else ""))
+    ax.plot(R[:, 0], R[:, 1] / G, "o-", color="tab:blue", ms=3,
+            label=f"flux estimate (u_b + {F_SHAPE:g} (u_s - u_b))" + (f", {lab1}" if lab1 else ""))
+    ax.plot(R[:, 0], accq / G, "s--", color="tab:orange", ms=3,
+            label=f"accumulation upstream (a x grounded area, a = {acc:.4g} m/yr)" + (f", {lab1}" if lab1 else ""))
+    az.plot(ts, zs, "o-", color="tab:green", ms=3, label=lab1)
+    if compare:
+        ax.fill_between(R2[:, 0], R2[:, 2] / G, R2[:, 3] / G, color="tab:red", alpha=0.15)
+        ax.plot(R2[:, 0], R2[:, 1] / G, "D-", color="tab:red", ms=4, label=f"flux estimate, {lab2}")
+        ax.plot(R2[:, 0], accq2 / G, "D--", color="tab:brown", ms=4, label=f"accumulation upstream, {lab2}")
+        az.plot(ts2, zs2, "D-", color="tab:red", ms=4, label=lab2)
+        az.legend()
     ax.set_ylabel("Gt/yr")
-    ax.grid(True, alpha=0.4); ax.legend()
-    az.plot(ts, zs, "o-", color="tab:green", ms=3)
+    ax.grid(True, alpha=0.4); ax.legend(fontsize=8)
     az.set_ylabel(f"surface elevation (m)\nat x {point[0]:.0f}, y {point[1]:.0f} km")
     az.set_xlabel("time (yr)"); az.grid(True, alpha=0.4)
-    fig.tight_layout(); fig.savefig(out + ".png", dpi=200)
-    print(f"{out}.csv, {out}.png")
+    fig.tight_layout()
+    png = out + (f"_vs_{os.path.basename(compare)[:-4]}" if compare else "") + ".png"
+    fig.savefig(png, dpi=200)
+    print(f"{out}.csv, {png}")
     if show:
         plt.show()
 
