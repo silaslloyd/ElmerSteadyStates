@@ -319,6 +319,11 @@ if [ -n "$FRIC" ]; then
     FC=$(python3 -c "import sys; sys.path.insert(0, '.'); from ess.case import eval_lua_parameters as e; print(repr($FRIC * e('case/parameters.lua')['fcoeff']))" | tail -1)
     opts="$opts --lua fcoeff=$FC"; echo "sliding coefficient fcoeff x $FRIC = $FC"
 fi
+# LUA=name=value: a parameters.lua assignment overridden for every run (ess run --lua), e.g. LUA=Tsurf=263.15 (one
+# assignment, no commas: sbatch --export splits at commas)
+if [ -n "$LUA" ]; then
+    opts="$opts --lua $LUA"; echo "parameters.lua override (every run): $LUA"
+fi
 CFG_ELEMENT=$(grep -o '^stokes_element *= *"[^"]*"' $GL_CONFIG | cut -d'"' -f2)
 echo "Stokes element: ${STOKES_ELEMENT:-$CFG_ELEMENT, from the config}"
 
