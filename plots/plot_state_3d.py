@@ -730,6 +730,10 @@ def main():
     if tsel:
         tv = lambda lab: float(lab[2:-3]) if lab.startswith("t ") and lab.endswith(" yr") else None
         items = [it for it in items if tv(it[0]) is None or tsel[0] - 1e-6 <= tv(it[0]) <= tsel[1] + 1e-6]
+    if COMPARE:                                   # only the times the compared run has (before loading anything)
+        tv_ = lambda lab: float(lab[2:-3].replace(",", "")) if lab.startswith("t ") and lab.endswith(" yr") else None
+        ct = {round(tv_(l), 0) for l, _ in collect(COMPARE) if tv_(l) is not None}
+        items = [it for it in items if tv_(it[0]) is None or round(tv_(it[0]), 0) in ct]
     if every > 1 and len(items) > 1:
         items = [it for n, it in enumerate(items) if n % every == 0 or n == len(items) - 1]
     print(f"{len(items)} states" + (f" (every {every}-th)" if every > 1 else "")
