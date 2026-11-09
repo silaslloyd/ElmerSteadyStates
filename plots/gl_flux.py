@@ -18,6 +18,9 @@ With it, the accumulation integrated over the grounded ice: the marine model's s
 grounding-line position integrated across the strip (from the divide at x = 0: the area to the left of the line,
 by Green's theorem along it). In a steady state with no basal melt the grounding-line flux equals it.
 
+Below it, the surface elevation over time at one point (--point X Y in km; default the centre of the grounded sheet
+in the first frame: halfway from the divide to the grounding line, mid-strip), every frame, also in NAME_surface.csv.
+
 Re-running reads NAME.csv and computes only the frames not in it yet (new output of a running job); --recompute
 redoes all of them. The plot opens in a window (and is saved); --no-show only saves it.
 
@@ -44,6 +47,9 @@ def main():
     args = [a for a in args if a not in ("--recompute", "--no-show")]
     if "--acc" in args:
         k = args.index("--acc"); acc = float(args[k + 1]); args = args[:k] + args[k + 2:]
+    point = None
+    if "--point" in args:                                   # --point X Y (km): where to follow the surface elevation
+        k = args.index("--point"); point = (float(args[k + 1]), float(args[k + 2])); args = args[:k] + args[k + 3:]
     if "--rho" in args:
         k = args.index("--rho"); rho = float(args[k + 1]); args = args[:k] + args[k + 2:]
     if not args:
@@ -130,15 +136,45 @@ def main():
            "accumulation_m3_per_yr,flux_Gt_per_yr,flux_low_Gt,flux_high_Gt,accumulation_Gt_per_yr")
     np.savetxt(out + ".csv", np.c_[R, accq, R[:, 1:4] * rho / 1e12, accq * rho / 1e12], delimiter=",", header=hdr,
                comments="")
-    fig, ax = plt.subplots(figsize=(9, 4.5))
+    # the surface elevation at one point over time (all frames of all files, read directly: no cache needed)
+    from scipy.spatial import Delaunay
+    D0 = np.load(args[0], allow_pickle=True)
+    if point is None:                                       # the centre of the grounded sheet in the first frame:
+        bx0, m0 = D0["base_x"], D0["base_mask"][0]          # halfway from the divide to the grounding line, mid-strip
+        gx = float(bx0[m0 > -0.5].max()) if (m0 > -0.5).any() else float(bx0.max())
+        point = (0.5 * gx / 1e3, 0.5 * float(D0["top_y"].min() + D0["top_y"].max()) / 1e3)
+    ts, zs = [], []
+    for path in args:
+        d = np.load(path, allow_pickle=True)
+        tri = Delaunay(np.c_[d["top_x"], d["top_y"]])
+        P = np.array([[point[0] * 1e3, point[1] * 1e3]])
+        j = int(tri.find_simplex(P)[0])
+        if j < 0:
+            print(f"  {os.path.basename(path)}: the point {point} km is outside the surface mesh")
+            continue
+        T = tri.transform[j]
+        b = T[:2] @ (P[0] - T[2]); w = np.r_[b, 1 - b.sum()]          # linear (barycentric) weights
+        nodes = tri.simplices[j]
+        ts += list(d["frame_times"]); zs += list(d["top_z"][:, nodes].astype(float) @ w)
+    ts, first = np.unique(np.round(np.array(ts, float), 3), return_index=True)   # sorted, each time once
+    zs = np.array(zs)[first]
+    np.savetxt(out + "_surface.csv", np.c_[ts, zs], delimiter=",", header=f"time_yr,surface_m_at_x{point[0]:g}_y{point[1]:g}_km",
+               comments="")
+    print(f"surface elevation at x {point[0]:.1f} y {point[1]:.1f} km: {zs.min():.1f} .. {zs.max():.1f} m "
+          f"({len(ts)} frames) -> {out}_surface.csv")
+
+    fig, (ax, az) = plt.subplots(2, 1, figsize=(9, 7.5), sharex=True)
     ax.fill_between(R[:, 0], R[:, 2] * rho / 1e12, R[:, 3] * rho / 1e12, color="tab:blue", alpha=0.25,
                     label="bounds (basal .. surface speed)")
     ax.plot(R[:, 0], R[:, 1] * rho / 1e12, "o-", color="tab:blue", ms=3,
             label=f"estimate (u_b + {F_SHAPE:g} (u_s - u_b))")
     ax.plot(R[:, 0], accq * rho / 1e12, "s--", color="tab:orange", ms=3,
             label=f"accumulation upstream (a x grounded area, a = {acc:.4g} m/yr)")
-    ax.set_xlabel("time (yr)"); ax.set_ylabel("Gt/yr")
+    ax.set_ylabel("Gt/yr")
     ax.grid(True, alpha=0.4); ax.legend()
+    az.plot(ts, zs, "o-", color="tab:green", ms=3)
+    az.set_ylabel(f"surface elevation (m)\nat x {point[0]:.0f}, y {point[1]:.0f} km")
+    az.set_xlabel("time (yr)"); az.grid(True, alpha=0.4)
     fig.tight_layout(); fig.savefig(out + ".png", dpi=200)
     print(f"{out}.csv, {out}.png")
     if show:
