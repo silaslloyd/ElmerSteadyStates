@@ -69,15 +69,15 @@ def main():
     # every frame of every file, in order: (file index, frame index, time)
     D = [np.load(f, allow_pickle=True) for f in files]
     items = [(i, k, float(t)) for i, d in enumerate(D) for k, t in enumerate(d["frame_times"])]
+    C, cidx = None, {}
+    if compare:                                            # only the times the compared run also has (before --every)
+        C = np.load(compare, allow_pickle=True)
+        cidx = {round(float(t), 0): k for k, t in enumerate(C["frame_times"])}
+        items = [it for it in items if round(it[2], 0) in cidx]
     if years:
         items = [it for it in items if years[0] - 1e-6 <= it[2] <= years[1] + 1e-6]
     if every > 1 and len(items) > 1:
         items = [it for n, it in enumerate(items) if n % every == 0 or n == len(items) - 1]
-    C, cidx = None, {}
-    if compare:                                            # only the times the compared run also has
-        C = np.load(compare, allow_pickle=True)
-        cidx = {round(float(t), 0): k for k, t in enumerate(C["frame_times"])}
-        items = [it for it in items if round(it[2], 0) in cidx]
     if not items:
         raise SystemExit("no frames left (--years / --every / --compare)")
 
