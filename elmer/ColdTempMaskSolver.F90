@@ -67,7 +67,7 @@ SUBROUTINE ColdTempMaskSolver(Model,Solver,dt,TransientSimulation)
   TYPE(Variable_t), POINTER :: TempSol, HwSol  ! These all 'point' to memory with different names elsewhere
   REAL(KIND=dp), POINTER :: ColdTempValues(:), ColdTempPrev(:), TempValues(:), TempPrev(:), HwValues(:), HwPrev(:,:)
   REAL(KIND=dp), POINTER :: HwOld(:)                 ! ESS: the water sheet the decision uses (previous step or current)
-  REAL(KIND=dp), ALLOCATABLE, SAVE :: MaskCopy(:)    ! ESS: the mask as it was (current values: read before overwriting)
+  REAL(KIND=dp), ALLOCATABLE, SAVE, TARGET :: MaskCopy(:)   ! ESS: the mask as it was (current values: read before overwriting)
   LOGICAL :: UseCurrent                              ! ESS: "Use Current Values" (the mask in the coupled loop)
   INTEGER, POINTER :: ColdTempPerm(:), TempPerm(:), HwPerm(:)   ! Used to match up node number with solution value at that node (not obvious due to how Elmer stores values)
 
