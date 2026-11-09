@@ -25,6 +25,8 @@ Streamlines of the surface velocity on the surface of both panels (white), one p
 state; "streamlines off" / "streamlines on" hides them; --stream-spacing KM (default 5) between their seeds across the
 flow; --no-streamlines: none. "play" / "pause" next to the slider runs through the states (--play-ms MS per state,
 default 400).
+--compare FILE [FILE ...] [--]: a second run (e.g. another time step) in the same scene, beside the first along y,
+at the times both have (by frame time), speed coloured the same; the temperature panel is off.
 Many states make a big page: --every N keeps every N-th state (and the last), --years T0 T1 only frames in that time
 range. The speed/vx/vy/vz buttons are off (their data was a large share of the page); --switch brings them back.
     python plots/plot_state_3d.py work/<config>/runs/<run>                  # a run with ESS_VTU_EVERY: every step
@@ -79,6 +81,7 @@ MESH_TOGGLE = True       # the "mesh off / mesh on" buttons for the base mesh (w
 SWITCH = False           # the speed/vx/vy/vz buttons (their values for every state go into the page: big); --switch
 T_RANGE = (None, None)   # temperature colour range (K); None: all temperatures in the window (--tmin / --tmax)
 SHOW = True
+COMPARE = []             # --compare FILE [FILE ...] --: a second run's speed beside the first's, at the same times
 PLAY_MS = 400            # ms per state when playing (--play-ms MS)
 STREAM = True            # streamlines of the surface velocity on the surface of both panels (--no-streamlines: none)
 STREAM_KM = 5.0          # km between the streamlines' seeds across the flow (--stream-spacing KM)
@@ -627,7 +630,7 @@ def _rdp(P, eps):
 def main():
     import plotly.graph_objects as go
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
-    global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS
+    global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE
     args = sys.argv[1:]
     if "--vmax-all" in args:
         VMAX_GL, VMAX = False, None
@@ -676,6 +679,12 @@ def main():
     if "--no-switch" in args:
         SWITCH = False
         args.remove("--no-switch")
+    if "--compare" in args:                       # --compare FILE [FILE ...] [--]: the files up to "--" or the next option
+        k = args.index("--compare")
+        j = k + 1
+        while j < len(args) and not args[j].startswith("--"):
+            COMPARE.append(args[j]); j += 1
+        args = args[:k] + args[j + (1 if j < len(args) and args[j] == "--" else 0):]
     if "--play-ms" in args:                       # --play-ms MS: the time per state of the play button
         k = args.index("--play-ms")
         PLAY_MS = int(float(args[k + 1]))
@@ -766,6 +775,22 @@ def main():
         m = (d["x"] / 1e3 >= x0) & (d["x"] / 1e3 <= x1)
         return {k: (v[m] if isinstance(v, np.ndarray) and v.shape == d["x"].shape else v) for k, v in d.items()}
     data = [(l, crop(tp), crop(b), t) for l, tp, b, t in data]
+    if COMPARE:                                   # the second run at the same times, beside the first (speed both)
+        other = {}
+        for _, f in collect(COMPARE):
+            tp2, b2, t2 = surfaces(f)
+            if t2 is not None:
+                other[round(float(t2), 0)] = (crop(tp2), crop(b2))
+        kept = []
+        for l, tp, b, t in data:
+            o = other.get(round(float(t), 0)) if t is not None else None
+            if o is not None and tp is not None:
+                tp["_cmp"] = o
+                kept.append((l, tp, b, t))
+        print(f"compare: {len(kept)} of {len(data)} states at times also in {' '.join(COMPARE)}")
+        if not kept:
+            raise SystemExit("--compare: no common times")
+        data = kept
     smax = max(float(np.nanmax(tp["speed"])) for _, tp, _, _ in data if tp is not None)
     if VMAX is not None:
         smax = VMAX
@@ -783,7 +808,8 @@ def main():
             smax = max(sgl)
             print(f"speed colours 0 .. {smax:.0f} m/yr: the largest surface speed on the grounding line (faster ice "
                   f"saturates; --vmax V to set it, --vmax-all for the largest speed)")
-    temp = TEMP and all(d is not None and "T" in d for _, tp, b, _ in data for d in (tp, b))
+    temp = TEMP and not COMPARE and all(d is not None and "T" in d for _, tp, b, _ in data for d in (tp, b))
+    two = temp                                    # two panels side by side (velocity | temperature)
     if TEMP and not temp:
         print("no Temperature in the states (slimmed before it was kept? re-run plots/slim_states.py): velocity only")
     if temp:
@@ -792,7 +818,7 @@ def main():
         tmax = T_RANGE[1] if T_RANGE[1] is not None else float(np.nanmax(Tv))
         print(f"temperature colours {tmin:.2f} .. {tmax:.2f} K: all temperatures (--tmin / --tmax to narrow)")
     # the panels: (field, colour range, colour scale, colour bar title, colour bar x, scene)
-    panels = [("speed", 0.0, smax, SPEED_CS, "speed (m/yr)", 0.47 if temp else 1.0, "scene")]
+    panels = [("speed", 0.0, smax, SPEED_CS, "speed (m/yr)", 0.47 if two else 1.0, "scene")]
     if DIFF:                                      # differences: vz first, symmetric red/blue
         v = np.abs(np.concatenate([d["vz"] for _, tp, b, _ in data for d in (tp, b) if d is not None]))
         m = max(float(np.nanpercentile(v, 99.5)) if np.isfinite(v).any() else 1.0, 1e-9)
@@ -801,8 +827,11 @@ def main():
               f"largest {np.nanmax(v):.3g} m/yr")
     if temp:
         panels.append(("T", tmin, tmax, "RdBu_r", "temperature (K)", 1.0, "scene2"))
+    if COMPARE:                                   # the second run in the same scene, beside the first in y
+        panels.append(("cmp", 0.0, smax, SPEED_CS, "speed (m/yr)", 1.0, "scene"))
 
     W = max(float(np.ptp(tp["y"])) for _, tp, _, _ in data if tp is not None)      # strip width (m)
+    CMP_SHIFT = 1.25 * W * TILE                   # --compare: the second run this far along y (a gap of W/4)
 
     def mesh_lines(base, P):
         """the element edges of the base (white), just below it, for every copy: the rows and columns of a structured
@@ -837,7 +866,7 @@ def main():
                 lz += [None if np.isnan(v) else round(float(v), 1) for v in Z.ravel()]
             print(f"  base mesh: {n} edges per copy")
         # white edges, dark grey on the speed panel (its slow ice is white)
-        return go.Scatter3d(x=lx, y=ly, z=lz, mode="lines", line=dict(color="#444444" if P[0] == "speed" else "white", width=1),
+        return go.Scatter3d(x=lx, y=ly, z=lz, mode="lines", line=dict(color="#444444" if P[0] in ("speed", "cmp") else "white", width=1),
                             name="base mesh", hoverinfo="skip", scene=P[6], showlegend=P[6] == "scene",
                             connectgaps=False)
 
@@ -894,9 +923,19 @@ def main():
     def panel_traces(top, base, P):
         """TILE copies side by side, copy c shifted by c W in y: at each seam y = c W the image side (y = W) of
         one copy meets the master side (y = 0) of the next, so anything not periodic shows as a step there"""
+        cmp = P[0] == "cmp"
+        if cmp:                                   # the compared run: its own surfaces, drawn as speed, shifted in y
+            if top is None or "_cmp" not in top:
+                top, base = None, None
+            else:                                 # shifted once and kept (the streamline cache goes by the dict)
+                if "_cmp_sh" not in top:
+                    sh = lambda d: None if d is None else {k: (v + CMP_SHIFT if k == "y" else v) for k, v in d.items()}
+                    top["_cmp_sh"] = tuple(sh(d) for d in top["_cmp"])
+                top, base = top["_cmp_sh"]
+            P = ("speed",) + tuple(P[1:])
         f, lo, hi, cs, ctitle, cx, sc = P
         unit = "K" if f == "T" else "m/yr"
-        first_panel = sc == "scene"
+        first_panel = sc == "scene" and not cmp
         tr = []
         # all copies as ONE surface each (the seam rows shared): separate surfaces are lit with one-sided normals at
         # their edges, which draws a faint line along a seam even where the values match exactly
@@ -1179,7 +1218,7 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
             t_.visible = SHOW_MESH
             midx.append(len(first))
             first.append(t_)
-        menus = menus + [dict(type="buttons", direction="right", x=0.52 if temp else 0.40, y=1.06, xanchor="left",
+        menus = menus + [dict(type="buttons", direction="right", x=0.52 if two else 0.40, y=1.06, xanchor="left",
                               yanchor="bottom", showactive=True, pad=dict(r=4, t=0), active=1 if SHOW_MESH else 0,
                               buttons=[dict(label="mesh off", method="restyle", args=[{"visible": False}, midx]),
                                        dict(label="mesh on", method="restyle", args=[{"visible": True}, midx])])]
@@ -1192,17 +1231,24 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
     zs += [np.nanmin(b["bed"]) for _, _, b, _ in data if b is not None and "bed" in b]
     asp = dict(ASPECT)
     asp["z"] = ASPECT["z"] * Z_EXAGGERATION
-    asp["y"] = ASPECT["y"] * TILE
+    asp["y"] = ASPECT["y"] * TILE * (2.25 if COMPARE else 1.0)
     fig = go.Figure(data=first, frames=frames)
     scene = dict(xaxis=dict(title="x (km)", range=[x0, x1]), yaxis=dict(title="y (km)"),
                  zaxis=dict(title="z (m)", range=[min(zs) - 20, max(zs) + 20]),
                  aspectmode="manual", aspectratio=asp)
-    scenes = {"scene": dict(scene, domain=dict(x=[0.0, 0.46] if temp else [0.0, 1.0], y=[0.0, 1.0]))}
-    if temp:
+    scenes = {"scene": dict(scene, domain=dict(x=[0.0, 0.46] if two else [0.0, 1.0], y=[0.0, 1.0]))}
+    if two:
         scenes["scene2"] = dict(scene, domain=dict(x=[0.52, 0.98], y=[0.0, 1.0]))
     ann = ([dict(text="velocity", x=0.23, y=1.0, xref="paper", yref="paper", showarrow=False, font=dict(size=16)),
             dict(text="temperature", x=0.75, y=1.0, xref="paper", yref="paper", showarrow=False, font=dict(size=16))]
            if temp else [])
+    if COMPARE:                                   # the two runs named above their ice sheets, in the scene
+        ztop = max(zs) + 20
+        scenes["scene"]["annotations"] = [
+            dict(x=x0, y=W * TILE / 2e3, z=ztop, text=os.path.basename(str(items[0][1]))[:-4], showarrow=False,
+                 font=dict(size=14), xanchor="left"),
+            dict(x=x0, y=(CMP_SHIFT + W * TILE / 2) / 1e3, z=ztop, text=os.path.basename(COMPARE[0])[:-4],
+                 showarrow=False, font=dict(size=14), xanchor="left")]
     # play / pause: through the states in turn from the one on show (PLAY_MS per state, --play-ms)
     anim = dict(frame=dict(duration=PLAY_MS, redraw=True), transition=dict(duration=0), mode="immediate",
                 fromcurrent=True)
@@ -1226,7 +1272,7 @@ gd.on('plotly_relayout', function (e) {
   if (e['scene.camera']) u['scene2.camera'] = e['scene.camera'];
   if (e['scene2.camera']) u['scene.camera'] = e['scene2.camera'];
   if (Object.keys(u).length) { busy = true; Plotly.relayout(gd, u).then(function () { busy = false; }); }
-});""" if temp else None)
+});""" if two else None)
     post = "\n".join(x for x in (sync, switch_js) if x) or None
     # the page width and height (no fixed size: no sideways scrolling; resizes with the window)
     fig.write_html(out, include_plotlyjs="cdn", post_script=post, config=dict(responsive=True),
