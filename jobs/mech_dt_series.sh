@@ -34,6 +34,14 @@ sub() {   # sub AFTER DT FSSA TAG -> job id
         bash jobs/scaling_sweep.sh $P | awk -v t="$tag" '/^c[0-9]+:/{print $2; print "  " t ": " $2 > "/dev/stderr"}'
 }
 
+# ONLY="100:full 100:adapted ...": just these runs (dt:fssa), as ONE chain after AFTER (no lanes), e.g. extra step
+# sizes for a series already run:  AFTER=31571 ONLY="100:full 100:adapted" SLIDING=temperate FRIC=100 SUFFIX=_unif100 ...
+if [ -n "$ONLY" ]; then
+    echo "mechanical-only runs: $ONLY, ${YEARS} yr each, $P${FRIC:+, friction x $FRIC}${SLIDING:+, sliding $SLIDING}"
+    a=${AFTER:-}
+    for r in $ONLY; do a=$(sub "$a" ${r%%:*} ${r##*:} _mech_dt${r%%:*}_${r##*:}); done
+    echo "submitted (one chain)"; exit 0
+fi
 echo "mechanical-only time-step series: ${YEARS} yr each, VTU every ${EVERY_YEARS} yr, $P${FRIC:+, friction x $FRIC}${LUA:+, $LUA}"
 a=${AFTER_A:-}
 a=$(sub "$a" 5 full _mech_dt5_full)
