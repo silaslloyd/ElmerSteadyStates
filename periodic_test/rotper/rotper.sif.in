@@ -58,7 +58,7 @@ Solver 2
   Stokes Flow = Logical True
   Nonlinear System Max Iterations = 1
   Linear System Solver = Direct
-  Linear System Direct Method = MUMPS
+  Linear System Direct Method = @DIRECT@
 End
 
 Solver 3
