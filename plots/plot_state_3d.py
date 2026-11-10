@@ -594,6 +594,57 @@ def gl_line(base, top=None):
 _STREAM_CACHE = {}
 
 
+_LOC_CACHE = {}
+
+
+def _point_locator(P, S, key):
+    """locate points in the triangles S of the points P: (triangle index or -1, barycentric weights). Without qhull's
+    find_simplex (it crashed with "Illegal instruction" on pilsen, as scipy's interpolators that use it): the nearest
+    nodes (cKDTree), then every triangle around them tested by its barycentric coordinates"""
+    if key in _LOC_CACHE:
+        return _LOC_CACHE[key]
+    from scipy.spatial import cKDTree
+    P = np.asarray(P, float)
+    tree = cKDTree(P)
+    # node -> its triangles, padded (-1)
+    cnt = np.bincount(S.ravel(), minlength=len(P))
+    mx = int(cnt.max())
+    inc = -np.ones((len(P), mx), int)
+    order = np.argsort(S.ravel(), kind="stable")
+    tri_of = order // 3
+    start = np.r_[0, np.cumsum(cnt)[:-1]]
+    pos = np.arange(len(order)) - np.repeat(start, cnt)
+    inc[np.sort(S.ravel())[np.arange(len(order))], pos] = tri_of
+    a, b, c = P[S[:, 0]], P[S[:, 1]], P[S[:, 2]]
+    det = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0])
+
+    def locate(Q, kn=4):
+        Q = np.asarray(Q, float)
+        _, nn = tree.query(Q, k=min(kn, len(P)))
+        cand = inc[nn].reshape(len(Q), -1)                      # (n, 4 mx) triangles around the 4 nearest nodes
+        valid = cand >= 0
+        cs = np.where(valid, cand, 0)
+        A_, B_, C_ = a[cs], b[cs], c[cs]
+        qx, qy = Q[:, None, 0], Q[:, None, 1]
+        d = det[cs]
+        l1 = ((B_[..., 0] - qx) * (C_[..., 1] - qy) - (B_[..., 1] - qy) * (C_[..., 0] - qx)) / d
+        l2 = ((C_[..., 0] - qx) * (A_[..., 1] - qy) - (C_[..., 1] - qy) * (A_[..., 0] - qx)) / d
+        l3 = 1.0 - l1 - l2
+        inside = valid & (l1 >= -1e-9) & (l2 >= -1e-9) & (l3 >= -1e-9)
+        hit = inside.any(1)
+        j = np.argmax(inside, 1)
+        r = np.arange(len(Q))
+        k = np.where(hit, cand[r, j], -1)
+        w = np.c_[l1[r, j], l2[r, j], l3[r, j]]
+        miss = ~hit
+        if kn < 64 and miss.any():                             # long triangles (at the edges): more nodes around
+            k2, w2 = locate(Q[miss], 4 * kn)
+            k[miss], w[miss] = k2, w2
+        return k, w
+    _LOC_CACHE[key] = locate
+    return locate
+
+
 def streamlines(top, spacing_km, width_m, periodic=True):
     """streamlines of the surface velocity (vx, vy): seeds every spacing_km across the strip, 20 km downstream of the
     window's upstream end, followed along the flow direction (RK2, 0.5 km steps, a point kept every 2 km) to the front,
@@ -610,15 +661,14 @@ def streamlines(top, spacing_km, width_m, periodic=True):
         _TRI_CACHE[tk] = Delaunay(np.c_[x, y])
     tri_, vals_ = _TRI_CACHE[tk], np.c_[top["vx"], top["vy"], top["v"]]
 
+    loc_ = _point_locator(tri_.points, tri_.simplices, tk)
+
     def f(Q):                                    # linear on the Delaunay triangles, NaN outside
-        k = tri_.find_simplex(Q)
+        k, w = loc_(Q)
         out = np.full((len(Q), 3), np.nan)
         ok = k >= 0
         if ok.any():
-            T = tri_.transform[k[ok]]
-            b = np.einsum("nij,nj->ni", T[:, :2], Q[ok] - T[:, 2])
-            w = np.c_[b, 1.0 - b.sum(1)]
-            out[ok] = np.einsum("ni,nij->nj", w, vals_[tri_.simplices[k[ok]]])
+            out[ok] = np.einsum("ni,nij->nj", w[ok], vals_[tri_.simplices[k[ok]]])
         return out
     x0, x1, y0 = x.min(), x.max(), y.min()
     W = width_m if width_m > 0 else float(np.ptp(y))
