@@ -51,7 +51,7 @@ for p in $POINTS; do
         s*) cfg=configs/coarse_sector.toml; extra="$MAR,FROM=${FROM:-work/coarse/ckpt_1500.npz}";;   # the Coarse sector (arc)
         f*) cfg=configs/coarse_sector_fine.toml; extra="$MAR,FROM=${FROM:-work/coarse/ckpt_1500.npz}";;   # sector, 1 km to 860 km
         j*) cfg=configs/coarse_sector_inv38.toml; extra="$MAR,FROM=${FROM:-work/coarse/ckpt_1500.npz}";;   # inverted, 38 x = circle
-        r*) cfg=configs/coarse_sector_inv38_cut.toml; extra="$MAR,FROM=${FROM:-work/coarse/ckpt_1500.npz}";;   # inverted 38, cut (jagged) sides
+        r*) cfg=configs/coarse_sector_inv38_cut.toml; extra="$MAR,FROM=${FROM:-work/coarse/start.npz}";;   # inverted 38, cut (jagged) sides; from the cold, laterally uniform strip start (ckpt_1500 has streams: transferred by radius they come out speckled)
         k*) cfg=configs/coarse_sector_inv2.toml; extra="$MAR,FROM=${FROM:-work/coarse/ckpt_1500.npz}";;   # inverted, twice as wide
         i*) cfg=configs/coarse_sector_inv.toml; extra="$MAR,FROM=${FROM:-work/coarse/ckpt_1500.npz}";;   # the inverted sector
         l*) cfg=configs/test_wall_land_50km_tri.toml; extra="$LAND,FROM=work/test_wall_land_50km/start.npz";;
