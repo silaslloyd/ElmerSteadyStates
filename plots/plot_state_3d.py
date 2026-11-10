@@ -64,6 +64,8 @@ SHOW_BED = False         # the bedrock surface under the ice (--bed to show)
 BASE_COLOUR = "speed"    # "speed" (basal speed, the same colour scale as the surface) or "mask" (red grounded, blue floating)
 SHOW_MESH = False        # the element edges on the base (--mesh to show)
 SIDES = True             # side walls (base to surface) at the window ends and the two outer sides
+SECTOR = False           # a sector footprint (configs/coarse_sector*.toml: symmetric about the x-axis, so y < 0 on one
+                         # half): walls on the angled sides and on the arcs, triangles in (r, angle), no tiling
 TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
 VMAX_GL = True           # speed colours up to the surface speed on the grounding line (--vmax-all: the largest)
 VMAX = 100.0             # speed colour maximum (m/yr), --vmax V; --vmax-gl: the surface speed on the grounding line
@@ -346,7 +348,11 @@ def _triangles(x, y):
     triangle meshes: their footprint is a rectangle, so Delaunay covers it like the mesh)"""
     if not structured(x, y):
         from scipy.spatial import Delaunay
-        t = Delaunay(np.c_[x, y] / 1e3).simplices
+        if np.min(y) < -1.0:      # a sector: Delaunay in (r, arc at the mean radius), where it is a rectangle (in x, y
+            r = np.hypot(x, y)    # its inner arc is concave, and Delaunay would bridge it)
+            t = Delaunay(np.c_[r, np.arctan2(y, x) * np.mean(r)] / 1e3).simplices
+        else:
+            t = Delaunay(np.c_[x, y] / 1e3).simplices
         return t[:, 0], t[:, 1], t[:, 2]
     ys = np.unique(np.round(y, 1))
     xs = np.unique(np.round(x, 1))
@@ -632,7 +638,7 @@ def _rdp(P, eps):
 def main():
     import plotly.graph_objects as go
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
-    global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD
+    global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD, SECTOR
     args = sys.argv[1:]
     if "--vmax-all" in args:
         VMAX_GL, VMAX = False, None
@@ -766,6 +772,13 @@ def main():
                    f"min {np.min(gx):.2f} mean {np.mean(gx):.2f} max {np.max(gx):.2f} over {len(gx)} rows")
             print(f"  {label}: grounding line {per} km; mask values {np.unique(base['mask'])}")
     # window around the grounding line
+    SECTOR = any(tp is not None and float(np.min(tp["y"])) < -1.0 for _, tp, _, _ in data)
+    if SECTOR:
+        if TILE != 1 or STREAM:
+            print("sector footprint: one copy, no streamlines (both assume a strip periodic in y); the window in r")
+        TILE, STREAM = 1, False
+        if not X_WINDOW:
+            X_WINDOW = (-1.0, 1e9)
     if X_WINDOW:
         x0, x1 = X_WINDOW
     else:
@@ -774,14 +787,16 @@ def main():
         xmax = max(float(np.max(top["x"])) for _, top, _, _ in data if top is not None) / 1e3
         x0 = (min(float(np.min(g)) for g in gls if len(g)) - 60.0) if gls else 0.0
         x1 = xmax
-    xall = np.concatenate([tp["x"] for _, tp, _, _ in data if tp is not None]) / 1e3
+    xall = np.concatenate([np.hypot(tp["x"], tp["y"]) if SECTOR else tp["x"] for _, tp, _, _ in data
+                           if tp is not None]) / 1e3
     x0, x1 = max(x0, float(xall.min())), min(x1, float(xall.max()))
     print(f"x window {x0:.0f} .. {x1:.0f} km (domain {xall.min():.0f} .. {xall.max():.0f} km; --x XMIN XMAX to change)")
 
     def crop(d):
         if d is None:
             return None
-        m = (d["x"] / 1e3 >= x0) & (d["x"] / 1e3 <= x1)
+        xr = np.hypot(d["x"], d["y"]) if SECTOR else d["x"]
+        m = (xr / 1e3 >= x0) & (xr / 1e3 <= x1)
         return {k: (v[m] if isinstance(v, np.ndarray) and v.shape == d["x"].shape else v) for k, v in d.items()}
     data = [(l, crop(tp), crop(b), t) for l, tp, b, t in data]
     if COMPARE:                                   # the second run at the same times, beside the first (speed both)
@@ -909,6 +924,15 @@ def main():
                                  showscale=False, opacity=1.0, name=name, showlegend=False, hoverinfo="skip",
                                  scene=P[6]))
         xs, ys = top["x"], top["y"]
+        if SECTOR:                # the two arcs (the window's r ends) by angle, the two angled sides by r
+            r, ph = np.hypot(xs, ys), np.arctan2(ys, xs)
+            for re_ in (r.min(), r.max()):
+                m = np.where(np.abs(r - re_) < 1.0)[0]
+                wall(m[np.argsort(ph[m])], 0.0, "end wall")
+            for pe in (ph.min(), ph.max()):
+                m = np.where(np.abs(ph - pe) < 1e-6)[0]
+                wall(m[np.argsort(r[m])], 0.0, "side wall")
+            return out
         for c in range(TILE):
             dy = c * W / 1e3
             for xe in (xs.min(), xs.max()):                       # the x ends of the window
@@ -1246,8 +1270,16 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
     asp = dict(ASPECT)
     asp["z"] = ASPECT["z"] * Z_EXAGGERATION
     asp["y"] = ASPECT["y"] * TILE * (2.25 if COMPARE else 1.0)
+    if SECTOR:                    # true horizontal proportions (x : y as the footprint)
+        allx = np.concatenate([tp["x"] for _, tp, _, _ in data if tp is not None])
+        ally = np.concatenate([tp["y"] for _, tp, _, _ in data if tp is not None])
+        asp["y"] = asp["x"] * float(np.ptp(ally)) / max(float(np.ptp(allx)), 1.0)
     fig = go.Figure(data=first, frames=frames)
-    scene = dict(xaxis=dict(title="x (km)", range=[x0, x1]), yaxis=dict(title="y (km)"),
+    xr_ = [x0, x1]
+    if SECTOR:                    # the window is in r: the x axis spans the cropped nodes
+        allx_ = np.concatenate([tp["x"] for _, tp, _, _ in data if tp is not None]) / 1e3
+        xr_ = [float(allx_.min()) - 1.0, float(allx_.max()) + 1.0]
+    scene = dict(xaxis=dict(title="x (km)", range=xr_), yaxis=dict(title="y (km)"),
                  zaxis=dict(title="z (m)", range=[min(zs) - 20, max(zs) + 20]),
                  aspectmode="manual", aspectratio=asp)
     scenes = {"scene": dict(scene, domain=dict(x=[0.0, 0.46] if two else [0.0, 1.0], y=[0.0, 1.0]))}
