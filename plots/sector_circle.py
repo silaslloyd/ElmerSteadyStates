@@ -49,7 +49,7 @@ def main():
     tx, ty = F["top_x"].astype(float), F["top_y"].astype(float)
     bx, by = F["base_x"].astype(float), F["base_y"].astype(float)
     ph = np.arctan2(ty, tx)
-    A = float(ph.max() - ph.min())
+    A = P3.sector_angle(tx, ty)                         # (the outer arc's span: also for jagged cut sides)
     if ncp is None:
         ncp = int(np.floor(2 * np.pi / A + 1e-6))
     gap = 2 * np.pi - ncp * A
@@ -82,7 +82,7 @@ def main():
             ax.tricontour(trb, mask, levels=[-0.5], colors="red", linewidths=0.8)
     if gap > 1e-3:                                     # the part of the circle no whole sector fills
         r1 = np.hypot(tx, ty).max() / 1e3
-        a0, a1 = ph.min() + ncp * A, ph.min() + 2 * np.pi
+        a0, a1 = -A / 2 + ncp * A, -A / 2 + 2 * np.pi
         ang = np.linspace(a0, a1, 50)
         ax.fill(np.r_[0, r1 * 1.02 * np.cos(ang), 0], np.r_[0, r1 * 1.02 * np.sin(ang), 0], color="0.85", zorder=0)
         ax.text(0.7 * r1 * np.cos(0.5 * (a0 + a1)), 0.7 * r1 * np.sin(0.5 * (a0 + a1)),

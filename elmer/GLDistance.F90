@@ -54,8 +54,8 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   INTEGER, ALLOCATABLE :: seamEl(:)
   TYPE(ParallelInfo_t), POINTER :: parInfo
   LOGICAL :: Found, hasg, hasf
-  REAL(KIND=dp) :: d2, dmin, m, dmax, dy, pw, pa, srows, dupd, moved
-  LOGICAL :: per
+  REAL(KIND=dp) :: d2, dmin, m, dmax, dy, pw, pa, srows, dupd, moved, thr
+  LOGICAL :: per, hasThr
   REAL(KIND=dp), ALLOCATABLE, SAVE :: refx(:), refy(:)   ! the grounding line the distance is measured from
   INTEGER, SAVE :: nref = -1, nupd = 0, nkept = 0
   LOGICAL :: upd
@@ -85,6 +85,11 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   per = ( pw > 0.0_dp .OR. pa > 0.0_dp )
   srows = ListGetConstReal( Params, 'Periodic Seam Rows', Found )
   IF ( .NOT. Found ) srows = 0.0_dp
+  ! "Periodic Seam Threshold" (m: the FS SSA distance, the passive threshold of the ice's "Flow Solution Passive"):
+  ! a mesh NOT mirror-symmetric across its seams (a cut sector, ess/case.py sector_geo cut_seed): instead of the
+  ! mirror rule below, every periodic pair (Elmer's projector) is made active or passive together, by activating the
+  ! elements around the passive member (their columns' distance lowered to the threshold) until no pair differs
+  thr = ListGetConstReal( Params, 'Periodic Seam Threshold', hasThr )
   ! "FS SSA Update Distance" (m, default 0: every step): the distance is measured from a REFERENCE grounding line,
   ! replaced by the current one only when the two differ by more than this (Hausdorff distance: some current
   ! grounding-line node this far from every reference node, or the other way round). In between, the floating
@@ -216,7 +221,7 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   ! too), so the elements touching the seam on its two sides are mirror images, with the same distances.
   ALLOCATE( seamEl(nn) )
   seamEl = 0
-  IF ( per ) THEN
+  IF ( per .AND. .NOT. hasThr ) THEN
     DO t = 1, Mesh % NumberOfBulkElements
       El => Mesh % Elements(t)
       n = El % TYPE % NumberOfNodes
@@ -250,12 +255,13 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
     ! so a seam node and its periodic image could differ (one pinned at its old value, which the periodic constraint
     ! then imposed on the other); with the rows next to the seam symmetric (the mesh is structured across y), the
     ! seam elements on both sides are active or passive together
-    IF ( per ) THEN
+    IF ( per .AND. .NOT. hasThr ) THEN
       IF ( seamEl(i) > 0 .OR. ( srows > 0.0_dp .AND. seamDist( Mesh % Nodes % x(i), Mesh % Nodes % y(i) ) <= srows ) ) &
           dVal(q) = MIN( dVal(q), glDist( Mesh % Nodes % x(i), mirrorY( Mesh % Nodes % y(i) ) ) )
     END IF
     dmax = MAX( dmax, dVal(q) )
   END DO
+  IF ( hasThr ) CALL seamConsistent()
   IF ( ParEnv % PEs > 1 ) THEN
     CALL MPI_Allreduce( MPI_IN_PLACE, dmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, ParEnv % ActiveComm, ierr )
   END IF
@@ -263,6 +269,106 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   CALL Info( Caller, Message, Level=3 )
 
 CONTAINS
+
+  ! "Periodic Seam Threshold": Elmer makes an element passive when one of its nodes is (GL Distance > thr), and a node
+  ! is passive-only when all its elements are. A seam node and its periodic image have the same distance but
+  ! different elements around them (the mesh is not mirrored across the seam), so one can be active and the other
+  ! passive, and the periodic tie then pins the active one at the passive one's frozen value. Here: per round, every
+  ! node's state from the elements of this solver (ice), OR over the ranks; every periodic pair (the projectors of
+  ! the BCs with "Periodic BC", master and slave on one rank: the partitioning keeps pairs together) compared; the
+  ! passive member's elements activated by lowering their columns' distance to thr (whole columns: every level
+  ! alike). Only ever activates, so it ends (in a round or two: only the few pairs where the region's edge crosses a
+  ! seam differ).
+  SUBROUTINE seamConsistent()
+    INTEGER, ALLOCATABLE :: act(:), low(:), colLow(:)
+    TYPE(Matrix_t), POINTER :: Pm
+    INTEGER :: it, ib, ii, ks, km, l, nmis, nfix, tt, jj, nq, gsum
+    LOGICAL :: actEl
+    ALLOCATE( act(nn), low(nn), colLow(nbl) )
+    nfix = 0
+    DO it = 1, 30
+      act = 0
+      DO tt = 1, Solver % NumberOfActiveElements
+        El => Mesh % Elements( Solver % ActiveElements(tt) )
+        n = El % TYPE % NumberOfNodes
+        actEl = .TRUE.
+        DO jj = 1, n
+          IF ( nodeD( El % NodeIndexes(jj) ) > thr ) actEl = .FALSE.
+        END DO
+        IF ( actEl ) act( El % NodeIndexes(1:n) ) = 1
+      END DO
+      IF ( ParEnv % PEs > 1 ) CALL CommunicateParallelSystemTag( Mesh % ParallelInfo, Itag=act, ParOper=2 )
+      low = 0; nmis = 0
+      DO ib = 1, Model % NumberOfBCs
+        IF ( .NOT. ListCheckPresent( Model % BCs(ib) % Values, 'Periodic BC' ) ) CYCLE
+        Pm => Model % BCs(ib) % PMatrix
+        IF ( .NOT. ASSOCIATED( Pm ) ) CYCLE
+        DO ii = 1, Pm % NumberOfRows
+          ks = Pm % InvPerm(ii)
+          IF ( ks <= 0 .OR. ks > nn ) CYCLE
+          IF ( nodeQ(ks) <= 0 ) CYCLE
+          DO l = Pm % Rows(ii), Pm % Rows(ii+1) - 1
+            km = Pm % Cols(l)
+            IF ( km <= 0 .OR. km > nn ) CYCLE
+            IF ( Pm % Values(l) == 0.0_dp .OR. nodeQ(km) <= 0 ) CYCLE
+            IF ( act(ks) == act(km) ) CYCLE
+            nmis = nmis + 1
+            IF ( act(ks) == 0 ) THEN
+              low(ks) = 1
+            ELSE
+              low(km) = 1
+            END IF
+          END DO
+        END DO
+      END DO
+      gsum = nmis
+      IF ( ParEnv % PEs > 1 ) CALL MPI_Allreduce( nmis, gsum, 1, MPI_INTEGER, MPI_SUM, ParEnv % ActiveComm, ierr )
+      IF ( gsum == 0 ) EXIT
+      nfix = nfix + gsum
+      ! the passive members' elements: all their columns lowered (every level, every rank sharing them)
+      colLow = 0
+      DO tt = 1, Solver % NumberOfActiveElements
+        El => Mesh % Elements( Solver % ActiveElements(tt) )
+        n = El % TYPE % NumberOfNodes
+        IF ( ANY( low( El % NodeIndexes(1:n) ) == 1 ) ) colLow( MOD( El % NodeIndexes(1:n) - 1, nbl ) + 1 ) = 1
+      END DO
+      DO i = 1, nn
+        low(i) = colLow( MOD(i-1, nbl) + 1 )
+      END DO
+      IF ( ParEnv % PEs > 1 ) CALL CommunicateParallelSystemTag( Mesh % ParallelInfo, Itag=low, ParOper=2 )
+      DO i = 1, nn
+        IF ( low(i) == 1 ) colLow( MOD(i-1, nbl) + 1 ) = 1
+      END DO
+      DO i = 1, nn
+        IF ( colLow( MOD(i-1, nbl) + 1 ) /= 1 ) CYCLE
+        nq = nodeQ(i)
+        IF ( nq > 0 ) dVal(nq) = MIN( dVal(nq), thr )
+      END DO
+    END DO
+    IF ( nfix > 0 .OR. it > 1 ) THEN
+      WRITE( Message, '(A,I0,A,I0,A)' ) 'periodic seam: ', nfix, ' active/passive pair mismatches fixed (', &
+          MIN(it, 30), ' rounds)'
+      CALL Info( Caller, Message, Level=3 )
+    END IF
+    IF ( it > 30 ) CALL Warn( Caller, 'periodic seam: pairs still differ after 30 rounds' )
+    DEALLOCATE( act, low, colLow )
+  END SUBROUTINE seamConsistent
+
+  ! the GL Distance index of mesh node i (0: none)
+  FUNCTION nodeQ( i ) RESULT( qq )
+    INTEGER :: i, qq
+    qq = 0
+    IF ( i <= SIZE(dPerm) ) qq = dPerm(i)
+  END FUNCTION nodeQ
+
+  ! the GL Distance at mesh node i (0 where it has none: Elmer's Lua sees 0 there too)
+  FUNCTION nodeD( i ) RESULT( dd )
+    INTEGER :: i, qq
+    REAL(KIND=dp) :: dd
+    qq = nodeQ(i)
+    dd = 0.0_dp
+    IF ( qq > 0 ) dd = dVal(qq)
+  END FUNCTION nodeD
 
   ! the distance from (xp, yp) to the nearest of the points (px, py)(1:np) (periodic in y when pw > 0)
   FUNCTION glNear( xp, yp, px, py, np ) RESULT( dd )
@@ -391,6 +497,12 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   REAL(KIND=dp), SAVE :: ysMin = 0.0_dp, ysMax = -1.0_dp
   REAL(KIND=dp) :: ytol, nside, nwall, pa, phs, crs, srs, Fs(3)
   LOGICAL :: onSide, wallsLS
+  ! "FS SSA Side Faces By BC" (a cut sector: jagged sides, not at one angle): a face is on a side when its nodes are
+  ! those of a boundary element of a periodic pair's BCs (sorted node lists of those elements, built once)
+  LOGICAL :: sideBC
+  INTEGER, ALLOCATABLE, SAVE :: sfNodes(:,:)
+  LOGICAL, ALLOCATABLE, SAVE :: sfNode(:)
+  INTEGER, SAVE :: nsf = -1
   ! periodic sides: Elmer has already folded each slave node's row into its master rows and replaced it by the
   ! periodic constraint (SetPeriodicBoundariesPass1/2), so a slave node's force goes to its masters, by the
   ! projector weights (pStart/pCnt/pNode/pW: per slave node, its masters)
@@ -707,6 +819,8 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   ! rows were assembled in frames R times the master's, elmer/ESSIncompressibleNS.F90 ESSRotPeriodicFrames)
   pa = ListGetConstReal( Solver % Values, 'FS SSA Periodic Angle', Found )
   IF ( .NOT. Found ) pa = 0.0_dp
+  sideBC = ListGetLogical( Solver % Values, 'FS SSA Side Faces By BC', Found )
+  IF ( sideBC .AND. nsf < 0 ) CALL sideFaces()
   DO pass = 1, 2
   nfaces = 0; ftot = 0.0_dp
   ! diagnostics: sum of face x-areas, area-weighted H, expected force, min/max H, x range of face centres
@@ -746,7 +860,9 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
       ! area vector of the quadrilateral: half the cross product of its diagonals
       av = 0.5_dp * essCross( pts(:,3) - pts(:,1), pts(:,4) - pts(:,2) )
       IF ( ABS(av(3)) > 0.5_dp * SQRT( SUM(av**2) ) ) CYCLE        ! a horizontal face (top/base): not the interface
-      IF ( pa > 0.0_dp ) THEN
+      IF ( sideBC ) THEN
+        onSide = onSideFace( El % NodeIndexes( fn(:,f) ) )
+      ELSE IF ( pa > 0.0_dp ) THEN
         onSide = ALL( ABS( ATAN2( pts(2,:), pts(1,:) ) + 0.5_dp * pa ) < 1.0e-7_dp ) .OR. &
                  ALL( ABS( ATAN2( pts(2,:), pts(1,:) ) - 0.5_dp * pa ) < 1.0e-7_dp )
       ELSE
@@ -945,6 +1061,79 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   END IF
 
 CONTAINS
+
+  ! the boundary elements of the periodic sides (the BCs with "Periodic BC" and their masters), node lists sorted
+  SUBROUTINE sideFaces()
+    INTEGER :: ib2, mb, tg, ne, kk, l2, nb, tags(2*Model % NumberOfBCs), ntg, srt(4)
+    TYPE(Element_t), POINTER :: Be
+    ntg = 0
+    DO ib2 = 1, Model % NumberOfBCs
+      IF ( .NOT. ListCheckPresent( Model % BCs(ib2) % Values, 'Periodic BC' ) ) CYCLE
+      mb = ListGetInteger( Model % BCs(ib2) % Values, 'Periodic BC', Found )
+      ntg = ntg + 1; tags(ntg) = Model % BCs(ib2) % Tag
+      IF ( mb >= 1 .AND. mb <= Model % NumberOfBCs ) THEN
+        ntg = ntg + 1; tags(ntg) = Model % BCs(mb) % Tag
+      END IF
+    END DO
+    nb = Mesh % NumberOfBulkElements
+    ALLOCATE( sfNode( Mesh % NumberOfNodes ) )
+    sfNode = .FALSE.
+    DO l2 = 1, 2
+      nsf = 0
+      DO kk = nb + 1, nb + Mesh % NumberOfBoundaryElements
+        Be => Mesh % Elements(kk)
+        IF ( .NOT. ASSOCIATED( Be % BoundaryInfo ) ) CYCLE
+        tg = Be % BoundaryInfo % Constraint
+        IF ( .NOT. ANY( tags(1:ntg) == tg ) ) CYCLE
+        ne = Be % TYPE % NumberOfNodes
+        IF ( ne < 3 .OR. ne > 4 ) CYCLE
+        nsf = nsf + 1
+        IF ( l2 == 2 ) THEN
+          srt = 0
+          srt(1:ne) = Be % NodeIndexes(1:ne)
+          CALL isort4( srt )
+          sfNodes(:, nsf) = srt
+          sfNode( Be % NodeIndexes(1:ne) ) = .TRUE.
+        END IF
+      END DO
+      IF ( l2 == 1 ) ALLOCATE( sfNodes(4, MAX(nsf, 1)) )
+    END DO
+    WRITE( Message, '(A,I0,A,I0,A)' ) 'side faces by BC: ', nsf, ' boundary faces of ', ntg, ' periodic side BCs'
+    CALL Info( 'FSSSALinsolve', Message, Level=4 )
+  END SUBROUTINE sideFaces
+
+  ! a face (4 nodes; a triangle's 4th repeats) that is a side boundary element
+  FUNCTION onSideFace( fnodes ) RESULT( on )
+    INTEGER :: fnodes(4), srt(4), kk
+    LOGICAL :: on
+    on = .FALSE.
+    IF ( .NOT. ALL( sfNode( fnodes ) ) ) RETURN
+    srt = fnodes
+    CALL isort4( srt )
+    ! a repeated node (a degenerate quadrilateral: a triangle) -> 0, as the triangles' lists
+    DO kk = 4, 2, -1
+      IF ( srt(kk) == srt(kk-1) ) srt(kk) = 0
+    END DO
+    CALL isort4( srt )
+    DO kk = 1, nsf
+      IF ( ALL( sfNodes(:, kk) == srt ) ) THEN
+        on = .TRUE.
+        RETURN
+      END IF
+    END DO
+  END FUNCTION onSideFace
+
+  ! sort 4 integers, descending (zeros last)
+  SUBROUTINE isort4( v )
+    INTEGER :: v(4), a, b, tmp
+    DO a = 1, 3
+      DO b = a + 1, 4
+        IF ( v(b) > v(a) ) THEN
+          tmp = v(a); v(a) = v(b); v(b) = tmp
+        END IF
+      END DO
+    END DO
+  END SUBROUTINE isort4
 
   FUNCTION essNodeVal( v, i ) RESULT( val )
     TYPE(Variable_t), POINTER :: v
@@ -1180,7 +1369,18 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
   cQ = COS( paS ); sQ = SIN( paS )
   ALLOCATE( slv(nn) )
   slv = .FALSE.
-  IF ( paS > 0.0_dp ) THEN
+  IF ( paS > 0.0_dp .AND. ListGetLogical( Params, 'SSA Side Nodes By Projector', Found ) ) THEN
+    ! a cut sector (jagged sides, not at one angle): the slaves of Elmer's periodic projector of the SSA velocity
+    DO ib = 1, Model % NumberOfBCs
+      IF ( .NOT. ListGetLogical( Model % BCs(ib) % Values, 'Periodic BC SSA Velocity 1', Found ) ) CYCLE
+      A => Model % BCs(ib) % PMatrix
+      IF ( .NOT. ASSOCIATED( A ) ) CYCLE
+      DO i = 1, A % NumberOfRows
+        k = A % InvPerm(i)
+        IF ( k >= 1 .AND. k <= nn ) slv(k) = .TRUE.
+      END DO
+    END DO
+  ELSE IF ( paS > 0.0_dp ) THEN
     DO i = 1, nn
       slv(i) = ABS( ATAN2( Mesh % Nodes % y(i), Mesh % Nodes % x(i) ) - 0.5_dp * paS ) < 1.0e-7_dp
     END DO

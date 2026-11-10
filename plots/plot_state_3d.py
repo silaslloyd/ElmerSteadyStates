@@ -344,6 +344,34 @@ def triangles(x, y):
     return _TRI_CACHE[key]
 
 
+def sector_angle(x, y):
+    """a sector footprint's angle (radians): the span of the nodes on its outer arc (whose two corners are on the
+    straight-side line also on a cut sector with jagged sides, ess/case.py sector_geo cut_seed)"""
+    r, ph = np.hypot(x, y), np.arctan2(y, x)
+    m = r > r.max() - 1.0
+    return float(ph[m].max() - ph[m].min()) if m.sum() > 1 else float(np.ptp(ph))
+
+
+_SIDES_CACHE = {}
+
+
+def sector_sides(x, y, A=None):
+    """the two periodic sides of a sector footprint: (side 1, side 2) node indices, each ordered by radius. Side 1:
+    the nodes whose image rotated by the sector angle is a node too (side 2): straight or jagged (a cut sector)"""
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    key = (len(x), float(x.sum()), float(y.sum()))
+    if key in _SIDES_CACHE:
+        return _SIDES_CACHE[key]
+    A = sector_angle(x, y) if A is None else A
+    from scipy.spatial import cKDTree
+    d, j = cKDTree(np.c_[x, y]).query(np.c_[np.cos(A) * x - np.sin(A) * y, np.sin(A) * x + np.cos(A) * y])
+    i1 = np.where(d < 1.0)[0]
+    i2 = j[i1]
+    o = np.argsort(np.hypot(x[i1], y[i1]))
+    _SIDES_CACHE[key] = (i1[o], i2[o])
+    return _SIDES_CACHE[key]
+
+
 def _triangles(x, y):
     """triangles of the footprint: of the rows and columns of a structured one, else Delaunay (the unstructured
     triangle meshes: their footprint is a rectangle, so Delaunay covers it like the mesh)"""
@@ -365,6 +393,18 @@ def _triangles(x, y):
         if (~ok).any():
             print(f"  footprint triangles: {int((~ok).sum())} slivers dropped (of {len(t)})")
         t = t[ok]
+        if np.min(y) < -1.0:      # a sector: no triangle outside it (Delaunay fills the notches of a jagged side)
+            A = sector_angle(x, y)
+            i1, _ = sector_sides(x, y, A)
+            if len(i1) > 1:
+                r1, p1 = np.hypot(x[i1], y[i1]), np.arctan2(y[i1], x[i1])
+                cx, cy = P_[t].mean(1).T
+                rc, pc = np.hypot(cx, cy), np.arctan2(cy, cx)
+                rel = pc - np.interp(rc, r1, p1)
+                ins = (rel > -1e-9) & (rel < A + 1e-9)
+                if (~ins).any():
+                    print(f"  footprint triangles: {int((~ins).sum())} outside the sector dropped")
+                t = t[ins]
         return t[:, 0], t[:, 1], t[:, 2]
     ys = np.unique(np.round(y, 1))
     xs = np.unique(np.round(x, 1))
@@ -495,8 +535,7 @@ def gl_distance(base, periodic=True):
     W = (base["y"].max() - base["y"].min()) / 1e3
     pts = np.c_[gx, gy]
     if periodic and base["y"].min() < -1.0:      # a sector: the images rotated by +- the sector angle
-        ph = np.arctan2(base["y"], base["x"])
-        A = float(ph.max() - ph.min())
+        A = sector_angle(base["x"], base["y"])
         rot = lambda a: np.c_[np.cos(a) * pts[:, 0] - np.sin(a) * pts[:, 1], np.sin(a) * pts[:, 0] + np.cos(a) * pts[:, 1]]
         pts = np.r_[pts, rot(A), rot(-A)]
     elif periodic:
@@ -654,10 +693,11 @@ def streamlines_sector(top, spacing_km):
     vr = (top["vx"] * x + top["vy"] * y) / r
     vt = (-top["vx"] * y + top["vy"] * x) / r
     inward = np.nanmean(vr) < 0
-    R, p0, rmax = float(np.mean(r)), float(ph.min()), float(r.max())
+    A = sector_angle(x, y)
+    R, p0, rmax = float(np.mean(r)), -0.5 * A, float(r.max())
     X = (rmax - r) if inward else r
     m = dict(x=X, y=(ph - p0) * R, vx=(-vr if inward else vr), vy=vt * R / r, v=np.asarray(top["v"], float))
-    sx, sy, sz = streamlines(m, spacing_km, float(np.ptp(ph)) * R, periodic=True)
+    sx, sy, sz = streamlines(m, spacing_km, A * R, periodic=True)
     rr = (rmax / 1e3 - sx) if inward else sx
     pp = sy * 1e3 / R + p0
     out = ((rr * np.cos(pp)).astype(np.float32), (rr * np.sin(pp)).astype(np.float32), sz)
@@ -834,8 +874,7 @@ def main():
     SECTOR = any(tp is not None and float(np.min(tp["y"])) < -1.0 for _, tp, _, _ in data)
     if SECTOR:
         tp0 = next(tp for _, tp, _, _ in data if tp is not None)
-        ph0 = np.arctan2(tp0["y"], tp0["x"])
-        SECTOR_A = float(ph0.max() - ph0.min())
+        SECTOR_A = sector_angle(tp0["x"], tp0["y"])
         if TILE > 1:
             print(f"sector footprint: {TILE} copies, each the last one rotated by the sector angle "
                   f"({np.degrees(SECTOR_A):.3f} deg): the seams show whether the sides are periodic in (r, angle)")
@@ -994,9 +1033,8 @@ def main():
             for re_ in (r.min(), r.max()):
                 m = np.where(np.abs(r - re_) < 1.0)[0]
                 wall(m[np.argsort(ph[m])], 0.0, "end wall")
-            for pe in (ph.min(), ph.max()):
-                m = np.where(np.abs(ph - pe) < 1e-6)[0]
-                wall(m[np.argsort(r[m])], 0.0, "side wall")
+            for m in sector_sides(xs, ys):            # ordered by radius (straight or jagged sides)
+                wall(m, 0.0, "side wall")
             return out
         for c in range(TILE):
             dy = c * W / 1e3
@@ -1207,9 +1245,8 @@ def main():
                                    scene=sc, showlegend=first_panel))
         if top is not None and TILE > 1:
             if SECTOR:                # side 2 (the largest angle) of copy c - 1 = side 1 of copy c
-                ph_ = np.arctan2(top["y"], top["x"])
-                m = ph_ > ph_.max() - 1e-6
-                o = np.argsort(np.hypot(top["x"][m], top["y"][m]))
+                m = sector_sides(top["x"], top["y"])[1]
+                o = np.arange(len(m))
             else:
                 m = np.abs(top["y"] - W) < 1
                 o = np.argsort(top["x"][m])

@@ -242,6 +242,9 @@ class ElmerModel(Model):
         # [case] sector_divide_km: an INVERTED sector (the divide the outer arc at this radius, the front inside it):
         # the distance from the divide is divide - r instead of r
         self.sector_divide = float(c["sector_divide_km"]) * 1e3 if c.get("sector_divide_km") else None
+        # [case] sector_cut_seed: a CUT sector (jagged sides, not mirrored: ess/case.py sector_geo): the sides found by
+        # their BCs / Elmer's projectors instead of by angle, and the seam pairs made active/passive together
+        self.sector_cut = self.sector_angle is not None and c.get("sector_cut_seed") is not None
         if self.sector_angle and not bool(c.get("periodic_sides", False)):
             raise ValueError("[case] sector_angle: needs periodic_sides = true (rotational periodic sides)")
         acc = float(os.environ.get("ESS_ACCUMULATION_FACTOR") or c.get("accumulation_factor", 1.0))   # env: a test
@@ -987,6 +990,8 @@ End
                   if self.periodic_sides and not self.sector_angle else "")
                + (f"  Periodic Angle = Real {math.radians(self.sector_angle)!r}   ! sector: the distance wraps across "
                   "the seam by the rotation\n" if self.sector_angle else "")
+               + (f"  Periodic Seam Threshold = Real {self.fs_ssa_x!r}   ! cut sector: periodic pairs active/passive "
+                  "together\n" if self.sector_cut else "")
                + (f"  Periodic Seam Rows = Real {1.01 * self.width / max(self.y_elements, 1)!r}   "
                   "! the node rows next to the seam take the smaller of their own and their mirror distance\n"
                   if self.periodic_sides else "")
@@ -1017,6 +1022,8 @@ End
                     f"  FS SSA Distance = Real {self.fs_ssa_x!r}\n"
                     + (f"  SSA Periodic Angle = Real {math.radians(self.sector_angle)!r}   ! sector: the SSA velocity "
                        "tied in (v_r, v_theta)\n" if self.sector_angle and ssa_periodic else "")
+                    + ("  SSA Side Nodes By Projector = Logical True   ! cut sector: the slaves from Elmer's projector\n"
+                       if self.sector_cut and ssa_periodic else "")
                     + "  FS SSA Viscosity = Real #viscosity\n"
                     f"  FS SSA Walls = Logical {walls}\n"
                     f"  FS SSA Stress Relaxation = Real {float(os.environ.get('ESS_FS_SSA_RELAX', '0.25'))!r}\n"
@@ -1091,6 +1098,8 @@ End
             if self.sector_angle:
                 sec += (f"\n  FS SSA Periodic Angle = Real {math.radians(self.sector_angle)!r}   ! sector: side faces by "
                         "angle, a slave's interface force rotated to its master")
+                if self.sector_cut:
+                    sec += "\n  FS SSA Side Faces By BC = Logical True   ! cut sector: the side faces by their BCs"
             rp = os.environ.get("ESS_FS_SSA_REBUILD_PREC")
             if rp:
                 sec += f'\n  FS SSA Rebuild Preconditioning = String "{rp}"'
