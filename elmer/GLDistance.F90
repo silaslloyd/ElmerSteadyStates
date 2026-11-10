@@ -285,6 +285,7 @@ CONTAINS
     INTEGER :: it, ib, ii, ks, km, l, nmis, nfix, tt, jj, nq, gsum
     LOGICAL :: actEl
     ALLOCATE( act(nn), low(nn), colLow(nbl) )
+    parInfo => Mesh % ParallelInfo
     nfix = 0
     DO it = 1, 30
       act = 0
@@ -297,7 +298,7 @@ CONTAINS
         END DO
         IF ( actEl ) act( El % NodeIndexes(1:n) ) = 1
       END DO
-      IF ( ParEnv % PEs > 1 ) CALL CommunicateParallelSystemTag( Mesh % ParallelInfo, Itag=act, ParOper=2 )
+      IF ( ParEnv % PEs > 1 ) CALL CommunicateParallelSystemTag( parInfo, Itag=act, ParOper=2 )
       low = 0; nmis = 0
       DO ib = 1, Model % NumberOfBCs
         IF ( .NOT. ListCheckPresent( Model % BCs(ib) % Values, 'Periodic BC' ) ) CYCLE
@@ -335,7 +336,7 @@ CONTAINS
       DO i = 1, nn
         low(i) = colLow( MOD(i-1, nbl) + 1 )
       END DO
-      IF ( ParEnv % PEs > 1 ) CALL CommunicateParallelSystemTag( Mesh % ParallelInfo, Itag=low, ParOper=2 )
+      IF ( ParEnv % PEs > 1 ) CALL CommunicateParallelSystemTag( parInfo, Itag=low, ParOper=2 )
       DO i = 1, nn
         IF ( low(i) == 1 ) colLow( MOD(i-1, nbl) + 1 ) = 1
       END DO
