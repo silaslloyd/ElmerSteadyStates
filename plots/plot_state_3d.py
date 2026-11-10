@@ -639,6 +639,32 @@ def streamlines(top, spacing_km, width_m, periodic=True):
     return _STREAM_CACHE[key]
 
 
+_SSTREAM_CACHE = {}
+
+
+def streamlines_sector(top, spacing_km):
+    """streamlines on a sector: traced by streamlines() in the unrolled coordinates X = distance along the flow from the
+    upstream arc (r, or r_max - r when the ice flows inwards: an inverted sector), Y = arc length at the mean radius
+    (periodic across the sides by the arc's width), the velocity turned and scaled to match; mapped back to x, y"""
+    key = id(top)
+    if key in _SSTREAM_CACHE:
+        return _SSTREAM_CACHE[key]
+    x, y = np.asarray(top["x"], float), np.asarray(top["y"], float)
+    r, ph = np.hypot(x, y), np.arctan2(y, x)
+    vr = (top["vx"] * x + top["vy"] * y) / r
+    vt = (-top["vx"] * y + top["vy"] * x) / r
+    inward = np.nanmean(vr) < 0
+    R, p0, rmax = float(np.mean(r)), float(ph.min()), float(r.max())
+    X = (rmax - r) if inward else r
+    m = dict(x=X, y=(ph - p0) * R, vx=(-vr if inward else vr), vy=vt * R / r, v=np.asarray(top["v"], float))
+    sx, sy, sz = streamlines(m, spacing_km, float(np.ptp(ph)) * R, periodic=True)
+    rr = (rmax / 1e3 - sx) if inward else sx
+    pp = sy * 1e3 / R + p0
+    out = ((rr * np.cos(pp)).astype(np.float32), (rr * np.sin(pp)).astype(np.float32), sz)
+    _SSTREAM_CACHE[key] = out
+    return out
+
+
 def _rdp(P, eps):
     """the indices of P (n x d) kept by Ramer-Douglas-Peucker with tolerance eps (iterative)"""
     keep = np.zeros(len(P), bool)
@@ -806,9 +832,6 @@ def main():
         tp0 = next(tp for _, tp, _, _ in data if tp is not None)
         ph0 = np.arctan2(tp0["y"], tp0["x"])
         SECTOR_A = float(ph0.max() - ph0.min())
-        if STREAM:
-            print("sector footprint: no streamlines (they assume a strip periodic in y); the window in r")
-        STREAM = False
         if TILE > 1:
             print(f"sector footprint: {TILE} copies, each the last one rotated by the sector angle "
                   f"({np.degrees(SECTOR_A):.3f} deg): the seams show whether the sides are periodic in (r, angle)")
@@ -1163,9 +1186,16 @@ def main():
                     if px:
                         once(f"  full-Stokes | SSA boundary: x {min(px):.2f} .. {max(px):.2f} km")
         if STREAM and not DIFF and top is not None and "vx" in top and "vy" in top:
-            sx, sy, sz = streamlines(top, STREAM_KM, W, periodic=not WALLS)
-            qx = np.concatenate([sx] * TILE)
-            qy = np.concatenate([sy + np.float32(c * W / 1e3) for c in range(TILE)])
+            if SECTOR:            # traced unrolled (r, arc), the copies rotated
+                sx, sy, sz = streamlines_sector(top, STREAM_KM)
+                cp = [np.c_[np.cos(c * SECTOR_A) * sx - np.sin(c * SECTOR_A) * sy,
+                            np.sin(c * SECTOR_A) * sx + np.cos(c * SECTOR_A) * sy].astype(np.float32) for c in range(TILE)]
+                qx = np.concatenate([q[:, 0] for q in cp])
+                qy = np.concatenate([q[:, 1] for q in cp])
+            else:
+                sx, sy, sz = streamlines(top, STREAM_KM, W, periodic=not WALLS)
+                qx = np.concatenate([sx] * TILE)
+                qy = np.concatenate([sy + np.float32(c * W / 1e3) for c in range(TILE)])
             qz = np.concatenate([sz] * TILE)
             tr.append(go.Scatter3d(x=qx, y=qy, z=qz, mode="lines", connectgaps=False,
                                    line=dict(color="white", width=2),
