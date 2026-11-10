@@ -961,9 +961,9 @@ def cmd_transfer(args):
     tgt = dst
     if c.get("sector_angle") and getattr(args, "keep_pattern", False) and not is_sector(src):
         dv = float(c["sector_divide_km"]) * 1e3 if c.get("sector_divide_km") else None
-        x, frozen = transfer_sector_pattern(src, dst, float(c["sector_angle"]), dv)
+        x, frozen, diag = transfer_sector_pattern(src, dst, float(c["sector_angle"]), dv)
         out = args.out or os.path.join(cfg["_work"], "start_pattern.npz")
-        save_state(out, dst.layout, x, src.p, frozen, dst.diag, source=args.source)
+        save_state(out, dst.layout, x, src.p, frozen, diag, source=args.source)
         log.info(f"wrote {out} (p = {src.p:g}; the strip's pattern kept)")
         return
     if c.get("sector_angle"):             # a sector: everything by radius, the bed the source's at x = r

@@ -245,7 +245,8 @@ def transfer_sector_pattern(src: SavedState, dst: SavedState, angle_deg: float, 
     eta = (angle + A/2) / A in 0..1 takes the strip's column at x = s, y = ymin + eta W (the nearest one); every level
     of the extruded column is copied level for level (both meshes extruded with the same levels, ice and rock), so
     temperature, the cold/temperate mask, the grounded mask, Zs, Zb and the bed stay consistent with each other.
-    The two periodic sides (eta = 0, 1) map to the strip's periodic sides (y = 0, W). Returns (x, frozen) for dst."""
+    The two periodic sides (eta = 0, 1) map to the strip's periodic sides (y = 0, W). Returns (x, frozen, diag) for
+    dst (diag: dst's, with the strip's velocity and pressure for a warm start)."""
     from scipy.spatial import cKDTree
     fs, fd = _all_fields(src), _all_fields(dst)
 
@@ -295,6 +296,33 @@ def transfer_sector_pattern(src: SavedState, dst: SavedState, angle_deg: float, 
             frozen[k] = (gd, copy(src.frozen[find_name(src.frozen, k)], gd))
         except KeyError:
             log.info(f"transfer: frozen {k} not in the source, the target's kept")
+    # the warm start (velocity, pressure; jobs/scaling_tests.cmd START_STATE): the strip's, the velocity turned with the
+    # pattern: the strip's x (from the divide) along the sector's direction away from the divide (+e_r, inverted -e_r)
+    # and its y along e_angle
+    diag = dict(dst.diag)
+    gv = {}
+    for nm in ("Velocity 1", "Velocity 2", "Velocity 3", "Pressure"):
+        try:
+            rec = src.diag[find_name(src.diag, nm)]
+        except KeyError:
+            continue
+        gall = np.arange(1, nnd + 1)
+        gv[nm] = (gall, copy(rec, gall))
+    if "Velocity 1" in gv and "Velocity 2" in gv:
+        gall = gv["Velocity 1"][0]
+        c = (gall - 1) % nbd
+        ca, sa = np.cos(ph[c]), np.sin(ph[c])
+        sgn = -1.0 if divide else 1.0
+        u, v = sgn * gv["Velocity 1"][1], gv["Velocity 2"][1]       # along e_r, e_angle
+        gv["Velocity 1"] = (gall, u * ca - v * sa)
+        gv["Velocity 2"] = (gall, u * sa + v * ca)
+    for nm, rec in gv.items():
+        old = [k for k in diag if k.lower() == nm.lower()]
+        for k in old:
+            del diag[k]
+        diag[nm] = rec
+    if gv:
+        log.info(f"transfer (pattern kept): warm start {', '.join(gv)} from the strip (velocity turned)")
     gm = frozen[find_name(frozen, "GroundedMask")][1] if any(k.lower() == "groundedmask" for k in frozen) else None
     ct = frozen[find_name(frozen, "ColdTempMask")][1] if any(k.lower() == "coldtempmask" for k in frozen) else None
     msg = ""
@@ -303,4 +331,4 @@ def transfer_sector_pattern(src: SavedState, dst: SavedState, angle_deg: float, 
     if ct is not None:
         msg += f", {int((ct > 0).sum())} temperate"
     log.info(f"transfer (pattern kept): {msg}")
-    return x_new, frozen
+    return x_new, frozen, diag
