@@ -2581,6 +2581,7 @@ SUBROUTINE IncompressibleNSSolver(Model, Solver, dt, Transient)
   USE DefUtils
   USE IncompressibleLocalForms
   USE MainUtils
+  USE ParallelUtils, ONLY : ParallelReduction
 
 
   IMPLICIT NONE
@@ -3172,7 +3173,12 @@ CONTAINS
       END DO
     END DO
 
-    WRITE( Message, '(A,I0,A,I0,A,I0,A)' ) 'ESS rotational periodic: ', nset, ' slave velocity frames set, ', &
+    IF ( ParEnv % PEs > 1 ) THEN      ! the totals over the ranks (the log is rank 0's)
+      nset = NINT( ParallelReduction( REAL( nset, dp ) ) )
+      nmiss = NINT( ParallelReduction( REAL( nmiss, dp ) ) )
+      nnc = NINT( ParallelReduction( REAL( nnc, dp ) ) )
+    END IF
+    WRITE( Message, '(A,I0,A,I0,A,I0,A)' ) 'ESS rotational periodic (all ranks): ', nset, ' slave velocity frames set, ', &
         nmiss, ' slave nodes without an N-T frame, ', nnc, ' non-conforming pairs'
     CALL Info( Caller, Message, Level = 3 )
     IF ( nmiss > 0 ) CALL Warn( Caller, 'ESS rotational periodic: slave nodes without an N-T frame (u not rotated)' )
