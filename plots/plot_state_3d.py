@@ -1371,15 +1371,25 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
     asp = dict(ASPECT)
     asp["z"] = ASPECT["z"] * Z_EXAGGERATION
     asp["y"] = ASPECT["y"] * TILE * (2.25 if COMPARE else 1.0)
-    if SECTOR:                    # the strip's scale (y stretched as a 100 km strip is): y in proportion to the width
+    if SECTOR:                    # the copies' true shape: x and y on ONE scale (a different stretch in y than in x
+        # shears the rotated copies), over the extent of all copies
+        allx = np.concatenate([tp["x"] for _, tp, _, _ in data if tp is not None])
         ally = np.concatenate([tp["y"] for _, tp, _, _ in data if tp is not None])
-        asp["y"] = ASPECT["y"] * TILE * float(np.ptp(ally)) / 100e3
+        tx_, ty_ = [], []
+        for c in range(TILE):
+            ca, sa = np.cos(c * SECTOR_A), np.sin(c * SECTOR_A)
+            tx_.append(ca * allx - sa * ally); ty_.append(sa * allx + ca * ally)
+        tx_, ty_ = np.concatenate(tx_), np.concatenate(ty_)
+        SECTOR_XR = [float(tx_.min()) / 1e3 - 1.0, float(tx_.max()) / 1e3 + 1.0]
+        SECTOR_YR = [float(ty_.min()) / 1e3 - 1.0, float(ty_.max()) / 1e3 + 1.0]
+        asp["y"] = asp["x"] * (SECTOR_YR[1] - SECTOR_YR[0]) / (SECTOR_XR[1] - SECTOR_XR[0])
     fig = go.Figure(data=first, frames=frames)
     xr_ = [x0, x1]
-    if SECTOR:                    # the window is in r: the x axis spans the cropped nodes
-        allx_ = np.concatenate([tp["x"] for _, tp, _, _ in data if tp is not None]) / 1e3
-        xr_ = [float(allx_.min()) - 1.0, float(allx_.max()) + 1.0]
-    scene = dict(xaxis=dict(title="x (km)", range=xr_), yaxis=dict(title="y (km)"),
+    yax = dict(title="y (km)")
+    if SECTOR:                    # the window is in r: the axes span all the copies
+        xr_ = SECTOR_XR
+        yax["range"] = SECTOR_YR
+    scene = dict(xaxis=dict(title="x (km)", range=xr_), yaxis=yax,
                  zaxis=dict(title="z (m)", range=[min(zs) - 20, max(zs) + 20]),
                  aspectmode="manual", aspectratio=asp)
     scenes = {"scene": dict(scene, domain=dict(x=[0.0, 0.46] if two else [0.0, 1.0], y=[0.0, 1.0]))}
