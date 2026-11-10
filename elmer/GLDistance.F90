@@ -300,11 +300,9 @@ CONTAINS
       DO ii = 1, Pm % NumberOfRows
         ks = Pm % InvPerm(ii)
         IF ( ks <= 0 .OR. ks > nn ) CYCLE
-        sm(ks) = 1
-        DO l = Pm % Rows(ii), Pm % Rows(ii+1) - 1
-          km = Pm % Cols(l)
-          IF ( km >= 1 .AND. km <= nn .AND. Pm % Values(l) /= 0.0_dp ) sm(km) = 1
-        END DO
+        km = masterOf( Pm, ii )
+        IF ( km < 1 .OR. km > nn ) CYCLE
+        sm(ks) = 1; sm(km) = 1
       END DO
     END DO
     IF ( ParEnv % PEs > 1 ) CALL CommunicateParallelSystemTag( parInfo, Itag=sm, ParOper=2 )
@@ -365,14 +363,12 @@ CONTAINS
           ks = Pm % InvPerm(ii)
           IF ( ks <= 0 .OR. ks > nn ) CYCLE
           IF ( nodeQ(ks) <= 0 ) CYCLE
-          DO l = Pm % Rows(ii), Pm % Rows(ii+1) - 1
-            km = Pm % Cols(l)
-            IF ( km <= 0 .OR. km > nn ) CYCLE
-            IF ( Pm % Values(l) == 0.0_dp .OR. nodeQ(km) <= 0 ) CYCLE
-            IF ( act(ks) == act(km) ) CYCLE
-            nmis = nmis + 1
-            low(ks) = 1; low(km) = 1
-          END DO
+          km = masterOf( Pm, ii )
+          IF ( km <= 0 .OR. km > nn ) CYCLE
+          IF ( nodeQ(km) <= 0 ) CYCLE
+          IF ( act(ks) == act(km) ) CYCLE
+          nmis = nmis + 1
+          low(ks) = 1; low(km) = 1
         END DO
       END DO
       gsum = nmis
@@ -404,6 +400,22 @@ CONTAINS
     IF ( it > 30 ) CALL Warn( Caller, 'periodic seam: pairs still differ after 30 rounds' )
     DEALLOCATE( act, low, colLow, sm )
   END SUBROUTINE seamConsistent
+
+  ! the master of projector row ii: the column with the largest weight (conforming sides: weight 1; the other
+  ! columns of a row are round-off, ~1e-16, on the master's neighbours: they are NOT periodic partners), 0 if none
+  ! reaches 1/2
+  FUNCTION masterOf( Pm, ii ) RESULT( km )
+    TYPE(Matrix_t), POINTER :: Pm
+    INTEGER :: ii, km, l
+    REAL(KIND=dp) :: wmax
+    km = 0; wmax = 0.5_dp
+    DO l = Pm % Rows(ii), Pm % Rows(ii+1) - 1
+      IF ( Pm % Cols(l) <= 0 ) CYCLE
+      IF ( ABS( Pm % Values(l) ) > wmax ) THEN
+        wmax = ABS( Pm % Values(l) ); km = Pm % Cols(l)
+      END IF
+    END DO
+  END FUNCTION masterOf
 
   ! the GL Distance index of mesh node i (0: none)
   FUNCTION nodeQ( i ) RESULT( qq )
