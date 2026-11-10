@@ -34,7 +34,7 @@ BASE="ALL,ELMER_MODULE=${ELMER_MODULE:-elmerfem/2026-10-28},ELMER_PREFIX=${ELMER
 MRP=${MAR_REBUILD_PREC:-ILU0}; [ "$MRP" = same ] && MRP= || MRP=",REBUILD_PREC=$MRP"
 # FS_SSA=km (default 10): the full-Stokes strip beyond the grounding line, the rest of the shelf SSA;
 # FS_SSA=none: no SSA at all, the whole shelf in full Stokes
-case "${FS_SSA:-10}" in none|0) SSAPART=",FS_SSA=none" ;; *) SSAPART=",FS_SSA=${FS_SSA:-10},FS_SSA_SHELF=ssa,FS_SSA_UPDATE=1" ;; esac
+case "${FS_SSA:-10}" in none|0) SSAPART=",FS_SSA=none" ;; *) SSAPART=",FS_SSA=${FS_SSA:-10},FS_SSA_SHELF=ssa,FS_SSA_UPDATE=${FS_SSA_UPDATE:-1}" ;; esac
 MAR="SET=${MAR_SET:-F},SLIDING=${SLIDING:-subtemperate},GLMODE=contact,NL=2,WARMUP=1e-2:0.1*3:1*3,SPRING_DT=${SPRING_DT:-${DT:-1}}$SSAPART$MRP"
 # LAND_SET (default FW: GCR + ILU0 and GCR + ILU4 per point). ILU0 wins at 288 ranks (1.9 vs 2.5 s Stokes) but its
 # iterations grow and it gets slower at 576 (3.2 s); ILU4 keeps 2-3 iterations (1.5 s at 576) but overflows Elmer's
