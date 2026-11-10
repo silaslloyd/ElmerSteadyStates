@@ -710,6 +710,10 @@ def main():
         k = args.index("--diff")
         DIFF = args[k + 1]
         args = args[:k] + args[k + 2:]
+    global SHOW
+    if "--no-show" in args:                       # only write the page (e.g. to view it from another machine)
+        SHOW = False
+        args.remove("--no-show")
     if "--full" in args:                          # the whole ice sheet, divide to front
         X_WINDOW = (-1.0, 1e9)
         args.remove("--full")
