@@ -353,6 +353,17 @@ def _triangles(x, y):
             t = Delaunay(np.c_[r, np.arctan2(y, x) * np.mean(r)] / 1e3).simplices
         else:
             t = Delaunay(np.c_[x, y] / 1e3).simplices
+        # no slivers: on a boundary that is straight only to round-off (the angled sides of a sector: r cos, r sin of
+        # the same angle) Delaunay strings nearly collinear boundary nodes, hundreds of km apart, into flat triangles,
+        # and every line drawn through them (grounding line, masks) runs along the side
+        P_ = np.c_[x, y]
+        a, b, c = P_[t[:, 0]], P_[t[:, 1]], P_[t[:, 2]]
+        area = 0.5 * np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0]))
+        emax = np.max(np.c_[np.hypot(*(b - a).T), np.hypot(*(c - b).T), np.hypot(*(a - c).T)], axis=1)
+        ok = area > 1e-3 * emax ** 2
+        if (~ok).any():
+            print(f"  footprint triangles: {int((~ok).sum())} slivers dropped (of {len(t)})")
+        t = t[ok]
         return t[:, 0], t[:, 1], t[:, 2]
     ys = np.unique(np.round(y, 1))
     xs = np.unique(np.round(x, 1))
