@@ -53,7 +53,8 @@ def load_config(path: str) -> dict:
 def _sector_derived(c: dict) -> None:
     """[case] sector_copies = N: a sector that tiles the full circle, angle 360 / N degrees (sector_angle derived).
     With sector_inverted = true (the divide the outer arc) and sector_front_arc_km (default 100): the front arc that
-    long, so the front at r = front_arc / angle and the divide at that + front_km (sector_divide_km derived).
+    long, so the front at r = front_arc / angle and the divide at that + front_km (sector_divide_km derived); or
+    sector_divide_arc_km instead: the divide at r = divide_arc / angle, the front front_km inside it.
     accumulation_factor = "match": the factor that gives the sector the strip's flux per unit arc at the grounding line
     s = sector_gl_km (default 791) from the divide (a uniform accumulation: sector flux a f (r_d^2 - r^2) / (2 r) in an
     inverted sector, a f (r^2 - r0^2) / (2 r) in a normal one, against the strip's a s)."""
@@ -68,8 +69,16 @@ def _sector_derived(c: dict) -> None:
         if c.get("sector_inverted"):
             if "front_km" not in c:
                 raise SystemExit("[case] sector_inverted needs front_km (the front's distance from the divide)")
-            rf = float(c.get("sector_front_arc_km", 100.0)) / th
-            c["sector_divide_km"] = rf + float(c["front_km"])
+            if c.get("sector_divide_arc_km") and c.get("sector_front_arc_km"):
+                raise SystemExit("[case] give sector_front_arc_km OR sector_divide_arc_km (with sector_copies and "
+                                 "front_km the other one follows)")
+            if c.get("sector_divide_arc_km"):      # the divide arc that long: the divide at r = arc / angle
+                c["sector_divide_km"] = float(c["sector_divide_arc_km"]) / th
+            else:
+                rf = float(c.get("sector_front_arc_km", 100.0)) / th
+                c["sector_divide_km"] = rf + float(c["front_km"])
+            if c["sector_divide_km"] <= float(c["front_km"]):
+                raise SystemExit("[case] inverted sector: the front would be at r <= 0 (divide arc too short)")
     if str(c.get("accumulation_factor", "")).lower() == "match":
         if not c.get("sector_angle"):
             raise SystemExit('[case] accumulation_factor = "match" needs a sector')
