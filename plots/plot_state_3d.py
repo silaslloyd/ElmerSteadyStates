@@ -1270,10 +1270,9 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
     asp = dict(ASPECT)
     asp["z"] = ASPECT["z"] * Z_EXAGGERATION
     asp["y"] = ASPECT["y"] * TILE * (2.25 if COMPARE else 1.0)
-    if SECTOR:                    # true horizontal proportions (x : y as the footprint)
-        allx = np.concatenate([tp["x"] for _, tp, _, _ in data if tp is not None])
+    if SECTOR:                    # the strip's scale (y stretched as a 100 km strip is): y in proportion to the width
         ally = np.concatenate([tp["y"] for _, tp, _, _ in data if tp is not None])
-        asp["y"] = asp["x"] * float(np.ptp(ally)) / max(float(np.ptp(allx)), 1.0)
+        asp["y"] = ASPECT["y"] * float(np.ptp(ally)) / 100e3
     fig = go.Figure(data=first, frames=frames)
     xr_ = [x0, x1]
     if SECTOR:                    # the window is in r: the x axis spans the cropped nodes
