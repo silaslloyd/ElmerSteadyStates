@@ -34,9 +34,9 @@ from vtu_frames import run_timing, surface  # noqa: E402
 def find_run(a):
     if os.path.isdir(a):
         return a.rstrip("/")
-    ds = sorted(glob.glob(f"work/*/runs/*_job{a}_*/"), key=os.path.getmtime)
+    ds = sorted(glob.glob(f"work/*/runs/*_job{a}_*/") + glob.glob(f"work/*/runs/*_fssa{a}_*/"), key=os.path.getmtime)
     if not ds:
-        raise SystemExit(f"{a}: no run directory work/*/runs/*_job{a}_* (run from the repo root, or give the directory)")
+        raise SystemExit(f"{a}: no run directory work/*/runs/*_job{a}_* or *_fssa{a}_* (run from the repo root, or give the directory)")
     return ds[-1].rstrip("/")
 
 
