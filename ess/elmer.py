@@ -244,7 +244,7 @@ class ElmerModel(Model):
         self.sector_divide = float(c["sector_divide_km"]) * 1e3 if c.get("sector_divide_km") else None
         if self.sector_angle and not bool(c.get("periodic_sides", False)):
             raise ValueError("[case] sector_angle: needs periodic_sides = true (rotational periodic sides)")
-        acc = float(c.get("accumulation_factor", 1.0))
+        acc = float(os.environ.get("ESS_ACCUMULATION_FACTOR") or c.get("accumulation_factor", 1.0))   # env: a test
         if acc != 1.0:
             self.lua_overrides = {"aDIM": f"{acc!r} * aND*ascale", **self.lua_overrides}
         if self.unglaciated_bed == "melting":
