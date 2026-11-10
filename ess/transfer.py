@@ -278,12 +278,12 @@ def transfer_sector_pattern(src: SavedState, dst: SavedState, angle_deg: float, 
         lvl, c = (gd - 1) // nbd, (gd - 1) % nbd
         return lvl * nbs + nc[c] + 1
 
-    def copy(rec_s, gd):
+    def copy(rec_s, gd, partial=False):
         gsrc, vsrc = rec_s
         full = np.full(nns + 1, np.nan)
         full[gsrc] = vsrc
         v = full[src_of(gd)]
-        if np.isnan(v).any():
+        if np.isnan(v).any() and not partial:
             raise SystemExit("transfer: a mapped node without a source value")
         return v
     x_new = dst.x.copy()
@@ -307,9 +307,13 @@ def transfer_sector_pattern(src: SavedState, dst: SavedState, angle_deg: float, 
         except KeyError:
             continue
         gall = np.arange(1, nnd + 1)
-        gv[nm] = (gall, copy(rec, gall))
+        v = copy(rec, gall, partial=True)          # the velocity / pressure only where the source has it (the ice)
+        ok = np.isfinite(v)
+        gv[nm] = (gall[ok], v[ok])
     if "Velocity 1" in gv and "Velocity 2" in gv:
         gall = gv["Velocity 1"][0]
+        if not np.array_equal(gall, gv["Velocity 2"][0]):
+            raise SystemExit("transfer: Velocity 1 and 2 on different nodes")
         c = (gall - 1) % nbd
         ca, sa = np.cos(ph[c]), np.sin(ph[c])
         sgn = -1.0 if divide else 1.0
