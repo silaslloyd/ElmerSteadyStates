@@ -3174,7 +3174,7 @@ CONTAINS
 
     WRITE( Message, '(A,I0,A,I0,A,I0,A)' ) 'ESS rotational periodic: ', nset, ' slave velocity frames set, ', &
         nmiss, ' slave nodes without an N-T frame, ', nnc, ' non-conforming pairs'
-    CALL Info( Caller, Message, Level = 5 )
+    CALL Info( Caller, Message, Level = 3 )
     IF ( nmiss > 0 ) CALL Warn( Caller, 'ESS rotational periodic: slave nodes without an N-T frame (u not rotated)' )
   END SUBROUTINE ESSRotPeriodicFrames
 
