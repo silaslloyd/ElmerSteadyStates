@@ -13,6 +13,12 @@
 #   lane B: full dt50                  -> full dt20     -> full dt10
 # YEARS (default 2500: the heat-coupled dt50 runs blew up by year ~950), the boundary VTU every 500 years
 # (EVERY_YEARS), START_STATE (default the year-1505 checkpoint), NODES as the scaling point (default c640).
+#
+# A perturbation (the start state is near a mechanical steady state for its frozen temperature, a weak test): any
+# job setting in the environment goes to every run, e.g.
+#   FRIC=0.5 SUFFIX=_fric05 bash jobs/mech_dt_series.sh      (basal friction halved at t = 0: speed-up, thinning and
+#                                                              grounding-line retreat over centuries)
+# SUFFIX is added to every tag.
 set -e
 cd "$(dirname "$0")/.."
 YEARS=${YEARS:-2500}; EVERY_YEARS=${EVERY_YEARS:-500}; P=${NODES:-c640}
@@ -23,11 +29,12 @@ sub() {   # sub AFTER DT FSSA TAG -> job id
     steps=$(( YEARS / dt )); every=$(( EVERY_YEARS / dt )); [ $every -ge 1 ] || every=1
     extra=""
     [ "$fssa" = adapted ] && extra="FS_COUPLED=1 COUPLED_ITERS=3"
+    tag=$tag${SUFFIX:-}
     env $B ${after:+AFTER=$after} FSSA=$fssa $extra DT=$dt STEPS=$steps VTU_EVERY=$every TAG=$tag \
         bash jobs/scaling_sweep.sh $P | awk -v t="$tag" '/^c[0-9]+:/{print $2; print "  " t ": " $2 > "/dev/stderr"}'
 }
 
-echo "mechanical-only time-step series: ${YEARS} yr each, VTU every ${EVERY_YEARS} yr, $P"
+echo "mechanical-only time-step series: ${YEARS} yr each, VTU every ${EVERY_YEARS} yr, $P${FRIC:+, friction x $FRIC}${LUA:+, $LUA}"
 a=${AFTER_A:-}
 a=$(sub "$a" 5 full _mech_dt5_full)
 a=$(sub "$a" 50 adapted _mech_dt50_adapted)
