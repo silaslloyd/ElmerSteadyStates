@@ -37,10 +37,10 @@ for k in ks:
           f"base T side1 side2 centre | Zs side1 side2 centre")
     for b0, b1 in zip(bins[:-1], bins[1:]):
         sel = [g & (r >= b0) & (r < b1) for g in (s1, s2, near, cen)]
-        if min(s.sum() for s in sel) == 0:
+        if min(sel[0].sum(), sel[1].sum(), sel[3].sum()) == 0:
             continue
-        gf = [np.mean(m[s] > -0.5) for s in sel]
-        tf = [np.mean(ct[s] > 0) for s in sel]
+        gf = [np.mean(m[s] > -0.5) if s.any() else np.nan for s in sel]
+        tf = [np.mean(ct[s] > 0) if s.any() else np.nan for s in sel]
         tt = [np.nanmean(T[s]) for s in (sel[0], sel[1], sel[3])]
         zz = [np.nanmean(zs[s]) for s in (sel[0], sel[1], sel[3])]
         flag = "  <--" if max(abs(gf[0] - gf[3]), abs(gf[1] - gf[3]), abs(tf[0] - tf[3]), abs(tf[1] - tf[3])) > 0.5 else ""
