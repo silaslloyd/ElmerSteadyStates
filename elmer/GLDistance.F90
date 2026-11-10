@@ -54,7 +54,8 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   INTEGER, ALLOCATABLE :: seamEl(:)
   TYPE(ParallelInfo_t), POINTER :: parInfo
   LOGICAL :: Found, hasg, hasf
-  REAL(KIND=dp) :: d2, dmin, m, dmax, dy, pw, srows, dupd, moved
+  REAL(KIND=dp) :: d2, dmin, m, dmax, dy, pw, pa, srows, dupd, moved
+  LOGICAL :: per
   REAL(KIND=dp), ALLOCATABLE, SAVE :: refx(:), refy(:)   ! the grounding line the distance is measured from
   INTEGER, SAVE :: nref = -1, nupd = 0, nkept = 0
   LOGICAL :: upd
@@ -77,6 +78,11 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   ! differ under a wavy grounding line, and the periodic constraint then tied an active node to a passive one)
   pw = ListGetConstReal( Params, 'Periodic Width', Found )
   IF ( .NOT. Found ) pw = 0.0_dp
+  ! "Periodic Angle" (radians): a sector -pa/2 .. +pa/2 about the x-axis (rotational periodic sides, about the
+  ! vertical axis through the origin): the distance wraps by the rotation, the mirror point is (x, -y)
+  pa = ListGetConstReal( Params, 'Periodic Angle', Found )
+  IF ( .NOT. Found ) pa = 0.0_dp
+  per = ( pw > 0.0_dp .OR. pa > 0.0_dp )
   srows = ListGetConstReal( Params, 'Periodic Seam Rows', Found )
   IF ( .NOT. Found ) srows = 0.0_dp
   ! "FS SSA Update Distance" (m, default 0: every step): the distance is measured from a REFERENCE grounding line,
@@ -210,14 +216,14 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   ! too), so the elements touching the seam on its two sides are mirror images, with the same distances.
   ALLOCATE( seamEl(nn) )
   seamEl = 0
-  IF ( pw > 0.0_dp ) THEN
+  IF ( per ) THEN
     DO t = 1, Mesh % NumberOfBulkElements
       El => Mesh % Elements(t)
       n = El % TYPE % NumberOfNodes
       hasg = .FALSE.
       DO j = 1, n
         k = El % NodeIndexes(j)
-        IF ( MIN( ABS( Mesh % Nodes % y(k) ), ABS( pw - Mesh % Nodes % y(k) ) ) < 1.0e-6_dp * pw ) hasg = .TRUE.
+        IF ( onSeam( Mesh % Nodes % x(k), Mesh % Nodes % y(k) ) ) hasg = .TRUE.
       END DO
       IF ( hasg ) seamEl( El % NodeIndexes(1:n) ) = 1
     END DO
@@ -244,9 +250,9 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
     ! so a seam node and its periodic image could differ (one pinned at its old value, which the periodic constraint
     ! then imposed on the other); with the rows next to the seam symmetric (the mesh is structured across y), the
     ! seam elements on both sides are active or passive together
-    IF ( pw > 0.0_dp ) THEN
-      IF ( seamEl(i) > 0 .OR. ( srows > 0.0_dp .AND. MIN( Mesh % Nodes % y(i), pw - Mesh % Nodes % y(i) ) <= srows ) ) &
-          dVal(q) = MIN( dVal(q), glDist( Mesh % Nodes % x(i), pw - Mesh % Nodes % y(i) ) )
+    IF ( per ) THEN
+      IF ( seamEl(i) > 0 .OR. ( srows > 0.0_dp .AND. seamDist( Mesh % Nodes % x(i), Mesh % Nodes % y(i) ) <= srows ) ) &
+          dVal(q) = MIN( dVal(q), glDist( Mesh % Nodes % x(i), mirrorY( Mesh % Nodes % y(i) ) ) )
     END IF
     dmax = MAX( dmax, dVal(q) )
   END DO
@@ -264,9 +270,7 @@ CONTAINS
     INTEGER :: np, kk
     dd2 = HUGE(1.0_dp)
     DO kk = 1, np
-      ddy = ABS( yp - py(kk) )
-      IF ( pw > 0.0_dp ) ddy = MIN( ddy, ABS( pw - ddy ) )
-      dd2 = MIN( dd2, (xp - px(kk))**2 + ddy**2 )
+      dd2 = MIN( dd2, pairD2( xp, yp, px(kk), py(kk) ) )
     END DO
     dd = SQRT( dd2 )
   END FUNCTION glNear
@@ -277,12 +281,57 @@ CONTAINS
     INTEGER :: kk
     dd2 = HUGE(1.0_dp)
     DO kk = 1, ntot
-      ddy = ABS( yp - ally(kk) )
-      IF ( pw > 0.0_dp ) ddy = MIN( ddy, ABS( pw - ddy ) )
-      dd2 = MIN( dd2, (xp - allx(kk))**2 + ddy**2 )
+      dd2 = MIN( dd2, pairD2( xp, yp, allx(kk), ally(kk) ) )
     END DO
     dd = SQRT( dd2 )
   END FUNCTION glDist
+
+  ! squared distance from (xp, yp) to (qx, qy), across the periodic seam: strip (pw > 0) wrapped in y; sector
+  ! (pa > 0) also to the point rotated by +-pa
+  FUNCTION pairD2( xp, yp, qx, qy ) RESULT( d2r )
+    REAL(KIND=dp) :: xp, yp, qx, qy, d2r, ddy, cr, sr
+    IF ( pa > 0.0_dp ) THEN
+      cr = COS( pa ); sr = SIN( pa )
+      d2r = MIN( (xp - qx)**2 + (yp - qy)**2, &
+                 (xp - (cr*qx - sr*qy))**2 + (yp - (sr*qx + cr*qy))**2, &
+                 (xp - (cr*qx + sr*qy))**2 + (yp - (-sr*qx + cr*qy))**2 )
+    ELSE
+      ddy = ABS( yp - qy )
+      IF ( pw > 0.0_dp ) ddy = MIN( ddy, ABS( pw - ddy ) )
+      d2r = (xp - qx)**2 + ddy**2
+    END IF
+  END FUNCTION pairD2
+
+  ! a node on a periodic side (strip: y = 0 or y = pw; sector: angle -pa/2 or +pa/2)
+  FUNCTION onSeam( xp, yp ) RESULT( on )
+    REAL(KIND=dp) :: xp, yp
+    LOGICAL :: on
+    IF ( pa > 0.0_dp ) THEN
+      on = ABS( ABS( ATAN2( yp, xp ) ) - 0.5_dp * pa ) < 1.0e-7_dp
+    ELSE
+      on = MIN( ABS( yp ), ABS( pw - yp ) ) < 1.0e-6_dp * pw
+    END IF
+  END FUNCTION onSeam
+
+  ! the distance from the nearer periodic side (sector: along the arc)
+  FUNCTION seamDist( xp, yp ) RESULT( dd )
+    REAL(KIND=dp) :: xp, yp, dd
+    IF ( pa > 0.0_dp ) THEN
+      dd = SQRT( xp**2 + yp**2 ) * ( 0.5_dp * pa - ABS( ATAN2( yp, xp ) ) )
+    ELSE
+      dd = MIN( yp, pw - yp )
+    END IF
+  END FUNCTION seamDist
+
+  ! the mirror image's y (the meshes are mirror-symmetric: strip about y = pw/2, sector about the x-axis)
+  FUNCTION mirrorY( yp ) RESULT( ym )
+    REAL(KIND=dp) :: yp, ym
+    IF ( pa > 0.0_dp ) THEN
+      ym = -yp
+    ELSE
+      ym = pw - yp
+    END IF
+  END FUNCTION mirrorY
 !------------------------------------------------------------------------------
 END SUBROUTINE GLDistance
 !------------------------------------------------------------------------------
@@ -340,7 +389,7 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   ! face, though on an unstructured mesh all its nodes can belong to passive elements too (an active element at the
   ! wall whose wall edge has both ends on the active/passive boundary); it got the shelf stress, on the wall
   REAL(KIND=dp), SAVE :: ysMin = 0.0_dp, ysMax = -1.0_dp
-  REAL(KIND=dp) :: ytol, nside, nwall
+  REAL(KIND=dp) :: ytol, nside, nwall, pa, phs, crs, srs, Fs(3)
   LOGICAL :: onSide, wallsLS
   ! periodic sides: Elmer has already folded each slave node's row into its master rows and replaced it by the
   ! periodic constraint (SetPeriodicBoundariesPass1/2), so a slave node's force goes to its masters, by the
@@ -653,6 +702,11 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
   ytol = 1.0e-6_dp * MAX( ysMax - ysMin, 1.0_dp )
   nside = 0.0_dp; nwall = 0.0_dp
   wallsLS = ListGetLogical( Solver % Values, 'FS SSA Walls', Found )
+  ! "FS SSA Periodic Angle" (radians): a sector -pa/2 .. +pa/2 about the x-axis with rotational periodic sides: the
+  ! side faces found by angle, and a slave's interface force rotated into its master's orientation (R^T F: the slave
+  ! rows were assembled in frames R times the master's, elmer/ESSIncompressibleNS.F90 ESSRotPeriodicFrames)
+  pa = ListGetConstReal( Solver % Values, 'FS SSA Periodic Angle', Found )
+  IF ( .NOT. Found ) pa = 0.0_dp
   DO pass = 1, 2
   nfaces = 0; ftot = 0.0_dp
   ! diagnostics: sum of face x-areas, area-weighted H, expected force, min/max H, x range of face centres
@@ -692,7 +746,12 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
       ! area vector of the quadrilateral: half the cross product of its diagonals
       av = 0.5_dp * essCross( pts(:,3) - pts(:,1), pts(:,4) - pts(:,2) )
       IF ( ABS(av(3)) > 0.5_dp * SQRT( SUM(av**2) ) ) CYCLE        ! a horizontal face (top/base): not the interface
-      onSide = ALL( ABS( pts(2,:) - ysMin ) < ytol ) .OR. ALL( ABS( pts(2,:) - ysMax ) < ytol )
+      IF ( pa > 0.0_dp ) THEN
+        onSide = ALL( ABS( ATAN2( pts(2,:), pts(1,:) ) + 0.5_dp * pa ) < 1.0e-7_dp ) .OR. &
+                 ALL( ABS( ATAN2( pts(2,:), pts(1,:) ) - 0.5_dp * pa ) < 1.0e-7_dp )
+      ELSE
+        onSide = ALL( ABS( pts(2,:) - ysMin ) < ytol ) .OR. ALL( ABS( pts(2,:) - ysMax ) < ytol )
+      END IF
       IF ( onSide ) THEN                                             ! a face on a wall / the seam: not the interface
         IF ( pass == 2 ) nside = nside + 1.0_dp
         CYCLE
@@ -771,15 +830,23 @@ INTEGER FUNCTION FSSSALinsolve( Model, Solver, A, b, x, n, DOFs, Norm )
               nmiss = nmiss + 1.0_dp
               CYCLE
             END IF
-            Fr = Fxyz
+            Fs = Fxyz
+            IF ( pa > 0.0_dp ) THEN       ! sector: the slave's force in the master's orientation, R^T F
+              phs = ATAN2( Mesh % Nodes % y(nd), Mesh % Nodes % x(nd) ) &
+                  - ATAN2( Mesh % Nodes % y(mnode), Mesh % Nodes % x(mnode) )
+              crs = COS( phs ); srs = SIN( phs )
+              Fs(1) = crs * Fxyz(1) + srs * Fxyz(2)
+              Fs(2) = -srs * Fxyz(1) + crs * Fxyz(2)
+            END IF
+            Fr = Fs
             kk = 0
             IF ( NT % NormalTangentialNOFNodes > 0 .AND. ASSOCIATED( NT % BoundaryReorder ) ) THEN
               IF ( mnode <= SIZE( NT % BoundaryReorder ) ) kk = NT % BoundaryReorder(mnode)
             END IF
             IF ( kk > 0 ) THEN
-              Fr(1) = DOT_PRODUCT( NT % BoundaryNormals(kk,:), Fxyz )
-              Fr(2) = DOT_PRODUCT( NT % BoundaryTangent1(kk,:), Fxyz )
-              Fr(3) = DOT_PRODUCT( NT % BoundaryTangent2(kk,:), Fxyz )
+              Fr(1) = DOT_PRODUCT( NT % BoundaryNormals(kk,:), Fs )
+              Fr(2) = DOT_PRODUCT( NT % BoundaryTangent1(kk,:), Fs )
+              Fr(3) = DOT_PRODUCT( NT % BoundaryTangent2(kk,:), Fs )
             END IF
             DO c = 1, 3
               r = DOFs * (Perm(mnode)-1) + c
@@ -986,6 +1053,12 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
   REAL(KIND=dp) :: Dcut, mu, rhoi, rhow, g, r, detJ, Hg, Pg, ymin, ymax, tolw, wq, uq(2), dux(2), duy(2), &
       dzb(2), ar, zb, zs, H, divu, wb, su, sv, umax, Norm, relax, dhh(2), umaxL, xm, ym
   LOGICAL :: Found, walls, stat, ssaEl
+  ! "SSA Periodic Angle" (radians): a sector -pa/2 .. +pa/2 about the x-axis with rotational periodic sides. Elmer
+  ! ties the periodic SSA velocity component by component, so each slave node (side 2, +pa/2) is solved in its own
+  ! frame rotated by pa (u = Q u~, Q the rotation by pa): the tie u~_slave = u_master is then u_slave = Q u_master
+  REAL(KIND=dp) :: paS, cQ, sQ, t1, t2
+  LOGICAL, ALLOCATABLE :: slv(:)
+  INTEGER :: pr
   CHARACTER(*), PARAMETER :: Caller = 'FSSSAShelf'
 !------------------------------------------------------------------------------
   Mesh => Solver % Mesh
@@ -1102,6 +1175,17 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
   END IF
   tolw = 1.0e-6_dp * MAX( ymax - ymin, 1.0_dp )
 
+  paS = ListGetConstReal( Params, 'SSA Periodic Angle', Found )
+  IF ( .NOT. Found ) paS = 0.0_dp
+  cQ = COS( paS ); sQ = SIN( paS )
+  ALLOCATE( slv(nn) )
+  slv = .FALSE.
+  IF ( paS > 0.0_dp ) THEN
+    DO i = 1, nn
+      slv(i) = ABS( ATAN2( Mesh % Nodes % y(i), Mesh % Nodes % x(i) ) - 0.5_dp * paS ) < 1.0e-7_dp
+    END DO
+  END IF
+
   ! assembly over the SSA faces (the face projected onto the horizontal plane)
   nmax = Model % MaxElementNodes
   ALLOCATE( STIFF(2*nmax,2*nmax), FORCE(2*nmax), Basis(nmax), dBasisdx(nmax,3) )
@@ -1140,6 +1224,20 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
         FORCE(2*p) = FORCE(2*p) + wq * Pg * dBasisdx(p,2)
       END DO
     END DO
+    DO p = 1, n                       ! slave nodes in their rotated frames: K <- T^T K T, F <- T^T F
+      IF ( .NOT. slv( El % NodeIndexes(p) ) ) CYCLE
+      pr = 2*p - 1
+      DO k = 1, 2*n
+        t1 = STIFF(k,pr); t2 = STIFF(k,pr+1)
+        STIFF(k,pr) = cQ * t1 + sQ * t2; STIFF(k,pr+1) = -sQ * t1 + cQ * t2
+      END DO
+      DO k = 1, 2*n
+        t1 = STIFF(pr,k); t2 = STIFF(pr+1,k)
+        STIFF(pr,k) = cQ * t1 + sQ * t2; STIFF(pr+1,k) = -sQ * t1 + cQ * t2
+      END DO
+      t1 = FORCE(pr); t2 = FORCE(pr+1)
+      FORCE(pr) = cQ * t1 + sQ * t2; FORCE(pr+1) = -sQ * t1 + cQ * t2
+    END DO
     CALL DefaultUpdateEquations( STIFF(1:2*n,1:2*n), FORCE(1:2*n) )
   END DO
   CALL DefaultFinishBulkAssembly()
@@ -1153,8 +1251,13 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
     IF ( q <= 0 ) CYCLE
     lc = MOD( i-1, nbl ) + 1
     IF ( .NOT. inner(lc) ) THEN
-      CALL UpdateDirichletDof( A, 2*(q-1)+1, ubar(lc) )
-      CALL UpdateDirichletDof( A, 2*(q-1)+2, vbar(lc) )
+      IF ( slv(i) ) THEN              ! in the slave's rotated frame: u~ = Q^T u
+        CALL UpdateDirichletDof( A, 2*(q-1)+1, cQ * ubar(lc) + sQ * vbar(lc) )
+        CALL UpdateDirichletDof( A, 2*(q-1)+2, -sQ * ubar(lc) + cQ * vbar(lc) )
+      ELSE
+        CALL UpdateDirichletDof( A, 2*(q-1)+1, ubar(lc) )
+        CALL UpdateDirichletDof( A, 2*(q-1)+2, vbar(lc) )
+      END IF
       ndir = ndir + 1
     ELSE IF ( walls .AND. ( ABS( Mesh % Nodes % y(i) - ymin ) < tolw .OR. ABS( Mesh % Nodes % y(i) - ymax ) < tolw ) ) THEN
       CALL UpdateDirichletDof( A, 2*(q-1)+2, 0.0_dp )
@@ -1162,6 +1265,15 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
   END DO
   CALL DefaultDirichletBCs()
   Norm = DefaultSolve()
+  IF ( paS > 0.0_dp ) THEN          ! the slaves back to x, y: u = Q u~
+    DO i = 1, MIN( nn, SIZE(sPerm) )
+      q = sPerm(i)
+      IF ( q <= 0 .OR. .NOT. slv(i) ) CYCLE
+      t1 = Solver % Variable % Values( 2*(q-1)+1 ); t2 = Solver % Variable % Values( 2*(q-1)+2 )
+      Solver % Variable % Values( 2*(q-1)+1 ) = cQ * t1 - sQ * t2
+      Solver % Variable % Values( 2*(q-1)+2 ) = sQ * t1 + cQ * t2
+    END DO
+  END IF
 
   ! nodal averages over the SSA faces: the strain rate, div(u) and grad(z_b) (area weighted), summed over ranks
   ALLOCATE( nodal(nn,9) )

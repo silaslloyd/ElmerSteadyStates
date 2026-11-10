@@ -111,6 +111,12 @@ partition() {   # $1 case dir (with footprint.msh), $2 config: add footprint/par
     fi
     [ -d $1/footprint/partitioning.$RANKS ] && return 0
     echo "$(date +%T) partitioning $1/footprint for $RANKS ranks"
+    if grep -q "^sector_angle *=" $2; then    # a sector: ess/case.py sector_partition (pairs kept together)
+        python3 -c "import sys; sys.path.insert(0, '.'); from ess.config import load_config as L; from ess.case import sector_partition as P
+c = L('$2')['case']; P('$1', 'footprint', $RANKS, float(c['sector_angle']), float(c['front_km']) * 1e3, metisper=c.get('partitioner') == 'metisper')" \
+            > ${L}_partition.log 2>&1 || { cat ${L}_partition.log; return 1; }
+        return 0
+    fi
     local per="" part="-metiskway $RANKS"
     grep -q "^periodic_sides *= *true" $2 && per="-periodic 0 1 0"
     # box partitions RANKS/PY x PY for periodic sides, or with BOXES=1 (else METIS); PART=metisper or the config's

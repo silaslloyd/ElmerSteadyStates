@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 import re
 import shlex
@@ -234,6 +235,15 @@ class ElmerModel(Model):
                                   "ess_Hs": "0.0", **self.lua_overrides}
         if self.marine:
             self.lua_overrides = {"ess_marine": "1.0", **self.lua_overrides}
+        # [case] sector_angle (degrees): the footprint an annular sector about the vertical axis through the origin
+        # (ess/case.py sector_geo), the sides rotational periodic, every x (distance from the divide) in the Lua
+        # expressions the radius; [case] accumulation_factor: aDIM times this (sector: 2, see configs/coarse_sector.toml)
+        self.sector_angle = float(c["sector_angle"]) if c.get("sector_angle") else None
+        if self.sector_angle and not bool(c.get("periodic_sides", False)):
+            raise ValueError("[case] sector_angle: needs periodic_sides = true (rotational periodic sides)")
+        acc = float(c.get("accumulation_factor", 1.0))
+        if acc != 1.0:
+            self.lua_overrides = {"aDIM": f"{acc!r} * aND*ascale", **self.lua_overrides}
         if self.unglaciated_bed == "melting":
             self.lua_overrides = {"ess_ungl_melt": "1.0", **self.lua_overrides}
         if self.surface_temp == "snout":
@@ -712,6 +722,8 @@ End
             j = text.index("\nEnd", k)
             text = (text[:j] + "\n  Exec Intervals(10) = Integer " + " ".join(["100000000"] * 10)
                     + "   ! ESS_PARTIAL_UPDATE_ONCE: only the first step (bedrock frozen)" + text[j:])
+        if self.sector_angle:
+            text = self._sector(text)
         every = os.environ.get("ESS_VTU_EVERY")
         if every and int(every) > 0:
             text = self._vtu_every(text, int(every))
@@ -721,6 +733,39 @@ End
         left = sorted(set(PLACEHOLDER.findall(text)))
         if left:
             raise ValueError(f"unfilled placeholders in {self.template}: {', '.join(left)}")
+        return text
+
+    def _sector(self, text):
+        """[case] sector_angle: the Stokes solver ESS's IncompressibleNS (the rotated slave frames), and in every Lua
+        expression of a "Variable" list with Coordinate 1 (the distance from the divide in the strip) that coordinate
+        replaced by the radius: Coordinate 2 appended to the list and tx[i] -> sqrt(tx[i]^2 + tx[n]^2) (sliding front
+        zone, friction heating, initial temperatures, ...). Tables over Coordinate 1 (the initial geometry of `ess
+        init`) stay in x: `ess transfer` puts the start state on the sector by radius."""
+        old = 'Procedure = "IncompressibleNSVec" "IncompressibleNSSolver"'
+        if old in text:
+            lib = os.path.join(os.path.dirname(self.periodic_lib), "ESSIncompressibleNS")
+            text = text.replace(old, f'Procedure = "{lib}" "IncompressibleNSSolver"   ! sector: rotated slave frames')
+        if "ESSIncompressibleNS" not in text:
+            raise ValueError("sector: the Stokes solver must be ESSIncompressibleNS (stokes_solver nsvec)")
+        if self.slide_ybump:
+            raise ValueError("sector: slide_ybump (a pattern in y) is not defined on a sector")
+        pat = re.compile(r'(=\s*Variable\s+)([^\n]*)(\n\s*Real\s+(?:Lua|LUA|lua)\s+")([^"]*)(")')
+        nsub = 0
+
+        def fix(m):
+            nonlocal nsub
+            names = [v.strip().strip('"') for v in m.group(2).split(",")]
+            low = [v.lower() for v in names]
+            if "coordinate 1" not in low:
+                return m.group(0)
+            i = low.index("coordinate 1")
+            n = len(names)
+            expr = re.sub(rf"tx\[{i}\]", f"math.sqrt(tx[{i}]*tx[{i}] + tx[{n}]*tx[{n}])", m.group(4))
+            nsub += 1
+            c2 = ', "Coordinate 2"' if '"' in m.group(2) else ", Coordinate 2"
+            return m.group(1) + m.group(2).rstrip() + c2 + m.group(3) + expr + m.group(5)
+        text = pat.sub(fix, text)
+        log.info(f"sector: {nsub} Lua expressions of Coordinate 1 now of the radius")
         return text
 
     def _vtu_every(self, text, every):
@@ -781,8 +826,11 @@ End
         """marine template: side 2 the periodic image of side 1 (bedrock, filler, ice), free ice sides"""
         if not self.marine:
             raise ValueError("[case] periodic_sides: marine template only")
-        per = lambda master, names: (f"  Periodic BC = {master}\n"
-                                     f"  Periodic BC Translate(3) = Real 0.0 {self.width!r} 0.0\n"
+        if self.sector_angle:      # side 2 (+A/2) the image of side 1 (-A/2) rotated by A about the z-axis
+            move = f"  Periodic BC Rotate(3) = Real 0.0 0.0 {self.sector_angle!r}\n"
+        else:
+            move = f"  Periodic BC Translate(3) = Real 0.0 {self.width!r} 0.0\n"
+        per = lambda master, names: (f"  Periodic BC = {master}\n" + move
                                      + "".join(f"  Periodic BC {n} = Logical True\n" for n in names))
         ice = ["Velocity 1", "Velocity 2", "Velocity 3", "Pressure", "Temperature", "Zs", "Zb"]
         if self.thermal == "elmerstreams":
@@ -798,7 +846,19 @@ End
             block = text[k:j]
             if "  Velocity 2 = 0.0\n" not in block:
                 raise ValueError(f"periodic_sides: no 'Velocity 2 = 0.0' in {name}")
-            text = text[:k] + block.replace("  Velocity 2 = 0.0\n", "", 1) + text[j:]
+            block = block.replace("  Velocity 2 = 0.0\n", "", 1)
+            if self.sector_angle and name == "side2 ice":
+                # the velocity tied in (v_r, v_theta, v_z): the slave nodes in frames rotated from their masters'
+                # (elmer/ESSIncompressibleNS.F90 ESSRotPeriodicFrames; periodic_test/rotper)
+                block = block.replace("  Normal-Tangential Velocity = Logical True\n", "").replace(
+                    "  Normal-Tangential Velocity = True\n", "")
+                block = (block.rstrip("\n") + "\n  Normal-Tangential Velocity = Logical True"
+                         "\n  ESS Rotational Periodic Velocity = Logical True\n  Rotational Normals = Logical True")
+            text = text[:k] + block + text[j:]
+        if self.sector_angle:
+            # the vector folds of the periodic loads, normals and hydrostatic loads rotated (elmer/PeriodicUtils.F90)
+            text = self._insert_in(text, 'Simulation Type = "transient"',
+                                  "  ESS Rotational Periodic = Logical True   ! [case] sector_angle")
         return text
 
     def _fs_iterative(self, text):
@@ -918,7 +978,10 @@ End
                + (f"  FS SSA Update Distance = Real {self.fs_ssa_update!r}   ! the full-Stokes region renewed when the "
                   "grounding line moved this far (m)\n" if self.fs_ssa_update > 0 else "")
                + (f"  Periodic Width = Real {self.width!r}   ! periodic sides: the distance wraps across the seam\n"
-                  f"  Periodic Seam Rows = Real {1.01 * self.width / max(self.y_elements, 1)!r}   "
+                  if self.periodic_sides and not self.sector_angle else "")
+               + (f"  Periodic Angle = Real {math.radians(self.sector_angle)!r}   ! sector: the distance wraps across "
+                  "the seam by the rotation\n" if self.sector_angle else "")
+               + (f"  Periodic Seam Rows = Real {1.01 * self.width / max(self.y_elements, 1)!r}   "
                   "! the node rows next to the seam take the smaller of their own and their mirror distance\n"
                   if self.periodic_sides else "")
                + "End\n")
@@ -946,7 +1009,9 @@ End
                     '  Variable = -dofs 2 "SSA Velocity"\n'
                     '  Exported Variable 1 = -dofs 4 "SSA Strain"\n'
                     f"  FS SSA Distance = Real {self.fs_ssa_x!r}\n"
-                    "  FS SSA Viscosity = Real #viscosity\n"
+                    + (f"  SSA Periodic Angle = Real {math.radians(self.sector_angle)!r}   ! sector: the SSA velocity "
+                       "tied in (v_r, v_theta)\n" if self.sector_angle and ssa_periodic else "")
+                    + "  FS SSA Viscosity = Real #viscosity\n"
                     f"  FS SSA Walls = Logical {walls}\n"
                     f"  FS SSA Stress Relaxation = Real {float(os.environ.get('ESS_FS_SSA_RELAX', '0.25'))!r}\n"
                     + (("  Linear System Solver = Direct\n"
@@ -1017,6 +1082,9 @@ End
                 sec += f"\n  FS SSA Adaptive Calm Solves = Integer {calm}"
                 if not re.search(r"\n *Linear System Timing *=", sec):
                     sec += "\n  Linear System Timing = Logical True"
+            if self.sector_angle:
+                sec += (f"\n  FS SSA Periodic Angle = Real {math.radians(self.sector_angle)!r}   ! sector: side faces by "
+                        "angle, a slave's interface force rotated to its master")
             rp = os.environ.get("ESS_FS_SSA_REBUILD_PREC")
             if rp:
                 sec += f'\n  FS SSA Rebuild Preconditioning = String "{rp}"'

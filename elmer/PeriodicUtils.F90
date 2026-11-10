@@ -16,6 +16,10 @@
 !>             of its copies is)
 !> Parallel: both nodes of a pair must be on the same partition (ElmerGrid -periodic). Groups without a
 !> local root are left as they are (counted in the return value norphan).
+!> Rotational periodic sides (Simulation: "ESS Rotational Periodic = Logical True", a sector about the vertical axis
+!> through the origin): fields with dofs >= 2 are vectors in their first two components (x, y: loads, normals); a
+!> member's (x, y) is rotated into its group root's orientation before it is combined and the result rotated back
+!> to the member (the angle from the two nodes' positions), so a vector field is periodic as u_image = R u_root.
 !------------------------------------------------------------------------------
 MODULE PeriodicUtils
   USE DefUtils
@@ -105,7 +109,8 @@ CONTAINS
     REAL(KIND=dp), ALLOCATABLE :: acc(:,:)
     INTEGER :: nn, i, a, d, p, nweak, norph, k
     CHARACTER(*), PARAMETER :: Caller = 'PeriodicSymmetrize'
-    LOGICAL :: UseRoots
+    LOGICAL :: UseRoots, Rot, Found
+    REAL(KIND=dp) :: ph, cr, sr, vx, vy
 
     nn = Model % Mesh % NumberOfNodes
     CALL PeriodicGroups( Model, nn, parent, isImage, inPair, npairs, nweak )
@@ -120,6 +125,9 @@ CONTAINS
       CALL Fatal( Caller, 'Unknown mode "'//TRIM(Mode)//'": folded, split, mean, fold, min or max' )
     END SELECT
     UseRoots = ( TRIM(Mode) == 'folded' )
+    Rot = .FALSE.
+    IF ( dofs >= 2 ) Rot = ListGetLogical( Model % Simulation, 'ESS Rotational Periodic', Found )
+    IF ( Rot ) CALL PGRotate( Values, Perm, dofs, -1 )      ! every member into its root's orientation
 
     ALLOCATE( acc(dofs, nn), nmem(nn), nroot(nn), seen(nn) )
     nmem = 0
@@ -197,8 +205,33 @@ CONTAINS
     IF ( PRESENT( norphan ) ) norphan = norph
     IF ( norph > 0 ) CALL Warn( Caller, I2S(norph)//' nodes whose periodic group has no root on this '// &
         'partition: left unchanged (partition with ElmerGrid -periodic)' )
+    IF ( Rot ) CALL PGRotate( Values, Perm, dofs, 1 )       ! and back to each member's own orientation
 
     DEALLOCATE( parent, isImage, inPair, acc, nmem, nroot, seen )
+
+  CONTAINS
+
+    !> (x, y) of every member rotated by sgn * (its angle - its root's angle) about the z-axis through the origin
+    SUBROUTINE PGRotate( V, Pm, nd, sgn )
+      REAL(KIND=dp) :: V(:)
+      INTEGER :: Pm(:), nd, sgn
+      INTEGER :: ii, pp, aa, kk
+      DO ii = 1, nn
+        IF ( .NOT. inPair(ii) ) CYCLE
+        IF ( ii > SIZE( Pm ) ) CYCLE
+        pp = Pm(ii)
+        IF ( pp <= 0 ) CYCLE
+        aa = PGRoot( parent, ii )
+        IF ( aa == ii ) CYCLE
+        ph = ATAN2( Model % Mesh % Nodes % y(ii), Model % Mesh % Nodes % x(ii) ) &
+           - ATAN2( Model % Mesh % Nodes % y(aa), Model % Mesh % Nodes % x(aa) )
+        cr = COS( sgn * ph ); sr = SIN( sgn * ph )
+        kk = nd*(pp-1)
+        vx = V(kk+1); vy = V(kk+2)
+        V(kk+1) = cr * vx - sr * vy
+        V(kk+2) = sr * vx + cr * vy
+      END DO
+    END SUBROUTINE PGRotate
   END SUBROUTINE PeriodicSymmetrize
 
 END MODULE PeriodicUtils

@@ -957,7 +957,14 @@ def cmd_transfer(args):
         from .case import eval_lua_parameters
         P = eval_lua_parameters(cfg["_path"](c.get("parameters", "case/parameters.lua")))
         x_end_m = x_end * P["L"]
-    x, frozen = transfer(src, dst, x_end_m, float(c.get("edge_thickness", 30.0)))
+    from .transfer import is_sector, radial, with_bed_of
+    tgt = dst
+    if c.get("sector_angle"):             # a sector: everything by radius, the bed the source's at x = r
+        if is_sector(src):
+            src = radial(src)
+        tgt = with_bed_of(radial(dst), src)
+        log.info("transfer: onto a sector, by radius (Coordinate 1 = sqrt(x^2 + y^2))")
+    x, frozen = transfer(src, tgt, x_end_m, float(c.get("edge_thickness", 30.0)))
     out = args.out or os.path.join(cfg["_work"], f"start_p{src.p:g}.npz")
     save_state(out, dst.layout, x, src.p, frozen, dst.diag, source=args.source)
     log.info(f"wrote {out} (p = {src.p:g}); next: ess newton {args.config} --state {out}")

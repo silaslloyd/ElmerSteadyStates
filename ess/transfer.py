@@ -122,6 +122,48 @@ def _sample(xs, cols, x, ice, c):
     return (1 - w) * out[0] + w * out[1]
 
 
+def is_sector(s: SavedState) -> bool:
+    """a sector state (ess/case.py sector_geo: symmetric about the x-axis, so y < 0 on one half; strips have y >= 0)"""
+    f = _all_fields(s)
+    try:
+        _, y = f[find_name(f, "coordinate 2")]
+    except KeyError:
+        return False
+    return bool(np.min(y) < -1.0)
+
+
+def radial(s: SavedState) -> SavedState:
+    """a copy of s whose "Coordinate 1" is the radius sqrt(x^2 + y^2): the distance from the divide of a sector,
+    so the transfer (by Coordinate 1) works on sectors as on strips"""
+    from dataclasses import replace
+    f = _all_fields(s)
+    k1, k2 = find_name(f, "coordinate 1"), find_name(f, "coordinate 2")
+    g1, x = f[k1]
+    y = _lookup(f, k2, g1)
+    new = (g1, np.hypot(x, y))
+    diag, frozen = dict(s.diag), dict(s.frozen)
+    (diag if k1 in diag else frozen)[k1] = new
+    return replace(s, diag=diag, frozen=frozen)
+
+
+def with_bed_of(dst: SavedState, src: SavedState) -> SavedState:
+    """dst with its bedrock replaced by src's bed as a function of Coordinate 1 (both radial for a sector: the bed of
+    the strip at x = r), and Zb put on that bed where dst is grounded is left to transfer()"""
+    from dataclasses import replace
+    fs, fd = _all_fields(src), _all_fields(dst)
+    gs, vs = src.frozen[find_name(src.frozen, "bedrock")]
+    xs = np.round(_lookup(fs, "coordinate 1", gs), 3)
+    ux, inv = np.unique(xs, return_inverse=True)
+    prof = np.bincount(inv, vs) / np.bincount(inv)
+    kd = find_name(dst.frozen, "bedrock")
+    gd, _ = dst.frozen[kd]
+    xd = _lookup(fd, "coordinate 1", gd)
+    frozen = dict(dst.frozen)
+    frozen[kd] = (gd, np.interp(xd, ux, prof))
+    log.info(f"transfer: the bedrock of the target from the source's bed profile ({len(gd)} nodes)")
+    return replace(dst, frozen=frozen)
+
+
 def transfer(src: SavedState, dst: SavedState, x_end_m: float | None = None, edge: float = 30.0):
     """Returns (x, frozen) for the layout of `dst`, from the physical state of `src`."""
     xs, cols = _columns(src)

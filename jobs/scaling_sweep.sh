@@ -48,6 +48,7 @@ for p in $POINTS; do
         w192) cfg=configs/test_periodic_gl_12p5km_tri.toml; extra="$MAR,FROM=work/test_periodic_gl_50km/start.npz";;
         w384) cfg=configs/test_periodic_gl_25km_tri.toml; extra="$MAR,FROM=work/test_periodic_gl_50km/start.npz";;
         c*) cfg=configs/coarse.toml; extra="$MAR,FROM=${FROM:-work/test_periodic_gl_50km/start.npz}";;   # the Coarse mesh
+        s*) cfg=configs/coarse_sector.toml; extra="$MAR,FROM=${FROM:-work/coarse/ckpt_1500.npz}";;   # the Coarse sector (arc)
         l*) cfg=configs/test_wall_land_50km_tri.toml; extra="$LAND,FROM=work/test_wall_land_50km/start.npz";;
         *) echo "unknown point $p"; exit 1;;
     esac
