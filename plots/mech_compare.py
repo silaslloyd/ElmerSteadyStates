@@ -134,7 +134,12 @@ def main():
     if len(args) < 2:
         raise SystemExit(__doc__)
     ref = Run(args[0])
-    runs = [Run(a) for a in args[1:]]
+    runs = []
+    for a in args[1:]:                       # a job not started yet (no run directory): skipped
+        try:
+            runs.append(Run(a))
+        except SystemExit as e:
+            print(f"  skipped: {e}")
     print(f"reference: job {ref.job} {ref.label}, {ref.done}/{ref.asked} steps, outputs at "
           f"{', '.join(f'{t:g}' for t in sorted(ref.files))} yr, cost {ref.cost:.0f} s / kyr")
     hdr = (f"{'job':>6} {'run':<18} {'t (yr)':>7} {'dZs rms':>8} {'dZs max':>8} {'at (km)':>14} {'dGL km':>7} "
