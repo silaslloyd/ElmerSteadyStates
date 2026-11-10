@@ -482,7 +482,12 @@ def gl_distance(base, periodic=True):
         return d
     W = (base["y"].max() - base["y"].min()) / 1e3
     pts = np.c_[gx, gy]
-    if periodic:
+    if periodic and base["y"].min() < -1.0:      # a sector: the images rotated by +- the sector angle
+        ph = np.arctan2(base["y"], base["x"])
+        A = float(ph.max() - ph.min())
+        rot = lambda a: np.c_[np.cos(a) * pts[:, 0] - np.sin(a) * pts[:, 1], np.sin(a) * pts[:, 0] + np.cos(a) * pts[:, 1]]
+        pts = np.r_[pts, rot(A), rot(-A)]
+    elif periodic:
         pts = np.r_[pts, pts + [0, W], pts - [0, W]]
     q = np.c_[base["x"][fl], base["y"][fl]] / 1e3
     try:
