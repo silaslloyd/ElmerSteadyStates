@@ -281,12 +281,68 @@ CONTAINS
   ! only: the region crept ~20 elements along the seam); deactivating does not, as upstream of the region's edge a
   ! seam node keeps active elements that do not contain the deactivated one. Ends in a round or two.
   SUBROUTINE seamConsistent()
-    INTEGER, ALLOCATABLE :: act(:), low(:), colLow(:)
+    INTEGER, ALLOCATABLE :: act(:), low(:), colLow(:), sm(:)
     TYPE(Matrix_t), POINTER :: Pm
-    INTEGER :: it, ib, ii, ks, km, l, nmis, nfix, tt, jj, nq, gsum
-    LOGICAL :: actEl
-    ALLOCATE( act(nn), low(nn), colLow(nbl) )
+    INTEGER :: it, ib, ii, ks, km, l, nmis, nfix, tt, jj, nq, gsum, nlw
+    LOGICAL :: actEl, hasS, allIn
+    ALLOCATE( act(nn), low(nn), colLow(nbl), sm(nn) )
     parInfo => Mesh % ParallelInfo
+    ! (1) by construction: the seam nodes (both members of every periodic pair, every rank sharing them); in every
+    ! element with a seam node whose seam nodes are all within thr, the other nodes' columns lowered to thr. Then an
+    ! element at the seam is active exactly when its seam nodes are, on both sides alike (a seam node and its image
+    ! have the same distance and, on each side, elements along the same seam edges), and nothing cascades: only
+    ! non-seam distances change, and only downwards to thr where the seam already is within it.
+    sm = 0
+    DO ib = 1, Model % NumberOfBCs
+      IF ( .NOT. ListCheckPresent( Model % BCs(ib) % Values, 'Periodic BC' ) ) CYCLE
+      Pm => Model % BCs(ib) % PMatrix
+      IF ( .NOT. ASSOCIATED( Pm ) ) CYCLE
+      DO ii = 1, Pm % NumberOfRows
+        ks = Pm % InvPerm(ii)
+        IF ( ks <= 0 .OR. ks > nn ) CYCLE
+        sm(ks) = 1
+        DO l = Pm % Rows(ii), Pm % Rows(ii+1) - 1
+          km = Pm % Cols(l)
+          IF ( km >= 1 .AND. km <= nn .AND. Pm % Values(l) /= 0.0_dp ) sm(km) = 1
+        END DO
+      END DO
+    END DO
+    IF ( ParEnv % PEs > 1 ) CALL CommunicateParallelSystemTag( parInfo, Itag=sm, ParOper=2 )
+    colLow = 0
+    DO tt = 1, Solver % NumberOfActiveElements
+      El => Mesh % Elements( Solver % ActiveElements(tt) )
+      n = El % TYPE % NumberOfNodes
+      hasS = .FALSE.; allIn = .TRUE.
+      DO jj = 1, n
+        IF ( sm( El % NodeIndexes(jj) ) /= 1 ) CYCLE
+        hasS = .TRUE.
+        IF ( nodeD( El % NodeIndexes(jj) ) > thr ) allIn = .FALSE.
+      END DO
+      IF ( .NOT. ( hasS .AND. allIn ) ) CYCLE
+      DO jj = 1, n
+        IF ( sm( El % NodeIndexes(jj) ) /= 1 ) colLow( MOD( El % NodeIndexes(jj) - 1, nbl ) + 1 ) = 1
+      END DO
+    END DO
+    DO i = 1, nn
+      low(i) = colLow( MOD(i-1, nbl) + 1 )
+    END DO
+    IF ( ParEnv % PEs > 1 ) CALL CommunicateParallelSystemTag( parInfo, Itag=low, ParOper=2 )
+    nlw = 0
+    DO i = 1, nn
+      IF ( low(i) == 1 ) colLow( MOD(i-1, nbl) + 1 ) = 1
+    END DO
+    DO i = 1, nn
+      IF ( colLow( MOD(i-1, nbl) + 1 ) /= 1 .OR. sm(i) == 1 ) CYCLE
+      nq = nodeQ(i)
+      IF ( nq <= 0 ) CYCLE
+      IF ( dVal(nq) > thr ) nlw = nlw + 1
+      dVal(nq) = MIN( dVal(nq), thr )
+    END DO
+    gsum = nlw
+    IF ( ParEnv % PEs > 1 ) CALL MPI_Allreduce( nlw, gsum, 1, MPI_INTEGER, MPI_SUM, ParEnv % ActiveComm, ierr )
+    nlw = gsum
+    ! (2) a fallback for what (1) leaves (an isolated seam node within thr between two beyond it, with an element of
+    ! its own on one side only; or distances of a pair differing by round-off at thr): the pair made passive
     nfix = 0
     DO it = 1, 30
       act = 0
@@ -342,13 +398,11 @@ CONTAINS
         IF ( nq > 0 ) dVal(nq) = MAX( dVal(nq), thr + 1.0_dp )
       END DO
     END DO
-    IF ( nfix > 0 .OR. it > 1 ) THEN
-      WRITE( Message, '(A,I0,A,I0,A)' ) 'periodic seam: ', nfix, ' active/passive pair mismatches fixed (', &
-          MIN(it, 30), ' rounds)'
-      CALL Info( Caller, Message, Level=3 )
-    END IF
+    WRITE( Message, '(A,I0,A,I0,A,I0,A)' ) 'periodic seam: ', nlw, ' node distances lowered next to the seam; ', &
+        nfix, ' pair mismatches left, made passive (', MIN(it, 30), ' rounds)'
+    CALL Info( Caller, Message, Level=3 )
     IF ( it > 30 ) CALL Warn( Caller, 'periodic seam: pairs still differ after 30 rounds' )
-    DEALLOCATE( act, low, colLow )
+    DEALLOCATE( act, low, colLow, sm )
   END SUBROUTINE seamConsistent
 
   ! the GL Distance index of mesh node i (0: none)
