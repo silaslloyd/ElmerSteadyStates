@@ -132,15 +132,16 @@ def is_sector(s: SavedState) -> bool:
     return bool(np.min(y) < -1.0)
 
 
-def radial(s: SavedState) -> SavedState:
-    """a copy of s whose "Coordinate 1" is the radius sqrt(x^2 + y^2): the distance from the divide of a sector,
-    so the transfer (by Coordinate 1) works on sectors as on strips"""
+def radial(s: SavedState, divide: float | None = None) -> SavedState:
+    """a copy of s whose "Coordinate 1" is the distance from the divide of a sector: the radius sqrt(x^2 + y^2), or
+    divide - radius for an inverted sector (divide at the outer arc), so the transfer (by Coordinate 1) works on
+    sectors as on strips"""
     from dataclasses import replace
     f = _all_fields(s)
     k1, k2 = find_name(f, "coordinate 1"), find_name(f, "coordinate 2")
     g1, x = f[k1]
     y = _lookup(f, k2, g1)
-    new = (g1, np.hypot(x, y))
+    new = (g1, (divide - np.hypot(x, y)) if divide else np.hypot(x, y))
     diag, frozen = dict(s.diag), dict(s.frozen)
     (diag if k1 in diag else frozen)[k1] = new
     return replace(s, diag=diag, frozen=frozen)

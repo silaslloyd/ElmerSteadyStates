@@ -960,9 +960,10 @@ def cmd_transfer(args):
     from .transfer import is_sector, radial, with_bed_of
     tgt = dst
     if c.get("sector_angle"):             # a sector: everything by radius, the bed the source's at x = r
-        if is_sector(src):
-            src = radial(src)
-        tgt = with_bed_of(radial(dst), src)
+        dv = float(c["sector_divide_km"]) * 1e3 if c.get("sector_divide_km") else None
+        if is_sector(src):                # a state of this sector set-up (e.g. its own average)
+            src = radial(src, dv)
+        tgt = with_bed_of(radial(dst, dv), src)
         log.info("transfer: onto a sector, by radius (Coordinate 1 = sqrt(x^2 + y^2))")
     x, frozen = transfer(src, tgt, x_end_m, float(c.get("edge_thickness", 30.0)))
     out = args.out or os.path.join(cfg["_work"], f"start_p{src.p:g}.npz")

@@ -252,7 +252,7 @@ def mirror_geo(points, L):
     return "\n".join(out) + "\n"
 
 
-def sector_geo(points, L, angle_deg, r0):
+def sector_geo(points, L, angle_deg, r0, divide_r=None):
     """gmsh .geo of an annular SECTOR footprint ([case] sector_angle): r from r0 (a small arc around the divide at the
     centre) to the front L, angle -A/2 .. +A/2 about the x-axis, unstructured triangles mirrored about the x-axis
     (y -> -y), so side 1 (-A/2) and side 2 (+A/2) are node for node the images of each other under the rotation by A
@@ -262,13 +262,18 @@ def sector_geo(points, L, angle_deg, r0):
     pts = [(float(xk) * 1e3, float(r)) for xk, r in points]
     if abs(pts[-1][0] - L) > 1.0 or any(b[0] <= a[0] for a, b in zip(pts, pts[1:])):
         raise SystemExit(f"[case] res_points must increase in r up to the front ({L / 1e3:g} km): {points}")
+    if divide_r:          # INVERTED sector: the divide the outer arc at divide_r, the front the inner one at divide_r - L;
+        # res_points are along the distance from the divide s = divide_r - r
+        r0 = divide_r - L
+        pts = sorted((divide_r - sd, h) for sd, h in pts)
     rs, hs = np.array([p[0] for p in pts]), np.array([p[1] for p in pts])
+    Lr = divide_r if divide_r else L          # the outer radius
     A = np.radians(float(angle_deg))
     # near the divide the sector is narrower than the requested size: there at most half the local width (r A / 2),
     # so the triangles stay well shaped (extra size points out to where the requested size is the smaller one)
     size = lambda r: float(min(np.interp(r, rs, hs), max(r * A / 2, 50.0)))
     extra, r = [], r0
-    while r * A / 2 < np.interp(r, rs, hs) and r < L:
+    while r * A / 2 < np.interp(r, rs, hs) and r < Lr:
         extra.append(r)
         r *= 1.3
     radii = sorted(set([float(v) for v in extra] + [float(r_) for r_ in rs if r_ > r0 + 1.0] + [float(r0)]))
@@ -301,11 +306,13 @@ def sector_geo(points, L, angle_deg, r0):
     top = [line(2 * n + i, 2 * n + i + 1) for i in range(1, n)]   # side 2, front to inner
     in_hi = line(3 * n, 2 * n, arc=True)                   # inner arc, upper half
     j = lambda v: ", ".join(str(t) for t in v)
+    inner, outer = (in_lo, in_hi), (fr_lo, fr_hi)
+    divide, front = (outer, inner) if divide_r else (inner, outer)
     out += [f"Curve Loop(1) = {{{j(bot + [fr_lo] + mid + [in_lo])}}};", "Plane Surface(100) = {1};",
             f"Curve Loop(2) = {{{j([-m for m in reversed(mid)] + [fr_hi] + top + [in_hi])}}};", "Plane Surface(200) = {2};",
             "Periodic Surface {200} = {100} Affine {1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};",
-            "Physical Surface(21) = {100, 200};", f"Physical Curve(22) = {{{in_lo}, {in_hi}}};",
-            f"Physical Curve(23) = {{{fr_lo}, {fr_hi}}};", f"Physical Curve(24) = {{{j(bot)}}};",
+            "Physical Surface(21) = {100, 200};", f"Physical Curve(22) = {{{j(divide)}}};",
+            f"Physical Curve(23) = {{{j(front)}}};", f"Physical Curve(24) = {{{j(bot)}}};",
             f"Physical Curve(25) = {{{j(top)}}};"]
     return "\n".join(out) + "\n"
 
@@ -448,9 +455,15 @@ def setup_case(cfg, mesh=True):
     if sector:
         if "res_points" not in c:
             raise SystemExit("[case] sector_angle needs res_points (element sizes along r)")
-        geo = sector_geo(c["res_points"], Lgeo, float(sector), float(c.get("sector_r0_km", 15.0)) * 1e3)
-        log.info(f"setup: sector of {float(sector):g} deg, r {float(c.get('sector_r0_km', 15.0)):g} .. "
-                 f"{Lgeo / 1e3:g} km (front arc {np.radians(float(sector)) * Lgeo / 1e3:.1f} km)")
+        dr = float(c["sector_divide_km"]) * 1e3 if c.get("sector_divide_km") else None
+        geo = sector_geo(c["res_points"], Lgeo, float(sector), float(c.get("sector_r0_km", 15.0)) * 1e3, dr)
+        if dr:
+            log.info(f"setup: INVERTED sector of {float(sector):g} deg, divide arc r = {dr / 1e3:g} km "
+                     f"({np.radians(float(sector)) * dr / 1e3:.1f} km long), front arc r = {(dr - Lgeo) / 1e3:g} km "
+                     f"({np.radians(float(sector)) * (dr - Lgeo) / 1e3:.1f} km)")
+        else:
+            log.info(f"setup: sector of {float(sector):g} deg, r {float(c.get('sector_r0_km', 15.0)):g} .. "
+                     f"{Lgeo / 1e3:g} km (front arc {np.radians(float(sector)) * Lgeo / 1e3:.1f} km)")
     elif "res_points" in c:                   # [case] res_points: the mirrored triangle footprint from size points
         geo = mirror_geo(c["res_points"], Lgeo)
     else:

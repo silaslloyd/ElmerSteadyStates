@@ -239,6 +239,9 @@ class ElmerModel(Model):
         # (ess/case.py sector_geo), the sides rotational periodic, every x (distance from the divide) in the Lua
         # expressions the radius; [case] accumulation_factor: aDIM times this (sector: 2, see configs/coarse_sector.toml)
         self.sector_angle = float(c["sector_angle"]) if c.get("sector_angle") else None
+        # [case] sector_divide_km: an INVERTED sector (the divide the outer arc at this radius, the front inside it):
+        # the distance from the divide is divide - r instead of r
+        self.sector_divide = float(c["sector_divide_km"]) * 1e3 if c.get("sector_divide_km") else None
         if self.sector_angle and not bool(c.get("periodic_sides", False)):
             raise ValueError("[case] sector_angle: needs periodic_sides = true (rotational periodic sides)")
         acc = float(c.get("accumulation_factor", 1.0))
@@ -760,7 +763,10 @@ End
                 return m.group(0)
             i = low.index("coordinate 1")
             n = len(names)
-            expr = re.sub(rf"tx\[{i}\]", f"math.sqrt(tx[{i}]*tx[{i}] + tx[{n}]*tx[{n}])", m.group(4))
+            rad = f"math.sqrt(tx[{i}]*tx[{i}] + tx[{n}]*tx[{n}])"
+            if self.sector_divide:                     # inverted: the distance from the divide (the outer arc)
+                rad = f"({self.sector_divide!r} - {rad})"
+            expr = re.sub(rf"tx\[{i}\]", rad, m.group(4))
             nsub += 1
             c2 = ', "Coordinate 2"' if '"' in m.group(2) else ", Coordinate 2"
             return m.group(1) + m.group(2).rstrip() + c2 + m.group(3) + expr + m.group(5)
