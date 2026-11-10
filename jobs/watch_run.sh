@@ -9,7 +9,11 @@ echo "job $j  $(squeue -h -j $j -o '%T %M (limit %l) on %D nodes' 2>/dev/null)"
 f=slurms/scaling_$j.out
 w=$(grep -o "runs continue from [^:]*" $f 2>/dev/null | head -1 | sed 's|runs continue from ||; s|/[^/]*\.npz$||; s|/scaling_.*$||')
 [ -n "$w" ] || w=work
-L=$(ls -td $w/runs/*/ 2>/dev/null | head -1)elmer.log
+# this job's newest run directory: by its label (_job<id>_), else by the job id in its sif, else the newest of all
+D=$(ls -td $w/runs/*_job${j}_*/ 2>/dev/null | head -1)
+[ -n "$D" ] || D=$(for r in $(ls -td $w/runs/*/ 2>/dev/null | head -30); do grep -q "ESS scaling .* $j\b" ${r}run.sif 2>/dev/null && { echo $r; break; }; done)
+[ -n "$D" ] || D=$(ls -td $w/runs/*/ 2>/dev/null | head -1)
+L=${D}elmer.log
 grep -h "run: chunk" slurms/scaling_${j}_*.log 2>/dev/null | tail -1 | sed 's/.*run: /  /'
 echo "  Elmer run $(basename $(dirname $L)): $(grep 'MAIN: Time:' $L 2>/dev/null | tail -1 | sed 's/MAIN: //')"
 echo "  Stokes per step (s), last 10: $(grep 'Solver time.*stokes-vec' $L 2>/dev/null | tail -10 | awk '{printf "%.0f ", $(NF-1)}')"

@@ -229,6 +229,7 @@ export ESS_ELMER_TIMEOUT=${ELMER_TIMEOUT:-604800}
 # "slow" = that many times the mean time of the easy solves
 [ -n "$ADAPTIVE_PREC" ] && export ESS_ADAPTIVE_PREC=$ADAPTIVE_PREC && echo "  adaptive Stokes preconditioner: $ADAPTIVE_PREC"
 [ -n "$ADAPTIVE_PREC_FACTOR" ] && export ESS_ADAPTIVE_PREC_FACTOR=$ADAPTIVE_PREC_FACTOR
+export ESS_RUN_LABEL=${ESS_RUN_LABEL:-job${SLURM_JOB_ID:-local}}   # run directories named by job (jobs/watch_run.sh)
 [ -n "$ADAPTIVE_PREC_CALM" ] && export ESS_ADAPTIVE_PREC_CALM=$ADAPTIVE_PREC_CALM   # easy solves before back to the first (default 200)
 # implicit free surface: FSSA=adapted (elmer/ESSIncompressibleNS: the FSSA term of the previous coupled iteration
 # subtracted, Ahlkrona et al. 2026) with FS_COUPLED=1 (mesh mapping and both free surfaces in the coupled loop with
