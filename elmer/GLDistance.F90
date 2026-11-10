@@ -87,8 +87,8 @@ SUBROUTINE GLDistance( Model, Solver, dt, Transient )
   IF ( .NOT. Found ) srows = 0.0_dp
   ! "Periodic Seam Threshold" (m: the FS SSA distance, the passive threshold of the ice's "Flow Solution Passive"):
   ! a mesh NOT mirror-symmetric across its seams (a cut sector, ess/case.py sector_geo cut_seed): instead of the
-  ! mirror rule below, every periodic pair (Elmer's projector) is made active or passive together, by activating the
-  ! elements around the passive member (their columns' distance lowered to the threshold) until no pair differs
+  ! mirror rule below, every periodic pair (Elmer's projector) is made active or passive together: a pair that
+  ! differs is made passive (both members' columns just above the threshold), until no pair differs
   thr = ListGetConstReal( Params, 'Periodic Seam Threshold', hasThr )
   ! "FS SSA Update Distance" (m, default 0: every step): the distance is measured from a REFERENCE grounding line,
   ! replaced by the current one only when the two differ by more than this (Hausdorff distance: some current
@@ -276,9 +276,10 @@ CONTAINS
   ! passive, and the periodic tie then pins the active one at the passive one's frozen value. Here: per round, every
   ! node's state from the elements of this solver (ice), OR over the ranks; every periodic pair (the projectors of
   ! the BCs with "Periodic BC", master and slave on one rank: the partitioning keeps pairs together) compared; the
-  ! passive member's elements activated by lowering their columns' distance to thr (whole columns: every level
-  ! alike). Only ever activates, so it ends (in a round or two: only the few pairs where the region's edge crosses a
-  ! seam differ).
+  ! pair made passive on both sides by raising its two columns' distance just above thr (every level alike).
+  ! Activating the passive member instead cascaded along the seam (its seam neighbour then became active on one side
+  ! only: the region crept ~20 elements along the seam); deactivating does not, as upstream of the region's edge a
+  ! seam node keeps active elements that do not contain the deactivated one. Ends in a round or two.
   SUBROUTINE seamConsistent()
     INTEGER, ALLOCATABLE :: act(:), low(:), colLow(:)
     TYPE(Matrix_t), POINTER :: Pm
@@ -314,11 +315,7 @@ CONTAINS
             IF ( Pm % Values(l) == 0.0_dp .OR. nodeQ(km) <= 0 ) CYCLE
             IF ( act(ks) == act(km) ) CYCLE
             nmis = nmis + 1
-            IF ( act(ks) == 0 ) THEN
-              low(ks) = 1
-            ELSE
-              low(km) = 1
-            END IF
+            low(ks) = 1; low(km) = 1
           END DO
         END DO
       END DO
@@ -326,12 +323,10 @@ CONTAINS
       IF ( ParEnv % PEs > 1 ) CALL MPI_Allreduce( nmis, gsum, 1, MPI_INTEGER, MPI_SUM, ParEnv % ActiveComm, ierr )
       IF ( gsum == 0 ) EXIT
       nfix = nfix + gsum
-      ! the passive members' elements: all their columns lowered (every level, every rank sharing them)
+      ! both members passive: their columns' distance raised just above the threshold (every level, every rank)
       colLow = 0
-      DO tt = 1, Solver % NumberOfActiveElements
-        El => Mesh % Elements( Solver % ActiveElements(tt) )
-        n = El % TYPE % NumberOfNodes
-        IF ( ANY( low( El % NodeIndexes(1:n) ) == 1 ) ) colLow( MOD( El % NodeIndexes(1:n) - 1, nbl ) + 1 ) = 1
+      DO i = 1, nn
+        IF ( low(i) == 1 ) colLow( MOD(i-1, nbl) + 1 ) = 1
       END DO
       DO i = 1, nn
         low(i) = colLow( MOD(i-1, nbl) + 1 )
@@ -342,8 +337,9 @@ CONTAINS
       END DO
       DO i = 1, nn
         IF ( colLow( MOD(i-1, nbl) + 1 ) /= 1 ) CYCLE
+        IF ( colgm( MOD(i-1, nbl) + 1 ) >= -0.5_dp ) CYCLE      ! never a grounded column (distance 0: always active)
         nq = nodeQ(i)
-        IF ( nq > 0 ) dVal(nq) = MIN( dVal(nq), thr )
+        IF ( nq > 0 ) dVal(nq) = MAX( dVal(nq), thr + 1.0_dp )
       END DO
     END DO
     IF ( nfix > 0 .OR. it > 1 ) THEN
@@ -1099,7 +1095,10 @@ CONTAINS
       END DO
       IF ( l2 == 1 ) ALLOCATE( sfNodes(4, MAX(nsf, 1)) )
     END DO
-    WRITE( Message, '(A,I0,A,I0,A)' ) 'side faces by BC: ', nsf, ' boundary faces of ', ntg, ' periodic side BCs'
+    ne = nsf
+    IF ( ParEnv % PEs > 1 ) ne = NINT( ParallelReduction( REAL( nsf, dp ) ) )
+    WRITE( Message, '(A,I0,A,I0,A)' ) 'side faces by BC (all ranks): ', ne, ' boundary faces of ', ntg, &
+        ' periodic side BCs'
     CALL Info( 'FSSSALinsolve', Message, Level=4 )
   END SUBROUTINE sideFaces
 
