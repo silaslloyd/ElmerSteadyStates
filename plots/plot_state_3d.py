@@ -64,6 +64,7 @@ SHOW_BED = False         # the bedrock surface under the ice (--bed to show)
 BASE_COLOUR = "speed"    # "speed" (basal speed, the same colour scale as the surface) or "mask" (red grounded, blue floating)
 SHOW_MESH = False        # the element edges on the base (--mesh to show)
 SIDES = True             # side walls (base to surface) at the window ends and the two outer sides
+SECTOR_A = 0.0           # its angle (radians)
 SECTOR = False           # a sector footprint (configs/coarse_sector*.toml: symmetric about the x-axis, so y < 0 on one
                          # half): walls on the angled sides and on the arcs, triangles in (r, angle), no tiling
 TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
@@ -510,6 +511,18 @@ def gl_distance(base, periodic=True):
     return d
 
 
+def tile_xy(xs, ys, c, W):
+    """copy c of the points (km; None for gaps): the strip shifted by c W in y, a sector rotated by c times its angle"""
+    if c == 0:
+        return list(xs), list(ys)
+    if SECTOR:
+        ca, sa = np.cos(c * SECTOR_A), np.sin(c * SECTOR_A)
+        X = [None if a is None or b is None else ca * a - sa * b for a, b in zip(xs, ys)]
+        Y = [None if a is None or b is None else sa * a + ca * b for a, b in zip(xs, ys)]
+        return X, Y
+    return list(xs), [None if b is None else b + c * W / 1e3 for b in ys]
+
+
 def gl_x(base):
     """the grounding line's x positions (km)"""
     return np.array([v for v in gl_line(base)[0] if v is not None], float)
@@ -654,7 +667,7 @@ def _rdp(P, eps):
 def main():
     import plotly.graph_objects as go
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
-    global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD, SECTOR
+    global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD, SECTOR, SECTOR_A
     args = sys.argv[1:]
     if "--vmax-all" in args:
         VMAX_GL, VMAX = False, None
@@ -790,9 +803,15 @@ def main():
     # window around the grounding line
     SECTOR = any(tp is not None and float(np.min(tp["y"])) < -1.0 for _, tp, _, _ in data)
     if SECTOR:
-        if TILE != 1 or STREAM:
-            print("sector footprint: one copy, no streamlines (both assume a strip periodic in y); the window in r")
-        TILE, STREAM = 1, False
+        tp0 = next(tp for _, tp, _, _ in data if tp is not None)
+        ph0 = np.arctan2(tp0["y"], tp0["x"])
+        SECTOR_A = float(ph0.max() - ph0.min())
+        if STREAM:
+            print("sector footprint: no streamlines (they assume a strip periodic in y); the window in r")
+        STREAM = False
+        if TILE > 1:
+            print(f"sector footprint: {TILE} copies, each the last one rotated by the sector angle "
+                  f"({np.degrees(SECTOR_A):.3f} deg): the seams show whether the sides are periodic in (r, angle)")
         if not X_WINDOW:
             X_WINDOW = (-1.0, 1e9)
     if X_WINDOW:
@@ -906,6 +925,9 @@ def main():
                 dy = c * W / 1e3
                 X = np.full((n, 3), np.nan); Y = np.full((n, 3), np.nan); Z = np.full((n, 3), np.nan)
                 X[:, :2] = base["x"][e] / 1e3; Y[:, :2] = base["y"][e] / 1e3 + dy; Z[:, :2] = base["v"][e] - 3.0
+                if SECTOR:
+                    Xr, Yr = tile_xy(list((base["x"][e] / 1e3).ravel()), list((base["y"][e] / 1e3).ravel()), c, W)
+                    X[:, :2] = np.array(Xr, float).reshape(-1, 2); Y[:, :2] = np.array(Yr, float).reshape(-1, 2)
                 lx += [None if np.isnan(v) else round(float(v), 3) for v in X.ravel()]
                 ly += [None if np.isnan(v) else round(float(v), 3) for v in Y.ravel()]
                 lz += [None if np.isnan(v) else round(float(v), 1) for v in Z.ravel()]
@@ -969,7 +991,24 @@ def main():
         if d is None:
             return None
         keys = [k for k, v in d.items() if isinstance(v, np.ndarray) and v.shape == d["x"].shape]
-        out = {k: np.concatenate([d[k] + (c * W if k == "y" else 0) for c in range(TILE)]) for k in keys}
+        if SECTOR:                # copies rotated by the sector angle (velocity components turned with them)
+            rot = lambda c, a, b: (np.cos(c * SECTOR_A) * a - np.sin(c * SECTOR_A) * b,
+                                   np.sin(c * SECTOR_A) * a + np.cos(c * SECTOR_A) * b)
+            out = {}
+            for k in keys:
+                parts = []
+                for c in range(TILE):
+                    if k in ("x", "y"):
+                        X_, Y_ = rot(c, d["x"], d["y"])
+                        parts.append(X_ if k == "x" else Y_)
+                    elif k in ("vx", "vy"):
+                        X_, Y_ = rot(c, d["vx"], d["vy"])
+                        parts.append(X_ if k == "vx" else Y_)
+                    else:
+                        parts.append(d[k])
+                out[k] = np.concatenate(parts)
+        else:
+            out = {k: np.concatenate([d[k] + (c * W if k == "y" else 0) for c in range(TILE)]) for k in keys}
         _, first = np.unique(np.c_[np.round(out["x"], 0), np.round(out["y"], 0)], axis=0, return_index=True)
         first = np.sort(first)
         return {k: v[first] for k, v in out.items()}
@@ -1032,6 +1071,9 @@ def main():
                     n = len(e)
                     X = np.full((n, 3), np.nan); Y = np.full((n, 3), np.nan); Z = np.full((n, 3), np.nan)
                     X[:, :2] = base["x"][e] / 1e3; Y[:, :2] = base["y"][e] / 1e3 + c * W / 1e3
+                    if SECTOR:
+                        Xr, Yr = tile_xy(list((base["x"][e] / 1e3).ravel()), list((base["y"][e] / 1e3).ravel()), c, W)
+                        X[:, :2] = np.array(Xr, float).reshape(-1, 2); Y[:, :2] = np.array(Yr, float).reshape(-1, 2)
                     Z[:, :2] = zz[e] + off
                     lx += [None if np.isnan(v) else round(float(v), 3) for v in X.ravel()]
                     ly += [None if np.isnan(v) else round(float(v), 3) for v in Y.ravel()]
@@ -1041,7 +1083,7 @@ def main():
                                        legendgroup="parts", hoverinfo="skip", scene=sc, showlegend=show,
                                        connectgaps=False))
         if SIDES and top is not None and base is not None:
-            tr += walls(top, base, P)
+            tr += walls(T_, B_, P) if SECTOR else walls(top, base, P)
         if base is not None and "mask" in base:      # both panels (empty without a mask: same traces per state)
             # the cold/temperate boundary of the grounded bed (ColdTempMask +1 temperate, -1 cold; floating counted
             # cold), magenta, on the surface and the base of both panels; hidden until "temperate on" (MASK_IDX)
@@ -1054,8 +1096,9 @@ def main():
                 mx, my, mb, mt = [], [], [], []
             qx, qy, qt, qb = [], [], [], []
             for c in range(TILE):
-                qx += mx + [None]
-                qy += [None if v is None else v + c * W / 1e3 for v in my] + [None]
+                X_, Y_ = tile_xy(mx, my, c, W)
+                qx += X_ + [None]
+                qy += Y_ + [None]
                 qt += [None if v is None else v + 6.0 for v in mt] + [None]
                 qb += [None if v is None else v - 6.0 for v in mb] + [None]
             for z_, nm in ((qt, "cold | temperate bed (on the surface)"), (qb, "cold | temperate bed (on the base)")):
@@ -1069,8 +1112,9 @@ def main():
             ax, ay, at, ab = [], [], [], []
             add = lambda v, a: None if v is None else v + a
             for c in range(TILE):
-                ax += list(gx) + [None]
-                ay += [add(v, c * W / 1e3) for v in gy] + [None]
+                X_, Y_ = tile_xy(list(gx), list(gy), c, W)
+                ax += X_ + [None]
+                ay += Y_ + [None]
                 at += [add(v, 5.0) for v in gzt] + [None]
                 ab += [add(v, -5.0) for v in gzb] + [None]
             unstr = not structured(base["x"], base["y"])
@@ -1091,8 +1135,9 @@ def main():
                                          [base["v"], zt_])
                 bx, by, btop, bbot = [], [], [], []
                 for c in range(TILE):
-                    bx += cx + [None]
-                    by += [add(v, c * W / 1e3) for v in cy] + [None]
+                    X_, Y_ = tile_xy(cx, cy, c, W)
+                    bx += X_ + [None]
+                    by += Y_ + [None]
                     btop += [add(v, 5.0) for v in ct] + [None]
                     bbot += [add(v, -5.0) for v in cb] + [None]
                 nm = f"full-Stokes | SSA boundary ({FS_SSA:g} km beyond the GL)"
@@ -1127,13 +1172,23 @@ def main():
                                    name="streamlines (surface velocity)", legendgroup="stream", hoverinfo="skip",
                                    scene=sc, showlegend=first_panel))
         if top is not None and TILE > 1:
-            m = np.abs(top["y"] - W) < 1
-            o = np.argsort(top["x"][m])
+            if SECTOR:                # side 2 (the largest angle) of copy c - 1 = side 1 of copy c
+                ph_ = np.arctan2(top["y"], top["x"])
+                m = ph_ > ph_.max() - 1e-6
+                o = np.argsort(np.hypot(top["x"][m], top["y"][m]))
+            else:
+                m = np.abs(top["y"] - W) < 1
+                o = np.argsort(top["x"][m])
             sx, sz = top["x"][m][o] / 1e3, top["v"][m][o] + 15.0
+            sy0 = top["y"][m][o] / 1e3
             qx, qy, qz = [], [], []
             for c in range(1, TILE):
-                qx += list(sx) + [None]
-                qy += [c * W / 1e3] * len(sx) + [None]
+                if SECTOR:
+                    X_, Y_ = tile_xy(list(sx), list(sy0), c - 1, W)
+                else:
+                    X_, Y_ = list(sx), [c * W / 1e3] * len(sx)
+                qx += X_ + [None]
+                qy += Y_ + [None]
                 qz += list(sz) + [None]
             tr.append(go.Scatter3d(x=qx, y=qy, z=qz, mode="lines",
                                    line=dict(color="black", width=3, dash="dash"),
@@ -1288,7 +1343,7 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
     asp["y"] = ASPECT["y"] * TILE * (2.25 if COMPARE else 1.0)
     if SECTOR:                    # the strip's scale (y stretched as a 100 km strip is): y in proportion to the width
         ally = np.concatenate([tp["y"] for _, tp, _, _ in data if tp is not None])
-        asp["y"] = ASPECT["y"] * float(np.ptp(ally)) / 100e3
+        asp["y"] = ASPECT["y"] * TILE * float(np.ptp(ally)) / 100e3
     fig = go.Figure(data=first, frames=frames)
     xr_ = [x0, x1]
     if SECTOR:                    # the window is in r: the x axis spans the cropped nodes
