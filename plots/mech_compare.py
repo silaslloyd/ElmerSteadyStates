@@ -61,7 +61,8 @@ class Run:
         txt = open(log, errors="replace").read() if os.path.exists(log) else ""
         st = re.findall(r"MAIN: Time:\s*(\d+)\s*/\s*(\d+)", txt)
         self.done, self.asked = (int(st[-1][0]), int(st[-1][1])) if st else (0, 0)
-        secs = sum(float(s) for s in re.findall(r"Solver time[^\n]*?([-+0-9.eE]+)\s+[-+0-9.eE]+\s*$", txt, re.M))
+        # "Solver time (CPU,REAL) for <solver>:  <cpu>  <real> (s)": the real (wall) times of every solver call
+        secs = sum(float(s) for s in re.findall(r"Solver time \(CPU,REAL\) for [^\n]*?[-+0-9.eE]+\s+([-+0-9.eE]+)\s*\(s\)", txt))
         self.years = self.done * self.dt
         self.cost = 1000 * secs / self.years if self.years and secs else np.nan
         self.finished = "ALL DONE" in txt or (self.asked and self.done >= self.asked)
