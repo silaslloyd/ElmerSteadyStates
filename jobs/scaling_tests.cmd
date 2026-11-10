@@ -243,6 +243,12 @@ elif [ -n "$COUPLED_ITERS" ]; then export ESS_COUPLED_ITERS=$COUPLED_ITERS; fi
 # MASK_IN_LOOP=1 (THERMAL=nowater with FS_COUPLED=1): the cold/temperate mask and the water sheet in the coupled loop,
 # from the latest iteration (a node heated past melting turns temperate within the step, not a step later)
 if [ "$MASK_IN_LOOP" = 1 ]; then export ESS_MASK_IN_LOOP=1; echo "  cold/temperate mask and water sheet in the coupled loop"; fi
+# SSA_IN_LOOP=1 (with FS_COUPLED=1): the SSA shelf (re-floating, plug flow, interface strain rate) every coupled iteration
+if [ "$SSA_IN_LOOP" = 1 ]; then export ESS_SSA_IN_LOOP=1; echo "  SSA shelf in the coupled loop"; fi
+# SSA_STRESS=0: the FS/SSA interface keeps the free-floating stress instead of the SSA shelf's (a test)
+if [ "$SSA_STRESS" = 0 ]; then export ESS_FS_SSA_STRESS=0; echo "  FS/SSA interface: free-floating stress (not the SSA's)"; fi
+# SSA_RELAX=w: the relaxation of the interface strain rate per call (default 0.25)
+if [ -n "$SSA_RELAX" ]; then export ESS_FS_SSA_RELAX=$SSA_RELAX; echo "  FS/SSA interface strain-rate relaxation $SSA_RELAX"; fi
 # STEP_CHECK=1: elmer/StepCheck.F90 after every step ([elmer] step_check): the advective CFL of the surface and the
 # floating base, the largest change per step, the free-surface relaxation number, in the Elmer log ("step check")
 [ "$STEP_CHECK" = 1 ] && export ESS_STEP_CHECK=1 && echo "  step check on"

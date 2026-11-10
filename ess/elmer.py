@@ -929,10 +929,17 @@ End
         ssa_periodic = self.periodic_sides and os.environ.get("ESS_FS_SSA_PERIODIC", "1") != "0"
         walls = (os.environ["ESS_FS_SSA_WALLS"] != "0") if os.environ.get("ESS_FS_SSA_WALLS") else not ssa_periodic
         ssa_stress = os.environ.get("ESS_FS_SSA_STRESS", "1") != "0"
+        # ESS_SSA_IN_LOOP=1 (with the coupled loop, ESS_FS_COUPLED): the SSA shelf (re-floating the passive columns,
+        # its plug flow written into the Stokes solution, the interface strain rate) every coupled iteration instead of
+        # once before the step, so the shelf and the interface stress follow the iterated full-Stokes strip
+        ssa_loop = os.environ.get("ESS_SSA_IN_LOOP") == "1"
+        if ssa_loop and not (self.fs_coupled or int(os.environ.get("ESS_COUPLED_ITERS") or 1) > 1):
+            raise ValueError("ESS_SSA_IN_LOOP needs coupled iterations (ESS_FS_COUPLED=1 / ESS_COUPLED_ITERS > 1)")
         if ssa:     # the SSA shelf (fs_ssa_shelf): right after the distance, before every time step, on the ice base
             sol += (f"\nSolver {n + 1}\n"
-                    '  Exec Solver = "Before Timestep"\n'
-                    '  Equation = "FS SSA shelf"\n'
+                    + ('  Exec Solver = "Always"   ! ESS_SSA_IN_LOOP: every coupled iteration\n' if ssa_loop else
+                       '  Exec Solver = "Before Timestep"\n')
+                    + '  Equation = "FS SSA shelf"\n'
                     f'  Procedure = File "{lib}" "FSSSAShelf"\n'
                     '  Variable = -dofs 2 "SSA Velocity"\n'
                     '  Exported Variable 1 = -dofs 4 "SSA Strain"\n'
