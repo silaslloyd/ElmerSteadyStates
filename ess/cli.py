@@ -961,8 +961,12 @@ def cmd_transfer(args):
     tgt = dst
     if c.get("sector_angle") and getattr(args, "keep_pattern", False) and not is_sector(src):
         dv = float(c["sector_divide_km"]) * 1e3 if c.get("sector_divide_km") else None
+        sf = os.path.join(cfg["paths"]["case_dir"], "sector_side1.txt")
+        if c.get("sector_cut_seed") is not None and not os.path.exists(sf):
+            raise SystemExit(f"transfer: a cut sector needs {sf} (ess setup writes it)")
+        side = tuple(np.loadtxt(sf, ndmin=2).T) if c.get("sector_cut_seed") is not None else None
         x, frozen, diag = transfer_sector_pattern(src, dst, float(c["sector_angle"]), dv,
-                                                  copies=int(getattr(args, "pattern_copies", 1) or 1))
+                                                  copies=int(getattr(args, "pattern_copies", 1) or 1), side=side)
         out = args.out or os.path.join(cfg["_work"], "start_pattern.npz")
         save_state(out, dst.layout, x, src.p, frozen, diag, source=args.source)
         log.info(f"wrote {out} (p = {src.p:g}; the strip's pattern kept)")

@@ -240,14 +240,16 @@ def transfer(src: SavedState, dst: SavedState, x_end_m: float | None = None, edg
 
 
 def transfer_sector_pattern(src: SavedState, dst: SavedState, angle_deg: float, divide: float | None = None,
-                            copies: int = 1):
+                            copies: int = 1, side=None):
     """A STRIP state carried onto a SECTOR keeping its 2D pattern (ice streams, the cold/temperate bed): the sector
     node at distance s from the divide (r, or divide - r for an inverted sector) and arc fraction
     eta = (angle + A/2) / A in 0..1 takes the strip's column at x = s, y = ymin + eta W (the nearest one); every level
     of the extruded column is copied level for level (both meshes extruded with the same levels, ice and rock), so
     temperature, the cold/temperate mask, the grounded mask, Zs, Zb and the bed stay consistent with each other.
     The two periodic sides (eta = 0, 1) map to the strip's periodic sides (y = 0, W). Returns (x, frozen, diag) for
-    dst (diag: dst's, with the strip's velocity and pressure for a warm start)."""
+    dst (diag: dst's, with the strip's velocity and pressure for a warm start).
+    side: (r, phi) of side 1 of a CUT sector (jagged sides, ess/case.py sector_geo cut_seed; case/sector_side1.txt):
+    eta measured from that side at the node's radius, so both jagged sides map exactly to eta = 0 and 1."""
     from scipy.spatial import cKDTree
     fs, fd = _all_fields(src), _all_fields(dst)
 
@@ -268,7 +270,12 @@ def transfer_sector_pattern(src: SavedState, dst: SavedState, angle_deg: float, 
     A = np.radians(float(angle_deg))
     r, ph = np.hypot(xd, yd), np.arctan2(yd, xd)
     sd = (divide - r) if divide else r
-    eta = np.clip((ph + A / 2) / A, 0.0, 1.0)
+    if side is not None:
+        Rs, Ps = side
+        eta = np.clip((ph - np.interp(r, Rs, Ps)) / A, 0.0, 1.0)
+        log.info("transfer (pattern kept): arc fraction from the cut sector's jagged side 1")
+    else:
+        eta = np.clip((ph + A / 2) / A, 0.0, 1.0)
     if copies > 1:                    # the strip's pattern `copies` times across the sector (periodic in eta * copies)
         eta = np.mod(eta * copies, 1.0)
     y0, W = float(ys.min()), float(np.ptp(ys))
