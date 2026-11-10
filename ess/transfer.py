@@ -239,7 +239,8 @@ def transfer(src: SavedState, dst: SavedState, x_end_m: float | None = None, edg
     return x_new, frozen
 
 
-def transfer_sector_pattern(src: SavedState, dst: SavedState, angle_deg: float, divide: float | None = None):
+def transfer_sector_pattern(src: SavedState, dst: SavedState, angle_deg: float, divide: float | None = None,
+                            copies: int = 1):
     """A STRIP state carried onto a SECTOR keeping its 2D pattern (ice streams, the cold/temperate bed): the sector
     node at distance s from the divide (r, or divide - r for an inverted sector) and arc fraction
     eta = (angle + A/2) / A in 0..1 takes the strip's column at x = s, y = ymin + eta W (the nearest one); every level
@@ -268,6 +269,8 @@ def transfer_sector_pattern(src: SavedState, dst: SavedState, angle_deg: float, 
     r, ph = np.hypot(xd, yd), np.arctan2(yd, xd)
     sd = (divide - r) if divide else r
     eta = np.clip((ph + A / 2) / A, 0.0, 1.0)
+    if copies > 1:                    # the strip's pattern `copies` times across the sector (periodic in eta * copies)
+        eta = np.mod(eta * copies, 1.0)
     y0, W = float(ys.min()), float(np.ptp(ys))
     _, nc = cKDTree(np.c_[xs, ys]).query(np.c_[sd, y0 + eta * W])        # dst column -> nearest src column (0-based)
     log.info(f"transfer (pattern kept): {nbd} sector columns from {nbs} strip columns (strip {W / 1e3:.0f} km wide; "

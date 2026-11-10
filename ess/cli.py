@@ -961,7 +961,8 @@ def cmd_transfer(args):
     tgt = dst
     if c.get("sector_angle") and getattr(args, "keep_pattern", False) and not is_sector(src):
         dv = float(c["sector_divide_km"]) * 1e3 if c.get("sector_divide_km") else None
-        x, frozen, diag = transfer_sector_pattern(src, dst, float(c["sector_angle"]), dv)
+        x, frozen, diag = transfer_sector_pattern(src, dst, float(c["sector_angle"]), dv,
+                                                  copies=int(getattr(args, "pattern_copies", 1) or 1))
         out = args.out or os.path.join(cfg["_work"], "start_pattern.npz")
         save_state(out, dst.layout, x, src.p, frozen, diag, source=args.source)
         log.info(f"wrote {out} (p = {src.p:g}; the strip's pattern kept)")
@@ -1308,6 +1309,8 @@ def main(argv=None):
     s.add_argument("--from", dest="source", required=True,
                    help="converged state to carry over (.npz, may come from another config)")
     s.add_argument("--out")
+    s.add_argument("--pattern-copies", type=int, default=1,
+                   help="with --keep-pattern: the strip's pattern this many times across the sector")
     s.add_argument("--keep-pattern", action="store_true",
                    help="sector target, strip source: keep the strip's 2D pattern (arc fraction -> y), level by level, "
                         "instead of averaging across the strip")
