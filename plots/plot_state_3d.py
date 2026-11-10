@@ -602,14 +602,24 @@ def streamlines(top, spacing_km, width_m, periodic=True):
     key = id(top)
     if key in _STREAM_CACHE:
         return _STREAM_CACHE[key]
-    from scipy.interpolate import LinearNDInterpolator
-    from scipy.spatial import Delaunay
-    import hashlib
+    from scipy.spatial import Delaunay           # (no scipy.interpolate: it crashed with "Illegal instruction"
+    import hashlib                               # on pilsen; the barycentric interpolation is done here instead)
     x, y = np.asarray(top["x"], float), np.asarray(top["y"], float)
     tk = "stream" + hashlib.sha1(np.round(x, 1).tobytes() + np.round(y, 1).tobytes()).hexdigest()
     if tk not in _TRI_CACHE:
         _TRI_CACHE[tk] = Delaunay(np.c_[x, y])
-    f = LinearNDInterpolator(_TRI_CACHE[tk], np.c_[top["vx"], top["vy"], top["v"]])
+    tri_, vals_ = _TRI_CACHE[tk], np.c_[top["vx"], top["vy"], top["v"]]
+
+    def f(Q):                                    # linear on the Delaunay triangles, NaN outside
+        k = tri_.find_simplex(Q)
+        out = np.full((len(Q), 3), np.nan)
+        ok = k >= 0
+        if ok.any():
+            T = tri_.transform[k[ok]]
+            b = np.einsum("nij,nj->ni", T[:, :2], Q[ok] - T[:, 2])
+            w = np.c_[b, 1.0 - b.sum(1)]
+            out[ok] = np.einsum("ni,nij->nj", w, vals_[tri_.simplices[k[ok]]])
+        return out
     x0, x1, y0 = x.min(), x.max(), y.min()
     W = width_m if width_m > 0 else float(np.ptp(y))
     n = max(1, int(round(W / (spacing_km * 1e3))))
