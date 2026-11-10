@@ -237,3 +237,70 @@ def transfer(src: SavedState, dst: SavedState, x_end_m: float | None = None, edg
         msg += f"; grounding line at {x_gl / 1e3:.2f} km ({int((gm > -0.5).sum())} grounded bed nodes)"
     log.info(f"transfer: {len(gT)} temperatures, {len(gZ)} surface nodes; " + msg)
     return x_new, frozen
+
+
+def transfer_sector_pattern(src: SavedState, dst: SavedState, angle_deg: float, divide: float | None = None):
+    """A STRIP state carried onto a SECTOR keeping its 2D pattern (ice streams, the cold/temperate bed): the sector
+    node at distance s from the divide (r, or divide - r for an inverted sector) and arc fraction
+    eta = (angle + A/2) / A in 0..1 takes the strip's column at x = s, y = ymin + eta W (the nearest one); every level
+    of the extruded column is copied level for level (both meshes extruded with the same levels, ice and rock), so
+    temperature, the cold/temperate mask, the grounded mask, Zs, Zb and the bed stay consistent with each other.
+    The two periodic sides (eta = 0, 1) map to the strip's periodic sides (y = 0, W). Returns (x, frozen) for dst."""
+    from scipy.spatial import cKDTree
+    fs, fd = _all_fields(src), _all_fields(dst)
+
+    def cols(s_, f_):
+        gz, _ = _block(s_, "Zs")
+        nb = len(gz)
+        g1, X = f_[find_name(f_, "coordinate 1")]
+        Y = _lookup(f_, "coordinate 2", g1)
+        o = np.argsort(g1)
+        g1, X, Y = g1[o], X[o], Y[o]
+        if not np.array_equal(g1[:nb], np.arange(1, nb + 1)):
+            raise SystemExit("transfer: node ids are not 1.. per level (not an extruded footprint)")
+        return nb, X[:nb], Y[:nb], len(g1)
+    nbs, xs, ys, nns = cols(src, fs)
+    nbd, xd, yd, nnd = cols(dst, fd)
+    if nns // nbs != nnd // nbd or nns % nbs or nnd % nbd:
+        raise SystemExit(f"transfer: different extruded levels ({nns // nbs} vs {nnd // nbd})")
+    A = np.radians(float(angle_deg))
+    r, ph = np.hypot(xd, yd), np.arctan2(yd, xd)
+    sd = (divide - r) if divide else r
+    eta = np.clip((ph + A / 2) / A, 0.0, 1.0)
+    y0, W = float(ys.min()), float(np.ptp(ys))
+    _, nc = cKDTree(np.c_[xs, ys]).query(np.c_[sd, y0 + eta * W])        # dst column -> nearest src column (0-based)
+    log.info(f"transfer (pattern kept): {nbd} sector columns from {nbs} strip columns (strip {W / 1e3:.0f} km wide; "
+             f"sector arc fraction -> y); distance from the divide {sd.min() / 1e3:.1f} .. {sd.max() / 1e3:.1f} km, "
+             f"strip x {xs.min() / 1e3:.1f} .. {xs.max() / 1e3:.1f} km")
+
+    def src_of(gd):                                   # dst gids -> the src gids at the same level of the mapped column
+        lvl, c = (gd - 1) // nbd, (gd - 1) % nbd
+        return lvl * nbs + nc[c] + 1
+
+    def copy(rec_s, gd):
+        gsrc, vsrc = rec_s
+        full = np.full(nns + 1, np.nan)
+        full[gsrc] = vsrc
+        v = full[src_of(gd)]
+        if np.isnan(v).any():
+            raise SystemExit("transfer: a mapped node without a source value")
+        return v
+    x_new = dst.x.copy()
+    sl = dst.layout.slices()
+    for b in dst.layout.blocks:
+        x_new[sl[b.name]] = copy(_block(src, b.name), b.gids)
+    frozen = dict(dst.frozen)
+    for k, (gd, _) in dst.frozen.items():
+        try:
+            frozen[k] = (gd, copy(src.frozen[find_name(src.frozen, k)], gd))
+        except KeyError:
+            log.info(f"transfer: frozen {k} not in the source, the target's kept")
+    gm = frozen[find_name(frozen, "GroundedMask")][1] if any(k.lower() == "groundedmask" for k in frozen) else None
+    ct = frozen[find_name(frozen, "ColdTempMask")][1] if any(k.lower() == "coldtempmask" for k in frozen) else None
+    msg = ""
+    if gm is not None:
+        msg += f"{int((gm > -0.5).sum())} grounded of {len(gm)} base nodes"
+    if ct is not None:
+        msg += f", {int((ct > 0).sum())} temperate"
+    log.info(f"transfer (pattern kept): {msg}")
+    return x_new, frozen

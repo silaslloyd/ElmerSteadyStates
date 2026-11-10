@@ -957,8 +957,15 @@ def cmd_transfer(args):
         from .case import eval_lua_parameters
         P = eval_lua_parameters(cfg["_path"](c.get("parameters", "case/parameters.lua")))
         x_end_m = x_end * P["L"]
-    from .transfer import is_sector, radial, with_bed_of
+    from .transfer import is_sector, radial, with_bed_of, transfer_sector_pattern
     tgt = dst
+    if c.get("sector_angle") and getattr(args, "keep_pattern", False) and not is_sector(src):
+        dv = float(c["sector_divide_km"]) * 1e3 if c.get("sector_divide_km") else None
+        x, frozen = transfer_sector_pattern(src, dst, float(c["sector_angle"]), dv)
+        out = args.out or os.path.join(cfg["_work"], "start_pattern.npz")
+        save_state(out, dst.layout, x, src.p, frozen, dst.diag, source=args.source)
+        log.info(f"wrote {out} (p = {src.p:g}; the strip's pattern kept)")
+        return
     if c.get("sector_angle"):             # a sector: everything by radius, the bed the source's at x = r
         dv = float(c["sector_divide_km"]) * 1e3 if c.get("sector_divide_km") else None
         if is_sector(src):                # a state of this sector set-up (e.g. its own average)
@@ -1301,6 +1308,9 @@ def main(argv=None):
     s.add_argument("--from", dest="source", required=True,
                    help="converged state to carry over (.npz, may come from another config)")
     s.add_argument("--out")
+    s.add_argument("--keep-pattern", action="store_true",
+                   help="sector target, strip source: keep the strip's 2D pattern (arc fraction -> y), level by level, "
+                        "instead of averaging across the strip")
     s.set_defaults(fn=cmd_transfer)
 
     s = sub.add_parser("stability")
