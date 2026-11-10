@@ -285,7 +285,8 @@ fi
 [ "$KEEP_WARM" = 1 ] && opts="$opts --add-diag Pressure"
 # FS_SSA=km: the moving full-Stokes region ([elmer] fs_ssa_km): ice more than this beyond the current grounding line
 # is passive for Stokes, its face carries the free-floating shelf's stress
-[ -n "$FS_SSA" ] && export ESS_FS_SSA_KM=$FS_SSA && echo "moving full-Stokes region: up to $FS_SSA km beyond the grounding line"
+if [ "$FS_SSA" = none ] || [ "$FS_SSA" = 0 ]; then echo "no SSA: the whole shelf in full Stokes"
+elif [ -n "$FS_SSA" ]; then export ESS_FS_SSA_KM=$FS_SSA && echo "moving full-Stokes region: up to $FS_SSA km beyond the grounding line"; fi
 # FS_SSA_TARGET=loads (default: the shelf force added to the Stokes right-hand side) | elmer (Elmer's Passive Target
 # boundary) | 0 (none: the interface stress free; tests)
 [ -n "$FS_SSA_TARGET" ] && export ESS_FS_SSA_TARGET=$FS_SSA_TARGET && echo "  interface shelf stress: $FS_SSA_TARGET"
