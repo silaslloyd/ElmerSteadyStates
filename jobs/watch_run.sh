@@ -11,6 +11,7 @@ w=$(grep -o "runs continue from [^:]*" $f 2>/dev/null | head -1 | sed 's|runs co
 [ -n "$w" ] || w=work
 # this job's newest run directory: by its label (_job<id>_), else by the job id in its sif, else the newest of all
 D=$(ls -td $w/runs/*_job${j}_*/ 2>/dev/null | head -1)
+[ -n "$D" ] || D=$(ls -td work/*/runs/*_job${j}_*/ 2>/dev/null | head -1)     # any work dir (e.g. a warm-up)
 [ -n "$D" ] || D=$(for r in $(ls -td $w/runs/*/ 2>/dev/null | head -30); do grep -q "ESS scaling .* $j\b" ${r}run.sif 2>/dev/null && { echo $r; break; }; done)
 [ -n "$D" ] || D=$(ls -td $w/runs/*/ 2>/dev/null | head -1)
 L=${D}elmer.log
