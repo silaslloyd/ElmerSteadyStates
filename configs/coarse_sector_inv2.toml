@@ -1,5 +1,6 @@
-# "Coarse inverted sector x 2": configs/coarse_sector_inv.toml on a sector twice as wide (18.765 deg), the same radii:
-# the front arc 200 km, the divide arc 500 km, divide to front 916 km. Everything else the same. Started from the
+# "Coarse inverted sector x 2, cyclic": configs/coarse_sector_inv38.toml (38 copies make the circle) on a sector twice
+# as wide: 19 copies, 18.947 deg, the same radii (front r 604.8 km, divide r 1520.8 km, 916 km apart), front arc 200 km,
+# divide arc 502.9 km. Everything else the same. Started from the
 # strip pattern twice across (ess transfer --keep-pattern --pattern-copies 2), i.e. the 1x run's start tiled twice:
 # whether the run keeps that 2-fold periodicity or breaks it.
 #
@@ -24,10 +25,10 @@ parameters = "case/parameters_fine2x.lua"      # physical parameters (the same a
 # element size (m) at points along x (km), graded linearly between (ess/case.py mirror_geo)
 res_points = [[0, 5000], [100, 1000], [800, 1000], [830, 5000], [916, 5000]]   # along s (from the divide)
 front_km = 916.0                        # the calving front's distance from the divide (L = 816 km)
-sector_angle = 18.764993290310806       # TWICE configs/coarse_sector_inv.toml's 9.3825 deg: the same radii, both arcs doubled
-sector_divide_km = 1526.6666666666667   # the divide: the outer arc at this radius (inverted sector); the front at
-                                        # sector_divide_km - front_km = 610.67 km
-accumulation_factor = 0.650             # the strip's flux at the grounding line (see the top)
+sector_copies = 19                      # 19 copies make the circle: 18.947 deg, twice configs/coarse_sector_inv38.toml
+sector_inverted = true                  # the divide the outer arc
+sector_front_arc_km = 200.0             # front arc 200 km (r = 604.8 km), divide arc 502.9 km (r = 1520.8 km)
+accumulation_factor = "match"           # the strip's grounding-line flux: 0.649 (as coarse_sector_inv38)
 width = 100000.0                        # m: the front arc (only the GLDistance seam band: width / y_elements)
 y_elements = 50                         # only the seam row band in GLDistance: width / y_elements = 2 km (~2 rows)
 partitioner = "metisper"                # METIS on the (r, arc) map of the sector, periodic partners together
