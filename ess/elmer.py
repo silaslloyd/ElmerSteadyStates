@@ -929,10 +929,12 @@ End
         ssa_periodic = self.periodic_sides and os.environ.get("ESS_FS_SSA_PERIODIC", "1") != "0"
         walls = (os.environ["ESS_FS_SSA_WALLS"] != "0") if os.environ.get("ESS_FS_SSA_WALLS") else not ssa_periodic
         ssa_stress = os.environ.get("ESS_FS_SSA_STRESS", "1") != "0"
-        # ESS_SSA_IN_LOOP=1 (with the coupled loop, ESS_FS_COUPLED): the SSA shelf (re-floating the passive columns,
-        # its plug flow written into the Stokes solution, the interface strain rate) every coupled iteration instead of
-        # once before the step, so the shelf and the interface stress follow the iterated full-Stokes strip
-        ssa_loop = os.environ.get("ESS_SSA_IN_LOOP") == "1"
+        # The SSA shelf (re-floating the passive columns, its plug flow written into the Stokes solution, the interface
+        # strain rate) every coupled iteration instead of once before the step, so the shelf and the interface stress
+        # follow the iterated full-Stokes strip: the DEFAULT with the coupled loop (fs_coupled, adapted FSSA; run
+        # once before the step, the shelf beside the iterated strip blew up at dt50 on the coupled-loop runs of
+        # 10 Nov 2026). ESS_SSA_IN_LOOP=0: once before the step (the old way); =1: in the loop.
+        ssa_loop = os.environ.get("ESS_SSA_IN_LOOP", "1" if self.fs_coupled else "0") == "1"
         if ssa_loop and not (self.fs_coupled or int(os.environ.get("ESS_COUPLED_ITERS") or 1) > 1):
             raise ValueError("ESS_SSA_IN_LOOP needs coupled iterations (ESS_FS_COUPLED=1 / ESS_COUPLED_ITERS > 1)")
         if ssa:     # the SSA shelf (fs_ssa_shelf): right after the distance, before every time step, on the ice base

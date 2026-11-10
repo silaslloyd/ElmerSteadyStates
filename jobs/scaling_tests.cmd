@@ -243,8 +243,12 @@ elif [ -n "$COUPLED_ITERS" ]; then export ESS_COUPLED_ITERS=$COUPLED_ITERS; fi
 # MASK_IN_LOOP=1 (THERMAL=nowater with FS_COUPLED=1): the cold/temperate mask and the water sheet in the coupled loop,
 # from the latest iteration (a node heated past melting turns temperate within the step, not a step later)
 if [ "$MASK_IN_LOOP" = 1 ]; then export ESS_MASK_IN_LOOP=1; echo "  cold/temperate mask and water sheet in the coupled loop"; fi
-# SSA_IN_LOOP=1 (with FS_COUPLED=1): the SSA shelf (re-floating, plug flow, interface strain rate) every coupled iteration
-if [ "$SSA_IN_LOOP" = 1 ]; then export ESS_SSA_IN_LOOP=1; echo "  SSA shelf in the coupled loop"; fi
+# the SSA shelf (re-floating, plug flow, interface strain rate) every coupled iteration: the default with FS_COUPLED=1;
+# SSA_IN_LOOP=0 runs it once before the step instead (the old way)
+if [ -n "$SSA_IN_LOOP" ]; then export ESS_SSA_IN_LOOP=$SSA_IN_LOOP; fi
+if [ "$FS_COUPLED" = 1 ]; then
+    if [ "$SSA_IN_LOOP" = 0 ]; then echo "  SSA shelf once before the step (SSA_IN_LOOP=0)"; else echo "  SSA shelf in the coupled loop"; fi
+fi
 # SSA_STRESS=0: the FS/SSA interface keeps the free-floating stress instead of the SSA shelf's (a test)
 if [ "$SSA_STRESS" = 0 ]; then export ESS_FS_SSA_STRESS=0; echo "  FS/SSA interface: free-floating stress (not the SSA's)"; fi
 # SSA_RELAX=w: the relaxation of the interface strain rate per call (default 0.25)
