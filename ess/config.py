@@ -32,6 +32,7 @@ def load_config(path: str) -> dict:
     cfg.setdefault("elmer", {})
     cfg.setdefault("state", {"variables": ["Temperature", "Zs"]})
     cfg.setdefault("parameter", {"name": "Tsurf", "value": 0.0, "scale": 1.0})
+    _sector_derived(cfg.get("case", {}))
     cfg["_repo"] = REPO
     cfg["_config"] = os.path.abspath(path)
     work = cfg["paths"].get("work_dir", "work/" + os.path.splitext(os.path.basename(path))[0])
@@ -47,6 +48,39 @@ def load_config(path: str) -> dict:
     cfg["paths"]["case_dir"] = fmt["case_dir"] = p(cfg["paths"].get("case_dir", "{work}/case"))
     os.makedirs(cfg["_work"], exist_ok=True)
     return cfg
+
+
+def _sector_derived(c: dict) -> None:
+    """[case] sector_copies = N: a sector that tiles the full circle, angle 360 / N degrees (sector_angle derived).
+    With sector_inverted = true (the divide the outer arc) and sector_front_arc_km (default 100): the front arc that
+    long, so the front at r = front_arc / angle and the divide at that + front_km (sector_divide_km derived).
+    accumulation_factor = "match": the factor that gives the sector the strip's flux per unit arc at the grounding line
+    s = sector_gl_km (default 791) from the divide (a uniform accumulation: sector flux a f (r_d^2 - r^2) / (2 r) in an
+    inverted sector, a f (r^2 - r0^2) / (2 r) in a normal one, against the strip's a s)."""
+    import math
+    n = c.get("sector_copies")
+    if n:
+        n = int(n)
+        if "sector_angle" in c and abs(float(c["sector_angle"]) - 360.0 / n) > 1e-9:
+            raise SystemExit(f"[case] sector_copies = {n} and sector_angle = {c['sector_angle']} disagree")
+        c["sector_angle"] = 360.0 / n
+        th = 2 * math.pi / n
+        if c.get("sector_inverted"):
+            if "front_km" not in c:
+                raise SystemExit("[case] sector_inverted needs front_km (the front's distance from the divide)")
+            rf = float(c.get("sector_front_arc_km", 100.0)) / th
+            c["sector_divide_km"] = rf + float(c["front_km"])
+    if str(c.get("accumulation_factor", "")).lower() == "match":
+        if not c.get("sector_angle"):
+            raise SystemExit('[case] accumulation_factor = "match" needs a sector')
+        s_gl = float(c.get("sector_gl_km", 791.0))
+        if c.get("sector_divide_km"):
+            rd = float(c["sector_divide_km"])
+            r = rd - s_gl
+            c["accumulation_factor"] = 2 * r * s_gl / (rd ** 2 - r ** 2)
+        else:
+            r0 = float(c.get("sector_r0_km", 15.0))
+            c["accumulation_factor"] = 2 * s_gl ** 2 / (s_gl ** 2 - r0 ** 2)
 
 
 def setup_logging(cfg, verbose=False):
