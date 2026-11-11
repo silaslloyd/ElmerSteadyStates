@@ -159,31 +159,8 @@ def frame_surfaces(path):
                 d[n] = F[f"{name}_{n}"][k].astype(float)
         if f"{name}_bed" in F:
             d["bed"] = F[f"{name}_bed"].astype(float)
-        if name == "base" and "fnoise_a" in F:
-            d["fnoise"] = fnoise_field(F, x, y)
         return d
     return side("top"), side("base"), float(F["frame_times"][k])
-
-
-_FN_CACHE = {}
-
-
-def fnoise_field(F, x, y):
-    """the run's friction noise factor 1 + amp n(x, y) at the nodes (x, y) (vtu_frames: the tables of its
-    parameters.lua; the same sum as the Lua ess_fnoise of ess/elmer.py)"""
-    key = (id(F), len(x))
-    if key not in _FN_CACHE:
-        K, M, Ph, A_ = (F[f"fnoise_{n}"].astype(float) for n in ("k", "m", "p", "a"))
-        sec, g, amp = F["fnoise_geo"].astype(float)
-        if sec > 0:
-            xi, u = np.hypot(x, y), (np.arctan2(y, x) + 0.5 * g) / g
-        else:
-            xi, u = x, y / g
-        n = np.zeros(len(x))
-        for kk in range(len(A_)):
-            n += A_[kk] * np.cos(2 * np.pi * M[kk] * u + K[kk] * xi + Ph[kk])
-        _FN_CACHE[key] = 1.0 + amp * n
-    return _FN_CACHE[key]
 
 
 def vtu_steps(d):
@@ -1519,31 +1496,6 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
                               buttons=[dict(label="mesh off", method="restyle", args=[{"visible": False}, midx]),
                                        dict(label="mesh on", method="restyle", args=[{"visible": True}, midx])])]
         print(f"  base mesh toggle on {len(midx)} panel(s) (drawn at the first state's base)")
-    # the run's friction noise (vtu_frames: from its parameters.lua) as an option on the base: one surface per panel
-    # AFTER the frames' traces, at the first state's base (the noise does not change in time), hidden; "noise on"
-    # shows it and hides the base surfaces (their slots: the frames never set visibility)
-    b0_ = data[0][2]
-    if b0_ is not None and "fnoise" in b0_:
-        nidx, bidx = [], [n for n, t_ in enumerate(first) if getattr(t_, "name", None) == "base Zb"]
-        amp_ = float(np.nanmax(np.abs(b0_["fnoise"] - 1.0))) or 0.1
-        for q, P in enumerate(panels):
-            Bn = tiled(b0_)
-            i, j, k = triangles(Bn["x"], Bn["y"])
-            t_ = go.Mesh3d(x=Bn["x"] / 1e3, y=Bn["y"] / 1e3, z=Bn["v"] - 1.0, i=i, j=j, k=k, intensity=Bn["fnoise"],
-                           colorscale="RdBu_r", cmin=1.0 - amp_, cmax=1.0 + amp_, showscale=(q == 0),
-                           colorbar=dict(title="friction factor", x=-0.06, len=0.6), name="friction noise",
-                           showlegend=False, scene=P[6], visible=False, customdata=Bn["fnoise"],
-                           hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>friction x %{customdata:.3f}<extra></extra>")
-            nidx.append(len(first))
-            first.append(t_)
-        allidx = nidx + bidx
-        menus = menus + [dict(type="buttons", direction="right", x=0.28, y=1.06, xanchor="left", yanchor="bottom",
-                              showactive=True, pad=dict(r=4, t=0), active=0,
-                              buttons=[dict(label="noise off", method="restyle",
-                                            args=[{"visible": [False] * len(nidx) + [True] * len(bidx)}, allidx]),
-                                       dict(label="noise on", method="restyle",
-                                            args=[{"visible": [True] * len(nidx) + [False] * len(bidx)}, allidx])])]
-        print(f"  friction noise option on the base ({len(nidx)} panel(s), factor {1 - amp_:.3f} .. {1 + amp_:.3f})")
     frames = [go.Frame(data=lean(tidy(per[n] if n else frame0)), name=str(n))
               for n in range(len(data))]
     steps = [dict(method="animate", label=l, args=[[str(n)], dict(mode="immediate", frame=dict(duration=0, redraw=True),
