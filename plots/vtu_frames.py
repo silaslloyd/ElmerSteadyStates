@@ -4,9 +4,11 @@ The VTU output of one long Elmer run (ESS_VTU_EVERY / jobs VTU_EVERY=N: base_t*.
 steps, one piece per rank) packed into ONE small file for plots/plot_state_3d.py: the surface and the base of every
 output step, nodes shared between partitions once, in the same (x, y) order in every frame, float32.
 
-    python3 plots/vtu_frames.py RUNDIR [OUT.npz] [--t0 YEARS] [--tmax YEARS]
+    python3 plots/vtu_frames.py RUNDIR [OUT.npz] [--t0 YEARS] [--tmax YEARS] [--every N | --every-yr Y]
         (default OUT: RUNDIR/../<run dir name>_frames.npz; --t0: added to the times, e.g. a run continued from a
-        checkpoint at year 1000; --tmax: only the frames up to that time (after --t0), e.g. to join two runs)
+        checkpoint at year 1000; --tmax: only the frames up to that time (after --t0), e.g. to join two runs;
+        --every N: every N-th output (and the last); --every-yr Y: the first, then outputs at multiples of Y yr, and
+        the last: a smaller file for long runs)
     python3 plots/plot_state_3d.py OUT.npz [--full ...]    (on the Mac: one frame per output step on the slider)
 
 Re-running it adds the steps written since (it rereads everything: a few seconds per step). The time of frame k is
@@ -86,16 +88,20 @@ def surface(path):
 
 def main():
     args = sys.argv[1:]
-    t0, tmax = 0.0, None
-    for opt in ("--t0", "--tmax"):
+    t0, tmax, keep_every, keep_yr = 0.0, None, 1, None
+    for opt in ("--t0", "--tmax", "--every", "--every-yr"):
         if opt in args:
             k = args.index(opt)
             v = float(args[k + 1])
             args = args[:k] + args[k + 2:]
             if opt == "--t0":
                 t0 = v
-            else:
+            elif opt == "--tmax":
                 tmax = v
+            elif opt == "--every":
+                keep_every = max(1, int(v))
+            else:
+                keep_yr = v
     if not args:
         raise SystemExit(__doc__)
     sys.argv = [sys.argv[0]] + args
@@ -111,6 +117,16 @@ def main():
     if sched:                                     # several timestep intervals (e.g. denser output at first)
         print(f"  output steps from the run's schedule: {', '.join(map(str, sched[:8]))}{', ..' if len(sched) > 8 else ''}")
         step_of = lambda k: sched[k - 1] if k <= len(sched) else sched[-1] + (k - len(sched)) * every
+    if keep_every > 1 or keep_yr:                 # thin the outputs before reading them
+        kof = lambda f: int(re.findall(r"_t(\d+)", os.path.basename(f))[0])
+        last = len(steps) - 1
+        if keep_yr:
+            ty = lambda f: t0 + step_of(kof(f)) * dt
+            steps = [f for n, f in enumerate(steps) if n in (0, last)
+                     or abs(ty(f) / keep_yr - round(ty(f) / keep_yr)) < 1e-6]
+        else:
+            steps = [f for n, f in enumerate(steps) if n % keep_every == 0 or n == last]
+        print(f"  {len(steps)} outputs kept ({'every ' + str(keep_every) if keep_every > 1 else f'every {keep_yr:g} yr'})")
     frames = {"top": [], "base": []}
     times = []
     for f in steps:
