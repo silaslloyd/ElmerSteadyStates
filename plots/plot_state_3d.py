@@ -1326,7 +1326,40 @@ def main():
                                    name="periodic seam (y = W of one copy = y = 0 of the next)", hoverinfo="skip",
                                    scene=sc, showlegend=first_panel))
         return tr
-    first = traces(data[0][1], data[0][2])
+    # every state's traces, ALIGNED: plotly matches a frame's traces to the figure's by position, so a state with a
+    # trace another lacks (cold/temperate boundary lines once part of the bed is temperate, a grounding-line piece,
+    # the FS | SSA line) would shift every later trace by one: e.g. its streamlines landing in a slot the toggle does
+    # not cover (a second, uncontrollable layer). Each trace keyed by (type, name, legend group, scene, n-th of that
+    # key); the union of the keys in order of first appearance; a state without one gets an empty trace of that type.
+    per = [traces(tp, b) for _, tp, b, _ in data]
+    def tkey(t_):
+        return (t_.type, getattr(t_, "name", None), getattr(t_, "legendgroup", None), getattr(t_, "scene", None))
+    slots, keyed = [], []
+    for tr in per:
+        cnt, ks = {}, []
+        for t_ in tr:
+            k = tkey(t_)
+            cnt[k] = cnt.get(k, 0) + 1
+            ks.append(k + (cnt[k],))
+        keyed.append(dict(zip(ks, tr)))
+        for k in ks:
+            if k not in slots:
+                slots.append(k)
+
+    def blank(k):
+        typ, nm, lg, sc_ = k[:4]
+        kw = dict(name=nm, scene=sc_, showlegend=False, hoverinfo="skip")
+        if lg is not None:
+            kw["legendgroup"] = lg
+        if typ == "mesh3d":
+            return go.Mesh3d(x=[], y=[], z=[], i=[], j=[], k=[], **kw)
+        return go.Scatter3d(x=[], y=[], z=[], mode="lines", **kw)
+    per = [[kd[k] if k in kd else blank(k) for k in slots] for kd in keyed]
+    if any(len(kd) != len(slots) for kd in keyed):
+        print(f"  traces aligned over the states: {len(slots)} slots "
+              f"({sum(len(slots) - len(kd) for kd in keyed)} empty fillers)")
+    frame0 = [t_.__class__(t_) for t_ in per[0]]      # the first state's frame: copies (the figure's own traces get
+    first = per[0]                                    # "visible" settings below; frames never set it)
     # the cold/temperate boundary toggle ("temperate off" / "temperate on"): those traces are in every frame (they move
     # with the slider) but hidden in the figure until switched on; the frames do not set "visible", so the choice stays
     ct_idx = [n for n, t_ in enumerate(first) if getattr(t_, "legendgroup", None) == "ctmask"]
@@ -1463,7 +1496,8 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
                               buttons=[dict(label="mesh off", method="restyle", args=[{"visible": False}, midx]),
                                        dict(label="mesh on", method="restyle", args=[{"visible": True}, midx])])]
         print(f"  base mesh toggle on {len(midx)} panel(s) (drawn at the first state's base)")
-    frames = [go.Frame(data=lean(tidy(traces(tp, b))), name=str(n)) for n, (_, tp, b, _) in enumerate(data)]
+    frames = [go.Frame(data=lean(tidy(per[n] if n else frame0)), name=str(n))
+              for n in range(len(data))]
     steps = [dict(method="animate", label=l, args=[[str(n)], dict(mode="immediate", frame=dict(duration=0, redraw=True),
                                                                   transition=dict(duration=0))])
              for n, (l, _, _, _) in enumerate(data)]
