@@ -29,7 +29,8 @@ default 400).
 at the times both have (by frame time), speed coloured the same (--compare-T: temperature); the temperature panel is
 off.
 Many states make a big page: --every N keeps every N-th state (and the last), --every-yr Y the first frame and then
-only frames at multiples of Y yr (a denser start: VTU_FIRST), --years T0 T1 only frames in that time
+only frames at multiples of Y yr (a denser start: VTU_FIRST), --dense-until T every frame up to T yr and the thinning
+only after it, --years T0 T1 only frames in that time
 range. The speed/vx/vy/vz buttons are off (their data was a large share of the page); --switch brings them back.
     python plots/plot_state_3d.py work/<config>/runs/<run>                  # a run with ESS_VTU_EVERY: every step
     python plots/plot_state_3d.py A.npz --diff B.npz                      # colours: A minus B (same mesh)
@@ -885,7 +886,11 @@ def main():
         k = args.index("--tile")
         TILE = max(1, int(args[k + 1]))
         args = args[:k] + args[k + 2:]
-    every, tsel, every_yr = 1, None, None
+    every, tsel, every_yr, dense = 1, None, None, None
+    if "--dense-until" in args:                   # --dense-until T: every frame up to T yr, the thinning (--every,
+        k = args.index("--dense-until")           # --every-yr) only after it
+        dense = float(args[k + 1])
+        args = args[:k] + args[k + 2:]
     if "--every-yr" in args:                      # --every-yr Y: the first frame, then only frames at multiples of Y yr
         k = args.index("--every-yr")              # (and the last): e.g. 500 with a denser start (VTU_FIRST)
         every_yr = float(args[k + 1])
@@ -909,14 +914,18 @@ def main():
         tv_ = lambda lab: float(lab[2:-3].replace(",", "")) if lab.startswith("t ") and lab.endswith(" yr") else None
         ct = {round(tv_(l), 0) for l, _ in collect(COMPARE) if tv_(l) is not None}
         items = [it for it in items if tv_(it[0]) is None or round(tv_(it[0]), 0) in ct]
+    tvy = lambda lab: float(lab[2:-3].replace(",", "")) if lab.startswith("t ") and lab.endswith(" yr") else None
+    early = lambda it: dense is not None and tvy(it[0]) is not None and tvy(it[0]) <= dense + 1e-9
     if every_yr and len(items) > 1:
-        tvy = lambda lab: float(lab[2:-3].replace(",", "")) if lab.startswith("t ") and lab.endswith(" yr") else None
         items = [it for n, it in enumerate(items)
-                 if n in (0, len(items) - 1) or tvy(it[0]) is None
+                 if n in (0, len(items) - 1) or tvy(it[0]) is None or early(it)
                  or abs(tvy(it[0]) / every_yr - round(tvy(it[0]) / every_yr)) < 1e-6]
-        print(f"  frames: the first, then every {every_yr:g} yr")
+        print(f"  frames: the first, then every {every_yr:g} yr" + (f" (all up to {dense:g} yr)" if dense else ""))
     if every > 1 and len(items) > 1:
-        items = [it for n, it in enumerate(items) if n % every == 0 or n == len(items) - 1]
+        ne = sum(1 for it in items if early(it))
+        items = [it for n, it in enumerate(items) if early(it) or (n - ne) % every == 0 or n == len(items) - 1]
+        if dense:
+            print(f"  frames: all up to {dense:g} yr, then every {every}-th")
     print(f"{len(items)} states" + (f" (every {every}-th)" if every > 1 else "")
           + (f" (years {tsel[0]:g} .. {tsel[1]:g})" if tsel else ""))
     data = []
