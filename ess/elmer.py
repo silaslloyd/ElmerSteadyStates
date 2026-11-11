@@ -323,9 +323,18 @@ class ElmerModel(Model):
         # Water Sheet Thickness are carried from chunk to chunk (the sheet made from the mask if the state has none).
         # Env ESS_THERMAL overrides (tests).
         self.thermal = str(os.environ.get("ESS_THERMAL") or e.get("thermal", "frozen"))
-        self.thermal_libs = {k: cfg["_path"](e.get(f"{k}_lib", f"elmer/{v}")) for k, v in
-                             (("coldtemp", "ColdTempMask"), ("sheet", "SheetSolverhw"), ("nowater", "NoWaterSheet"))}
-        if self.thermal == "nowater":       # the mask and the sheet in the written state (carried between chunks)
+        # [elmer] sheet_solver (env ESS_SHEET_SOLVER, jobs SHEET): which SheetSolverhw thermal = "elmerstreams" uses:
+        # "elmerstreams" (elmer/SheetSolverhw: ElmerStreams' as it was) or "cs" (elmer/SheetSolverhwCS: the user's
+        # version of 2026-11-11, cold nodes held at dh/dt = 0, flux only between temperate nodes)
+        sheet_solver = str(os.environ.get("ESS_SHEET_SOLVER") or e.get("sheet_solver", "elmerstreams")).lower()
+        if sheet_solver not in ("elmerstreams", "cs"):
+            raise ValueError(f"[elmer] sheet_solver must be 'elmerstreams' or 'cs', not {sheet_solver!r}")
+        sheet_default = "elmer/SheetSolverhwCS" if sheet_solver == "cs" else "elmer/SheetSolverhw"
+        self.thermal_libs = {k: cfg["_path"](e.get(f"{k}_lib", v)) for k, v in
+                             (("coldtemp", "elmer/ColdTempMask"), ("sheet", sheet_default),
+                              ("nowater", "elmer/NoWaterSheet"))}
+        if self.thermal in ("nowater", "elmerstreams"):   # the mask and the sheet in the written state (carried
+                                                          # between chunks, and from the warm-up into the run)
             for nm in ("ColdTempMask", "Water Sheet Thickness", "Melt Rate"):
                 if nm not in self.diagnostics:
                     self.diagnostics.append(nm)
@@ -804,8 +813,10 @@ End
         n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M)) + 1
         base = ["GroundedMask", "bedrock"] + (["GL Distance"] if self.fs_ssa_x is not None else [])
         heat = [] if self.stokes_only else ["Temperature"]       # the temperature panel of plots/plot_state_3d.py
-        if self.thermal == "nowater" and not self.stokes_only:    # the mask and the sheet (plots/vtu_frames.py)
+        if self.thermal in ("nowater", "elmerstreams") and not self.stokes_only:   # the mask and the sheet
             base += ["ColdTempMask", "Water Sheet Thickness", "Melt Rate"]
+            if self.thermal == "elmerstreams":
+                base += ["Effective Pressure Output"]
         sc = ["CFL", "Step Change"] if self.step_check else []
         # ESS_VTU_FIRST = "F:N0" (jobs VTU_FIRST): every F steps over the first N0 steps, then every `every`: the
         # run's single timestep interval split in two (same dt; Elmer's Exec Intervals are per timestep interval and

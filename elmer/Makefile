@@ -57,7 +57,7 @@ ESSFreeSurface.so: PeriodicUtils.F90 ESSFreeSurface.F90
 
 # ElmerStreams' thermal chain ([elmer] thermal = "elmerstreams") and the no-water sheet (thermal = "nowater"):
 # make -C elmer thermal
-thermal: ColdTempMask.so SheetSolverhw.so NoWaterSheet.so
+thermal: ColdTempMask.so SheetSolverhw.so SheetSolverhwCS.so NoWaterSheet.so
 
 NoWaterSheet.so: NoWaterSheet.F90
 	$(ELMERF90) -o $@ $<
@@ -68,5 +68,8 @@ ColdTempMask.so: ColdTempMaskSolver.F90
 SheetSolverhw.so: SheetSolverhw.F90
 	$(ELMERF90) -o $@ $<
 
+SheetSolverhwCS.so: SheetSolverhwCS.F90
+	$(ELMERF90) -o $@ $<
+
 clean:
-	rm -rf checked; rm -f SteadyStateIO.so Buoyancy.so RotateGuess.so GLDistance.so PeriodicGL.so FixPeriodicLoads.so ColdTempMask.so SheetSolverhw.so NoWaterSheet.so ESSFreeSurface.so StepCheck.so ESSIncompressibleNS.so *.mod
+	rm -rf checked; rm -f SteadyStateIO.so Buoyancy.so RotateGuess.so GLDistance.so PeriodicGL.so FixPeriodicLoads.so ColdTempMask.so SheetSolverhw.so SheetSolverhwCS.so NoWaterSheet.so ESSFreeSurface.so StepCheck.so ESSIncompressibleNS.so *.mod

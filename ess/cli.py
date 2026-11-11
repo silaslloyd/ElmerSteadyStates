@@ -379,7 +379,7 @@ def cmd_run(args):
                 log.warning(f"run: {int(warm.sum())} grounded bed nodes are warmer than {Tw:.2f} K, where the sliding "
                             f"factor still depends on temperature" + (" (--stokes-only keeps their temperature fixed)"
                                                                        if args.stokes_only else ""))
-    if getattr(model, "thermal", "frozen") == "nowater" and not args.stokes_only:
+    if getattr(model, "thermal", "frozen") in ("nowater", "elmerstreams") and not args.stokes_only:
         # the no-water sheet: Elmer reads it from the state (ColdTempMaskSolver uses last step's value); from the
         # state's own sheet if it has one, otherwise from the mask (temperate: 1, cold: 0: the mask stays as it is)
         from .masks import _on
@@ -397,15 +397,24 @@ def cmd_run(args):
                 continue
             src = "the state's own sheet"
             break
-        if hw0 is None:
-            hw0 = np.where(np.asarray(ct0) > 0, 1.0, 0.0)
-        for k in [k for k in saved.frozen if k.lower() == "water sheet thickness"]:
-            del saved.frozen[k]
-        saved.frozen["Water Sheet Thickness"] = (g_ct, hw0)
-        model.frozen = saved.frozen
-        log.info(f"run: thermal = nowater: the cold/temperate mask moves every step (ColdTempMaskSolver), sheet = "
-                 f"sign(melt); start sheet from {src}; mask temperate {int((np.asarray(ct0) > 0).sum())} / cold "
-                 f"{int((np.asarray(ct0) <= 0).sum())} bed nodes")
+        es = model.thermal == "elmerstreams"
+        if hw0 is None and es:
+            # the water sheet (SheetSolverhw): no sheet in the state: Elmer's initial condition (InitialSheet, Lua)
+            log.info("run: thermal = elmerstreams: no water sheet in the state: the sheet from its initial condition "
+                     f"(InitialSheet); sheet solver {os.path.basename(model.thermal_libs['sheet'])}; mask temperate "
+                     f"{int((np.asarray(ct0) > 0).sum())} / cold {int((np.asarray(ct0) <= 0).sum())} bed nodes")
+        else:
+            if hw0 is None:
+                hw0 = np.where(np.asarray(ct0) > 0, 1.0, 0.0)
+            for k in [k for k in saved.frozen if k.lower() == "water sheet thickness"]:
+                del saved.frozen[k]
+            saved.frozen["Water Sheet Thickness"] = (g_ct, hw0)
+            model.frozen = saved.frozen
+            log.info(f"run: thermal = {model.thermal}: the cold/temperate mask moves every step (ColdTempMaskSolver), "
+                     + ("the water sheet SheetSolverhw (" + os.path.basename(model.thermal_libs['sheet']) + ")"
+                        if es else "sheet = sign(melt)")
+                     + f"; start sheet from {src}; mask temperate {int((np.asarray(ct0) > 0).sum())} / cold "
+                     f"{int((np.asarray(ct0) <= 0).sum())} bed nodes")
     y = prob.scale(saved.x)
     on, _ = _masks_auto(cfg, model)
     remask = on if args.remask is None else args.remask
