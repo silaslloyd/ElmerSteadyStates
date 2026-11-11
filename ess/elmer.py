@@ -115,7 +115,8 @@ class ElmerModel(Model):
         self.diagnostics = list(e.get("diagnostics", []))
         self.extra_subs = dict(e.get("substitutions", {}))
         self.vtu = bool(e.get("vtu", False))
-        self.friction_heat = str(e.get("friction_heat", "flux"))
+        # env ESS_FRICTION_HEAT (jobs FRICTION_HEAT): loads | flux | none (no frictional heating at the bed)
+        self.friction_heat = str(os.environ.get("ESS_FRICTION_HEAT") or e.get("friction_heat", "flux"))
         self.strain_heat = bool(e.get("strain_heat", False))
         if os.environ.get("ESS_STRAIN_HEAT") is not None:     # env (tests): 0 / 1 overrides [elmer] strain_heat
             self.strain_heat = os.environ["ESS_STRAIN_HEAT"] not in ("0", "", "false", "False")
@@ -395,7 +396,9 @@ class ElmerModel(Model):
             return ('  Heat Flux BC = Logical True\n'
                     '  Heat Flux = Variable Temperature, Velocity 1, Velocity 2, Velocity 3, Coordinate 1, GroundedMask\n'
                     '    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * ess_grounded(tx[5]) * (tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
-        raise ValueError(f"[elmer] friction_heat must be 'loads' or 'flux', not {self.friction_heat!r}")
+        if self.friction_heat == "none":        # no frictional heating (e.g. a thermal spin-up without it)
+            return "  ! [elmer] friction_heat = none: no frictional heating at the bed"
+        raise ValueError(f"[elmer] friction_heat must be 'loads', 'flux' or 'none', not {self.friction_heat!r}")
 
     @staticmethod
     def _dt_ramp(text: str, ramp: str, n_steps: int) -> str:
