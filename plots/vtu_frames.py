@@ -143,6 +143,20 @@ def main():
                 rec[f"{side}_bed"] = fr[0]["bed"].astype(np.float32)
             else:
                 rec[f"{side}_{n}"] = np.stack([d[n] for d in fr]).astype(np.float32)
+    # the friction noise of the run ([elmer] friction_noise: its tables in the run's parameters.lua), for the base
+    # colouring option of plots/plot_state_3d.py
+    try:
+        lua = open(os.path.join(rundir, "parameters.lua")).read()
+    except OSError:
+        lua = ""
+    if "function ess_fnoise" in lua:
+        val = lambda n: float(re.search(rf"^{n} = (\S+)", lua, re.M).group(1))
+        tab = lambda n: np.array([float(v) for v in re.search(rf"^{n} = \{{([^}}]*)\}}", lua, re.M).group(1).split(",")])
+        sec = val("ess_fn_sector") > 0
+        rec.update(fnoise_k=tab("ess_fn_k"), fnoise_m=tab("ess_fn_m"), fnoise_p=tab("ess_fn_p"), fnoise_a=tab("ess_fn_a"),
+                   fnoise_geo=np.array([1.0 if sec else 0.0, val("ess_fn_A") if sec else val("ess_fn_W"),
+                                        val("ess_fn_amp")]))
+        print(f"  friction noise +-{val('ess_fn_amp'):g} from the run's parameters.lua (kept for the base colouring)")
     np.savez_compressed(out, **rec)
     print(f"{rundir}: {len(times)} steps (every {every} x {dt:g} yr, t {times[0]:g} .. {times[-1]:g} yr), "
           f"{len(rec['top_x'])} surface / {len(rec['base_x'])} base nodes -> {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
