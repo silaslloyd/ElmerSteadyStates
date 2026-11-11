@@ -4,12 +4,15 @@ copies each rotated by the sector angle about the centre, coloured by surface sp
 plots/plot_state_3d.py) or temperature, with the grounding line in red. --gif: every frame, as an animated GIF.
 
     python3 plots/sector_circle.py FRAMES.npz [--frame K] [--field speed|T|Tbase] [--vmax V] [--copies N]
-                                   [--out FILE] [--dpi D] [--gif] [--every-yr Y] [--fps F]
+                                   [--out FILE] [--dpi D] [--gif] [--every-yr Y] [--fps F] [--start-deg D]
 
 --frame: default the last; --copies: default as many whole sectors as fit in 360 deg (a sector angle that does not
 divide 360 deg leaves a gap, marked); --vmax: speed colour maximum (default 100 m/yr).
 --gif: all frames (or the first and then every Y yr with --every-yr Y, and the last) into FRAMES_circle.gif, F frames
 per second (default 2), at --dpi (default 100 for a GIF, 200 for a PNG); the colour scale fixed over the frames.
+--start-deg D: only the --copies sectors from angle D (degrees, counterclockwise from the x axis): the first copy's
+side 1 on the ray at D, the others counterclockwise from it; the view zoomed on them (e.g. --copies 4 --start-deg 90:
+four sectors in the upper left, from the vertical).
 On a machine where numpy's OpenBLAS dies with "Illegal instruction": OPENBLAS_CORETYPE=Nehalem.
 """
 import io
@@ -43,6 +46,7 @@ def main():
     args, dpi = opt(args, "--dpi", int, 100 if gif else 200)
     args, every_yr = opt(args, "--every-yr", float)
     args, fps = opt(args, "--fps", float, 2.0)
+    args, start_deg = opt(args, "--start-deg", float)
     if len(args) != 1:
         raise SystemExit(__doc__)
     F = np.load(args[0])
@@ -60,6 +64,10 @@ def main():
     if ncp is None:
         ncp = int(np.floor(2 * np.pi / A + 1e-6))
     gap = 2 * np.pi - ncp * A
+    # the rotation of copy c: c A, or from --start-deg: side 1 (at -A/2) of the first copy on the ray at start_deg
+    a0 = 0.0 if start_deg is None else np.radians(start_deg) + A / 2
+    if start_deg is not None:
+        gap = 0.0                                      # a partial fan: no gap to mark
     if field == "speed":
         cmap = LinearSegmentedColormap.from_list("sm2021", [(v, c) for v, c in P3.SPEED_CS])
         lab = "surface speed (m/yr)"
@@ -80,12 +88,21 @@ def main():
     i, j, kk_ = P3.triangles(X, Y)
     bi, bj, bk = P3.triangles(bx, by)
     rmax = max(np.hypot(tx, ty).max(), np.hypot(bx, by).max()) / 1e3 * 1.03
+    lims = None
     # the rotated copies' triangulations once (the footprint does not change)
     tri_v, tri_b = [], []
+    allx, ally = [], []
     for c in range(ncp):
-        ca, sa = np.cos(c * A), np.sin(c * A)
+        ca, sa = np.cos(a0 + c * A), np.sin(a0 + c * A)
+        if start_deg is not None:
+            allx.append((ca * X - sa * Y) / 1e3); ally.append((sa * X + ca * Y) / 1e3)
         tri_v.append(mtri.Triangulation((ca * X - sa * Y) / 1e3, (sa * X + ca * Y) / 1e3, np.c_[i, j, kk_]))
         tri_b.append(mtri.Triangulation((ca * bx - sa * by) / 1e3, (sa * bx + ca * by) / 1e3, np.c_[bi, bj, bk]))
+
+    if start_deg is not None:
+        ax_, ay_ = np.concatenate(allx), np.concatenate(ally)
+        pad = 0.03 * max(np.ptp(ax_), np.ptp(ay_))
+        lims = (ax_.min() - pad, ax_.max() + pad, ay_.min() - pad, ay_.max() + pad)
 
     def draw(kk):
         val = value(kk)
@@ -101,7 +118,10 @@ def main():
             a0, a1 = -A / 2 + ncp * A, -A / 2 + 2 * np.pi
             ang = np.linspace(a0, a1, 50)
             ax.fill(np.r_[0, r1 * 1.02 * np.cos(ang), 0], np.r_[0, r1 * 1.02 * np.sin(ang), 0], color="0.85", zorder=0)
-        ax.set_xlim(-rmax, rmax); ax.set_ylim(-rmax, rmax)
+        if lims:
+            ax.set_xlim(lims[0], lims[1]); ax.set_ylim(lims[2], lims[3])
+        else:
+            ax.set_xlim(-rmax, rmax); ax.set_ylim(-rmax, rmax)
         ax.set_aspect("equal")
         ax.set_xlabel("x (km)"); ax.set_ylabel("y (km)")
         ax.set_title(f"{os.path.basename(args[0])[:-4]}: t = {times[kk]:,.0f} yr, {ncp} copies of the "
