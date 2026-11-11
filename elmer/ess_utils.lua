@@ -35,7 +35,7 @@ ess_Hedge = nil
 -- distance to the "front" used by the frontal sliding zone (C/2 within 10 km):
 -- x = L by default, which is beyond the ice in both the regularised and the
 -- fixed-margin set-ups, so the zone is inactive; set ess_front ([lua] in the
--- config, in m, e.g. the margin 0.8 L) to put it under the ice
+-- config, in m, e.g. the margin 0.8 L) to put it under the ice. Land only: off in marine runs (TDepSliding)
 ess_front = nil
 function frontdist(x)
   return (ess_front or L) - x
@@ -53,7 +53,9 @@ function TDepSliding(C, Th, gamma, x)
   local e = -Tr / gamma
   if ess_slide_maxfactor > 0 and e > math.log(ess_slide_maxfactor) then e = math.log(ess_slide_maxfactor) end
   local slid = C * math.exp(e)
-  if frontdist(x) < 10000 then slid = C / 2 end
+  -- the frontal zone: land only. Marine (ess_marine = 1) has none: with L = 816 km it sat at a fixed
+  -- 806 km from the divide, under grounded ice once the grounding line advanced (C/2 whatever the temperature)
+  if ess_marine == 0 and frontdist(x) < 10000 then slid = C / 2 end
   return slid
 end
 
