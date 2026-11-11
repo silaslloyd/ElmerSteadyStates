@@ -220,6 +220,10 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # SLIDE_YBUMP=A: the sliding coefficient times 1 + A sin(2 pi y / width) ([case] slide_ybump; states spun up with 0.8
 # need it: switching it off at once leaves Stokes far from the new flow, GCR at the iteration cap)
 [ -n "$SLIDE_YBUMP" ] && export ESS_SLIDE_YBUMP=$SLIDE_YBUMP && echo "  sliding y bump: $SLIDE_YBUMP"
+# FNOISE=A (FNOISE_KM, FNOISE_SEED): coherent noise in the sliding coefficient, times 1 + A n(x, y), n in -1..1, periodic
+# across ([elmer] friction_noise: ess/elmer.py)
+[ -n "$FNOISE" ] && export ESS_FRICTION_NOISE=$FNOISE ${FNOISE_KM:+ESS_FRICTION_NOISE_KM=$FNOISE_KM} \
+    ${FNOISE_SEED:+ESS_FRICTION_NOISE_SEED=$FNOISE_SEED} && echo "  friction noise: +-$FNOISE (wavelength ${FNOISE_KM:-20} km, seed ${FNOISE_SEED:-1})"
 # CHECKPOINT_EVERY=N: a long single run (CHUNKS=1, many STEPS; output by VTU_EVERY) writes its state every N steps to
 # checkpoint.bin.* in the run directory (periodic_test/checkpoint_state.py RUNDIR START OUT: a state to continue from)
 # default: with VTU output, a checkpoint at every output step (CHECKPOINT_EVERY=0: none)

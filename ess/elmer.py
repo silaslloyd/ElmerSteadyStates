@@ -288,6 +288,14 @@ class ElmerModel(Model):
         # [case] slide_ybump: the sliding coefficient times 1 + slide_ybump sin(2 pi y / width) (periodic), so the
         # grounding line is not straight across the flow (tests of the periodic sides); 0: off
         self.slide_ybump = float(os.environ.get("ESS_SLIDE_YBUMP") or c.get("slide_ybump", 0.0))   # env: runs continuing
+        # [elmer] friction_noise (env ESS_FRICTION_NOISE): coherent noise in the sliding coefficient, C (1 + a n(x, y))
+        # with n in -1..1 (a = 0.1: +-10 %), fixed in time; also in the flux friction heating. n: a sum of cosines
+        # (fractal: octaves of wavelength lambda, lambda/2, lambda/4 at amplitudes 1, 1/2, 1/4, random directions and
+        # phases, seeded), periodic across the domain: strips in y / width, sectors in the angle / sector angle, so the
+        # same at a seam node and its image (rotated). friction_noise_km (ESS_FRICTION_NOISE_KM, default 20): lambda;
+        # friction_noise_seed (ESS_FRICTION_NOISE_SEED, default 1). Lua ess_fnoise(x, y) in parameters.lua.
+        self.fnoise = float(os.environ.get("ESS_FRICTION_NOISE") or e.get("friction_noise", 0.0))
+        self.fnoise_lua = self._friction_noise_lua(c) if self.fnoise else ""
         # from a state spun up with another value (the sliding coefficient changed at once breaks Stokes)
         # [elmer] periodic_gl (contact grounding line with periodic sides; `ess run --periodic-gl`):
         #   "none"          Elmer/Ice SlidCoef_Contact (hydrostatic loads Fw)
@@ -366,6 +374,8 @@ class ElmerModel(Model):
             extra["ess_sl"] = "0.0"                     # sea level (m) of sea_level_param, unless overridden
         if extra:
             txt += "\n-- [lua] overrides from the ess config\n" + "".join(f"{k} = {v}\n" for k, v in extra.items())
+        if getattr(self, "fnoise_lua", ""):
+            txt += self.fnoise_lua
         return txt
 
     def _friction_heat_block(self) -> str:
@@ -730,6 +740,8 @@ End
                     + "   ! ESS_PARTIAL_UPDATE_ONCE: only the first step (bedrock frozen)" + text[j:])
         if self.sector_angle:
             text = self._sector(text)
+        if self.fnoise:
+            text = self._friction_noise(text)
         every = os.environ.get("ESS_VTU_EVERY")
         if every and int(every) > 0:
             text = self._vtu_every(text, int(every))
@@ -1511,6 +1523,86 @@ End
         # Lua: the hydrology functions and parameters after parameters.lua
         k = text.index("Header")
         text = text[:k] + f"!---LUA BEGIN\n! assert(loadfile('{self.hydro_lua}'))()\n!---LUA END\n\n" + text[k:]
+        return text
+
+    def _friction_noise_lua(self, c) -> str:
+        """the Lua of [elmer] friction_noise: mode tables and ess_fnoise(x, y) (see __init__)"""
+        e = self.cfg.get("elmer", {})
+        lam = float(os.environ.get("ESS_FRICTION_NOISE_KM") or e.get("friction_noise_km", 20.0)) * 1e3
+        seed = int(os.environ.get("ESS_FRICTION_NOISE_SEED") or e.get("friction_noise_seed", 1))
+        rng = np.random.default_rng(seed)
+        L = float(c.get("front_km", 0.0)) * 1e3 or 1.0e6
+        if self.sector_angle:
+            A = math.radians(self.sector_angle)
+            r0, r1 = ((self.sector_divide - L, self.sector_divide) if self.sector_divide
+                      else (float(c.get("sector_r0_km", 15.0)) * 1e3, L))
+            lat = A * 0.5 * (r0 + r1)          # the lateral period (m) at the mid radius
+            xi_rng = (r0, r1)
+        else:
+            lat = self.width
+            xi_rng = (0.0, L)
+        K, M, Ph, Am = [], [], [], []
+        for o, (fac, amp) in enumerate(((1.0, 1.0), (0.5, 0.5), (0.25, 0.25))):
+            for _ in range(16):
+                ln = lam * fac * rng.uniform(0.8, 1.25)
+                al = rng.uniform(0.0, 2 * math.pi)
+                m = int(round(math.sin(al) * lat / ln))          # whole periods across: periodic
+                K.append(2 * math.pi * math.cos(al) / ln)
+                M.append(m)
+                Ph.append(rng.uniform(0.0, 2 * math.pi))
+                Am.append(amp * rng.uniform(0.5, 1.0))
+        K, M, Ph, Am = map(np.array, (K, M, Ph, Am))
+        # normalised to max |n| = 1 over the domain (a 400 x 200 sample)
+        xi = np.linspace(*xi_rng, 400)[:, None, None]
+        u = np.linspace(0.0, 1.0, 200)[None, :, None]
+        n = np.sum(Am * np.cos(2 * math.pi * M * u + K * xi + Ph), axis=-1)
+        Am = Am / float(np.abs(n).max())
+        f = lambda v, fmt: "{" + ", ".join(fmt.format(t) for t in v) + "}"
+        geo = (f"ess_fn_sector = 1\ness_fn_A = {math.radians(self.sector_angle)!r}\n" if self.sector_angle
+               else f"ess_fn_sector = 0\ness_fn_W = {float(self.width)!r}\n")
+        log.info(f"friction noise: +-{self.fnoise:g} x n(x, y), {len(K)} modes, wavelength {lam / 1e3:g} km "
+                 f"(octaves 1, 1/2, 1/4), seed {seed}, periodic across ({lat / 1e3:.0f} km at the mid radius)"
+                 if self.sector_angle else
+                 f"friction noise: +-{self.fnoise:g} x n(x, y), {len(K)} modes, wavelength {lam / 1e3:g} km, seed {seed}")
+        return ("\n-- [elmer] friction_noise: the sliding coefficient times ess_fnoise(x, y) (ess/elmer.py)\n"
+                + geo + f"ess_fn_amp = {self.fnoise!r}\n"
+                + "ess_fn_k = " + f(K, "{:.10e}") + "\n" + "ess_fn_m = " + f(M, "{:d}") + "\n"
+                + "ess_fn_p = " + f(Ph, "{:.10f}") + "\n" + "ess_fn_a = " + f(Am, "{:.10f}") + "\n"
+                + "function ess_fnoise(x, y)\n"
+                "  local xi, u\n"
+                "  if ess_fn_sector > 0 then\n"
+                "    xi = math.sqrt(x * x + y * y)\n"
+                "    u = ((math.atan2 or math.atan)(y, x) + 0.5 * ess_fn_A) / ess_fn_A\n"
+                "  else\n"
+                "    xi = x\n"
+                "    u = y / ess_fn_W\n"
+                "  end\n"
+                "  local s = 0.0\n"
+                "  for k = 1, #ess_fn_a do\n"
+                "    s = s + ess_fn_a[k] * math.cos(2 * math.pi * ess_fn_m[k] * u + ess_fn_k[k] * xi + ess_fn_p[k])\n"
+                "  end\n"
+                "  return 1.0 + ess_fn_amp * s\n"
+                "end\n")
+
+    def _friction_noise(self, text):
+        """[elmer] friction_noise: the Weertman friction coefficient and the flux friction heating times
+        ess_fnoise(x, y) (raw Cartesian coordinates appended to the variables: after _sector)"""
+        pat = re.compile(r'(  (?:Weertman Friction Coefficient|Heat Flux) = Variable )([^\n]*)\n(\s*Real [Ll]ua ")([^"]*)"')
+        n_done = 0
+
+        def sub(m):
+            nonlocal n_done
+            name = m.group(0).split("=")[0].strip()
+            expr = m.group(4)
+            if name == "Heat Flux" and "fcoeff" not in expr and "TDepSliding" not in expr:
+                return m.group(0)               # not the friction heating
+            nv = len([v for v in m.group(2).split(",") if v.strip()])
+            n_done += 1
+            return (f"{m.group(1)}{m.group(2)}, Coordinate 1, Coordinate 2\n{m.group(3)}({expr}) * "
+                    f'ess_fnoise(tx[{nv}], tx[{nv + 1}])"')
+        text = pat.sub(sub, text)
+        if n_done < 1 or "Weertman Friction Coefficient = Variable" not in text:
+            raise ValueError("friction_noise: no Weertman Friction Coefficient Lua expression in the template")
         return text
 
     def _slide_ybump(self, text):
