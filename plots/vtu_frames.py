@@ -36,9 +36,34 @@ def run_timing(rundir):
                   r'\s*Equation = "vtu base"', sif)
     every = int(m.group(1)) if m else 1
     offset = bool(m and m.group(2))       # with the offset: output k at step k N; without (older runs): (k-1) N + 1
-    m = re.search(r"Timestep Sizes\s*=\s*(?:Real\s*)?([-+0-9.eE]+)", sif)
+    m = re.search(r"Timestep Sizes(?:\(\d+\))?\s*=\s*(?:Real\s*)?([-+0-9.eE]+)", sif)
     dt = float(m.group(1)) if m else 1.0
     return every, dt, offset
+
+
+def output_steps(rundir):
+    """the time steps at which the run wrote its VTUs, in order (None: the uniform rule of run_timing applies): from
+    the vtu base solver's Exec Intervals / Offset per timestep interval, as Elmer applies them (global step t is
+    written when MOD(t - 1 - offset_i, every_i) = 0 in its timestep interval i); for runs with several timestep
+    intervals (ESS_VTU_FIRST: every F for the first N0 steps, then every N)"""
+    sif = open(os.path.join(rundir, "run.sif")).read()
+    m = re.search(r"Timestep Intervals\((\d+)\)\s*=\s*Integer\s+([\d\s]+?)\n", sif)
+    if not m:
+        return None
+    counts = [int(v) for v in m.group(2).split()]
+    m = re.search(r'Exec Intervals\(\d+\)\s*=\s*Integer\s+([\d\s]+?)\s*(?:!.*)?\n\s*Exec Intervals Offset\(\d+\)\s*='
+                  r'\s*Integer\s+([\d\s]+?)\s*(?:!.*)?\n\s*Equation = "vtu base"', sif)
+    if not m:
+        return None
+    ex = [int(v) for v in m.group(1).split()]
+    off = [int(v) for v in m.group(2).split()]
+    out, t = [], 0
+    for i, c in enumerate(counts):
+        for _ in range(c):
+            t += 1
+            if ex[i] > 0 and (t - 1 - off[i]) % ex[i] == 0:
+                out.append(t)
+    return out
 
 
 def surface(path):
@@ -82,6 +107,10 @@ def main():
         raise SystemExit(f"{rundir}: no base_t*.pvtu (a run with VTU_EVERY?)")
     every, dt, offset = run_timing(rundir)
     step_of = (lambda k: k * every) if offset else (lambda k: (k - 1) * every + 1)
+    sched = output_steps(rundir)
+    if sched:                                     # several timestep intervals (e.g. denser output at first)
+        print(f"  output steps from the run's schedule: {', '.join(map(str, sched[:8]))}{', ..' if len(sched) > 8 else ''}")
+        step_of = lambda k: sched[k - 1] if k <= len(sched) else sched[-1] + (k - len(sched)) * every
     frames = {"top": [], "base": []}
     times = []
     for f in steps:

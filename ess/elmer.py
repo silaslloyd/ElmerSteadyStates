@@ -804,14 +804,32 @@ End
         if self.thermal == "nowater" and not self.stokes_only:    # the mask and the sheet (plots/vtu_frames.py)
             base += ["ColdTempMask", "Water Sheet Thickness", "Melt Rate"]
         sc = ["CFL", "Step Change"] if self.step_check else []
+        # ESS_VTU_FIRST = "F:N0" (jobs VTU_FIRST): every F steps over the first N0 steps, then every `every`: the
+        # run's single timestep interval split in two (same dt; Elmer's Exec Intervals are per timestep interval and
+        # count the global step: Offset F-1 gives F, 2F, .., N0, then every-1 gives 2 every, 3 every, ..)
+        ex, off = [every] * 10, [every - 1] * 10
+        first = os.environ.get("ESS_VTU_FIRST")
+        if first:
+            f_, _, n0 = first.partition(":")
+            f_, n0 = int(f_), int(n0 or 0)
+            m = re.search(r"^ *Timestep Intervals = (\d+)\n *Timestep Sizes = (\S+)\n *Output Intervals = .*$", text, re.M)
+            if m and f_ > 0 and 0 < n0 < int(m.group(1)):
+                nst = int(m.group(1))
+                text = (text[:m.start()] + f"  Timestep Intervals(2) = Integer {n0} {nst - n0}\n"
+                        f"  Timestep Sizes(2) = Real {m.group(2)} {m.group(2)}\n"
+                        f"  Output Intervals(2) = Integer {n0} {nst - n0}   ! ESS_VTU_FIRST {first}" + text[m.end():])
+                ex[0], off[0] = f_, f_ - 1
+                log.info(f"VTU output every {f_} steps for the first {n0}, then every {every}")
+            else:
+                log.info(f"ESS_VTU_FIRST {first}: not applied (a run of several timestep intervals, or too short)")
         out = ""
         for m, (fname, key, fields) in enumerate((("base", "ESS Save Base", base + heat + sc),
                                                   ("surface", "ESS Save Surface", heat + sc))):
             out += (f"\nSolver {n + m}\n"
                     '  Exec Solver = "After Timestep"\n'
-                    f"  Exec Intervals(10) = Integer {' '.join([str(every)] * 10)}   ! per Timestep Interval (ramps)\n"
+                    f"  Exec Intervals(10) = Integer {' '.join(map(str, ex))}   ! per Timestep Interval (ramps)\n"
                     # at steps N, 2N, ... (Elmer: without the offset 1, N + 1, ...)
-                    f"  Exec Intervals Offset(10) = Integer {' '.join([str(every - 1)] * 10)}\n"
+                    f"  Exec Intervals Offset(10) = Integer {' '.join(map(str, off))}\n"
                     f'  Equation = "vtu {fname}"\n'
                     '  Procedure = "ResultOutputSolve" "ResultOutputSolver"\n'
                     f'  Output File Name = "{fname}"\n'

@@ -318,6 +318,8 @@ elif [ -n "$FS_SSA" ]; then export ESS_FS_SSA_KM=$FS_SSA && echo "moving full-St
 # VTU_EVERY=N: a VTU of the boundaries (base, surface: velocity, grounded mask, distance to the grounding line) every N
 # steps in each run's directory (work/<config>/runs/<run>/steps_t*.pvtu), to watch it in ParaView
 [ -n "$VTU_EVERY" ] && export ESS_VTU_EVERY=$VTU_EVERY && echo "  boundary VTU every $VTU_EVERY step(s) in the run directories"
+# VTU_FIRST=F:N0: every F steps over the first N0 steps of the main run, then every VTU_EVERY (e.g. 10:50)
+[ -n "$VTU_FIRST" ] && export ESS_VTU_FIRST=$VTU_FIRST && echo "  boundary VTU every ${VTU_FIRST%%:*} step(s) for the first ${VTU_FIRST#*:}"
 # REBUILD_PREC=ILU1 (or ILU0, ILU2): a rank whose active set / grounded mask changed rebuilds with this cheaper
 # preconditioner instead of the solver's (ILU4); every rank waits for the slowest factorisation
 [ -n "$REBUILD_PREC" ] && export ESS_FS_SSA_REBUILD_PREC=$REBUILD_PREC && echo "  forced ILU rebuilds with $REBUILD_PREC"
