@@ -41,6 +41,9 @@ Structured footprints and the unstructured triangle ones (configs/*_tri.toml; De
 With a Temperature field: a second panel next to it, the same geometry coloured by temperature (surface, base and
 side walls; the base shows the bed temperature, where a seam stripe from wrong loads would show).
 A treatment folder is read phase by phase (spinup, retreat, advance: <phase>_chunks/points/state_*.npz).
+--sheet: the second panel the water sheet thickness of the bed (THERMAL=elmerstreams runs) instead of the temperature,
+seen from above (the base only), colours 0 .. 0.3 m (--hw-max H; thicker saturates, the hover gives the value); the
+cold/temperate boundary in magenta ("temperate on").
 Writes <first input>_3d.html and opens it. Needs numpy and plotly.
 """
 import base64
@@ -82,6 +85,8 @@ SHOW_PARTS = False       # --partitions: the partition outlines in white (needs 
 MESH_DIR = None          # --mesh-dir DIR: the footprint mesh (ElmerGrid directory) whose elements --mesh draws
 FS_SSA = 0.0             # km: draw the full-Stokes | SSA boundary this far beyond the grounding line (--fs-ssa 10)
 WALLS = False            # walled sides: the distance to the grounding line not wrapped across y (--walls)
+SHEET = False            # --sheet: the second panel the water sheet (base only) instead of the temperature
+HW_MAX = 0.3             # --hw-max: its colour maximum (m)
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
 MESH_TOGGLE = True       # the "mesh off / mesh on" buttons for the base mesh (white); --no-mesh-toggle: none (smaller)
 SWITCH = False           # the speed/vx/vy/vz buttons (their values for every state go into the page: big); --switch
@@ -794,6 +799,7 @@ def _rdp(P, eps):
 
 def main():
     import plotly.graph_objects as go
+    global SHEET, HW_MAX
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
     global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD, SECTOR, SECTOR_A
     args = sys.argv[1:]
@@ -842,6 +848,13 @@ def main():
     if "--no-temp" in args:
         TEMP = False
         args.remove("--no-temp")
+    if "--sheet" in args:
+        SHEET = True
+        args.remove("--sheet")
+    if "--hw-max" in args:
+        k = args.index("--hw-max")
+        HW_MAX = float(args[k + 1])
+        del args[k:k + 2]
     if "--switch" in args:
         SWITCH = True
         args.remove("--switch")
@@ -1013,8 +1026,12 @@ def main():
             smax = max(sgl)
             print(f"speed colours 0 .. {smax:.0f} m/yr: the largest surface speed on the grounding line (faster ice "
                   f"saturates; --vmax V to set it, --vmax-all for the largest speed)")
-    temp = TEMP and not COMPARE and all(d is not None and "T" in d for _, tp, b, _ in data for d in (tp, b))
-    two = temp                                    # two panels side by side (velocity | temperature)
+    sheet = SHEET and not COMPARE and all(b is not None and "hw" in b for _, _, b, _ in data)
+    if SHEET and not sheet:
+        print("no Water Sheet Thickness in the frames (a THERMAL=elmerstreams run, packed by plots/vtu_frames.py): "
+              "no sheet panel")
+    temp = TEMP and not sheet and not COMPARE and all(d is not None and "T" in d for _, tp, b, _ in data for d in (tp, b))
+    two = temp or sheet                           # two panels side by side (velocity | temperature or water sheet)
     if TEMP and not temp:
         print("no Temperature in the states (slimmed before it was kept? re-run plots/slim_states.py): velocity only")
     if temp or (COMPARE and CMP_FIELD == "T"):
@@ -1033,6 +1050,10 @@ def main():
               f"largest {np.nanmax(v):.3g} m/yr")
     if temp:
         panels.append(("T", tmin, tmax, "RdBu_r", "temperature (K)", 1.0, "scene2"))
+    if sheet:
+        hv = np.concatenate([b["hw"] for _, _, b, _ in data])
+        print(f"water sheet colours 0 .. {HW_MAX:g} m (--hw-max); all frames: {np.nanmin(hv):.3g} .. {np.nanmax(hv):.3g} m")
+        panels.append(("hw", 0.0, HW_MAX, "Blues", "water sheet (m)", 1.0, "scene2"))
     if COMPARE:                                   # the second run in the same scene, beside the first in y
         if CMP_FIELD == "T":                      # both coloured by temperature (one colour bar)
             panels = [("T", tmin, tmax, "RdBu_r", "temperature (K)", 1.0, "scene"),
@@ -1172,12 +1193,14 @@ def main():
                 top, base = top["_cmp_sh"]
             P = (CMP_FIELD,) + tuple(P[1:])
         f, lo, hi, cs, ctitle, cx, sc = P
-        unit = "K" if f == "T" else "m/yr"
+        unit = "K" if f == "T" else "m" if f == "hw" else "m/yr"
         first_panel = sc == "scene" and not cmp
         tr = []
         # all copies as ONE surface each (the seam rows shared): separate surfaces are lit with one-sided normals at
         # their edges, which draws a faint line along a seam even where the values match exactly
         T_, B_ = tiled(top), tiled(base)
+        if T_ is not None and f not in T_:        # a base-only field (the water sheet): no surface, the base seen
+            T_ = None                             # from above
         if T_ is not None:
             i, j, k = triangles(T_["x"], T_["y"])
             tr.append(go.Mesh3d(x=T_["x"] / 1e3, y=T_["y"] / 1e3, z=T_["v"], i=i, j=j, k=k,
@@ -1198,7 +1221,7 @@ def main():
                                 customdata=np.stack([B_[f], mask], 1), scene=sc,
                                 name="base Zb", opacity=1.0, showlegend=False,
                                 hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>"
-                                              f"{'bed T' if f == 'T' else f} %{{customdata[0]:.2f}} {unit}"
+                                              f"{'bed T' if f == 'T' else f} %{{customdata[0]:{'.3g' if f == 'hw' else '.2f'}}} {unit}"
                                               "<br>mask %{customdata[1]}<extra></extra>"))
             if SHOW_BED and "bed" in B_:
                 tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["bed"] - 1.0, i=i, j=j,
@@ -1227,7 +1250,7 @@ def main():
                                        name=f"partitions ({len(np.unique(p_))} in the window)",
                                        legendgroup="parts", hoverinfo="skip", scene=sc, showlegend=show,
                                        connectgaps=False))
-        if SIDES and top is not None and base is not None:
+        if SIDES and top is not None and base is not None and T_ is not None:
             tr += walls(T_, B_, P) if SECTOR else walls(top, base, P)
         if base is not None and "mask" in base:      # both panels (empty without a mask: same traces per state)
             # the cold/temperate boundary of the grounded bed (ColdTempMask +1 temperate, -1 cold; floating counted
@@ -1551,8 +1574,9 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
     if two:
         scenes["scene2"] = dict(scene, domain=dict(x=[0.52, 0.98], y=[0.0, 1.0]))
     ann = ([dict(text="velocity", x=0.23, y=1.0, xref="paper", yref="paper", showarrow=False, font=dict(size=16)),
-            dict(text="temperature", x=0.75, y=1.0, xref="paper", yref="paper", showarrow=False, font=dict(size=16))]
-           if temp else [])
+            dict(text="water sheet" if sheet else "temperature", x=0.75, y=1.0, xref="paper", yref="paper",
+                 showarrow=False, font=dict(size=16))]
+           if two else [])
     if COMPARE:                                   # the two runs named above their ice sheets, in the scene
         ztop = max(zs) + 20
         scenes["scene"]["annotations"] = [
