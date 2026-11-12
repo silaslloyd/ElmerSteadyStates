@@ -334,6 +334,10 @@ class ElmerModel(Model):
         # jobs SHEET_DCAP, default 1 with cs) and, optionally, a floor on the sheet after every linear solve (env
         # ESS_SHEET_HMIN, jobs SHEET_HMIN; unset: off, 0 included: a floor at 0)
         cs_ = sheet_solver == "cs"
+        # the CS solver: the potential-gradient flux implicit in h, as w h (env ESS_SHEET_IMPLICIT, jobs SHEET_IMPLICIT;
+        # default 0)
+        self.sheet_implicit = cs_ and str(os.environ.get("ESS_SHEET_IMPLICIT") or e.get("sheet_implicit", "0")) \
+            not in ("0", "false")
         self.sheet_dcap = cs_ and str(os.environ.get("ESS_SHEET_DCAP") or e.get("sheet_dcap", "1")) not in ("0", "false")
         _hm = os.environ.get("ESS_SHEET_HMIN") or e.get("sheet_hmin")
         self.sheet_hmin = float(_hm) if cs_ and _hm not in (None, "", "off") else None
@@ -1473,7 +1477,9 @@ Solver {stress}
         hmin_line = ((f"\n  Minimum Water Sheet Thickness = Real {self.sheet_hmin!r}   ! the sheet floored after "
                       "every linear solve (SheetSolverhwCS)" if getattr(self, "sheet_hmin", None) is not None else "")
                      + ("\n  Nonnegative Sheet Diffusion = Logical True   ! -K dN/dh and K capped at 0 "
-                        "(SheetSolverhwCS)" if getattr(self, "sheet_dcap", False) else ""))
+                        "(SheetSolverhwCS)" if getattr(self, "sheet_dcap", False) else "")
+                     + ("\n  Implicit Sheet Advection = Logical True   ! q0 = -K grad Phi0 as (K/h) h, h implicit "
+                        "(SheetSolverhwCS)" if getattr(self, "sheet_implicit", False) else ""))
         blocks.append(f"""
 Solver {sheet}
   Exec Solver = "After Timestep"

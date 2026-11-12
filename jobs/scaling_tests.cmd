@@ -220,6 +220,8 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # SHEET_DCAP=0|1: the CS sheet solver's diffusion coefficient capped at 0 (default 1)
 [ -n "$SHEET_DCAP" ] && export ESS_SHEET_DCAP=$SHEET_DCAP && echo "  water sheet diffusion capped at 0: $SHEET_DCAP"
 [ -n "$SHEET_HMIN" ] && export ESS_SHEET_HMIN=$SHEET_HMIN && echo "  water sheet floor: $SHEET_HMIN m"
+# SHEET_IMPLICIT=1: the CS sheet solver's potential-gradient flux implicit in h (K/h from the last iteration)
+[ -n "$SHEET_IMPLICIT" ] && export ESS_SHEET_IMPLICIT=$SHEET_IMPLICIT && echo "  water sheet implicit advection: $SHEET_IMPLICIT"
 # SHEET_N=hr_over_h|marine_term: the sheet's effective pressure (default hr_over_h with SHEET=cs)
 [ -n "$SHEET_N" ] && export ESS_SHEET_N=$SHEET_N && echo "  water sheet effective pressure: $SHEET_N"
 # HEAT_SOLVER=METHOD:PREC or direct: the heat solve's linear solver (default BiCGStabL:ILU1), e.g. GCR:ILU0, GCR:ILU0:0.1 (ILU factor: diagonal shift), direct (MUMPS), hypre (BiCGStab + BoomerAMG)

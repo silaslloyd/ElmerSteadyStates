@@ -55,7 +55,7 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
 !------------------------------------------------------------------------------
   TYPE(Element_t),POINTER :: Element
   REAL(KIND=dp) :: Norm, hmin
-  LOGICAL :: hasMin, capD
+  LOGICAL :: hasMin, capD, implAdv
   INTEGER :: nfloor
   INTEGER :: i, j, m, n, n_nei, nb, nd, t, active,passive, istat, correctedvalues  , num_cold !, n = number of nodes (given element), n = number of degrees of freedom (given element), nd = number of DOFs on the boundary (given element), t = index for..., active = number of active element
   INTEGER :: iter, maxiter  ! nonlinear iteration number, max number of nonlinear iterations
@@ -155,6 +155,13 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
   ! in the potential-gradient flux: no backward diffusion where h < -eps^2/hr (dN/dh > 0) or K < 0 (N > N(0)), water
   ! conserved (the floor above is not); a negative h is then not amplified, only left as it is
   capD = ListGetLogical( SolverParams, 'Nonnegative Sheet Diffusion', Found )
+  ! ESS: "Implicit Sheet Advection" (logical): the potential-gradient flux q0 = -K grad(Phi0) written as w h, with the
+  ! speed w = -(K/h+) grad(Phi0) (K/h+ from the last iteration, h+ = max(h, 1e-3 m), K capped at 0) and h implicit:
+  ! in the matrix, -int grad(v).w h, instead of q0 from the last iteration in the force vector. A node then sends
+  ! water in proportion to what it holds (an empty one none); with q0 lagged, a near-empty node was drained at its
+  ! neighbours' rate and went negative (jobs 31687, 31690). Galerkin, not upwinded: fine for a cell Peclet number
+  ! |grad Phi0| dx h / (2 N0 hr) < 1 (h below ~2 m for 1e-4 MPa/m, 1 km elements)
+  implAdv = ListGetLogical( SolverParams, 'Implicit Sheet Advection', Found )
   maxiter = ListGetInteger( GetSolverParams(),&
       'Nonlinear System Max Iterations',Found,minv=1)
   IF(.NOT. Found ) maxiter = 1
@@ -522,6 +529,7 @@ CONTAINS
     REAL(KIND=dp) :: QQhAtIp
     REAL(KIND=dp) :: dqdhAtIP(dimsheet), q0AtIP(dimsheet), dhwdxAtIP(dimsheet), gradPhi0AtIP(dimsheet), graddNdhAtIP(dimsheet)
     REAL(KIND=dp) :: qhAtIP(dimsheet), gradNAtIP(dimsheet)
+    REAL(KIND=dp) :: KoverH(n), wAtIP(dimsheet)
     REAL(KIND=dp) :: Basis(nd),dBasisdx(nd,dim),DetJ
     REAL(KIND=dp) :: MASS(nd,nd), STIFF(nd,nd), FORCE(nd), LOAD(n)
     LOGICAL :: Stat,Found
@@ -567,6 +575,13 @@ CONTAINS
     
     num_cold = 0._dp
 
+    ! ESS (Implicit Sheet Advection): the nodal K/h+ of the advection speed
+    IF ( implAdv ) THEN
+      DO i=1,n
+        KoverH(i) = MAX( HydraulicConductivity(i), 0.0_dp ) / MAX( nodalhw(i), 1.0e-3_dp )
+      END DO
+    END IF
+
      DO i=1, n   ! ... for each node within the element (LOCAL nodal index)
         j = Element % NodeIndexes(i)
         IF (ctvals(ctperm(j)) .LE. 0) THEN
@@ -610,6 +625,7 @@ CONTAINS
       ELSE
         q0AtIP = -HydraulicConductivityAtIP*gradPhi0AtIP
       END IF
+      IF ( implAdv ) wAtIP = -SUM( KoverH(1:n) * Basis(1:n) ) * gradPhi0AtIP
 
       Weight = IP % s(t) * DetJ
 
@@ -639,7 +655,14 @@ CONTAINS
         ! RHS FLUX TERM
         ! Only include in elements with all nodes temperate
         IF (num_cold .EQ. 0) THEN
-          FORCE(q) = FORCE(q) + Weight * SUM( dBasisdx(q,1:dimsheet)*q0AtIP(1:dimsheet) )
+          IF ( implAdv ) THEN
+            ! ESS: -int grad(v_q).w h, h = sum_p h_p Basis(p): row q (test function), column p
+            DO p=1,nd
+              STIFF(q,p) = STIFF(q,p) - Weight * SUM( dBasisdx(q,1:dimsheet)*wAtIP(1:dimsheet) ) * Basis(p)
+            END DO
+          ELSE
+            FORCE(q) = FORCE(q) + Weight * SUM( dBasisdx(q,1:dimsheet)*q0AtIP(1:dimsheet) )
+          END IF
         END IF
 
         DO p=1,nd        
