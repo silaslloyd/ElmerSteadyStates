@@ -32,7 +32,7 @@ echo "  GCR iterations, last 10 solves (the current one last, still counting): $
 m=$(grep 'NoWaterSheet.*bed nodes' $L 2>/dev/null | tail -1 | sed 's/.*bed nodes: //')
 [ -n "$m" ] && echo "  mask (THERMAL=nowater): $m"
 grep 'step check t' $L 2>/dev/null | tail -2 | sed 's/.*step check /  step check /' | cut -c1-230
-a=$(grep 'adaptive preconditioning' $L 2>/dev/null | tail -1 | sed 's/.*adaptive preconditioning: //')
+a=$(grep 'adaptive preconditioning' $L 2>/dev/null | grep -v CheckKeyword | tail -1 | sed 's/.*adaptive preconditioning: //')
 [ -n "$a" ] && echo "  preconditioner (last change): $a"
 grep -q 'periodic limiter' $L 2>/dev/null && echo "  free surface: $(grep -m1 'periodic limiter' $L | sed 's/.*periodic limiter: //')"
 grep -m1 -i "segmentation\|nan\b\|error termination" $L 2>/dev/null | head -1 | sed 's/^/  PROBLEM: /'
