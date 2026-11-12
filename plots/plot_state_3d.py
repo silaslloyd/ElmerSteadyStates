@@ -41,9 +41,10 @@ Structured footprints and the unstructured triangle ones (configs/*_tri.toml; De
 With a Temperature field: a second panel next to it, the same geometry coloured by temperature (surface, base and
 side walls; the base shows the bed temperature, where a seam stripe from wrong loads would show).
 A treatment folder is read phase by phase (spinup, retreat, advance: <phase>_chunks/points/state_*.npz).
---sheet: the second panel the water sheet thickness of the bed (THERMAL=elmerstreams runs) instead of the temperature,
-seen from above (the base only), colours 0 .. 0.3 m (--hw-max H; thicker saturates, the hover gives the value); the
-cold/temperate boundary in magenta ("temperate on").
+--sheet: instead of the temperature, two panels of the bed seen from above (the base only; THERMAL=elmerstreams runs):
+the water sheet thickness, colours 0 .. 0.3 m (--hw-max H; thicker saturates, the hover gives the value; below 0
+white), and the cold/temperate mask (red temperate, blue cold, grey floating); the cold/temperate boundary in magenta
+on all three ("temperate on").
 Writes <first input>_3d.html and opens it. Needs numpy and plotly.
 """
 import base64
@@ -1032,6 +1033,10 @@ def main():
               "no sheet panel")
     temp = TEMP and not sheet and not COMPARE and all(d is not None and "T" in d for _, tp, b, _ in data for d in (tp, b))
     two = temp or sheet                           # two panels side by side (velocity | temperature or water sheet)
+    three = sheet and all("ct" in b and "mask" in b for _, _, b, _ in data)    # velocity | water sheet | mask
+    if three:
+        for _, _, b, _ in data:                   # the bed's state: 1 temperate, -1 cold (grounded), 0 floating
+            b["ctm"] = np.where(b["mask"] < -0.5, 0.0, np.where(np.nan_to_num(b["ct"], nan=-1.0) > 0, 1.0, -1.0))
     if TEMP and not temp:
         print("no Temperature in the states (slimmed before it was kept? re-run plots/slim_states.py): velocity only")
     if temp or (COMPARE and CMP_FIELD == "T"):
@@ -1041,7 +1046,7 @@ def main():
         tmax = T_RANGE[1] if T_RANGE[1] is not None else float(np.nanmax(Tv))
         print(f"temperature colours {tmin:.2f} .. {tmax:.2f} K: all temperatures (--tmin / --tmax to narrow)")
     # the panels: (field, colour range, colour scale, colour bar title, colour bar x, scene)
-    panels = [("speed", 0.0, smax, SPEED_CS, "speed (m/yr)", 0.47 if two else 1.0, "scene")]
+    panels = [("speed", 0.0, smax, SPEED_CS, "speed (m/yr)", 0.30 if three else 0.47 if two else 1.0, "scene")]
     if DIFF:                                      # differences: vz first, symmetric red/blue
         v = np.abs(np.concatenate([d["vz"] for _, tp, b, _ in data for d in (tp, b) if d is not None]))
         m = max(float(np.nanpercentile(v, 99.5)) if np.isfinite(v).any() else 1.0, 1e-9)
@@ -1053,7 +1058,10 @@ def main():
     if sheet:
         hv = np.concatenate([b["hw"] for _, _, b, _ in data])
         print(f"water sheet colours 0 .. {HW_MAX:g} m (--hw-max); all frames: {np.nanmin(hv):.3g} .. {np.nanmax(hv):.3g} m")
-        panels.append(("hw", 0.0, HW_MAX, "Blues", "water sheet (m)", 1.0, "scene2"))
+        panels.append(("hw", 0.0, HW_MAX, "Blues", "water sheet (m)", 0.645 if three else 1.0, "scene2"))
+    if three:
+        panels.append(("ctm", -1.0, 1.0, [[0, "#3a7bd5"], [0.333, "#3a7bd5"], [0.334, "#bbbbbb"], [0.666, "#bbbbbb"],
+                                          [0.667, "#c0392b"], [1, "#c0392b"]], "bed", 0.99, "scene3"))
     if COMPARE:                                   # the second run in the same scene, beside the first in y
         if CMP_FIELD == "T":                      # both coloured by temperature (one colour bar)
             panels = [("T", tmin, tmax, "RdBu_r", "temperature (K)", 1.0, "scene"),
@@ -1193,7 +1201,7 @@ def main():
                 top, base = top["_cmp_sh"]
             P = (CMP_FIELD,) + tuple(P[1:])
         f, lo, hi, cs, ctitle, cx, sc = P
-        unit = "K" if f == "T" else "m" if f == "hw" else "m/yr"
+        unit = "K" if f == "T" else "m" if f == "hw" else "" if f == "ctm" else "m/yr"
         first_panel = sc == "scene" and not cmp
         tr = []
         # all copies as ONE surface each (the seam rows shared): separate surfaces are lit with one-sided normals at
@@ -1212,7 +1220,12 @@ def main():
         if B_ is not None:
             i, j, k = triangles(B_["x"], B_["y"])
             mask = B_.get("mask", np.zeros_like(B_["v"]))
-            if f != "speed" or BASE_COLOUR == "speed":
+            if T_ is None and top is not None and f in ("hw", "ctm"):   # a base-only panel: its own colour bar
+                cb = dict(title=ctitle, x=cx, len=0.8)
+                if f == "ctm":
+                    cb.update(tickvals=[-1, 0, 1], ticktext=["cold", "floating", "temperate"])
+                col = dict(intensity=B_[f], colorscale=cs, cmin=lo, cmax=hi, showscale=True, colorbar=cb)
+            elif f != "speed" or BASE_COLOUR == "speed":
                 col = dict(intensity=B_[f], colorscale=cs, cmin=lo, cmax=hi, showscale=False)
             else:
                 col = dict(intensity=np.where(mask > -0.5, 1.0, 0.0), cmin=0, cmax=1,
@@ -1221,7 +1234,7 @@ def main():
                                 customdata=np.stack([B_[f], mask], 1), scene=sc,
                                 name="base Zb", opacity=1.0, showlegend=False,
                                 hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>"
-                                              f"{'bed T' if f == 'T' else f} %{{customdata[0]:{'.3g' if f == 'hw' else '.2f'}}} {unit}"
+                                              f"{'bed T' if f == 'T' else 'cold -1 / floating 0 / temperate 1:' if f == 'ctm' else f} %{{customdata[0]:{'.3g' if f == 'hw' else '.0f' if f == 'ctm' else '.2f'}}} {unit}"
                                               "<br>mask %{customdata[1]}<extra></extra>"))
             if SHOW_BED and "bed" in B_:
                 tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["bed"] - 1.0, i=i, j=j,
@@ -1570,12 +1583,15 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
     scene = dict(xaxis=dict(title="x (km)", range=xr_), yaxis=yax,
                  zaxis=dict(title="z (m)", range=[min(zs) - 20, max(zs) + 20]),
                  aspectmode="manual", aspectratio=asp)
-    scenes = {"scene": dict(scene, domain=dict(x=[0.0, 0.46] if two else [0.0, 1.0], y=[0.0, 1.0]))}
+    scenes = {"scene": dict(scene, domain=dict(x=[0.0, 0.29] if three else [0.0, 0.46] if two else [0.0, 1.0],
+                                               y=[0.0, 1.0]))}
     if two:
-        scenes["scene2"] = dict(scene, domain=dict(x=[0.52, 0.98], y=[0.0, 1.0]))
-    ann = ([dict(text="velocity", x=0.23, y=1.0, xref="paper", yref="paper", showarrow=False, font=dict(size=16)),
-            dict(text="water sheet" if sheet else "temperature", x=0.75, y=1.0, xref="paper", yref="paper",
-                 showarrow=False, font=dict(size=16))]
+        scenes["scene2"] = dict(scene, domain=dict(x=[0.345, 0.635] if three else [0.52, 0.98], y=[0.0, 1.0]))
+    if three:
+        scenes["scene3"] = dict(scene, domain=dict(x=[0.69, 0.98], y=[0.0, 1.0]))
+    ann = ([dict(text=t_, x=x_, y=1.0, xref="paper", yref="paper", showarrow=False, font=dict(size=16))
+            for t_, x_ in (zip(("velocity", "water sheet", "cold / temperate bed"), (0.145, 0.49, 0.835)) if three else
+                           zip(("velocity", "water sheet" if sheet else "temperature"), (0.23, 0.75)))]
            if two else [])
     if COMPARE:                                   # the two runs named above their ice sheets, in the scene
         ztop = max(zs) + 20
@@ -1603,9 +1619,9 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
 var gd = document.getElementsByClassName('plotly-graph-div')[0], busy = false;
 gd.on('plotly_relayout', function (e) {
   if (busy) return;
-  var u = {};
-  if (e['scene.camera']) u['scene2.camera'] = e['scene.camera'];
-  if (e['scene2.camera']) u['scene.camera'] = e['scene2.camera'];
+  var u = {}, sc = ['scene', 'scene2', 'scene3'];
+  sc.forEach(function (a) { if (e[a + '.camera']) sc.forEach(function (b) {
+    if (b != a && gd.layout[b]) u[b + '.camera'] = e[a + '.camera']; }); });
   if (Object.keys(u).length) { busy = true; Plotly.relayout(gd, u).then(function () { busy = false; }); }
 });""" if two else None)
     post = "\n".join(x for x in (sync, switch_js) if x) or None
