@@ -330,9 +330,12 @@ class ElmerModel(Model):
         if sheet_solver not in ("elmerstreams", "cs"):
             raise ValueError(f"[elmer] sheet_solver must be 'elmerstreams' or 'cs', not {sheet_solver!r}")
         sheet_default = "elmer/SheetSolverhwCS" if sheet_solver == "cs" else "elmer/SheetSolverhw"
-        # the CS solver's floor on the sheet after every linear solve (env ESS_SHEET_HMIN, jobs SHEET_HMIN; 0: off)
-        self.sheet_hmin = (float(os.environ.get("ESS_SHEET_HMIN") or e.get("sheet_hmin", 1e-5))
-                           if sheet_solver == "cs" else 0.0)
+        # the CS solver: the sheet's diffusion coefficient capped at 0 (no backward diffusion; env ESS_SHEET_DCAP,
+        # jobs SHEET_DCAP, default 1 with cs) and, optionally, a floor on the sheet after every linear solve (env
+        # ESS_SHEET_HMIN, jobs SHEET_HMIN; default 0: off)
+        cs_ = sheet_solver == "cs"
+        self.sheet_dcap = cs_ and str(os.environ.get("ESS_SHEET_DCAP") or e.get("sheet_dcap", "1")) not in ("0", "false")
+        self.sheet_hmin = float(os.environ.get("ESS_SHEET_HMIN") or e.get("sheet_hmin", 0.0)) if cs_ else 0.0
         self.thermal_libs = {k: cfg["_path"](e.get(f"{k}_lib", v)) for k, v in
                              (("coldtemp", "elmer/ColdTempMask"), ("sheet", sheet_default),
                               ("nowater", "elmer/NoWaterSheet"))}
@@ -1458,8 +1461,10 @@ Solver {stress}
                           + "\n! the friction heating: created before all, then run by the heat solver first (Pre Solvers)\n"
                           + fpl(fixU0, "Before All", "Flow Solution Loads", "Periodic Flow Solution Loads", "folded", " Init")
                           + "\n" + fpl(fixU, "Never", "Flow Solution Loads", "Periodic Flow Solution Loads", "folded"))
-        hmin_line = (f"\n  Minimum Water Sheet Thickness = Real {self.sheet_hmin!r}   ! the sheet floored after every "
-                     "linear solve (SheetSolverhwCS)" if getattr(self, "sheet_hmin", 0.0) > 0 else "")
+        hmin_line = ((f"\n  Minimum Water Sheet Thickness = Real {self.sheet_hmin!r}   ! the sheet floored after "
+                      "every linear solve (SheetSolverhwCS)" if getattr(self, "sheet_hmin", 0.0) > 0 else "")
+                     + ("\n  Nonnegative Sheet Diffusion = Logical True   ! -K dN/dh and K capped at 0 "
+                        "(SheetSolverhwCS)" if getattr(self, "sheet_dcap", False) else ""))
         blocks.append(f"""
 Solver {sheet}
   Exec Solver = "After Timestep"

@@ -55,7 +55,7 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
 !------------------------------------------------------------------------------
   TYPE(Element_t),POINTER :: Element
   REAL(KIND=dp) :: Norm, hmin
-  LOGICAL :: hasMin
+  LOGICAL :: hasMin, capD
   INTEGER :: nfloor
   INTEGER :: i, j, m, n, n_nei, nb, nd, t, active,passive, istat, correctedvalues  , num_cold !, n = number of nodes (given element), n = number of degrees of freedom (given element), nd = number of DOFs on the boundary (given element), t = index for..., active = number of active element
   INTEGER :: iter, maxiter  ! nonlinear iteration number, max number of nonlinear iterations
@@ -151,6 +151,10 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
   ! coefficients: the sheet's diffusion -K dN/dh turns negative (backward) for h < -eps^2/hr = -1e-5 m, and one
   ! undershooting node then blows the sheet up within a step (job 31672: +-1e10 m by year 50)
   hmin = ListGetConstReal( SolverParams, 'Minimum Water Sheet Thickness', hasMin )
+  ! ESS: "Nonnegative Sheet Diffusion" (logical): the diffusion coefficient -K dN/dh capped at 0 from below and K at 0
+  ! in the potential-gradient flux: no backward diffusion where h < -eps^2/hr (dN/dh > 0) or K < 0 (N > N(0)), water
+  ! conserved (the floor above is not); a negative h is then not amplified, only left as it is
+  capD = ListGetLogical( SolverParams, 'Nonnegative Sheet Diffusion', Found )
   maxiter = ListGetInteger( GetSolverParams(),&
       'Nonlinear System Max Iterations',Found,minv=1)
   IF(.NOT. Found ) maxiter = 1
@@ -601,7 +605,11 @@ CONTAINS
       dEffectivePressuredhAtIP = SUM( dEffectivePressuredh(1:n) * Basis(1:n) )
       dHydraulicConductivitydxAtIP = SUM( dHydraulicConductivitydx(1:n) * Basis(1:n) )
       
-      q0AtIP = -HydraulicConductivityAtIP*gradPhi0AtIP
+      IF ( capD ) THEN
+        q0AtIP = -MAX( HydraulicConductivityAtIP, 0.0_dp )*gradPhi0AtIP
+      ELSE
+        q0AtIP = -HydraulicConductivityAtIP*gradPhi0AtIP
+      END IF
 
       Weight = IP % s(t) * DetJ
 
@@ -610,9 +618,15 @@ CONTAINS
       !IF (num_cold > 0) THEN
       !  STIFF(1:nd,1:nd) = 0._dp
       !ELSE 
-        STIFF(1:nd,1:nd) = STIFF(1:nd,1:nd) - Weight * &
+        IF ( capD ) THEN
+          STIFF(1:nd,1:nd) = STIFF(1:nd,1:nd) + Weight * &
+              MAX( -HydraulicConductivityAtIP*dEffectivePressuredhAtIP, 0.0_dp ) * &
+              MATMUL( dBasisdx, TRANSPOSE( dBasisdx ) )
+        ELSE
+          STIFF(1:nd,1:nd) = STIFF(1:nd,1:nd) - Weight * &
               (HydraulicConductivityAtIP)*dEffectivePressuredhAtIP * &
               MATMUL( dBasisdx, TRANSPOSE( dBasisdx ) )
+        END IF
       !END IF
 
       DO q=1,nd
