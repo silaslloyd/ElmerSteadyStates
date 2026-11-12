@@ -42,8 +42,8 @@ With a Temperature field: a second panel next to it, the same geometry coloured 
 side walls; the base shows the bed temperature, where a seam stripe from wrong loads would show).
 A treatment folder is read phase by phase (spinup, retreat, advance: <phase>_chunks/points/state_*.npz).
 --sheet: instead of the temperature, two panels of the bed seen from above (the base only; THERMAL=elmerstreams runs):
-the water sheet thickness, colours 0 .. 0.3 m (--hw-max H; thicker saturates, the hover gives the value; below 0
-white), and the cold/temperate mask (red temperate, blue cold, grey floating); the cold/temperate boundary in magenta
+the water sheet thickness on a signed log scale (blue positive, red negative, white 0; ticks 1 cm .. 1 km; --hw-max H:
+linear 0 .. H m instead, thicker saturating), and the cold/temperate mask (red temperate, blue cold, grey floating); the cold/temperate boundary in magenta
 on all three ("temperate on").
 Writes <first input>_3d.html and opens it. Needs numpy and plotly.
 """
@@ -87,7 +87,8 @@ MESH_DIR = None          # --mesh-dir DIR: the footprint mesh (ElmerGrid directo
 FS_SSA = 0.0             # km: draw the full-Stokes | SSA boundary this far beyond the grounding line (--fs-ssa 10)
 WALLS = False            # walled sides: the distance to the grounding line not wrapped across y (--walls)
 SHEET = False            # --sheet: the second panel the water sheet (base only) instead of the temperature
-HW_MAX = 0.3             # --hw-max: its colour maximum (m)
+HW_MAX = None            # --hw-max H: a linear colour scale 0 .. H m; default the signed log scale (HW_LOG)
+HW_H0 = 0.01             # the signed log scale: sign(h) log10(1 + |h| / HW_H0), from -1e3 to 1e3 m
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
 MESH_TOGGLE = True       # the "mesh off / mesh on" buttons for the base mesh (white); --no-mesh-toggle: none (smaller)
 SWITCH = False           # the speed/vx/vy/vz buttons (their values for every state go into the page: big); --switch
@@ -1057,8 +1058,17 @@ def main():
         panels.append(("T", tmin, tmax, "RdBu_r", "temperature (K)", 1.0, "scene2"))
     if sheet:
         hv = np.concatenate([b["hw"] for _, _, b, _ in data])
-        print(f"water sheet colours 0 .. {HW_MAX:g} m (--hw-max); all frames: {np.nanmin(hv):.3g} .. {np.nanmax(hv):.3g} m")
-        panels.append(("hw", 0.0, HW_MAX, "Blues", "water sheet (m)", 0.645 if three else 1.0, "scene2"))
+        if HW_MAX:
+            print(f"water sheet colours 0 .. {HW_MAX:g} m (--hw-max); all frames: {np.nanmin(hv):.3g} .. {np.nanmax(hv):.3g} m")
+            panels.append(("hw", 0.0, HW_MAX, "Blues", "water sheet (m)", 0.645 if three else 1.0, "scene2"))
+        else:
+            # signed log: blue positive, red negative, white 0; every thickness from 1 cm to 1 km distinguishable
+            for _, _, b, _ in data:
+                b["hwl"] = np.sign(b["hw"]) * np.log10(1.0 + np.abs(b["hw"]) / HW_H0)
+            L = float(np.log10(1.0 + 1e3 / HW_H0))
+            print(f"water sheet colours: signed log, -1 km (red) .. 0 (white) .. 1 km (blue) (--hw-max H: linear 0 .. H);"
+                  f" all frames: {np.nanmin(hv):.3g} .. {np.nanmax(hv):.3g} m")
+            panels.append(("hwl", -L, L, "RdBu", "water sheet (m)", 0.645 if three else 1.0, "scene2"))
     if three:
         panels.append(("ctm", -1.0, 1.0, [[0, "#3a7bd5"], [0.333, "#3a7bd5"], [0.334, "#bbbbbb"], [0.666, "#bbbbbb"],
                                           [0.667, "#c0392b"], [1, "#c0392b"]], "bed", 0.99, "scene3"))
@@ -1201,7 +1211,7 @@ def main():
                 top, base = top["_cmp_sh"]
             P = (CMP_FIELD,) + tuple(P[1:])
         f, lo, hi, cs, ctitle, cx, sc = P
-        unit = "K" if f == "T" else "m" if f == "hw" else "" if f == "ctm" else "m/yr"
+        unit = "K" if f == "T" else "m" if f in ("hw", "hwl") else "" if f == "ctm" else "m/yr"
         first_panel = sc == "scene" and not cmp
         tr = []
         # all copies as ONE surface each (the seam rows shared): separate surfaces are lit with one-sided normals at
@@ -1220,8 +1230,12 @@ def main():
         if B_ is not None:
             i, j, k = triangles(B_["x"], B_["y"])
             mask = B_.get("mask", np.zeros_like(B_["v"]))
-            if T_ is None and top is not None and f in ("hw", "ctm"):   # a base-only panel: its own colour bar
+            if T_ is None and top is not None and f in ("hw", "hwl", "ctm"):   # a base-only panel: own colour bar
                 cb = dict(title=ctitle, x=cx, len=0.8)
+                if f == "hwl":                  # ticks at round thicknesses
+                    tv = [0.0, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]
+                    cb.update(tickvals=[float(np.sign(v) * np.log10(1 + abs(v) / HW_H0)) for v in [-x for x in tv[:0:-1]] + tv],
+                              ticktext=[f"{v:g}" for v in [-x for x in tv[:0:-1]] + tv])
                 if f == "ctm":
                     cb.update(tickvals=[-1, 0, 1], ticktext=["cold", "floating", "temperate"])
                 # no shading: lit, the colours came out greyed by the angle to the light (a flat colour map here)
@@ -1233,10 +1247,10 @@ def main():
                 col = dict(intensity=np.where(mask > -0.5, 1.0, 0.0), cmin=0, cmax=1,
                            colorscale=[[0, "#3a7bd5"], [1, "#c0392b"]], showscale=False)
             tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["v"], i=i, j=j, k=k, **col,
-                                customdata=np.stack([B_[f], mask], 1), scene=sc,
+                                customdata=np.stack([B_["hw" if f == "hwl" else f], mask], 1), scene=sc,
                                 name="base Zb", opacity=1.0, showlegend=False,
                                 hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>"
-                                              f"{'bed T' if f == 'T' else 'cold -1 / floating 0 / temperate 1:' if f == 'ctm' else f} %{{customdata[0]:{'.3g' if f == 'hw' else '.0f' if f == 'ctm' else '.2f'}}} {unit}"
+                                              f"{'bed T' if f == 'T' else 'cold -1 / floating 0 / temperate 1:' if f == 'ctm' else 'hw' if f == 'hwl' else f} %{{customdata[0]:{'.3g' if f in ('hw', 'hwl') else '.0f' if f == 'ctm' else '.2f'}}} {unit}"
                                               "<br>mask %{customdata[1]}<extra></extra>"))
             if SHOW_BED and "bed" in B_:
                 tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["bed"] - 1.0, i=i, j=j,
