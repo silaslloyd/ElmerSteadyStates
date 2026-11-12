@@ -838,7 +838,7 @@ End
         if self.thermal in ("nowater", "elmerstreams") and not self.stokes_only:   # the mask and the sheet
             base += ["ColdTempMask", "Water Sheet Thickness", "Melt Rate"]
             if self.thermal == "elmerstreams":
-                base += ["Effective Pressure Output"]
+                base += ["Effective Pressure Output", "Phi0 Output", "Szz Output", "zb"]
         sc = ["CFL", "Step Change"] if self.step_check else []
         # ESS_VTU_FIRST = "F:N0" (jobs VTU_FIRST): every F steps over the first N0 steps, then every `every`: the
         # run's single timestep interval split in two (same dt; Elmer's Exec Intervals are per timestep interval and
@@ -1512,6 +1512,8 @@ Solver {sheet}
   Exported Variable 2 = -dofs 1 "Effective Pressure Output"
   Exported Variable 3 = -dofs 3 "Water Flux"
   Exported Variable 4 = -dofs 1 "Hydraulic Conductivity Output"
+  Exported Variable 5 = -dofs 1 "Phi0 Output"
+  Exported Variable 6 = -dofs 1 "Szz Output"
   Nonlinear Update Exported Variables = Logical True
   Update Exported Variables = Logical True
 End
@@ -1545,6 +1547,10 @@ End
     Real Lua "N(tx[0], tx[1], N0, hr)"
   Hydraulic Conductivity Output = Variable "Effective Pressure Output"
     Real LUA "conductivity(tx[0])"
+  ! diagnostics (base VTU): the sheet's potential Phi0 = -sigma_zz + rhow g zb and the Stokes sigma_zz it uses
+  Phi0 Output = Variable "Stress 3", "zb"
+    Real LUA "-tx[0] + rhow*gravity*tx[1]"
+  Szz Output = Equals "Stress 3"
   Basal Velocity 2 = Equals Velocity 2
   Basal Velocity 3 = Equals Velocity 3""")
         text = self._insert_in(text, 'Name = "ice material"', """  ! Hydrology model (ElmerStreams)
