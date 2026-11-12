@@ -40,9 +40,18 @@ function smoothplusDerivative(x)
   return 1/(1+math.exp(k*x))
 end
 
+-- ESS: ess_N_hr_over_h = 1 (set by ess/elmer.py: [elmer] sheet_n = "hr_over_h", the default with sheet_solver
+-- "cs"): N = N0 hr / sqrt(h^2 + eps^2), positive for every h, tending to 0 only as h grows without bound (the
+-- Marine_Term form below reaches 0 at h = hr + ..., goes negative beyond, and its conductivity then diverged at the
+-- grounding line: job 31686). Otherwise the Marine_Term form, unchanged.
+ess_N_hr_over_h = ess_N_hr_over_h or 0
+
 function N(h, sigma, N0, hr)
   --epsilon = N0*hr/(-sigma)
   epsilon = 0.001
+  if ess_N_hr_over_h == 1 then
+    return N0*hr/(h^2 + epsilon^2)^0.5
+  end
   effectivePressure = N0*(hr - h)/(h^2 + epsilon^2)^0.5 + 0.01
   return effectivePressure
 end
@@ -60,7 +69,19 @@ end
 function dNdh(h, sigma, N0, hr)
   --epsilon = N0*hr/(-sigma)
   epsilon = 0.001
+  if ess_N_hr_over_h == 1 then
+    return -N0*hr*h/(h^2 + epsilon^2)^1.5
+  end
   return -N0*(hr*h + epsilon^2)/(h^2 + epsilon^2)^1.5
+end
+
+-- the second derivative (used by a Newton linearisation only)
+function d2Ndh2(h, N0, hr)
+  epsilon = 0.001
+  if ess_N_hr_over_h == 1 then
+    return N0*hr*(2*h^2 - epsilon^2)/(h^2 + epsilon^2)^2.5
+  end
+  return 2*N0*(hr + eps)/((h + eps)^3)
 end
 
 function InitialSheet(x)

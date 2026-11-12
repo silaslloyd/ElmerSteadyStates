@@ -336,6 +336,11 @@ class ElmerModel(Model):
         cs_ = sheet_solver == "cs"
         self.sheet_dcap = cs_ and str(os.environ.get("ESS_SHEET_DCAP") or e.get("sheet_dcap", "1")) not in ("0", "false")
         self.sheet_hmin = float(os.environ.get("ESS_SHEET_HMIN") or e.get("sheet_hmin", 0.0)) if cs_ else 0.0
+        # the effective pressure of the sheet (env ESS_SHEET_N, jobs SHEET_N): "hr_over_h" (N = N0 hr / h,
+        # regularised: positive, never 0; the default with cs) or "marine_term" (ElmerStreams' N0 (hr - h)/h + 0.01)
+        self.sheet_n = str(os.environ.get("ESS_SHEET_N") or e.get("sheet_n", "hr_over_h" if cs_ else "marine_term"))
+        if self.sheet_n not in ("hr_over_h", "marine_term"):
+            raise ValueError(f"[elmer] sheet_n must be 'hr_over_h' or 'marine_term', not {self.sheet_n!r}")
         self.thermal_libs = {k: cfg["_path"](e.get(f"{k}_lib", v)) for k, v in
                              (("coldtemp", "elmer/ColdTempMask"), ("sheet", sheet_default),
                               ("nowater", "elmer/NoWaterSheet"))}
@@ -392,6 +397,9 @@ class ElmerModel(Model):
             txt += "\n-- [lua] overrides from the ess config\n" + "".join(f"{k} = {v}\n" for k, v in extra.items())
         if getattr(self, "fnoise_lua", ""):
             txt += self.fnoise_lua
+        if getattr(self, "thermal", "") == "elmerstreams" and getattr(self, "sheet_n", "") == "hr_over_h":
+            txt += "\n-- [elmer] sheet_n = hr_over_h: the sheet's effective pressure N0 hr / h (elmer/ess_hydro.lua)\n" \
+                   "ess_N_hr_over_h = 1\n"
         return txt
 
     def _friction_heat_block(self) -> str:
@@ -1541,7 +1549,7 @@ End
   Effective Pressure First Derivative = Variable "Water Sheet Thickness", "Stress 3"
     Real LUA "dNdh(tx[0],tx[1], N0, hr)"
   Effective Pressure Second Derivative = Variable "Water Sheet Thickness"
-     Real LUA "2*N0*(hr + eps)/((tx[0] + eps)^3)"
+     Real LUA "d2Ndh2(tx[0], N0, hr)"
   Hydraulic Conductivity First Derivative = Variable "Effective Pressure"
     Real LUA "dkappadN(tx[0])"\n""")
         text = self._insert_in(text, "Initial Condition 4", '  Water Sheet Thickness = Variable "Coordinate 1"\n'
