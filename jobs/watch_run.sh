@@ -20,7 +20,14 @@ echo "  Elmer run $(basename $(dirname $L)): $(grep 'MAIN: Time:' $L 2>/dev/null
 echo "  Stokes per step (s), last 10: $(grep 'Solver time.*stokes-vec' $L 2>/dev/null | tail -10 | awk '{printf "%.0f ", $(NF-1)}')"
 # the whole step: every solver's time (Solver Timing, TIMING=1) summed between the MAIN: Time lines (complete steps only)
 echo "  whole step (s, all solvers), last 10: $(awk '/MAIN: Time:/ {if (n) print t; n = 1; t = 0} /Solver time/ {t += $(NF-1)}' $L 2>/dev/null | tail -10 | awk '{printf "%.0f ", $1}')"
-echo "  heat per step (s), last 5:    $(grep 'Solver time.*homologous' $L 2>/dev/null | tail -5 | awk '{printf "%.1f ", $(NF-1)}')"
+# the water sheet (THERMAL=elmerstreams): its time per step (TIMING=1) and its nonlinear iterations per step (complete
+# steps; 200 = the cap, not converged)
+if grep -q 'Sheet solver iteration:' $L 2>/dev/null; then
+    echo "  sheet per step (s), last 5:   $(grep 'Solver time.*sheet solver' $L 2>/dev/null | tail -5 | awk '{printf "%.1f ", $(NF-1)}')"
+    echo "  sheet iterations, last 10 steps: $(awk '/MAIN: Time:/ {if (n) print n; n = 0} /Sheet solver iteration:/ {n = $NF}' $L | tail -10 | tr '\n' ' ')"
+else
+    echo "  heat per step (s), last 5:    $(grep 'Solver time.*homologous' $L 2>/dev/null | tail -5 | awk '{printf "%.1f ", $(NF-1)}')"
+fi
 echo "  GCR iterations, last 10 solves (the current one last, still counting): $(grep 'gcr:' $L 2>/dev/null | awk '$2 < prev {print prev} {prev=$2} END {print prev}' | tail -10 | tr '\n' ' ')"
 m=$(grep 'NoWaterSheet.*bed nodes' $L 2>/dev/null | tail -1 | sed 's/.*bed nodes: //')
 [ -n "$m" ] && echo "  mask (THERMAL=nowater): $m"
