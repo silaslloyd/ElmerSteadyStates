@@ -1035,6 +1035,7 @@ def main():
     temp = TEMP and not sheet and not COMPARE and all(d is not None and "T" in d for _, tp, b, _ in data for d in (tp, b))
     two = temp or sheet                           # two panels side by side (velocity | temperature or water sheet)
     three = sheet and all("ct" in b and "mask" in b for _, _, b, _ in data)    # velocity | water sheet | mask
+    ZFLAT = float(min(np.nanmin(b["v"]) for _, _, b, _ in data if b is not None)) - 10.0   # the flat maps' height
     if three:
         for _, _, b, _ in data:                   # the bed's state: 1 temperate, -1 cold (grounded), 0 floating
             b["ctm"] = np.where(b["mask"] < -0.5, 0.0, np.where(np.nan_to_num(b["ct"], nan=-1.0) > 0, 1.0, -1.0))
@@ -1246,7 +1247,10 @@ def main():
             else:
                 col = dict(intensity=np.where(mask > -0.5, 1.0, 0.0), cmin=0, cmax=1,
                            colorscale=[[0, "#3a7bd5"], [1, "#c0392b"]], showscale=False)
-            tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["v"], i=i, j=j, k=k, **col,
+            # a base-only panel (sheet, mask) is a map: drawn flat just below the lowest base, so no part of the base
+            # (the shelf base above the grounded bed) hides another as the view turns; the lines stay above it
+            zb_ = np.full(len(B_["v"]), ZFLAT) if (T_ is None and f in ("hw", "hwl", "ctm")) else B_["v"]
+            tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=zb_, i=i, j=j, k=k, **col,
                                 customdata=np.stack([B_["hw" if f == "hwl" else f], mask], 1), scene=sc,
                                 name="base Zb", opacity=1.0, showlegend=False,
                                 hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>"
