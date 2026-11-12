@@ -344,6 +344,8 @@ class ElmerModel(Model):
                                                         or e.get("sheet_upwind", "0")) not in ("0", "false")
         # the CS solver: floating nodes not cold for the sheet's flux (the grounding line an outlet, not a wall; env
         # ESS_SHEET_GL_OPEN, jobs SHEET_GL_OPEN; default 0)
+        # the sheet solver's nonlinear relaxation factor (env ESS_SHEET_RELAX, jobs SHEET_RELAX; default 0.5, 1 = none)
+        self.sheet_relax = float(os.environ.get("ESS_SHEET_RELAX") or e.get("sheet_relax", 0.5))
         self.sheet_gl_open = cs_ and str(os.environ.get("ESS_SHEET_GL_OPEN") or e.get("sheet_gl_open", "0")) \
             not in ("0", "false")
         self.sheet_dcap = cs_ and str(os.environ.get("ESS_SHEET_DCAP") or e.get("sheet_dcap", "1")) not in ("0", "false")
@@ -1509,7 +1511,7 @@ Solver {sheet}
   Nonlinear System Convergence Tolerance = 1.0e-6
   Nonlinear System Max Iterations = 200
   Nonlinear System Min Iterations = 1
-  Nonlinear System Relaxation Factor = Real 0.5
+  Nonlinear System Relaxation Factor = Real {getattr(self, "sheet_relax", 0.5)!r}
   Nonlinear System Convergence Measure = "solution"
   Nonlinear System Reset Newton = Logical True
   Nonlinear System Newton After Iterations = 20
