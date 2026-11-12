@@ -141,11 +141,14 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
     CALL FATAL(SolverName, "Pointer to CT Mask not associated")
   END IF
 
-  ! ESS: "Sheet Open At Grounding Line" (logical): floating nodes (GroundedMask < -0.5) not counted as cold when the
+  ! ESS: "Sheet Open At Grounding Line" (logical): floating and grounding-line nodes (GroundedMask -1, 0) not counted
+  ! as cold when the
   ! flux terms are switched off in elements with a cold node. ColdTempMask marks the shelf cold, so the element across
   ! the grounding line carried no flux and the grounding line was a no-flux wall: the water driven down the steep
   ! Phi0 there (~1 MPa/km) piled up on the last grounded node (job 31693: 7.4 m, the node behind drained). Open, the
-  ! flux reaches the floating nodes, whose Dirichlet sheet (hr) is the outlet.
+  ! flux reaches the floating nodes, whose Dirichlet sheet (hr) is the outlet. The grounding-line nodes (mask 0) are
+  ! cold in ColdTempMask too and not Dirichlet (that needs mask < 0), so they count as open: with floating nodes only,
+  ! the wall stayed one node inland (job 31694)
   glOpen = ListGetLogical( Solver % Values, 'Sheet Open At Grounding Line', Found )
   IF ( glOpen ) THEN
     gmVar => VariableGet( Mesh % Variables, 'GroundedMask' )
@@ -323,7 +326,7 @@ CONTAINS
     isCold = ctvals(ctperm(j)) .LE. 0
     IF ( isCold .AND. glOpen ) THEN
       IF ( gmperm(j) > 0 ) THEN
-        IF ( gmvals(gmperm(j)) < -0.5_dp ) isCold = .FALSE.
+        IF ( gmvals(gmperm(j)) < 0.5_dp ) isCold = .FALSE.   ! floating (-1) and grounding-line (0) nodes
       END IF
     END IF
   END FUNCTION isCold
