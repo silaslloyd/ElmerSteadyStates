@@ -1458,6 +1458,7 @@ Solver {ct}
   Variable = "ColdTempMask"
   Variable DOFs = 1
   Toler = Real 1e-3
+  Floating Nodes Temperate = Logical True   ! floating and grounding-line nodes temperate, their sheet not reset
 End
 
 Solver {stress}

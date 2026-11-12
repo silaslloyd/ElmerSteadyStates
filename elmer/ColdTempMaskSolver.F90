@@ -69,6 +69,10 @@ SUBROUTINE ColdTempMaskSolver(Model,Solver,dt,TransientSimulation)
   REAL(KIND=dp), POINTER :: HwOld(:)                 ! ESS: the water sheet the decision uses (previous step or current)
   REAL(KIND=dp), ALLOCATABLE, SAVE, TARGET :: MaskCopy(:)   ! ESS: the mask as it was (current values: read before overwriting)
   LOGICAL :: UseCurrent                              ! ESS: "Use Current Values" (the mask in the coupled loop)
+  LOGICAL :: FloatTemp                               ! ESS: "Floating Nodes Temperate"
+  TYPE(Variable_t), POINTER :: GmSol
+  REAL(KIND=dp), POINTER :: GmValues(:)
+  INTEGER, POINTER :: GmPerm(:)
   INTEGER, POINTER :: ColdTempPerm(:), TempPerm(:), HwPerm(:)   ! Used to match up node number with solution value at that node (not obvious due to how Elmer stores values)
 
   CHARACTER(LEN=MAX_NAME_LEN) :: SolverName = 'ColdTempMaskSolver'
@@ -140,6 +144,17 @@ SUBROUTINE ColdTempMaskSolver(Model,Solver,dt,TransientSimulation)
     MaskCopy = ColdTempValues            ! a node's old mask, unchanged by this pass's updates of shared nodes
     ColdTempPrev => MaskCopy
   END IF
+  ! ESS "Floating Nodes Temperate": floating and grounding-line nodes (GroundedMask -1, 0) always temperate (+1), their
+  ! water sheet never reset. The heat BC holds them at T0 anyway (gm ct (gm+1) + 1 > 0 for gm <= 0), but as cold
+  ! they were reset to hw = 1e-4 every step (the grounding-line nodes are not under the sheet's floating Dirichlet hr):
+  ! water drained out at the grounding line every step, and the mask showed the grounding line cold.
+  FloatTemp = GetLogical(SolverParams, 'Floating Nodes Temperate', Found)
+  IF (FloatTemp) THEN
+    GmSol => VariableGet( Mesh % Variables, 'GroundedMask' )
+    IF ( .NOT. ASSOCIATED( GmSol ) ) CALL FATAL(SolverName, 'Floating Nodes Temperate: no GroundedMask')
+    GmValues => GmSol % Values
+    GmPerm => GmSol % Perm
+  END IF
   toler = GetConstReal(SolverParams, 'Toler', Found)
   IF (.NOT.Found) THEN
      CALL FATAL(SolverName, 'No tolerance given for the ColdTempMask.')
@@ -166,6 +181,15 @@ CALL INFO( SolverName, 'setting vals', level=1 )
       
       IF (ParEnv % myPe .NE. Element % partIndex) CYCLE
 
+      ! ESS: floating and grounding-line nodes temperate, sheet untouched
+      IF (FloatTemp) THEN
+        IF (GmPerm(j) > 0) THEN
+          IF (GmValues(GmPerm(j)) < 0.5_dp) THEN
+            ColdTempValues(ColdTempPerm(j)) = 1.0_dp
+            CYCLE
+          END IF
+        END IF
+      END IF
 
       ! IF (j==0) CYCLE
 
