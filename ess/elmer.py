@@ -1429,8 +1429,8 @@ End
         """ElmerStreams Marine_Term's thermal chain (see [elmer] thermal)"""
         if not self.marine or self.gl_mode != "contact":
             raise ValueError("[elmer] thermal = 'elmerstreams': marine template with the contact grounding line only")
-        if self.friction_heat != "loads":
-            raise ValueError("[elmer] thermal = 'elmerstreams' needs friction_heat = 'loads' (as ElmerStreams)")
+        if self.friction_heat not in ("loads", "none"):    # none: a spin-up without frictional heating
+            raise ValueError("[elmer] thermal = 'elmerstreams' needs friction_heat = 'loads' (as ElmerStreams) or 'none'")
         if not self.strain_heat or self.stokes_only:
             raise ValueError("[elmer] thermal = 'elmerstreams' needs strain_heat = true and the heat solve")
         fix, halve = self.periodic_gl == "fix", self.periodic_gl == "elmerstreams"
@@ -1590,14 +1590,17 @@ End
         old = ('  Temperature Load = Variable Flow Solution Loads 1, Flow Solution Loads 2, '
                'Flow Solution Loads 3, Velocity 1, Velocity 2, Velocity 3, Coordinate 2\n'
                '    Real Lua "frictionloads(tx[0],tx[1],tx[2],tx[3],tx[4],tx[5], W, W)"')
-        if old not in text:
+        if self.friction_heat == "none":                   # no friction heat load to make periodic
+            old = None
+        elif old not in text:
             raise ValueError("thermal: the loads friction-heating lines of the template changed")
-        new = old
-        if fix:
-            new = old.replace("Flow Solution Loads ", "Periodic Flow Solution Loads ")
-        elif halve:
-            new = old.replace("tx[5], W, W)", "tx[5], tx[6], W)")
-        text = text.replace(old, new)
+        if old is not None:
+            new = old
+            if fix:
+                new = old.replace("Flow Solution Loads ", "Periodic Flow Solution Loads ")
+            elif halve:
+                new = old.replace("tx[5], W, W)", "tx[5], tx[6], W)")
+            text = text.replace(old, new)
         # Lua: the hydrology functions and parameters after parameters.lua
         k = text.index("Header")
         text = text[:k] + f"!---LUA BEGIN\n! assert(loadfile('{self.hydro_lua}'))()\n!---LUA END\n\n" + text[k:]
