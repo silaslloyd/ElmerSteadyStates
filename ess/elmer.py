@@ -332,10 +332,11 @@ class ElmerModel(Model):
         sheet_default = "elmer/SheetSolverhwCS" if sheet_solver == "cs" else "elmer/SheetSolverhw"
         # the CS solver: the sheet's diffusion coefficient capped at 0 (no backward diffusion; env ESS_SHEET_DCAP,
         # jobs SHEET_DCAP, default 1 with cs) and, optionally, a floor on the sheet after every linear solve (env
-        # ESS_SHEET_HMIN, jobs SHEET_HMIN; default 0: off)
+        # ESS_SHEET_HMIN, jobs SHEET_HMIN; unset: off, 0 included: a floor at 0)
         cs_ = sheet_solver == "cs"
         self.sheet_dcap = cs_ and str(os.environ.get("ESS_SHEET_DCAP") or e.get("sheet_dcap", "1")) not in ("0", "false")
-        self.sheet_hmin = float(os.environ.get("ESS_SHEET_HMIN") or e.get("sheet_hmin", 0.0)) if cs_ else 0.0
+        _hm = os.environ.get("ESS_SHEET_HMIN") or e.get("sheet_hmin")
+        self.sheet_hmin = float(_hm) if cs_ and _hm not in (None, "", "off") else None
         # the effective pressure of the sheet (env ESS_SHEET_N, jobs SHEET_N): "hr_over_h" (N = N0 hr / h,
         # regularised: positive, never 0; the default with cs) or "marine_term" (ElmerStreams' N0 (hr - h)/h + 0.01)
         self.sheet_n = str(os.environ.get("ESS_SHEET_N") or e.get("sheet_n", "hr_over_h" if cs_ else "marine_term"))
@@ -1470,7 +1471,7 @@ Solver {stress}
                           + fpl(fixU0, "Before All", "Flow Solution Loads", "Periodic Flow Solution Loads", "folded", " Init")
                           + "\n" + fpl(fixU, "Never", "Flow Solution Loads", "Periodic Flow Solution Loads", "folded"))
         hmin_line = ((f"\n  Minimum Water Sheet Thickness = Real {self.sheet_hmin!r}   ! the sheet floored after "
-                      "every linear solve (SheetSolverhwCS)" if getattr(self, "sheet_hmin", 0.0) > 0 else "")
+                      "every linear solve (SheetSolverhwCS)" if getattr(self, "sheet_hmin", None) is not None else "")
                      + ("\n  Nonnegative Sheet Diffusion = Logical True   ! -K dN/dh and K capped at 0 "
                         "(SheetSolverhwCS)" if getattr(self, "sheet_dcap", False) else ""))
         blocks.append(f"""

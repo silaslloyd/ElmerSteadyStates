@@ -216,7 +216,7 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 [ -n "$FRICTION_HEAT" ] && export ESS_FRICTION_HEAT=$FRICTION_HEAT && echo "  friction heating: $FRICTION_HEAT"
 # SHEET=cs|elmerstreams: which water-sheet solver THERMAL=elmerstreams uses (cs: elmer/SheetSolverhwCS)
 [ -n "$SHEET" ] && export ESS_SHEET_SOLVER=$SHEET && echo "  water sheet solver: $SHEET"
-# SHEET_HMIN=h: the CS sheet solver's floor on the sheet after every linear solve (default 0: off)
+# SHEET_HMIN=h: the CS sheet solver's floor on the sheet after every linear solve (unset: off; 0 is a floor at 0)
 # SHEET_DCAP=0|1: the CS sheet solver's diffusion coefficient capped at 0 (default 1)
 [ -n "$SHEET_DCAP" ] && export ESS_SHEET_DCAP=$SHEET_DCAP && echo "  water sheet diffusion capped at 0: $SHEET_DCAP"
 [ -n "$SHEET_HMIN" ] && export ESS_SHEET_HMIN=$SHEET_HMIN && echo "  water sheet floor: $SHEET_HMIN m"
