@@ -216,6 +216,8 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 [ -n "$FRICTION_HEAT" ] && export ESS_FRICTION_HEAT=$FRICTION_HEAT && echo "  friction heating: $FRICTION_HEAT"
 # SHEET=cs|elmerstreams: which water-sheet solver THERMAL=elmerstreams uses (cs: elmer/SheetSolverhwCS)
 [ -n "$SHEET" ] && export ESS_SHEET_SOLVER=$SHEET && echo "  water sheet solver: $SHEET"
+# SHEET_HMIN=h: the CS sheet solver's floor on the sheet after every linear solve (default 1e-5 m; 0: off)
+[ -n "$SHEET_HMIN" ] && export ESS_SHEET_HMIN=$SHEET_HMIN && echo "  water sheet floor: $SHEET_HMIN m"
 # HEAT_SOLVER=METHOD:PREC or direct: the heat solve's linear solver (default BiCGStabL:ILU1), e.g. GCR:ILU0, GCR:ILU0:0.1 (ILU factor: diagonal shift), direct (MUMPS), hypre (BiCGStab + BoomerAMG)
 [ -n "$HEAT_SOLVER" ] && export ESS_HEAT_SOLVER=$HEAT_SOLVER && echo "  heat linear solver: $HEAT_SOLVER"
 # THERMAL=loads|nowater: [elmer] thermal; nowater: the cold/temperate mask moved every step (ColdTempMaskSolver) with the

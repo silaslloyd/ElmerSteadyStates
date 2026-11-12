@@ -54,7 +54,9 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
 ! Local variables (i.e. for a given element)
 !------------------------------------------------------------------------------
   TYPE(Element_t),POINTER :: Element
-  REAL(KIND=dp) :: Norm
+  REAL(KIND=dp) :: Norm, hmin
+  LOGICAL :: hasMin
+  INTEGER :: nfloor
   INTEGER :: i, j, m, n, n_nei, nb, nd, t, active,passive, istat, correctedvalues  , num_cold !, n = number of nodes (given element), n = number of degrees of freedom (given element), nd = number of DOFs on the boundary (given element), t = index for..., active = number of active element
   INTEGER :: iter, maxiter  ! nonlinear iteration number, max number of nonlinear iterations
   LOGICAL :: Found, Newton, BulkUpdate, RHSUpdate, AllocationsDone = .FALSE.
@@ -145,6 +147,10 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
   END IF
   CALL DefaultStart()
   
+  ! ESS: "Minimum Water Sheet Thickness" (m): after every linear solve, h = max(h, hmin) before the next iteration's
+  ! coefficients: the sheet's diffusion -K dN/dh turns negative (backward) for h < -eps^2/hr = -1e-5 m, and one
+  ! undershooting node then blows the sheet up within a step (job 31672: +-1e10 m by year 50)
+  hmin = ListGetConstReal( SolverParams, 'Minimum Water Sheet Thickness', hasMin )
   maxiter = ListGetInteger( GetSolverParams(),&
       'Nonlinear System Max Iterations',Found,minv=1)
   IF(.NOT. Found ) maxiter = 1
@@ -219,6 +225,13 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
     !--------------------
     Norm = DefaultSolve() 
     !IF ( ParEnv % PEs > 1) CALL ParallelSumVector( Solver % Matrix, hw, 2)
+    IF ( hasMin ) THEN
+      hw => Solver % Variable % Values
+      nfloor = COUNT( hw < hmin )
+      WHERE ( hw < hmin ) hw = hmin
+      IF ( nfloor > 0 ) CALL Info( SolverName, 'Minimum Water Sheet Thickness: '//I2S(nfloor)// &
+          ' values raised (this rank)', Level=5 )
+    END IF
 
    IF( DefaultConverged() ) THEN
     EXIT    
