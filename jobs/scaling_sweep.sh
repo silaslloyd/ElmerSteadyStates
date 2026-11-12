@@ -53,6 +53,7 @@ for p in $POINTS; do
         j*) cfg=configs/coarse_sector_inv38.toml; extra="$MAR,FROM=${FROM:-work/coarse/ckpt_1500.npz}";;   # inverted, 38 x = circle
         x*) cfg=configs/coarse_sector_inv2_cut_ext.toml; extra="$MAR,FROM=${FROM:-work/marine_flowline/run_cold_p268.15.npz}";;   # inv2_cut with the front 200 km further in (more shelf)
         v*) cfg=configs/coarse_sector_inv2_cut.toml; extra="$MAR,FROM=${FROM:-work/coarse/start.npz}";;   # inverted x 2 (19 copies), cut sides, cold uniform start
+        y*) cfg=configs/coarse_sector_inv38_cut_cold.toml; extra="$MAR,FROM=${FROM:-work/marine_flowline/run_cold_p268.15.npz}";;   # inv38_cut (single width) set up afresh from the cold flowline state
         r*) cfg=configs/coarse_sector_inv38_cut.toml; extra="$MAR,FROM=${FROM:-work/coarse/start.npz}";;   # inverted 38, cut (jagged) sides; from the cold, laterally uniform strip start (ckpt_1500 has streams: transferred by radius they come out speckled)
         k*) cfg=configs/coarse_sector_inv2.toml; extra="$MAR,FROM=${FROM:-work/coarse/ckpt_1500.npz}";;   # inverted, twice as wide
         i*) cfg=configs/coarse_sector_inv.toml; extra="$MAR,FROM=${FROM:-work/coarse/ckpt_1500.npz}";;   # the inverted sector
