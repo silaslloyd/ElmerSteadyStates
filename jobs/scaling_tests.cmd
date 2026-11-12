@@ -222,7 +222,7 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 [ -n "$SHEET_HMIN" ] && export ESS_SHEET_HMIN=$SHEET_HMIN && echo "  water sheet floor: $SHEET_HMIN m"
 # SHEET_IMPLICIT=1: the CS sheet solver's potential-gradient flux implicit in h (K/h from the last iteration)
 [ -n "$SHEET_IMPLICIT" ] && export ESS_SHEET_IMPLICIT=$SHEET_IMPLICIT && echo "  water sheet implicit advection: $SHEET_IMPLICIT"
-# SHEET_UPWIND=0: without the streamline upwinding of that flux (default on with SHEET_IMPLICIT=1)
+# SHEET_UPWIND=1: streamline upwinding of that flux (with SHEET_IMPLICIT=1; default off)
 [ -n "$SHEET_UPWIND" ] && export ESS_SHEET_UPWIND=$SHEET_UPWIND && echo "  water sheet advection upwinding: $SHEET_UPWIND"
 # SHEET_GL_OPEN=1: the CS sheet solver's flux carried into floating nodes (the grounding line an outlet, not a wall)
 [ -n "$SHEET_GL_OPEN" ] && export ESS_SHEET_GL_OPEN=$SHEET_GL_OPEN && echo "  water sheet open at the grounding line: $SHEET_GL_OPEN"

@@ -338,9 +338,10 @@ class ElmerModel(Model):
         # default 0)
         self.sheet_implicit = cs_ and str(os.environ.get("ESS_SHEET_IMPLICIT") or e.get("sheet_implicit", "0")) \
             not in ("0", "false")
-        # with it, streamline-upwind diffusion on that flux (env ESS_SHEET_UPWIND, jobs SHEET_UPWIND; default 1)
+        # with it, streamline-upwind diffusion on that flux (env ESS_SHEET_UPWIND, jobs SHEET_UPWIND; default 0: not
+        # needed with the grounding line open, cell Peclet ~0.5 there; jobs 31695 with, 31696 without: the same)
         self.sheet_upwind = self.sheet_implicit and str(os.environ.get("ESS_SHEET_UPWIND")
-                                                        or e.get("sheet_upwind", "1")) not in ("0", "false")
+                                                        or e.get("sheet_upwind", "0")) not in ("0", "false")
         # the CS solver: floating nodes not cold for the sheet's flux (the grounding line an outlet, not a wall; env
         # ESS_SHEET_GL_OPEN, jobs SHEET_GL_OPEN; default 0)
         self.sheet_gl_open = cs_ and str(os.environ.get("ESS_SHEET_GL_OPEN") or e.get("sheet_gl_open", "0")) \
