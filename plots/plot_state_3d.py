@@ -1224,7 +1224,9 @@ def main():
                 cb = dict(title=ctitle, x=cx, len=0.8)
                 if f == "ctm":
                     cb.update(tickvals=[-1, 0, 1], ticktext=["cold", "floating", "temperate"])
-                col = dict(intensity=B_[f], colorscale=cs, cmin=lo, cmax=hi, showscale=True, colorbar=cb)
+                # no shading: lit, the colours came out greyed by the angle to the light (a flat colour map here)
+                col = dict(intensity=B_[f], colorscale=cs, cmin=lo, cmax=hi, showscale=True, colorbar=cb,
+                           lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0, roughness=1.0, fresnel=0.0))
             elif f != "speed" or BASE_COLOUR == "speed":
                 col = dict(intensity=B_[f], colorscale=cs, cmin=lo, cmax=hi, showscale=False)
             else:
