@@ -62,8 +62,8 @@ thermal: ColdTempMask.so SheetSolverhw.so SheetSolverhwCS.so NoWaterSheet.so
 NoWaterSheet.so: NoWaterSheet.F90
 	$(ELMERF90) -o $@ $<
 
-ColdTempMask.so: ColdTempMaskSolver.F90
-	$(ELMERF90) -o $@ $<
+ColdTempMask.so: PeriodicUtils.F90 ColdTempMaskSolver.F90
+	$(ELMERF90) -o $@ $^
 
 SheetSolverhw.so: SheetSolverhw.F90
 	$(ELMERF90) -o $@ $<

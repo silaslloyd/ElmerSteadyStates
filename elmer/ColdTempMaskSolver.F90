@@ -1,4 +1,4 @@
-! Copied unchanged from ElmerStreams SRC/ColdTempMaskSolver.f90 (thermal = "elmerstreams" in ESS).
+! Copied from ElmerStreams SRC/ColdTempMaskSolver.f90 (thermal = "elmerstreams" in ESS).
 ! Solver for creating a maks that identifies where the temperate and cold BCs should be applied.
 ! Inspired by the GroundedSolver.f90 used to make the GroundedMask.
 !
@@ -34,6 +34,7 @@ SUBROUTINE ColdTempMaskSolver(Model,Solver,dt,TransientSimulation)
 !**************************************************************************
 
   Use DefUtils
+  USE PeriodicUtils                 ! ESS: the mask made periodic (PeriodicSymmetrize)
 
   IMPLICIT NONE
 
@@ -57,7 +58,7 @@ SUBROUTINE ColdTempMaskSolver(Model,Solver,dt,TransientSimulation)
 
   LOGICAL :: Found, AllocationsDone = .FALSE.
 
-  INTEGER :: i, n, t, j, dim, mn, istat
+  INTEGER :: i, n, t, j, dim, mn, istat, npairsP
 
   REAL(KIND=dp) :: toler
   REAL(KIND=dp), ALLOCATABLE :: Tm(:)
@@ -219,6 +220,12 @@ CALL INFO( SolverName, 'setting vals', level=1 )
 
   
   !IF ( ParEnv % PEs > 1) CALL ParallelSumVector( Solver % Matrix, ColdTempValues, 1)
+
+  ! ESS: the mask periodic, temperate if either node of a periodic pair is ("max"). Node by node, an image could stay
+  ! cold next to its temperate master for good: T and hw are tied across the seam, the master's Dirichlet T0 holds
+  ! the pair at exactly T0, never the 1e-3 K above it that turns a cold node temperate (job 31699: seam pairs with
+  ! equal T, hw and melt, master +1, image -1). The cold image then cut the sheet's flux along the whole seam.
+  CALL PeriodicSymmetrize( Model, ColdTempValues, ColdTempPerm, 1, 'max', npairsP )
 
 CALL INFO(SolverName,'Done',level=1)
 
