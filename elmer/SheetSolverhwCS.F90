@@ -55,7 +55,10 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
 !------------------------------------------------------------------------------
   TYPE(Element_t),POINTER :: Element
   REAL(KIND=dp) :: Norm, hmin
-  LOGICAL :: hasMin, capD, implAdv, upwAdv
+  LOGICAL :: hasMin, capD, implAdv, upwAdv, glOpen
+  TYPE(Variable_t), POINTER :: gmVar
+  REAL(KIND=dp), POINTER :: gmvals(:)
+  INTEGER, POINTER :: gmperm(:)
   INTEGER :: nfloor
   INTEGER :: i, j, m, n, n_nei, nb, nd, t, active,passive, istat, correctedvalues  , num_cold !, n = number of nodes (given element), n = number of degrees of freedom (given element), nd = number of DOFs on the boundary (given element), t = index for..., active = number of active element
   INTEGER :: iter, maxiter  ! nonlinear iteration number, max number of nonlinear iterations
@@ -136,6 +139,19 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
         ctvals => coldtempmask % Values
   ELSE
     CALL FATAL(SolverName, "Pointer to CT Mask not associated")
+  END IF
+
+  ! ESS: "Sheet Open At Grounding Line" (logical): floating nodes (GroundedMask < -0.5) not counted as cold when the
+  ! flux terms are switched off in elements with a cold node. ColdTempMask marks the shelf cold, so the element across
+  ! the grounding line carried no flux and the grounding line was a no-flux wall: the water driven down the steep
+  ! Phi0 there (~1 MPa/km) piled up on the last grounded node (job 31693: 7.4 m, the node behind drained). Open, the
+  ! flux reaches the floating nodes, whose Dirichlet sheet (hr) is the outlet.
+  glOpen = ListGetLogical( Solver % Values, 'Sheet Open At Grounding Line', Found )
+  IF ( glOpen ) THEN
+    gmVar => VariableGet( Mesh % Variables, 'GroundedMask' )
+    IF ( .NOT. ASSOCIATED( gmVar ) ) CALL FATAL( SolverName, 'Sheet Open At Grounding Line: no GroundedMask' )
+    gmvals => gmVar % Values
+    gmperm => gmVar % Perm
   END IF
 
   nodalcoords1 => VariableGet( Mesh % Variables, 'nodalcoords 1' )
@@ -299,6 +315,18 @@ END DO
 CALL DefaultFinish()
  
 CONTAINS
+
+!------------------------------------------------------------------------------
+! ESS: node j counts as cold for the flux switch-off: ColdTempMask <= 0, unless floating with Sheet Open At Grounding Line
+  LOGICAL FUNCTION isCold( j )
+    INTEGER :: j
+    isCold = ctvals(ctperm(j)) .LE. 0
+    IF ( isCold .AND. glOpen ) THEN
+      IF ( gmperm(j) > 0 ) THEN
+        IF ( gmvals(gmperm(j)) < -0.5_dp ) isCold = .FALSE.
+      END IF
+    END IF
+  END FUNCTION isCold
 
 ! Calculate the linearised components of the water flux (used in the local matrices)
 ! ------------------------------------------------------------------------------------------
@@ -590,7 +618,7 @@ CONTAINS
 
      DO i=1, n   ! ... for each node within the element (LOCAL nodal index)
         j = Element % NodeIndexes(i)
-        IF (ctvals(ctperm(j)) .LE. 0) THEN
+        IF ( isCold(j) ) THEN
           num_cold = num_cold + 1
         END IF
     END DO
@@ -713,7 +741,7 @@ CONTAINS
       !MASS = MASS*0._dp
       DO i = 1,n
         j = Element % NodeIndexes(i)
-        IF (ctvals(ctperm(j)) .LE. 0) THEN
+        IF ( isCold(j) ) THEN
           DO k = 1,n
             ! Set mass matrix entries associated with cold nodes to zero - NECESSARY, otherwise solution diverges
             MASS(i,k) = 0._dp

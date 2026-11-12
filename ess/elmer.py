@@ -341,6 +341,10 @@ class ElmerModel(Model):
         # with it, streamline-upwind diffusion on that flux (env ESS_SHEET_UPWIND, jobs SHEET_UPWIND; default 1)
         self.sheet_upwind = self.sheet_implicit and str(os.environ.get("ESS_SHEET_UPWIND")
                                                         or e.get("sheet_upwind", "1")) not in ("0", "false")
+        # the CS solver: floating nodes not cold for the sheet's flux (the grounding line an outlet, not a wall; env
+        # ESS_SHEET_GL_OPEN, jobs SHEET_GL_OPEN; default 0)
+        self.sheet_gl_open = cs_ and str(os.environ.get("ESS_SHEET_GL_OPEN") or e.get("sheet_gl_open", "0")) \
+            not in ("0", "false")
         self.sheet_dcap = cs_ and str(os.environ.get("ESS_SHEET_DCAP") or e.get("sheet_dcap", "1")) not in ("0", "false")
         _hm = os.environ.get("ESS_SHEET_HMIN") or e.get("sheet_hmin")
         self.sheet_hmin = float(_hm) if cs_ and _hm not in (None, "", "off") else None
@@ -1484,7 +1488,9 @@ Solver {stress}
                      + ("\n  Implicit Sheet Advection = Logical True   ! q0 = -K grad Phi0 as (K/h) h, h implicit "
                         "(SheetSolverhwCS)" if getattr(self, "sheet_implicit", False) else "")
                      + ("\n  Sheet Advection Upwinding = Logical True   ! streamline-upwind diffusion on it "
-                        "(SheetSolverhwCS)" if getattr(self, "sheet_upwind", False) else ""))
+                        "(SheetSolverhwCS)" if getattr(self, "sheet_upwind", False) else "")
+                     + ("\n  Sheet Open At Grounding Line = Logical True   ! floating nodes not cold for the flux "
+                        "(SheetSolverhwCS)" if getattr(self, "sheet_gl_open", False) else ""))
         blocks.append(f"""
 Solver {sheet}
   Exec Solver = "After Timestep"
