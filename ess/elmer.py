@@ -338,6 +338,9 @@ class ElmerModel(Model):
         # default 0)
         self.sheet_implicit = cs_ and str(os.environ.get("ESS_SHEET_IMPLICIT") or e.get("sheet_implicit", "0")) \
             not in ("0", "false")
+        # with it, streamline-upwind diffusion on that flux (env ESS_SHEET_UPWIND, jobs SHEET_UPWIND; default 1)
+        self.sheet_upwind = self.sheet_implicit and str(os.environ.get("ESS_SHEET_UPWIND")
+                                                        or e.get("sheet_upwind", "1")) not in ("0", "false")
         self.sheet_dcap = cs_ and str(os.environ.get("ESS_SHEET_DCAP") or e.get("sheet_dcap", "1")) not in ("0", "false")
         _hm = os.environ.get("ESS_SHEET_HMIN") or e.get("sheet_hmin")
         self.sheet_hmin = float(_hm) if cs_ and _hm not in (None, "", "off") else None
@@ -1479,7 +1482,9 @@ Solver {stress}
                      + ("\n  Nonnegative Sheet Diffusion = Logical True   ! -K dN/dh and K capped at 0 "
                         "(SheetSolverhwCS)" if getattr(self, "sheet_dcap", False) else "")
                      + ("\n  Implicit Sheet Advection = Logical True   ! q0 = -K grad Phi0 as (K/h) h, h implicit "
-                        "(SheetSolverhwCS)" if getattr(self, "sheet_implicit", False) else ""))
+                        "(SheetSolverhwCS)" if getattr(self, "sheet_implicit", False) else "")
+                     + ("\n  Sheet Advection Upwinding = Logical True   ! streamline-upwind diffusion on it "
+                        "(SheetSolverhwCS)" if getattr(self, "sheet_upwind", False) else ""))
         blocks.append(f"""
 Solver {sheet}
   Exec Solver = "After Timestep"

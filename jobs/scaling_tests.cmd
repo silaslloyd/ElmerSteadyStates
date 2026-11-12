@@ -222,6 +222,8 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 [ -n "$SHEET_HMIN" ] && export ESS_SHEET_HMIN=$SHEET_HMIN && echo "  water sheet floor: $SHEET_HMIN m"
 # SHEET_IMPLICIT=1: the CS sheet solver's potential-gradient flux implicit in h (K/h from the last iteration)
 [ -n "$SHEET_IMPLICIT" ] && export ESS_SHEET_IMPLICIT=$SHEET_IMPLICIT && echo "  water sheet implicit advection: $SHEET_IMPLICIT"
+# SHEET_UPWIND=0: without the streamline upwinding of that flux (default on with SHEET_IMPLICIT=1)
+[ -n "$SHEET_UPWIND" ] && export ESS_SHEET_UPWIND=$SHEET_UPWIND && echo "  water sheet advection upwinding: $SHEET_UPWIND"
 # SHEET_N=hr_over_h|marine_term: the sheet's effective pressure (default hr_over_h with SHEET=cs)
 [ -n "$SHEET_N" ] && export ESS_SHEET_N=$SHEET_N && echo "  water sheet effective pressure: $SHEET_N"
 # HEAT_SOLVER=METHOD:PREC or direct: the heat solve's linear solver (default BiCGStabL:ILU1), e.g. GCR:ILU0, GCR:ILU0:0.1 (ILU factor: diagonal shift), direct (MUMPS), hypre (BiCGStab + BoomerAMG)

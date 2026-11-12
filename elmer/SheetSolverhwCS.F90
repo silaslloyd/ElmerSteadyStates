@@ -55,7 +55,7 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
 !------------------------------------------------------------------------------
   TYPE(Element_t),POINTER :: Element
   REAL(KIND=dp) :: Norm, hmin
-  LOGICAL :: hasMin, capD, implAdv
+  LOGICAL :: hasMin, capD, implAdv, upwAdv
   INTEGER :: nfloor
   INTEGER :: i, j, m, n, n_nei, nb, nd, t, active,passive, istat, correctedvalues  , num_cold !, n = number of nodes (given element), n = number of degrees of freedom (given element), nd = number of DOFs on the boundary (given element), t = index for..., active = number of active element
   INTEGER :: iter, maxiter  ! nonlinear iteration number, max number of nonlinear iterations
@@ -162,6 +162,11 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
   ! neighbours' rate and went negative (jobs 31687, 31690). Galerkin, not upwinded: fine for a cell Peclet number
   ! |grad Phi0| dx h / (2 N0 hr) < 1 (h below ~2 m for 1e-4 MPa/m, 1 km elements)
   implAdv = ListGetLogical( SolverParams, 'Implicit Sheet Advection', Found )
+  ! ESS: "Sheet Advection Upwinding" (logical, with Implicit Sheet Advection): streamline-upwind diffusion
+  ! tau (w.grad v)(w.grad h), tau = he/(2|w|) (coth Pe - 1/Pe), Pe = |w| he / (2 D), D = -K dN/dh (>= 0): Galerkin
+  ! advection oscillates for a cell Peclet number above 1, as at the grounding line where grad Phi0 is steep
+  ! (job 31691: h +200 / -330 m on neighbouring grounded nodes 2 km from floating ice)
+  upwAdv = implAdv .AND. ListGetLogical( SolverParams, 'Sheet Advection Upwinding', Found )
   maxiter = ListGetInteger( GetSolverParams(),&
       'Nonlinear System Max Iterations',Found,minv=1)
   IF(.NOT. Found ) maxiter = 1
@@ -529,7 +534,7 @@ CONTAINS
     REAL(KIND=dp) :: QQhAtIp
     REAL(KIND=dp) :: dqdhAtIP(dimsheet), q0AtIP(dimsheet), dhwdxAtIP(dimsheet), gradPhi0AtIP(dimsheet), graddNdhAtIP(dimsheet)
     REAL(KIND=dp) :: qhAtIP(dimsheet), gradNAtIP(dimsheet)
-    REAL(KIND=dp) :: KoverH(n), wAtIP(dimsheet)
+    REAL(KIND=dp) :: KoverH(n), wAtIP(dimsheet), he, wn, Dif, Pe, tau
     REAL(KIND=dp) :: Basis(nd),dBasisdx(nd,dim),DetJ
     REAL(KIND=dp) :: MASS(nd,nd), STIFF(nd,nd), FORCE(nd), LOAD(n)
     LOGICAL :: Stat,Found
@@ -575,7 +580,8 @@ CONTAINS
     
     num_cold = 0._dp
 
-    ! ESS (Implicit Sheet Advection): the nodal K/h+ of the advection speed
+    ! ESS (Implicit Sheet Advection): the nodal K/h+ of the advection speed; the element size for the upwinding
+    IF ( upwAdv ) he = ElementDiameter( Element, Nodes )
     IF ( implAdv ) THEN
       DO i=1,n
         KoverH(i) = MAX( HydraulicConductivity(i), 0.0_dp ) / MAX( nodalhw(i), 1.0e-3_dp )
@@ -626,6 +632,25 @@ CONTAINS
         q0AtIP = -HydraulicConductivityAtIP*gradPhi0AtIP
       END IF
       IF ( implAdv ) wAtIP = -SUM( KoverH(1:n) * Basis(1:n) ) * gradPhi0AtIP
+      tau = 0.0_dp
+      IF ( upwAdv ) THEN
+        wn = SQRT( SUM( wAtIP**2 ) )
+        Dif = MAX( -HydraulicConductivityAtIP*dEffectivePressuredhAtIP, 0.0_dp )
+        IF ( wn > 0.0_dp ) THEN
+          IF ( Dif > 0.0_dp ) THEN
+            Pe = wn*he/(2.0_dp*Dif)
+          ELSE
+            Pe = HUGE(1.0_dp)
+          END IF
+          IF ( Pe > 30.0_dp ) THEN
+            tau = he/(2.0_dp*wn)*(1.0_dp - 1.0_dp/Pe)
+          ELSE IF ( Pe > 1.0e-3_dp ) THEN
+            tau = he/(2.0_dp*wn)*(1.0_dp/TANH(Pe) - 1.0_dp/Pe)
+          ELSE
+            tau = he/(2.0_dp*wn)*Pe/3.0_dp
+          END IF
+        END IF
+      END IF
 
       Weight = IP % s(t) * DetJ
 
@@ -658,7 +683,9 @@ CONTAINS
           IF ( implAdv ) THEN
             ! ESS: -int grad(v_q).w h, h = sum_p h_p Basis(p): row q (test function), column p
             DO p=1,nd
-              STIFF(q,p) = STIFF(q,p) - Weight * SUM( dBasisdx(q,1:dimsheet)*wAtIP(1:dimsheet) ) * Basis(p)
+              STIFF(q,p) = STIFF(q,p) - Weight * SUM( dBasisdx(q,1:dimsheet)*wAtIP(1:dimsheet) ) * Basis(p) &
+                  + Weight * tau * SUM( wAtIP(1:dimsheet)*dBasisdx(q,1:dimsheet) ) &
+                                 * SUM( wAtIP(1:dimsheet)*dBasisdx(p,1:dimsheet) )
             END DO
           ELSE
             FORCE(q) = FORCE(q) + Weight * SUM( dBasisdx(q,1:dimsheet)*q0AtIP(1:dimsheet) )
