@@ -42,8 +42,8 @@ With a Temperature field: a second panel next to it, the same geometry coloured 
 side walls; the base shows the bed temperature, where a seam stripe from wrong loads would show).
 A treatment folder is read phase by phase (spinup, retreat, advance: <phase>_chunks/points/state_*.npz).
 --sheet: instead of the temperature, two panels of the bed seen from above (the base only; THERMAL=elmerstreams runs):
-the water sheet thickness on a signed log scale (blue positive, red negative, white 0; ticks 1 cm .. 1 km; --hw-max H:
-linear 0 .. H m instead, thicker saturating), and the cold/temperate mask (red temperate, blue cold, grey floating); the cold/temperate boundary in magenta
+the water sheet thickness, linear over its min .. max in all frames (white 0, blue positive, red negative; --hw-max H:
+0 .. H m, thicker saturating; --hw-log: a signed log scale, ticks 1 cm .. 1 km), and the cold/temperate mask (red temperate, blue cold, grey floating); the cold/temperate boundary in magenta
 on all three ("temperate on").
 Writes <first input>_3d.html and opens it. Needs numpy and plotly.
 """
@@ -87,7 +87,8 @@ MESH_DIR = None          # --mesh-dir DIR: the footprint mesh (ElmerGrid directo
 FS_SSA = 0.0             # km: draw the full-Stokes | SSA boundary this far beyond the grounding line (--fs-ssa 10)
 WALLS = False            # walled sides: the distance to the grounding line not wrapped across y (--walls)
 SHEET = False            # --sheet: the second panel the water sheet (base only) instead of the temperature
-HW_MAX = None            # --hw-max H: a linear colour scale 0 .. H m; default the signed log scale (HW_LOG)
+HW_MAX = None            # --hw-max H: a linear colour scale 0 .. H m; default: linear over the data's min .. max
+HW_LOG = False           # --hw-log: the signed log scale instead
 HW_H0 = 0.01             # the signed log scale: sign(h) log10(1 + |h| / HW_H0), from -1e3 to 1e3 m
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
 MESH_TOGGLE = True       # the "mesh off / mesh on" buttons for the base mesh (white); --no-mesh-toggle: none (smaller)
@@ -801,7 +802,7 @@ def _rdp(P, eps):
 
 def main():
     import plotly.graph_objects as go
-    global SHEET, HW_MAX
+    global SHEET, HW_MAX, HW_LOG
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
     global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD, SECTOR, SECTOR_A
     args = sys.argv[1:]
@@ -853,6 +854,9 @@ def main():
     if "--sheet" in args:
         SHEET = True
         args.remove("--sheet")
+    if "--hw-log" in args:
+        HW_LOG = True
+        args.remove("--hw-log")
     if "--hw-max" in args:
         k = args.index("--hw-max")
         HW_MAX = float(args[k + 1])
@@ -1062,6 +1066,18 @@ def main():
         if HW_MAX:
             print(f"water sheet colours 0 .. {HW_MAX:g} m (--hw-max); all frames: {np.nanmin(hv):.3g} .. {np.nanmax(hv):.3g} m")
             panels.append(("hw", 0.0, HW_MAX, "Blues", "water sheet (m)", 0.645 if three else 1.0, "scene2"))
+        elif not HW_LOG:
+            # linear over the data (all frames): white at 0, blue above, red below (if any)
+            lo_, hi_ = float(np.nanmin(hv)), float(np.nanmax(hv))
+            hi_ = hi_ if hi_ > lo_ else lo_ + 1e-6
+            if lo_ < 0 < hi_:
+                z0 = -lo_ / (hi_ - lo_)
+                cs_ = [[0.0, "#b2182b"], [z0, "#ffffff"], [1.0, "#08306b"]]
+            else:
+                cs_ = "Blues"
+            print(f"water sheet colours: linear {lo_:.3g} .. {hi_:.3g} m, the data's range over all frames "
+                  f"(white 0, blue positive, red negative; --hw-max H: 0 .. H; --hw-log: signed log)")
+            panels.append(("hw", lo_, hi_, cs_, "water sheet (m)", 0.645 if three else 1.0, "scene2"))
         else:
             # signed log: blue positive, red negative, white 0; every thickness from 1 cm to 1 km distinguishable
             for _, _, b, _ in data:
