@@ -1578,7 +1578,7 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
     def tidy(tr):
         """compact copies of the big arrays: plotly >= 6 writes numpy arrays as binary (base64 of their dtype), so
         float32 / int32 halve them; plotly < 6 writes every float as text in full (~18 characters), so rounded:
-        positions to 1 m, heights to 0.1 m, colours to 0.01"""
+        positions to 1 m, heights to 0.1 m, colours to 3 significant figures (at least 0.01)"""
         import plotly
         f32 = int(plotly.__version__.split(".")[0]) >= 6
         cast = (lambda a: a.astype(np.float32)) if f32 else (lambda a: a)
@@ -1592,7 +1592,12 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
                     t_[k] = np.asarray(t_[k], dtype=np.int32)
             for k in ("intensity", "customdata"):
                 if t_[k] is not None:
-                    t_[k] = cast(np.round(np.asarray(t_[k], float), 2))
+                    # colours to 3 significant figures of the field's largest value, at least 0.01 (2 decimals): a
+                    # fixed 0.01 rounded the melt (mm/yr, ~0.003 m/yr) and sheet values of cm to exactly 0
+                    a_ = np.asarray(t_[k], float)
+                    m_ = float(np.nanmax(np.abs(a_))) if a_.size and np.isfinite(a_).any() else 0.0
+                    dec = 2 if m_ == 0 or m_ >= 10 else max(2, int(3 - np.floor(np.log10(m_))))
+                    t_[k] = cast(np.round(a_, dec))
         return tr
     tidy(first)
 
