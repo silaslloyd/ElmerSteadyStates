@@ -44,7 +44,7 @@ A treatment folder is read phase by phase (spinup, retreat, advance: <phase>_chu
 --sheet: instead of the temperature, two panels of the bed seen from above (the base only; THERMAL=elmerstreams runs):
 the temperature (surface and base; --sheet-velocity: the velocity instead), the water sheet thickness and the melt
 rate (--mask-panel: the cold/temperate mask instead; --melt-max M: its colours
--M .. M m/yr, default its range on the grounded temperate bed; red freeze-on, white 0, blue melt). The sheet: linear over its min .. max
+-M .. M m/yr, default its 2nd .. 98th percentile on the grounded temperate bed; red freeze-on, white 0, blue melt). The sheet: linear over its min .. max
 in all frames (white 0, blue positive, red negative; --hw-max H:
 0 .. H m, thicker saturating; --hw-log: a signed log scale, ticks 1 cm .. 1 km), and the cold/temperate mask (red temperate, blue cold, grey floating); the cold/temperate boundary in magenta
 on all three ("temperate on").
@@ -1123,13 +1123,17 @@ def main():
         if MELT_MAX:
             lo_, hi_ = -MELT_MAX, MELT_MAX
         else:
-            lo_, hi_ = min(float(np.nanmin(mt)), 0.0), max(float(np.nanmax(mt)), 0.0)
+            # the 2nd .. 98th percentile there (a few extreme nodes would leave the rest of the strip near-white)
+            lo_, hi_ = min(float(np.nanpercentile(mt, 2)), 0.0), max(float(np.nanpercentile(mt, 98)), 0.0)
             if hi_ - lo_ <= 0:
                 lo_, hi_ = -1e-6, 1e-6
         z0 = -lo_ / (hi_ - lo_)
         cs_ = [[0.0, "#b2182b"], [z0, "#ffffff"], [1.0, "#08306b"]] if 0 < z0 < 1 else \
             ([[0.0, "#ffffff"], [1.0, "#08306b"]] if z0 <= 0 else [[0.0, "#b2182b"], [1.0, "#ffffff"]])
-        print(f"melt rate colours {lo_:.3g} .. {hi_:.3g} m/yr: the range on the grounded temperate bed, all frames "
+        q = np.nanpercentile(mt, [0, 10, 50, 90, 100]) if len(mt) else [np.nan] * 5
+        print(f"melt on the grounded temperate bed ({len(mt)} node values): min {q[0]:.3g}, 10% {q[1]:.3g}, median "
+              f"{q[2]:.3g}, 90% {q[3]:.3g}, max {q[4]:.3g} m/yr")
+        print(f"melt rate colours {lo_:.3g} .. {hi_:.3g} m/yr: its 2nd .. 98th percentile there, all frames "
               f"(--melt-max M: -M .. M; red freeze-on, white 0, blue melt); everywhere {np.nanmin(mv):.3g} .. "
               f"{np.nanmax(mv):.3g} m/yr")
         panels.append(("melt", lo_, hi_, cs_, "melt rate (m/yr)", 0.99, "scene3"))
