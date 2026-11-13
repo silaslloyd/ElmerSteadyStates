@@ -44,7 +44,7 @@ A treatment folder is read phase by phase (spinup, retreat, advance: <phase>_chu
 --sheet: instead of the temperature, two panels of the bed seen from above (the base only; THERMAL=elmerstreams runs):
 the temperature (surface and base; --sheet-velocity: the velocity instead), the water sheet thickness and the melt
 rate (--mask-panel: the cold/temperate mask instead; --melt-max M: its colours
--M .. M m/yr, default the 99.5th percentile of |melt|; red freeze-on, blue melt). The sheet: linear over its min .. max
+-M .. M m/yr, default its range on the grounded temperate bed; red freeze-on, white 0, blue melt). The sheet: linear over its min .. max
 in all frames (white 0, blue positive, red negative; --hw-max H:
 0 .. H m, thicker saturating; --hw-log: a signed log scale, ticks 1 cm .. 1 km), and the cold/temperate mask (red temperate, blue cold, grey floating); the cold/temperate boundary in magenta
 on all three ("temperate on").
@@ -1115,10 +1115,24 @@ def main():
             panels.append(("hwl", -L, L, "RdBu", "water sheet (m)", 0.645 if three else 1.0, "scene2"))
     if three and p3 == "melt":
         mv = np.concatenate([b["melt"] for _, _, b, _ in data])
-        M = MELT_MAX or float(np.nanpercentile(np.abs(mv), 99.5)) or 1e-6
-        print(f"melt rate colours -{M:.3g} .. {M:.3g} m/yr (--melt-max; red freeze-on, white 0, blue melt); "
-              f"all frames {np.nanmin(mv):.3g} .. {np.nanmax(mv):.3g} m/yr")
-        panels.append(("melt", -M, M, "RdBu", "melt rate (m/yr)", 0.99, "scene3"))
+        # the range of the melt where it is real: the grounded temperate bed (elsewhere it is 0 by definition or
+        # round-off of the loads); white at 0, red freeze-on, blue melt
+        sel = [b["melt"][(b["mask"] > 0.5) & (np.nan_to_num(b["ct"], nan=-1.0) > 0)]
+               for _, _, b, _ in data if "mask" in b and "ct" in b]
+        mt = np.concatenate(sel) if sel and sum(len(x) for x in sel) else mv
+        if MELT_MAX:
+            lo_, hi_ = -MELT_MAX, MELT_MAX
+        else:
+            lo_, hi_ = min(float(np.nanmin(mt)), 0.0), max(float(np.nanmax(mt)), 0.0)
+            if hi_ - lo_ <= 0:
+                lo_, hi_ = -1e-6, 1e-6
+        z0 = -lo_ / (hi_ - lo_)
+        cs_ = [[0.0, "#b2182b"], [z0, "#ffffff"], [1.0, "#08306b"]] if 0 < z0 < 1 else \
+            ([[0.0, "#ffffff"], [1.0, "#08306b"]] if z0 <= 0 else [[0.0, "#b2182b"], [1.0, "#ffffff"]])
+        print(f"melt rate colours {lo_:.3g} .. {hi_:.3g} m/yr: the range on the grounded temperate bed, all frames "
+              f"(--melt-max M: -M .. M; red freeze-on, white 0, blue melt); everywhere {np.nanmin(mv):.3g} .. "
+              f"{np.nanmax(mv):.3g} m/yr")
+        panels.append(("melt", lo_, hi_, cs_, "melt rate (m/yr)", 0.99, "scene3"))
     if three and p3 == "ctm":
         panels.append(("ctm", -1.0, 1.0, [[0, "#3a7bd5"], [0.333, "#3a7bd5"], [0.334, "#bbbbbb"], [0.666, "#bbbbbb"],
                                           [0.667, "#c0392b"], [1, "#c0392b"]], "bed", 0.99, "scene3"))
