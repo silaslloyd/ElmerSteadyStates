@@ -42,7 +42,9 @@ With a Temperature field: a second panel next to it, the same geometry coloured 
 side walls; the base shows the bed temperature, where a seam stripe from wrong loads would show).
 A treatment folder is read phase by phase (spinup, retreat, advance: <phase>_chunks/points/state_*.npz).
 --sheet: instead of the temperature, two panels of the bed seen from above (the base only; THERMAL=elmerstreams runs):
-the water sheet thickness, linear over its min .. max in all frames (white 0, blue positive, red negative; --hw-max H:
+the water sheet thickness and the melt rate (--mask-panel: the cold/temperate mask instead; --melt-max M: its colours
+-M .. M m/yr, default the 99.5th percentile of |melt|; red freeze-on, blue melt). The sheet: linear over its min .. max
+in all frames (white 0, blue positive, red negative; --hw-max H:
 0 .. H m, thicker saturating; --hw-log: a signed log scale, ticks 1 cm .. 1 km), and the cold/temperate mask (red temperate, blue cold, grey floating); the cold/temperate boundary in magenta
 on all three ("temperate on").
 Writes <first input>_3d.html and opens it. Needs numpy and plotly.
@@ -89,6 +91,8 @@ WALLS = False            # walled sides: the distance to the grounding line not 
 SHEET = False            # --sheet: the second panel the water sheet (base only) instead of the temperature
 HW_MAX = None            # --hw-max H: a linear colour scale 0 .. H m; default: linear over the data's min .. max
 HW_LOG = False           # --hw-log: the signed log scale instead
+MASK_PANEL = False       # --mask-panel: the third --sheet panel the cold/temperate mask instead of the melt rate
+MELT_MAX = None          # --melt-max M: the melt colours -M .. M m/yr (default: 99.5th percentile of |melt|, all frames)
 HW_H0 = 0.01             # the signed log scale: sign(h) log10(1 + |h| / HW_H0), from -1e3 to 1e3 m
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
 MESH_TOGGLE = False      # the "mesh off / mesh on" buttons for the base mesh (white): only with --mesh (or
@@ -803,7 +807,7 @@ def _rdp(P, eps):
 
 def main():
     import plotly.graph_objects as go
-    global SHEET, HW_MAX, HW_LOG
+    global SHEET, HW_MAX, HW_LOG, MASK_PANEL, MELT_MAX
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
     global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD, SECTOR, SECTOR_A
     args = sys.argv[1:]
@@ -858,6 +862,13 @@ def main():
     if "--sheet" in args:
         SHEET = True
         args.remove("--sheet")
+    if "--mask-panel" in args:
+        MASK_PANEL = True
+        args.remove("--mask-panel")
+    if "--melt-max" in args:
+        k = args.index("--melt-max")
+        MELT_MAX = float(args[k + 1])
+        del args[k:k + 2]
     if "--hw-log" in args:
         HW_LOG = True
         args.remove("--hw-log")
@@ -1042,9 +1053,12 @@ def main():
               "no sheet panel")
     temp = TEMP and not sheet and not COMPARE and all(d is not None and "T" in d for _, tp, b, _ in data for d in (tp, b))
     two = temp or sheet                           # two panels side by side (velocity | temperature or water sheet)
-    three = sheet and all("ct" in b and "mask" in b for _, _, b, _ in data)    # velocity | water sheet | mask
+    # the third panel: the melt rate (default), or the cold/temperate mask (--mask-panel, or no melt in the frames)
+    p3 = ("melt" if not MASK_PANEL and all("melt" in b for _, _, b, _ in data if b is not None) else
+          "ctm" if all("ct" in b and "mask" in b for _, _, b, _ in data if b is not None) else None)
+    three = sheet and p3 is not None              # velocity | water sheet | melt rate (or mask)
     ZFLAT = float(min(np.nanmin(b["v"]) for _, _, b, _ in data if b is not None)) - 10.0   # the flat maps' height
-    if three:
+    if three and p3 == "ctm":
         for _, _, b, _ in data:                   # the bed's state: 1 temperate, -1 cold (grounded), 0 floating
             b["ctm"] = np.where(b["mask"] < -0.5, 0.0, np.where(np.nan_to_num(b["ct"], nan=-1.0) > 0, 1.0, -1.0))
     if TEMP and not temp:
@@ -1090,7 +1104,13 @@ def main():
             print(f"water sheet colours: signed log, -1 km (red) .. 0 (white) .. 1 km (blue) (--hw-max H: linear 0 .. H);"
                   f" all frames: {np.nanmin(hv):.3g} .. {np.nanmax(hv):.3g} m")
             panels.append(("hwl", -L, L, "RdBu", "water sheet (m)", 0.645 if three else 1.0, "scene2"))
-    if three:
+    if three and p3 == "melt":
+        mv = np.concatenate([b["melt"] for _, _, b, _ in data])
+        M = MELT_MAX or float(np.nanpercentile(np.abs(mv), 99.5)) or 1e-6
+        print(f"melt rate colours -{M:.3g} .. {M:.3g} m/yr (--melt-max; red freeze-on, white 0, blue melt); "
+              f"all frames {np.nanmin(mv):.3g} .. {np.nanmax(mv):.3g} m/yr")
+        panels.append(("melt", -M, M, "RdBu", "melt rate (m/yr)", 0.99, "scene3"))
+    if three and p3 == "ctm":
         panels.append(("ctm", -1.0, 1.0, [[0, "#3a7bd5"], [0.333, "#3a7bd5"], [0.334, "#bbbbbb"], [0.666, "#bbbbbb"],
                                           [0.667, "#c0392b"], [1, "#c0392b"]], "bed", 0.99, "scene3"))
     if COMPARE:                                   # the second run in the same scene, beside the first in y
@@ -1251,7 +1271,7 @@ def main():
         if B_ is not None:
             i, j, k = triangles(B_["x"], B_["y"])
             mask = B_.get("mask", np.zeros_like(B_["v"]))
-            if T_ is None and top is not None and f in ("hw", "hwl", "ctm"):   # a base-only panel: own colour bar
+            if T_ is None and top is not None and f in ("hw", "hwl", "ctm", "melt"):   # a base-only panel: own colour bar
                 cb = dict(title=ctitle, x=cx, len=0.8)
                 if f == "hwl":                  # ticks at round thicknesses
                     tv = [0.0, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]
@@ -1269,12 +1289,12 @@ def main():
                            colorscale=[[0, "#3a7bd5"], [1, "#c0392b"]], showscale=False)
             # a base-only panel (sheet, mask) is a map: drawn flat just below the lowest base, so no part of the base
             # (the shelf base above the grounded bed) hides another as the view turns; the lines stay above it
-            zb_ = np.full(len(B_["v"]), ZFLAT) if (T_ is None and f in ("hw", "hwl", "ctm")) else B_["v"]
+            zb_ = np.full(len(B_["v"]), ZFLAT) if (T_ is None and f in ("hw", "hwl", "ctm", "melt")) else B_["v"]
             tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=zb_, i=i, j=j, k=k, **col,
                                 customdata=np.stack([B_["hw" if f == "hwl" else f], mask], 1), scene=sc,
                                 name="base Zb", opacity=1.0, showlegend=False,
                                 hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>"
-                                              f"{'bed T' if f == 'T' else 'cold -1 / floating 0 / temperate 1:' if f == 'ctm' else 'hw' if f == 'hwl' else f} %{{customdata[0]:{'.3g' if f in ('hw', 'hwl') else '.0f' if f == 'ctm' else '.2f'}}} {unit}"
+                                              f"{'bed T' if f == 'T' else 'cold -1 / floating 0 / temperate 1:' if f == 'ctm' else 'hw' if f == 'hwl' else f} %{{customdata[0]:{'.3g' if f in ('hw', 'hwl', 'melt') else '.0f' if f == 'ctm' else '.2f'}}} {unit}"
                                               "<br>mask %{customdata[1]}<extra></extra>"))
             if SHOW_BED and "bed" in B_:
                 tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["bed"] - 1.0, i=i, j=j,
@@ -1630,7 +1650,7 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
     if three:
         scenes["scene3"] = dict(scene, domain=dict(x=[0.69, 0.98], y=[0.0, 1.0]))
     ann = ([dict(text=t_, x=x_, y=1.0, xref="paper", yref="paper", showarrow=False, font=dict(size=16))
-            for t_, x_ in (zip(("velocity", "water sheet", "cold / temperate bed"), (0.145, 0.49, 0.835)) if three else
+            for t_, x_ in (zip(("velocity", "water sheet", "melt rate" if p3 == "melt" else "cold / temperate bed"), (0.145, 0.49, 0.835)) if three else
                            zip(("velocity", "water sheet" if sheet else "temperature"), (0.23, 0.75)))]
            if two else [])
     if COMPARE:                                   # the two runs named above their ice sheets, in the scene
