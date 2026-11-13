@@ -42,7 +42,8 @@ With a Temperature field: a second panel next to it, the same geometry coloured 
 side walls; the base shows the bed temperature, where a seam stripe from wrong loads would show).
 A treatment folder is read phase by phase (spinup, retreat, advance: <phase>_chunks/points/state_*.npz).
 --sheet: instead of the temperature, two panels of the bed seen from above (the base only; THERMAL=elmerstreams runs):
-the water sheet thickness and the melt rate (--mask-panel: the cold/temperate mask instead; --melt-max M: its colours
+the temperature (surface and base; --sheet-velocity: the velocity instead), the water sheet thickness and the melt
+rate (--mask-panel: the cold/temperate mask instead; --melt-max M: its colours
 -M .. M m/yr, default the 99.5th percentile of |melt|; red freeze-on, blue melt). The sheet: linear over its min .. max
 in all frames (white 0, blue positive, red negative; --hw-max H:
 0 .. H m, thicker saturating; --hw-log: a signed log scale, ticks 1 cm .. 1 km), and the cold/temperate mask (red temperate, blue cold, grey floating); the cold/temperate boundary in magenta
@@ -91,6 +92,7 @@ WALLS = False            # walled sides: the distance to the grounding line not 
 SHEET = False            # --sheet: the second panel the water sheet (base only) instead of the temperature
 HW_MAX = None            # --hw-max H: a linear colour scale 0 .. H m; default: linear over the data's min .. max
 HW_LOG = False           # --hw-log: the signed log scale instead
+SHEET_VEL = False        # --sheet-velocity: the first --sheet panel the velocity instead of the temperature
 MASK_PANEL = False       # --mask-panel: the third --sheet panel the cold/temperate mask instead of the melt rate
 MELT_MAX = None          # --melt-max M: the melt colours -M .. M m/yr (default: 99.5th percentile of |melt|, all frames)
 HW_H0 = 0.01             # the signed log scale: sign(h) log10(1 + |h| / HW_H0), from -1e3 to 1e3 m
@@ -807,7 +809,7 @@ def _rdp(P, eps):
 
 def main():
     import plotly.graph_objects as go
-    global SHEET, HW_MAX, HW_LOG, MASK_PANEL, MELT_MAX
+    global SHEET, HW_MAX, HW_LOG, MASK_PANEL, MELT_MAX, SHEET_VEL
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
     global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD, SECTOR, SECTOR_A
     args = sys.argv[1:]
@@ -862,6 +864,9 @@ def main():
     if "--sheet" in args:
         SHEET = True
         args.remove("--sheet")
+    if "--sheet-velocity" in args:
+        SHEET_VEL = True
+        args.remove("--sheet-velocity")
     if "--mask-panel" in args:
         MASK_PANEL = True
         args.remove("--mask-panel")
@@ -1063,7 +1068,9 @@ def main():
             b["ctm"] = np.where(b["mask"] < -0.5, 0.0, np.where(np.nan_to_num(b["ct"], nan=-1.0) > 0, 1.0, -1.0))
     if TEMP and not temp:
         print("no Temperature in the states (slimmed before it was kept? re-run plots/slim_states.py): velocity only")
-    if temp or (COMPARE and CMP_FIELD == "T"):
+    # --sheet: the first panel the temperature (surface and base), not the velocity (--sheet-velocity to keep it)
+    sheetT = sheet and not SHEET_VEL and all(d is not None and "T" in d for _, tp, b, _ in data for d in (tp, b))
+    if temp or sheetT or (COMPARE and CMP_FIELD == "T"):
         Tv = np.concatenate([d["T"] for _, tp, b, _ in data for d in (tp, b) if d is not None and "T" in d] +
                             [d["T"] for _, tp, _, _ in data for d in tp.get("_cmp", ()) if d is not None and "T" in d])
         tmin = T_RANGE[0] if T_RANGE[0] is not None else float(np.nanmin(Tv))
@@ -1071,6 +1078,8 @@ def main():
         print(f"temperature colours {tmin:.2f} .. {tmax:.2f} K: all temperatures (--tmin / --tmax to narrow)")
     # the panels: (field, colour range, colour scale, colour bar title, colour bar x, scene)
     panels = [("speed", 0.0, smax, SPEED_CS, "speed (m/yr)", 0.30 if three else 0.47 if two else 1.0, "scene")]
+    if sheetT:
+        panels[0] = ("T", tmin, tmax, "RdBu_r", "temperature (K)", panels[0][5], "scene")
     if DIFF:                                      # differences: vz first, symmetric red/blue
         v = np.abs(np.concatenate([d["vz"] for _, tp, b, _ in data for d in (tp, b) if d is not None]))
         m = max(float(np.nanpercentile(v, 99.5)) if np.isfinite(v).any() else 1.0, 1e-9)
@@ -1650,7 +1659,7 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
     if three:
         scenes["scene3"] = dict(scene, domain=dict(x=[0.69, 0.98], y=[0.0, 1.0]))
     ann = ([dict(text=t_, x=x_, y=1.0, xref="paper", yref="paper", showarrow=False, font=dict(size=16))
-            for t_, x_ in (zip(("velocity", "water sheet", "melt rate" if p3 == "melt" else "cold / temperate bed"), (0.145, 0.49, 0.835)) if three else
+            for t_, x_ in (zip(("temperature" if sheetT else "velocity", "water sheet", "melt rate" if p3 == "melt" else "cold / temperate bed"), (0.145, 0.49, 0.835)) if three else
                            zip(("velocity", "water sheet" if sheet else "temperature"), (0.23, 0.75)))]
            if two else [])
     if COMPARE:                                   # the two runs named above their ice sheets, in the scene
