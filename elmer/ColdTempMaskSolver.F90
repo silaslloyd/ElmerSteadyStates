@@ -212,6 +212,11 @@ CALL INFO( SolverName, 'setting vals', level=1 )
       END IF
       IF (ColdTempValues(ColdTempPerm(j)) .LE. 0) THEN
         HwValues(HwPerm(j))  = 0.0001_dp
+        ! ESS: the previous time level too. The sheet solver holds a cold node by dh/dt = 0 (identity mass row, no
+        ! force), i.e. at its PREVIOUS-step value, so resetting only the current value did nothing: a node that went
+        ! cold with h <= 0 (or 0.1) kept it for good (job 31717: 237 cold grounded nodes at -0.09 .. 0 m, the same
+        ! ones output after output)
+        IF (ASSOCIATED(HwPrev)) HwPrev(HwPerm(j), 1) = 0.0001_dp
       END IF
     END DO
 
