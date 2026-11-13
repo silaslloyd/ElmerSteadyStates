@@ -1285,8 +1285,10 @@ def main():
         # all copies as ONE surface each (the seam rows shared): separate surfaces are lit with one-sided normals at
         # their edges, which draws a faint line along a seam even where the values match exactly
         T_, B_ = tiled(top), tiled(base)
-        if T_ is not None and f not in T_:        # a base-only field (the water sheet): no surface, the base seen
-            T_ = None                             # from above
+        # a bed field (water sheet, melt, mask): no surface, the base seen from above. Always: the surface VTU can
+        # carry the same field (Melt Rate, 0 at the surface), and that surface then hid the bed and its hover read 0
+        if T_ is not None and (f not in T_ or f in ("hw", "hwl", "ctm", "melt")):
+            T_ = None
         if T_ is not None:
             i, j, k = triangles(T_["x"], T_["y"])
             tr.append(go.Mesh3d(x=T_["x"] / 1e3, y=T_["y"] / 1e3, z=T_["v"], i=i, j=j, k=k,
