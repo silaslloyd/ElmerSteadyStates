@@ -19,7 +19,7 @@ slider through the states.
     python plots/plot_state_3d.py STATE.npz --partitions --mesh-dir CASE/footprint   # partition outlines, white
 With --switch, buttons above the velocity panel switch its colours between speed, vx, vy and vz.
 "mesh on" / "mesh off" (above the temperature panel) shows the element edges on the base in white (drawn at the first
-state's base; --mesh: on from the start; --no-mesh-toggle: no buttons, a smaller page; --mesh-dir: the real elements,
+state's base; off by default (no mesh, no buttons): --mesh-toggle for the buttons, --mesh: on from the start; --mesh-dir: the real elements,
 else Delaunay triangles of the nodes).
 Streamlines of the surface velocity on the surface of both panels (white), one per
 state; "streamlines off" / "streamlines on" hides them; --stream-spacing KM (default 5) between their seeds across the
@@ -91,7 +91,8 @@ HW_MAX = None            # --hw-max H: a linear colour scale 0 .. H m; default: 
 HW_LOG = False           # --hw-log: the signed log scale instead
 HW_H0 = 0.01             # the signed log scale: sign(h) log10(1 + |h| / HW_H0), from -1e3 to 1e3 m
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
-MESH_TOGGLE = True       # the "mesh off / mesh on" buttons for the base mesh (white); --no-mesh-toggle: none (smaller)
+MESH_TOGGLE = False      # the "mesh off / mesh on" buttons for the base mesh (white): only with --mesh (or
+                         # --mesh-toggle); by default no mesh at all (smaller pages)
 SWITCH = False           # the speed/vx/vy/vz buttons (their values for every state go into the page: big); --switch
 T_RANGE = (None, None)   # temperature colour range (K); None: all temperatures in the window (--tmin / --tmax)
 SHOW = True
@@ -846,8 +847,11 @@ def main():
         SHOW_BED = True
         args.remove("--bed")
     if "--mesh" in args:
-        SHOW_MESH = True
+        SHOW_MESH = MESH_TOGGLE = True
         args.remove("--mesh")
+    if "--mesh-toggle" in args:
+        MESH_TOGGLE = True
+        args.remove("--mesh-toggle")
     if "--no-temp" in args:
         TEMP = False
         args.remove("--no-temp")
