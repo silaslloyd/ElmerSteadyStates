@@ -1375,7 +1375,8 @@ def main():
                 tr.append(go.Scatter3d(x=qx, y=qy, z=z_, mode="lines", line=dict(color="#ff00e0", width=6), name=nm,
                                        legendgroup="ctmask", scene=sc, showlegend=False, connectgaps=False,
                                        hovertemplate="cold | temperate at x %{x:.2f} km, y %{y:.2f} km<extra></extra>"))
-        if base is not None and "mask" in base:
+        bedmap = f in ("hw", "hwl", "ctm", "melt")   # the bed maps (sheet, melt, mask): no GL or FS | SSA lines
+        if base is not None and "mask" in base and not bedmap:
             # the grounding line through all copies (a jump at a seam: not periodic), in red on the surface and on
             # the base (just outside each, so neither surface hides it)
             gx, gy, gzb, gzt = gl_line(base, top)
