@@ -4,10 +4,10 @@ The VTU output of one long Elmer run (ESS_VTU_EVERY / jobs VTU_EVERY=N: base_t*.
 steps, one piece per rank) packed into ONE small file for plots/plot_state_3d.py: the surface and the base of every
 output step, nodes shared between partitions once, in the same (x, y) order in every frame, float32.
 
-    python3 plots/vtu_frames.py RUNDIR [OUT.npz] [--t0 YEARS] [--tmax YEARS] [--every N | --every-yr Y]
+    python3 plots/vtu_frames.py RUNDIR [OUT.npz] [--t0 YEARS] [--tmax YEARS] [--every N | --every-yr Y | --last]
         (default OUT: RUNDIR/../<run dir name>_frames.npz; --t0: added to the times, e.g. a run continued from a
         checkpoint at year 1000; --tmax: only the frames up to that time (after --t0), e.g. to join two runs;
-        --every N: every N-th output (and the last); --every-yr Y: the first, then outputs at multiples of Y yr, and
+        --last: only the newest output; --every N: every N-th output (and the last); --every-yr Y: the first, then outputs at multiples of Y yr, and
         the last: a smaller file for long runs)
     python3 plots/plot_state_3d.py OUT.npz [--full ...]    (on the Mac: one frame per output step on the slider)
 
@@ -89,6 +89,8 @@ def surface(path):
 def main():
     args = sys.argv[1:]
     t0, tmax, keep_every, keep_yr = 0.0, None, 1, None
+    last_only = "--last" in args                  # --last: only the newest output
+    args = [a for a in args if a != "--last"]
     for opt in ("--t0", "--tmax", "--every", "--every-yr"):
         if opt in args:
             k = args.index(opt)
@@ -127,6 +129,9 @@ def main():
         else:
             steps = [f for n, f in enumerate(steps) if n % keep_every == 0 or n == last]
         print(f"  {len(steps)} outputs kept ({'every ' + str(keep_every) if keep_every > 1 else f'every {keep_yr:g} yr'})")
+    if last_only:
+        steps = steps[-1:]
+        print(f"  the last output only: {os.path.basename(steps[0])}")
     frames = {"top": [], "base": []}
     times = []
     for f in steps:
