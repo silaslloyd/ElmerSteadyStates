@@ -4,9 +4,9 @@ The VTU output of one long Elmer run (ESS_VTU_EVERY / jobs VTU_EVERY=N: base_t*.
 steps, one piece per rank) packed into ONE small file for plots/plot_state_3d.py: the surface and the base of every
 output step, nodes shared between partitions once, in the same (x, y) order in every frame, float32.
 
-    python3 plots/vtu_frames.py RUNDIR [OUT.npz] [--t0 YEARS] [--tmax YEARS] [--every N | --every-yr Y | --last]
+    python3 plots/vtu_frames.py RUNDIR [OUT.npz] [--t0 YEARS] [--tmin YEARS] [--tmax YEARS] [--every N | --every-yr Y | --last]
         (default OUT: RUNDIR/../<run dir name>_frames.npz; --t0: added to the times, e.g. a run continued from a
-        checkpoint at year 1000; --tmax: only the frames up to that time (after --t0), e.g. to join two runs;
+        checkpoint at year 1000; --tmin / --tmax: only the frames from / up to that time (after --t0), e.g. to join two runs;
         --last: only the newest output; --every N: every N-th output (and the last); --every-yr Y: the first, then outputs at multiples of Y yr, and
         the last: a smaller file for long runs)
     python3 plots/plot_state_3d.py OUT.npz [--full ...]    (on the Mac: one frame per output step on the slider)
@@ -91,7 +91,8 @@ def main():
     t0, tmax, keep_every, keep_yr = 0.0, None, 1, None
     last_only = "--last" in args                  # --last: only the newest output
     args = [a for a in args if a != "--last"]
-    for opt in ("--t0", "--tmax", "--every", "--every-yr"):
+    tmin = None
+    for opt in ("--t0", "--tmin", "--tmax", "--every", "--every-yr"):
         if opt in args:
             k = args.index(opt)
             v = float(args[k + 1])
@@ -100,6 +101,8 @@ def main():
                 t0 = v
             elif opt == "--tmax":
                 tmax = v
+            elif opt == "--tmin":
+                tmin = v
             elif opt == "--every":
                 keep_every = max(1, int(v))
             else:
@@ -135,6 +138,10 @@ def main():
     frames = {"top": [], "base": []}
     times = []
     for f in steps:
+        if tmin is not None:                      # --tmin: skip earlier outputs (before reading them)
+            k_ = int(re.findall(r"_t(\d+)", os.path.basename(f))[0])
+            if t0 + step_of(k_) * dt < tmin - 1e-9:
+                continue
         try:
             b = surface(f)
             t = surface(f.replace("base_t", "surface_t"))
