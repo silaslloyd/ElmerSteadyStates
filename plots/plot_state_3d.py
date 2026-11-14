@@ -1330,6 +1330,7 @@ def main():
             tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=zb_, i=i, j=j, k=k, **col,
                                 customdata=np.stack([B_["hw" if f == "hwl" else f], mask], 1), scene=sc,
                                 name="base Zb", opacity=1.0, showlegend=False,
+                                meta="hw" if f == "hw" else None,     # the page's sheet maximum box acts on it
                                 hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>"
                                               f"{'bed T' if f == 'T' else 'cold -1 / floating 0 / temperate 1:' if f == 'ctm' else 'hw' if f == 'hwl' else f} %{{customdata[0]:{'.3g' if f in ('hw', 'hwl', 'melt') else '.0f' if f == 'ctm' else '.2f'}}} {unit}"
                                               "<br>mask %{customdata[1]}<extra></extra>"))
@@ -1340,7 +1341,7 @@ def main():
                                     colorbar=dict(title="water sheet (m)", x=-0.08, len=0.6),
                                     lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0, roughness=1.0, fresnel=0.0),
                                     customdata=np.stack([B_["hw"], mask], 1), scene=sc, name="water sheet (base)",
-                                    legendgroup="sheetov", visible=False, opacity=1.0, showlegend=False,
+                                    legendgroup="sheetov", visible=False, opacity=1.0, showlegend=False, meta="hw",
                                     hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>hw %{customdata[0]:.3g} m"
                                                   "<br>mask %{customdata[1]}<extra></extra>"))
             if SHOW_BED and "bed" in B_:
@@ -1745,7 +1746,30 @@ gd.on('plotly_relayout', function (e) {
     if (b != a && gd.layout[b]) u[b + '.camera'] = e[a + '.camera']; }); });
   if (Object.keys(u).length) { busy = true; Plotly.relayout(gd, u).then(function () { busy = false; }); }
 });""" if two else None)
-    post = "\n".join(x for x in (sync, switch_js) if x) or None
+    # a box for the sheet colours' maximum (m) on the page, when a sheet is drawn (overlay or the sheet panel): restyles
+    # cmax of the traces tagged meta "hw", and again after every frame change (the frames carry their own cmax)
+    hw_js = None
+    if any(getattr(t_, "meta", None) == "hw" for t_ in first):
+        hw_js = """
+(function () {
+  var g = document.getElementsByClassName('plotly-graph-div')[0], v = null;
+  var box = document.createElement('div');
+  box.style.cssText = 'position:absolute;top:4px;left:8px;z-index:10;font:13px sans-serif;background:#fff;padding:2px 6px;'
+    + 'border:1px solid #ccc;border-radius:4px';
+  box.innerHTML = 'sheet max (m) <input id="hwmax" type="number" step="any" min="0" style="width:70px">'
+    + ' <button id="hwauto">auto</button>';
+  g.parentNode.style.position = 'relative'; g.parentNode.insertBefore(box, g);
+  function ids() { var r = []; g.data.forEach(function (t, i) { if (t.meta === 'hw') r.push(i); }); return r; }
+  var i0 = ids(); if (!i0.length) return;
+  var auto = g.data[i0[0]].cmax; document.getElementById('hwmax').value = auto;
+  function apply() { var r = ids(); if (v !== null && r.length) Plotly.restyle(g, {cmax: Array(r.length).fill(v)}, r); }
+  document.getElementById('hwmax').addEventListener('change', function (e) {
+    var x = parseFloat(e.target.value); if (isFinite(x) && x > 0) { v = x; apply(); } });
+  document.getElementById('hwauto').addEventListener('click', function () {
+    v = auto; document.getElementById('hwmax').value = auto; apply(); });
+  g.on('plotly_animated', apply);
+})();"""
+    post = "\n".join(x for x in (sync, switch_js, hw_js) if x) or None
     # the page width and height (no fixed size: no sideways scrolling; resizes with the window)
     fig.write_html(out, include_plotlyjs="cdn", post_script=post, config=dict(responsive=True),
                    default_width="100%", default_height="95vh")
