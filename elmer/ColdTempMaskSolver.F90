@@ -187,6 +187,11 @@ CALL INFO( SolverName, 'setting vals', level=1 )
       IF (ParEnv % myPe .NE. Element % partIndex) CYCLE
       ! ESS diagnostics (before this node's update): visited, previously temperate, its sheet as the decision sees it
       ! (HwOld) and as it is now (HwValues), both <= 0
+      ! ESS: each node decided ONCE per call. A node is met through each of its elements; the reset of a node made cold
+      ! (hw = 1e-4, at both time levels) changed the sheet the next visit decides from (HwOld = the previous level), so
+      ! that visit turned it straight back temperate: with the reset of the previous level (c21718b) no temperate node
+      ! could ever go cold (job 31762 diagnostics: ~39,000 T->C and ~39,000 C->T in every call, mask unchanged)
+      IF (Seen(ColdTempPerm(j))) CYCLE
       IF (.NOT. Seen(ColdTempPerm(j))) THEN
         Seen(ColdTempPerm(j)) = .TRUE.
         dg(1) = dg(1) + 1
