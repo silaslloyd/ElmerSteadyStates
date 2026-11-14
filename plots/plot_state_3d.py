@@ -75,7 +75,7 @@ PHASES = ("spinup", "retreat", "advance")
 X_WINDOW = None          # (xmin, xmax) km; None: from 60 km behind the most inland grounding line to the front
 Z_EXAGGERATION = 1.0     # extra vertical stretch on top of the automatic aspect ratio
 ASPECT = dict(x=4.0, y=1.0, z=1.2)
-SHOW_BED = False         # the bedrock surface under the ice (--bed to show)
+SHOW_BED = False         # the bedrock surface under the ice: hidden at first, "bed on" shows it (--bed: shown at first)
 BASE_COLOUR = "speed"    # "speed" (basal speed, the same colour scale as the surface) or "mask" (red grounded, blue floating)
 SHOW_MESH = False        # the element edges on the base (--mesh to show)
 SIDES = True             # side walls (base to surface) at the window ends and the two outer sides
@@ -1511,6 +1511,7 @@ def main():
         # all copies as ONE surface each (the seam rows shared): separate surfaces are lit with one-sided normals at
         # their edges, which draws a faint line along a seam even where the values match exactly
         T_, B_ = tiled(top), tiled(base)
+        bedmap_panel = f in ("hw", "hwl", "ctm", "melt")
         # a bed field (water sheet, melt, mask): no surface, the base seen from above. Always: the surface VTU can
         # carry the same field (Melt Rate, 0 at the surface), and that surface then hid the bed and its hover read 0
         if T_ is not None and (f not in T_ or f in ("hw", "hwl", "ctm", "melt")):
@@ -1578,10 +1579,14 @@ def main():
                                            line=dict(color="#ff7f00", width=2), name="sheet flow lines",
                                            legendgroup="sheetflow", scene=sc, showlegend=False,
                                            connectgaps=False, hoverinfo="skip"))
-            if SHOW_BED and "bed" in B_:
+            if "bed" in B_ and sc == "scene" and not bedmap_panel:
+                # the bedrock surface, 1 m under the bed: buttons "bed off / on" (shown at first with --bed)
                 tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["bed"] - 1.0, i=i, j=j,
-                                    k=k, color="#999999", opacity=0.35, name="bedrock", hoverinfo="skip",
-                                    showlegend=False, scene=sc))
+                                    k=k, color="#9c7b55", opacity=0.6, name="bedrock", legendgroup="bedsurf",
+                                    showlegend=False, scene=sc, customdata=B_["bed"],
+                                    lighting=dict(ambient=0.6, diffuse=0.6, specular=0.05),
+                                    hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>bed %{customdata:.1f} m"
+                                                  "<extra></extra>"))
         if SHOW_PARTS and base is not None and top is not None:
             t_, p_ = mesh_elements(MESH_DIR, base["x"], base["y"])
             e = partition_edges(t_, p_)
@@ -1915,6 +1920,15 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
                               buttons=[dict(label="sheet off", method="restyle", args=[{"visible": False}, sv_idx]),
                                        dict(label="sheet on", method="restyle", args=[{"visible": True}, sv_idx])])]
         print("  water sheet overlay toggle on the base (view from below to see it)")
+    bd_idx = [n for n, t_ in enumerate(first) if getattr(t_, "legendgroup", None) == "bedsurf"]
+    if bd_idx:
+        for n in bd_idx:                          # hidden on the figure only (a frame with visible=False hid it again)
+            first[n].visible = SHOW_BED
+        menus = menus + [dict(type="buttons", direction="right", x=0.84, y=1.12, xanchor="left", yanchor="bottom",
+                              showactive=True, pad=dict(r=4, t=0), active=1 if SHOW_BED else 0,
+                              buttons=[dict(label="bed off", method="restyle", args=[{"visible": False}, bd_idx]),
+                                       dict(label="bed on", method="restyle", args=[{"visible": True}, bd_idx])])]
+        print("  the bedrock surface toggle (bed off / on; --bed: on at first)")
     sf_idx = [n for n, t_ in enumerate(first) if getattr(t_, "legendgroup", None) in ("sheetflow", "hwstream")]
     if sf_idx:
         # hidden at first, set on the figure's traces only: a frame carrying visible=False hid them again on every
