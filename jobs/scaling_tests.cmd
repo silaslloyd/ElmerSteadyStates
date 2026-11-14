@@ -226,6 +226,8 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 [ -n "$SHEET_UPWIND" ] && export ESS_SHEET_UPWIND=$SHEET_UPWIND && echo "  water sheet advection upwinding: $SHEET_UPWIND"
 # SHEET_GL_OPEN=1: the CS sheet solver's flux carried into floating nodes (the grounding line an outlet, not a wall)
 [ -n "$SHEET_GL_OPEN" ] && export ESS_SHEET_GL_OPEN=$SHEET_GL_OPEN && echo "  water sheet open at the grounding line: $SHEET_GL_OPEN"
+# SHEET_PREC=P: the sheet solver's linear preconditioner (default ILU8; e.g. ILU0, ILU1)
+[ -n "$SHEET_PREC" ] && export ESS_SHEET_PREC=$SHEET_PREC && echo "  water sheet preconditioner: $SHEET_PREC"
 # SHEET_RELAX=f: the sheet solver's nonlinear relaxation factor (default 0.5; 1 = no relaxation)
 [ -n "$SHEET_RELAX" ] && export ESS_SHEET_RELAX=$SHEET_RELAX && echo "  water sheet relaxation: $SHEET_RELAX"
 # SHEET_N=hr_over_h|marine_term: the sheet's effective pressure (default hr_over_h with SHEET=cs)

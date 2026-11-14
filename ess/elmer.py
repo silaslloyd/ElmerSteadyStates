@@ -346,6 +346,8 @@ class ElmerModel(Model):
         # ESS_SHEET_GL_OPEN, jobs SHEET_GL_OPEN; default 0)
         # the sheet solver's nonlinear relaxation factor (env ESS_SHEET_RELAX, jobs SHEET_RELAX; default 0.5, 1 = none)
         self.sheet_relax = float(os.environ.get("ESS_SHEET_RELAX") or e.get("sheet_relax", 0.5))
+        # the sheet solver's linear preconditioner (env ESS_SHEET_PREC, jobs SHEET_PREC; default ILU8, as ElmerStreams)
+        self.sheet_prec = str(os.environ.get("ESS_SHEET_PREC") or e.get("sheet_prec", "ILU8"))
         self.sheet_gl_open = cs_ and str(os.environ.get("ESS_SHEET_GL_OPEN") or e.get("sheet_gl_open", "0")) \
             not in ("0", "false")
         self.sheet_dcap = cs_ and str(os.environ.get("ESS_SHEET_DCAP") or e.get("sheet_dcap", "1")) not in ("0", "false")
@@ -1507,7 +1509,7 @@ Solver {sheet}
   Linear System Max Iterations = 1500
   Linear System Convergence Tolerance = 1.0e-8
   Linear System Abort Not Converged = False
-  Linear System Preconditioning = "ILU8"
+  Linear System Preconditioning = "{getattr(self, "sheet_prec", "ILU8")}"
   Linear System Residual Output = 100
   Nonlinear System Convergence Tolerance = 1.0e-6
   Nonlinear System Max Iterations = 200
