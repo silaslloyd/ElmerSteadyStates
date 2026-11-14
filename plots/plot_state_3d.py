@@ -1063,6 +1063,14 @@ def main():
           "ctm" if all("ct" in b and "mask" in b for _, _, b, _ in data if b is not None) else None)
     three = sheet and p3 is not None              # velocity | water sheet | melt rate (or mask)
     ZFLAT = float(min(np.nanmin(b["v"]) for _, _, b, _ in data if b is not None)) - 10.0   # the flat maps' height
+    # the water sheet as a toggled overlay on the base of the first panel ("sheet on/off"; hidden at first): whenever
+    # the frames carry the sheet and the second panel is not already the sheet
+    sheet_ov = (not sheet) and all(b is not None and "hw" in b for _, _, b, _ in data)
+    if sheet_ov:
+        hv_ = np.concatenate([b["hw"] for _, _, b, _ in data])
+        HWOV = (HW_MAX or max(float(np.nanpercentile(hv_[hv_ > 0], 99)) if (hv_ > 0).any() else 0.0, 1e-3))
+        print(f"water sheet overlay on the base (buttons sheet off / on): colours 0 .. {HWOV:.3g} m (--hw-max); "
+              f"all frames {np.nanmin(hv_):.3g} .. {np.nanmax(hv_):.3g} m")
     if three and p3 == "ctm":
         for _, _, b, _ in data:                   # the bed's state: 1 temperate, -1 cold (grounded), 0 floating
             b["ctm"] = np.where(b["mask"] < -0.5, 0.0, np.where(np.nan_to_num(b["ct"], nan=-1.0) > 0, 1.0, -1.0))
@@ -1325,6 +1333,16 @@ def main():
                                 hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>Zb %{z:.1f} m<br>"
                                               f"{'bed T' if f == 'T' else 'cold -1 / floating 0 / temperate 1:' if f == 'ctm' else 'hw' if f == 'hwl' else f} %{{customdata[0]:{'.3g' if f in ('hw', 'hwl', 'melt') else '.0f' if f == 'ctm' else '.2f'}}} {unit}"
                                               "<br>mask %{customdata[1]}<extra></extra>"))
+            if sheet_ov and sc == "scene" and "hw" in B_:
+                # the overlay: the base again, 2 m below it (in front of it seen from below), coloured by the sheet
+                tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["v"] - 2.0, i=i, j=j, k=k,
+                                    intensity=B_["hw"], colorscale="Blues", cmin=0.0, cmax=HWOV, showscale=True,
+                                    colorbar=dict(title="water sheet (m)", x=-0.08, len=0.6),
+                                    lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0, roughness=1.0, fresnel=0.0),
+                                    customdata=np.stack([B_["hw"], mask], 1), scene=sc, name="water sheet (base)",
+                                    legendgroup="sheetov", visible=False, opacity=1.0, showlegend=False,
+                                    hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>hw %{customdata[0]:.3g} m"
+                                                  "<br>mask %{customdata[1]}<extra></extra>"))
             if SHOW_BED and "bed" in B_:
                 tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["bed"] - 1.0, i=i, j=j,
                                     k=k, color="#999999", opacity=0.35, name="bedrock", hoverinfo="skip",
@@ -1522,7 +1540,8 @@ def main():
         P0 = panels[0]
         ref = panel_traces(tp0, b0, P0)
         get = lambda t_, k: t_[k] if k in t_ else None
-        idx = [n for n, t_ in enumerate(ref) if get(t_, "intensity") is not None]
+        idx = [n for n, t_ in enumerate(ref) if get(t_, "intensity") is not None
+               and get(t_, "legendgroup") != "sheetov"]
         allv = lambda fld: np.concatenate([d[fld] for _, tp, b, _ in data for d in (tp, b) if d is not None and fld in d])
         ranges, vals = {}, [dict() for _ in data]
         for fld, title in (("speed", "speed (m/yr)"), ("vx", "vx, along the flow (m/yr)"),
@@ -1540,7 +1559,7 @@ def main():
             ranges[fld] = dict(lo=lo, hi=hi, cs=cs if isinstance(cs, list) else get_colorscale(cs), title=title)
             for n, (_, tp, b, _) in enumerate(data):
                 tf = [t_ for t_ in panel_traces(tp, b, (fld, lo, hi, cs, title, P0[5], P0[6]))
-                      if get(t_, "intensity") is not None]
+                      if get(t_, "intensity") is not None and get(t_, "legendgroup") != "sheetov"]
                 if len(tf) != len(idx):              # a state drawn with other traces: no switch there
                     vals[n][fld] = None
                     continue
@@ -1627,6 +1646,13 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
                               buttons=[dict(label="temperate off", method="restyle", args=[{"visible": False}, ct_idx]),
                                        dict(label="temperate on", method="restyle", args=[{"visible": True}, ct_idx])])]
         print(f"  cold/temperate boundary toggle on {len(ct_idx)} traces (magenta, both panels)")
+    sv_idx = [n for n, t_ in enumerate(first) if getattr(t_, "legendgroup", None) == "sheetov"]
+    if sv_idx:
+        menus = menus + [dict(type="buttons", direction="right", x=0.58, y=1.06, xanchor="left", yanchor="bottom",
+                              showactive=True, pad=dict(r=4, t=0), active=0,
+                              buttons=[dict(label="sheet off", method="restyle", args=[{"visible": False}, sv_idx]),
+                                       dict(label="sheet on", method="restyle", args=[{"visible": True}, sv_idx])])]
+        print("  water sheet overlay toggle on the base (view from below to see it)")
     st_idx = [n for n, t_ in enumerate(first) if getattr(t_, "legendgroup", None) == "stream"]
     if st_idx:
         menus = menus + [dict(type="buttons", direction="right", x=0.84, y=1.06, xanchor="left", yanchor="bottom",
