@@ -233,6 +233,8 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 [ -n "$SHEET_BACKOFF" ] && export ESS_SHEET_BACKOFF=$SHEET_BACKOFF && echo "  water sheet relaxation back-off: $SHEET_BACKOFF"
 # SHEET_CONV=norm: the sheet's convergence test on the change of its norm instead of the solution (default solution)
 [ -n "$SHEET_CONV" ] && export ESS_SHEET_CONV=$SHEET_CONV && echo "  water sheet convergence measure: $SHEET_CONV"
+# SHEET_TOL=1e-4: the sheet's Picard tolerance (default 1e-6)
+[ -n "$SHEET_TOL" ] && export ESS_SHEET_TOL=$SHEET_TOL && echo "  water sheet Picard tolerance: $SHEET_TOL"
 # SHEET_RELAX=f: the sheet solver's nonlinear relaxation factor (default 0.5; 1 = no relaxation)
 [ -n "$SHEET_RELAX" ] && export ESS_SHEET_RELAX=$SHEET_RELAX && echo "  water sheet relaxation: $SHEET_RELAX"
 # SHEET_N=hr_over_h|marine_term: the sheet's effective pressure (default hr_over_h with SHEET=cs)

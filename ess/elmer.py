@@ -350,6 +350,9 @@ class ElmerModel(Model):
         # default) or "norm" (the change of the sheet's norm: passes when the sheet as a whole has settled, even if a
         # few nodes still switch)
         self.sheet_conv = str(os.environ.get("ESS_SHEET_CONV") or e.get("sheet_conv", "solution"))
+        # the sheet's Picard tolerance (env ESS_SHEET_TOL, jobs SHEET_TOL; default 1e-6). Job 31775: the norm's change
+        # fell to 2e-5 in 4 iterations, then crept at ~8e-5 per iteration (drying nodes) and took ~50 to reach 1e-6
+        self.sheet_tol = float(os.environ.get("ESS_SHEET_TOL") or e.get("sheet_tol", 1e-6))
         # halve the sheet's relaxation every N Picard iterations without convergence (env ESS_SHEET_BACKOFF, jobs
         # SHEET_BACKOFF; default 25 with relaxation 1, 0 (off) otherwise)
         self.sheet_backoff = int(os.environ.get("ESS_SHEET_BACKOFF") or e.get("sheet_backoff",
@@ -1519,7 +1522,7 @@ Solver {sheet}
   Linear System Abort Not Converged = False
   Linear System Preconditioning = "{getattr(self, "sheet_prec", "ILU8")}"
   Linear System Residual Output = 100
-  Nonlinear System Convergence Tolerance = 1.0e-6
+  Nonlinear System Convergence Tolerance = {getattr(self, "sheet_tol", 1e-6)!r}
   Nonlinear System Max Iterations = 200
   Nonlinear System Min Iterations = 1
   Nonlinear System Relaxation Factor = Real {getattr(self, "sheet_relax", 0.5)!r}
