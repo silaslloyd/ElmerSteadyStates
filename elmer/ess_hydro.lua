@@ -64,9 +64,14 @@ function conductivity(EP)
   return D0*(smoothplus(EP, 0.01))^(-k0) - D0*(smoothplus(N(0,0,N0,hr),0.01))^(-k0)
 end
 
+-- ESS: the derivative of conductivity(EP) = D0 sp(N)^(-k0) - const, sp(x) = log(1 + exp(10 x))/10, so
+-- dK/dN = -k0 D0 sp(N)^(-(k0+1)) sigma(10 N), sigma(x) = 1/(1 + exp(-x)) (= sp'(N)). The Marine_Term form had N^(-(k0+1))
+-- and 1/(1 + exp(10 N)) (= 1 - sigma: ~exp(-10 N), i.e. ~0 for N of 0.1 .. 100 MPa); only a Newton linearisation
+-- uses it (SheetSolverhwCS "Sheet Newton"), Picard never did.
 function dkappadN(EP)
-  --return 0
-  return -k0*D0*(EP)^(-(k0+1))*smoothplusDerivative(EP)
+  local sp = smoothplus(EP, 0.01)
+  if sp == math.huge then return 0 end
+  return -k0*D0*sp^(-(k0+1))/(1 + math.exp(-10*EP))
 end
 
 function dNdh(h, sigma, N0, hr)

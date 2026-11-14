@@ -56,6 +56,9 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
   TYPE(Element_t),POINTER :: Element
   REAL(KIND=dp) :: Norm, hmin
   LOGICAL :: hasMin, capD, implAdv, upwAdv, glOpen
+  LOGICAL :: useNewton, newtonOn                 ! ESS: Sheet Newton (requested / active in this call)
+  REAL(KIND=dp) :: newtonTol, khFloor            ! ESS: Sheet Newton After Change, Sheet K Over H Floor
+  INTEGER :: newtonAfter                         ! ESS: Sheet Newton After Iterations
   TYPE(Variable_t), POINTER :: gmVar
   REAL(KIND=dp), POINTER :: gmvals(:)
   INTEGER, POINTER :: gmperm(:)
@@ -193,6 +196,23 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
   ! advection oscillates for a cell Peclet number above 1, as at the grounding line where grad Phi0 is steep
   ! (job 31691: h +200 / -330 m on neighbouring grounded nodes 2 km from floating ice)
   upwAdv = implAdv .AND. ListGetLogical( SolverParams, 'Sheet Advection Upwinding', Found )
+  ! ESS: "Sheet K Over H Floor" (m, default 1e-3): the advection speed's K/h+ is K / max(h, floor). 0: K/h exactly
+  ! (K ~ h^2 as h -> 0, so K/h -> 0 smoothly; 0 below h = 1e-9 m): no kink at the floor (needed by Newton)
+  khFloor = ListGetConstReal( SolverParams, 'Sheet K Over H Floor', Found )
+  IF ( .NOT. Found ) khFloor = 1.0e-3_dp
+  ! ESS: "Sheet Newton" (logical, with Implicit Sheet Advection): Newton instead of Picard once the change is below
+  ! "Sheet Newton After Change" (default 1e-2) or after "Sheet Newton After Iterations" (default 3) Picard iterations.
+  ! The residual R(h) = A(h) h - b; Newton solves [A(h_k) + A_N(h_k)] h_{k+1} = b + A_N(h_k) h_k, with
+  ! (A_N)_qj = sum_p dA_qp/dh_j h_p: the derivatives of the advection coefficient c = K/h+ and of the diffusion
+  ! D = -K N' (nodal, interpolated as in A). dK/dh = (dK/dN)(dN/dh): Hydraulic Conductivity First Derivative x
+  ! Effective Pressure First Derivative; N'' Effective Pressure Second Derivative (see the derivation in the
+  ! project notes, claude/sheet-newton.md)
+  useNewton = implAdv .AND. ListGetLogical( SolverParams, 'Sheet Newton', Found )
+  newtonTol = ListGetConstReal( SolverParams, 'Sheet Newton After Change', Found )
+  IF ( .NOT. Found ) newtonTol = 1.0e-2_dp
+  newtonAfter = ListGetInteger( SolverParams, 'Sheet Newton After Iterations', Found )
+  IF ( .NOT. Found ) newtonAfter = 3
+  newtonOn = .FALSE.
   maxiter = ListGetInteger( GetSolverParams(),&
       'Nonlinear System Max Iterations',Found,minv=1)
   IF(.NOT. Found ) maxiter = 1
@@ -222,6 +242,10 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
 
     !Newton =  GetNewtonActive()  ! logical that is 1 if Newton iterations are to be used (Picard otherwise)
     Newton = .False.
+    IF ( useNewton .AND. .NOT. newtonOn .AND. iter > newtonAfter ) THEN
+      newtonOn = .TRUE.
+      CALL Info( SolverName, 'Newton from iteration '//I2S(iter)//' (after '//I2S(newtonAfter)//' Picard)', Level=4 )
+    END IF
 
     !WRITE(*,*) Newton
     ! System assembly:
@@ -289,6 +313,12 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
       hwIt = Solver % Variable % Values
     END IF
     Norm = DefaultSolve() 
+    IF ( useNewton .AND. .NOT. newtonOn ) THEN
+      IF ( Solver % Variable % NonlinChange < newtonTol ) THEN
+        newtonOn = .TRUE.
+        CALL Info( SolverName, 'Newton from iteration '//I2S(iter+1), Level=4 )
+      END IF
+    END IF
     ! ESS: non-convergence diagnostic. After 50, 100 and 150 iterations, over all ranks: how many nodes changed by more
     ! than 0.1 mm and 0.01 mm in this iteration, split by grounded mask (floating / grounding line / grounded) and by
     ! cold or temperate; and the node that changed most (printed by the rank that holds it): where, its sheet before
@@ -655,6 +685,7 @@ CONTAINS
     REAL(KIND=dp) :: dqdhAtIP(dimsheet), q0AtIP(dimsheet), dhwdxAtIP(dimsheet), gradPhi0AtIP(dimsheet), graddNdhAtIP(dimsheet)
     REAL(KIND=dp) :: qhAtIP(dimsheet), gradNAtIP(dimsheet)
     REAL(KIND=dp) :: KoverH(n), wAtIP(dimsheet), he, wn, Dif, Pe, tau
+    REAL(KIND=dp) :: dKdh(n), dcdh(n), hj, gPhiq, gHq, nwAdv(n), nwDif(n), DAtIP
     REAL(KIND=dp) :: Basis(nd),dBasisdx(nd,dim),DetJ
     REAL(KIND=dp) :: MASS(nd,nd), STIFF(nd,nd), FORCE(nd), LOAD(n)
     LOGICAL :: Stat,Found
@@ -704,7 +735,28 @@ CONTAINS
     IF ( upwAdv ) he = ElementDiameter( Element, Nodes )
     IF ( implAdv ) THEN
       DO i=1,n
-        KoverH(i) = MAX( HydraulicConductivity(i), 0.0_dp ) / MAX( nodalhw(i), 1.0e-3_dp )
+        IF ( khFloor > 0.0_dp ) THEN
+          KoverH(i) = MAX( HydraulicConductivity(i), 0.0_dp ) / MAX( nodalhw(i), khFloor )
+        ELSE IF ( nodalhw(i) > 1.0e-9_dp ) THEN
+          KoverH(i) = MAX( HydraulicConductivity(i), 0.0_dp ) / nodalhw(i)
+        ELSE
+          KoverH(i) = 0.0_dp
+        END IF
+      END DO
+    END IF
+    ! ESS Newton: the nodal derivatives dK/dh = (dK/dN)(dN/dh) and dc/dh of c = K/h+ (consistent with KoverH above)
+    IF ( newtonOn ) THEN
+      DO i=1,n
+        dKdh(i) = dHydraulicConductivitydx(i) * dEffectivePressuredh(i)
+        IF ( HydraulicConductivity(i) <= 0.0_dp ) dKdh(i) = 0.0_dp
+        hj = nodalhw(i)
+        IF ( hj > MAX( khFloor, 1.0e-9_dp ) ) THEN
+          dcdh(i) = ( dKdh(i) - KoverH(i) ) / hj
+        ELSE IF ( khFloor > 0.0_dp ) THEN
+          dcdh(i) = dKdh(i) / khFloor
+        ELSE
+          dcdh(i) = 0.0_dp
+        END IF
       END DO
     END IF
 
@@ -789,6 +841,26 @@ CONTAINS
               MATMUL( dBasisdx, TRANSPOSE( dBasisdx ) )
         END IF
       !END IF
+
+      ! ESS Newton: A_N and A_N h_k (all-temperate elements only: the others' flux terms are switched off below)
+      !   advection: (A_N)_qj = int (grad v_q . grad Phi0) h c'_j phi_j
+      !   diffusion: (A_N)_qj = int (grad v_q . grad h) dD/dh_j, dD/dh_j = -(K'_j N' + K N''_j) phi_j (0 where D capped)
+      IF ( newtonOn .AND. num_cold .EQ. 0 ) THEN
+        DAtIP = -HydraulicConductivityAtIP*dEffectivePressuredhAtIP
+        DO p=1,n
+          nwAdv(p) = hwAtIP * dcdh(p) * Basis(p)
+          nwDif(p) = -( dKdh(p)*dEffectivePressuredhAtIP + HydraulicConductivityAtIP*ddEffectivePressuredh(p) ) * Basis(p)
+        END DO
+        IF ( capD .AND. DAtIP <= 0.0_dp ) nwDif = 0.0_dp
+        DO q=1,n
+          gPhiq = SUM( dBasisdx(q,1:dimsheet)*gradPhi0AtIP(1:dimsheet) )
+          gHq = SUM( dBasisdx(q,1:dimsheet)*dhwdxAtIP(1:dimsheet) )
+          DO p=1,n
+            STIFF(q,p) = STIFF(q,p) + Weight * ( gPhiq*nwAdv(p) + gHq*nwDif(p) )
+          END DO
+          FORCE(q) = FORCE(q) + Weight * ( gPhiq*SUM( nwAdv(1:n)*nodalhw(1:n) ) + gHq*SUM( nwDif(1:n)*nodalhw(1:n) ) )
+        END DO
+      END IF
 
       DO q=1,nd
         ! MELT SOURCE

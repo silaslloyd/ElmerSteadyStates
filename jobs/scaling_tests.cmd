@@ -233,6 +233,11 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 [ -n "$SHEET_BACKOFF" ] && export ESS_SHEET_BACKOFF=$SHEET_BACKOFF && echo "  water sheet relaxation back-off: $SHEET_BACKOFF"
 # SHEET_CONV=norm: the sheet's convergence test on the change of its norm instead of the solution (default solution)
 [ -n "$SHEET_CONV" ] && export ESS_SHEET_CONV=$SHEET_CONV && echo "  water sheet convergence measure: $SHEET_CONV"
+# SHEET_NEWTON=1: Newton for the sheet once Picard has its change below 1e-2 (with SHEET_IMPLICIT=1; default 0)
+[ -n "$SHEET_NEWTON" ] && export ESS_SHEET_NEWTON=$SHEET_NEWTON && echo "  water sheet Newton: $SHEET_NEWTON"
+# SHEET_KH_FLOOR=1e-3: the floor of h in the sheet's advection speed K / max(h, floor) (default 0: K/h exactly; the
+# runs before 2026-11-14 had 1e-3)
+[ -n "$SHEET_KH_FLOOR" ] && export ESS_SHEET_KH_FLOOR=$SHEET_KH_FLOOR && echo "  water sheet K/h floor: $SHEET_KH_FLOOR"
 # SHEET_TOL=1e-4: the sheet's Picard tolerance (default 1e-6)
 [ -n "$SHEET_TOL" ] && export ESS_SHEET_TOL=$SHEET_TOL && echo "  water sheet Picard tolerance: $SHEET_TOL"
 # SHEET_RELAX=f: the sheet solver's nonlinear relaxation factor (default 0.5; 1 = no relaxation)

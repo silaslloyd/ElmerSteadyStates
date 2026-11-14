@@ -342,6 +342,12 @@ class ElmerModel(Model):
         # needed with the grounding line open, cell Peclet ~0.5 there; jobs 31695 with, 31696 without: the same)
         self.sheet_upwind = self.sheet_implicit and str(os.environ.get("ESS_SHEET_UPWIND")
                                                         or e.get("sheet_upwind", "0")) not in ("0", "false")
+        # with it, Newton for the sheet once Picard has the change below 1e-2 (env ESS_SHEET_NEWTON, jobs SHEET_NEWTON;
+        # default 0); and the floor of h in the advection speed K / max(h, floor) (env ESS_SHEET_KH_FLOOR, jobs
+        # SHEET_KH_FLOOR; default 0: K/h exactly, smooth as h -> 0 since K ~ h^2; the old runs had 1e-3 m)
+        self.sheet_newton = self.sheet_implicit and str(os.environ.get("ESS_SHEET_NEWTON")
+                                                        or e.get("sheet_newton", "0")) not in ("0", "false")
+        self.sheet_kh_floor = float(os.environ.get("ESS_SHEET_KH_FLOOR") or e.get("sheet_kh_floor", 0.0))
         # the CS solver: floating nodes not cold for the sheet's flux (the grounding line an outlet, not a wall; env
         # ESS_SHEET_GL_OPEN, jobs SHEET_GL_OPEN; default 0)
         # the sheet solver's nonlinear relaxation factor (env ESS_SHEET_RELAX, jobs SHEET_RELAX; default 0.5, 1 = none)
@@ -1506,6 +1512,10 @@ Solver {stress}
                         "(SheetSolverhwCS)" if getattr(self, "sheet_implicit", False) else "")
                      + ("\n  Sheet Advection Upwinding = Logical True   ! streamline-upwind diffusion on it "
                         "(SheetSolverhwCS)" if getattr(self, "sheet_upwind", False) else "")
+                     + (f"\n  Sheet K Over H Floor = Real {self.sheet_kh_floor!r}   ! K / max(h, floor) in the "
+                        "advection speed; 0: K/h (SheetSolverhwCS)" if getattr(self, "sheet_implicit", False) else "")
+                     + ("\n  Sheet Newton = Logical True   ! Newton once the change < 1e-2 or after 3 Picard "
+                        "iterations (SheetSolverhwCS)" if getattr(self, "sheet_newton", False) else "")
                      + ("\n  Sheet Open At Grounding Line = Logical True   ! floating nodes not cold for the flux "
                         "(SheetSolverhwCS)" if getattr(self, "sheet_gl_open", False) else ""))
         blocks.append(f"""
