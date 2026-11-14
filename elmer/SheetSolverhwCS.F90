@@ -196,8 +196,11 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
   ! convergence (down to 0.05), back to its set value at the next call. Undamped Picard (factor 1) needs ~6
   ! iterations a step but now and then cycles without converging, to the 200 cap at ~200 s (job 31770); a
   ! damped one gets out of the cycle.
-  IF ( relax0 < 0 ) relax0 = GetCReal( SolverParams, 'Nonlinear System Relaxation Factor', Found )
-  IF ( .NOT. Found .AND. relax0 < 0 ) relax0 = 1.0_dp
+  IF ( relax0 < 0 ) THEN
+    relaxNow = GetCReal( SolverParams, 'Nonlinear System Relaxation Factor', Found )
+    relax0 = 1.0_dp
+    IF ( Found ) relax0 = relaxNow
+  END IF
   nBackOff = ListGetInteger( SolverParams, 'Sheet Relaxation Back Off', Found )
   relaxNow = relax0
   CALL ListAddConstReal( SolverParams, 'Nonlinear System Relaxation Factor', relaxNow )
