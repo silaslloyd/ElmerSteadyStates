@@ -65,6 +65,10 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
   INTEGER :: nBackOff                    ! ESS: Sheet Relaxation Back Off
   REAL(KIND=dp) :: relaxNow
   REAL(KIND=dp), SAVE :: relax0 = -1.0_dp   ! ESS: the set relaxation factor (read at the first call)
+  REAL(KIND=dp), ALLOCATABLE :: hwIt(:)     ! ESS: the sheet before this iteration's solve (non-convergence diagnostic)
+  TYPE(Variable_t), POINTER :: gmDiag
+  INTEGER :: jd, kd, kmax
+  REAL(KIND=dp) :: dmax, gmv
   LOGICAL :: Found, Newton, BulkUpdate, RHSUpdate, AllocationsDone = .FALSE.
   TYPE(Mesh_t), POINTER :: Mesh 
   TYPE(ValueList_t), POINTER :: BodyForce, Material, SolverParams 
@@ -279,7 +283,39 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
     CALL DefaultDirichletBCs()
     ! And finally, solve:
     !--------------------
+    IF ( iter == 50 .OR. iter == 100 .OR. iter == 150 ) THEN
+      IF ( ALLOCATED( hwIt ) ) DEALLOCATE( hwIt )
+      ALLOCATE( hwIt( SIZE( Solver % Variable % Values ) ) )
+      hwIt = Solver % Variable % Values
+    END IF
     Norm = DefaultSolve() 
+    ! ESS: non-convergence diagnostic. After 50, 100 and 150 iterations, on each rank, the node whose sheet changed
+    ! most in this iteration (if by more than 1 mm): where it is, its sheet before and after, its cold/temperate and
+    ! grounded masks. Finds the few nodes that keep a converged sheet from passing the solution change test.
+    IF ( ALLOCATED( hwIt ) ) THEN
+      hw => Solver % Variable % Values
+      dmax = 0.0_dp; kmax = 0
+      DO jd = 1, Mesh % NumberOfNodes
+        kd = hwPerm(jd)
+        IF ( kd <= 0 ) CYCLE
+        IF ( ABS( hw(kd) - hwIt(kd) ) > dmax ) THEN
+          dmax = ABS( hw(kd) - hwIt(kd) ); kmax = jd
+        END IF
+      END DO
+      IF ( kmax > 0 .AND. dmax > 1.0e-3_dp ) THEN
+        gmv = -9.0_dp
+        gmDiag => VariableGet( Mesh % Variables, 'GroundedMask' )
+        IF ( ASSOCIATED( gmDiag ) ) THEN
+          IF ( gmDiag % Perm(kmax) > 0 ) gmv = gmDiag % Values( gmDiag % Perm(kmax) )
+        END IF
+        WRITE( Message, '(A,I0,A,I0,A,2F10.2,A,ES11.4,A,ES11.4,A,F5.1,A,F5.1)' ) 'sheet diag it ', iter, &
+            ' rank ', ParEnv % myPe, ': x, y (km)', Mesh % Nodes % x(kmax)/1.0e3_dp, Mesh % Nodes % y(kmax)/1.0e3_dp, &
+            ' | h before ', hwIt(hwPerm(kmax)), ' after ', hw(hwPerm(kmax)), ' | ColdTempMask ', &
+            MERGE( ctvals(MAX(ctperm(kmax),1)), -9.0_dp, ctperm(kmax) > 0 ), ' GroundedMask ', gmv
+        CALL Info( SolverName, Message, Level=1 )
+      END IF
+      DEALLOCATE( hwIt )
+    END IF
     !IF ( ParEnv % PEs > 1) CALL ParallelSumVector( Solver % Matrix, hw, 2)
     IF ( hasMin ) THEN
       hw => Solver % Variable % Values
