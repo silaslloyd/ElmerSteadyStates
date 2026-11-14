@@ -28,7 +28,8 @@ sys.path.insert(0, HERE)
 from plot_state_3d import read_vtu, vtu_steps  # noqa: E402
 
 EXTRA = {"coldtempmask": "ct", "water sheet thickness": "hw", "melt rate": "melt", "cfl": "cfl", "step change": "dz",
-         "groundedmask": "mask", "bedrock": "bed", "temperature": "T"}
+         "groundedmask": "mask", "bedrock": "bed", "temperature": "T",
+         "phi0 output": "phi0", "effective pressure output": "N"}   # the sheet's potential (MPa): its flow lines
 
 
 def run_timing(rundir):

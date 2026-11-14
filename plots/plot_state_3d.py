@@ -48,6 +48,13 @@ rate (--mask-panel: the cold/temperate mask instead; --melt-max M: its colours
 in all frames (white 0, blue positive, red negative; --hw-max H:
 0 .. H m, thicker saturating; --hw-log: a signed log scale, ticks 1 cm .. 1 km), and the cold/temperate mask (red temperate, blue cold, grey floating); the cold/temperate boundary in magenta
 on all three ("temperate on").
+On the sheet panel: iso-h lines (black; the level in the hover; default 1, 3 per decade from 1 mm to the largest
+sheet; --hw-iso A,B,..: those levels in m) and the sheet's flow lines (orange, a dot at the downstream end): along
+-grad(Phi0 - N), the direction of the flux q = -K grad(Phi0 - N), traced over the wet grounded bed (temperate, or the
+grounding line, sheet > 0.2 mm) from seeds every --sheet-stream-km KM (default 8), each line stopped where it comes
+within half that of another, at the shelf, a dry or cold node or a stagnant point. Needs Phi0 Output and Effective
+Pressure Output in the frames (plots/vtu_frames.py packs them since 2026-11-14; repack older frames). Both toggle in
+the legend; --no-sheet-lines: neither.
 Writes <first input>_3d.html and opens it. Needs numpy and plotly.
 """
 import base64
@@ -92,6 +99,9 @@ WALLS = False            # walled sides: the distance to the grounding line not 
 SHEET = False            # --sheet: the second panel the water sheet (base only) instead of the temperature
 HW_MAX = None            # --hw-max H: a linear colour scale 0 .. H m; default: linear over the data's min .. max
 HW_LOG = False           # --hw-log: the signed log scale instead
+SHEET_LINES = True       # iso-h and flow lines on the sheet panel (--no-sheet-lines: none)
+HW_ISO = None            # --hw-iso A,B,..: the iso-h levels (m); default 1, 3 per decade from 1 mm to the largest sheet
+SHEET_STREAM_KM = 8.0    # --sheet-stream-km KM: the spacing of the sheet's flow lines
 SHEET_VEL = False        # --sheet-velocity: the first --sheet panel the velocity instead of the temperature
 MASK_PANEL = False       # --mask-panel: the third --sheet panel the cold/temperate mask instead of the melt rate
 MELT_MAX = None          # --melt-max M: the melt colours -M .. M m/yr (default: 99.5th percentile of |melt|, all frames)
@@ -171,7 +181,7 @@ def frame_surfaces(path):
             for n in ("vx", "vy", "vz"):
                 d[n] = F[f"{name}_{n}"][k].astype(float)
             d["speed"] = np.sqrt(d["vx"] ** 2 + d["vy"] ** 2 + d["vz"] ** 2)
-        for n in ("T", "mask", "ct", "hw", "melt", "cfl", "dz"):
+        for n in ("T", "mask", "ct", "hw", "melt", "cfl", "dz", "phi0", "N"):
             if f"{name}_{n}" in F:
                 d[n] = F[f"{name}_{n}"][k].astype(float)
         if f"{name}_bed" in F:
@@ -756,6 +766,164 @@ def streamlines(top, spacing_km, width_m, periodic=True):
 
 
 _SSTREAM_CACHE = {}
+_SHEET_FLOW_CACHE = {}
+
+
+def sheet_flow_lines(base, spacing_km, sector_a=0.0, periodic=True):
+    """flow lines of the water sheet on the base: along -grad(Phi0 - N) (Phi0 Output, Effective Pressure Output; the
+    flux q = -K grad Phi0 + K N' grad h = -K grad(Phi0 - N), K > 0, so only the direction matters), linear on the
+    footprint triangles (each node the area-weighted mean of its triangles' gradients). Wet: grounded or grounding line
+    (GroundedMask > -0.5), temperate or on the grounding line, sheet > 0.2 mm. Seeds one per spacing_km cell of the
+    wet nodes; each traced downstream, then upstream (RK2, steps spacing_km / 16), stopped on leaving the wet bed,
+    at a stagnant point, or on entering a cell (spacing_km / 2) another line has taken (evenly spaced lines).
+    Periodic across the sides (a sector: rotated by its angle; a strip: y wrapped). Returns x, y (km) with None
+    between the lines, and a marker size per point (the downstream end of each line 3, else 0)"""
+    key = (id(base), spacing_km)
+    if key in _SHEET_FLOW_CACHE:
+        return _SHEET_FLOW_CACHE[key]
+    empty = ([], [], [])
+    if not all(n in base for n in ("phi0", "N", "hw", "mask")):
+        _SHEET_FLOW_CACHE[key] = empty
+        return empty
+    import hashlib
+    x, y = np.asarray(base["x"], float), np.asarray(base["y"], float)
+    i, j, k = triangles(x, y)
+    S = np.c_[i, j, k]
+    phi = np.asarray(base["phi0"], float) - np.asarray(base["N"], float)
+    xa, ya, fa = x[S[:, 0]], y[S[:, 0]], phi[S[:, 0]]
+    dxb, dyb, dfb = x[S[:, 1]] - xa, y[S[:, 1]] - ya, phi[S[:, 1]] - fa
+    dxc, dyc, dfc = x[S[:, 2]] - xa, y[S[:, 2]] - ya, phi[S[:, 2]] - fa
+    det = dxb * dyc - dxc * dyb
+    ok = np.abs(det) > 0
+    det_ = np.where(ok, det, 1.0)
+    gx = np.where(ok, (dfb * dyc - dfc * dyb) / det_, 0.0)
+    gy = np.where(ok, (dfc * dxb - dfb * dxc) / det_, 0.0)
+    wa = np.abs(det)
+    G = np.zeros((len(x), 2))
+    Wn = np.zeros(len(x))
+    for c in range(3):
+        np.add.at(G[:, 0], S[:, c], wa * gx)
+        np.add.at(G[:, 1], S[:, c], wa * gy)
+        np.add.at(Wn, S[:, c], wa)
+    G /= np.maximum(Wn, 1e-30)[:, None]
+    m = np.asarray(base["mask"], float)
+    ct = np.asarray(base["ct"], float) if "ct" in base else np.ones(len(x))
+    wet = ((m > -0.5) & ((ct > 0.5) | (m < 0.5)) & (np.asarray(base["hw"], float) > 2e-4)).astype(float)
+    vals = np.c_[-G, wet]                        # the flow direction (unnormalised) and the wet indicator
+    tk = "sheet" + hashlib.sha1(np.round(x, 1).tobytes() + np.round(y, 1).tobytes()).hexdigest()
+    loc = _point_locator(np.c_[x, y], S, tk)
+
+    def f(Q):
+        kk, w = loc(Q)
+        out = np.full((len(Q), 3), np.nan)
+        o = kk >= 0
+        if o.any():
+            out[o] = np.einsum("ni,nij->nj", w[o], vals[S[kk[o]]])
+        return out
+
+    def direction(Q, sgn):
+        u = f(Q)
+        sp = np.hypot(u[:, 0], u[:, 1])
+        good = np.isfinite(sp) & (sp > 1e-14) & (u[:, 2] > 0.5)
+        d = np.zeros((len(Q), 2))
+        d[good] = sgn * u[good, :2] / sp[good, None]
+        return d, good
+
+    A = sector_a
+    y0, Wy = y.min(), float(np.ptp(y))
+
+    def wrap(Q):
+        """back into the footprint across a periodic side; True where it crossed"""
+        if not periodic:
+            return Q, np.zeros(len(Q), bool)
+        if A > 0:
+            ph = np.arctan2(Q[:, 1], Q[:, 0])
+            jump = np.where(ph > 0.5 * A, -1.0, np.where(ph < -0.5 * A, 1.0, 0.0))
+            ca, sa = np.cos(jump * A), np.sin(jump * A)
+            Q = np.c_[ca * Q[:, 0] - sa * Q[:, 1], sa * Q[:, 0] + ca * Q[:, 1]]
+            return Q, jump != 0
+        jump = (Q[:, 1] < y0) | (Q[:, 1] > y0 + Wy)
+        Q = Q.copy()
+        Q[:, 1] = y0 + np.mod(Q[:, 1] - y0, Wy)
+        return Q, jump
+
+    sp_m = spacing_km * 1e3
+    cell = 0.5 * sp_m
+    ck = lambda Q: list(zip(np.floor(Q[:, 0] / cell).astype(int).tolist(), np.floor(Q[:, 1] / cell).astype(int).tolist()))
+    # seeds: the first wet node of each spacing cell
+    wn = np.where(wet > 0.5)[0]
+    if not len(wn):
+        _SHEET_FLOW_CACHE[key] = empty
+        return empty
+    _, first = np.unique(np.c_[np.floor(x[wn] / sp_m), np.floor(y[wn] / sp_m)], axis=0, return_index=True)
+    sn = wn[first]
+    sn = sn[np.argsort(-phi[sn])]                # upstream (high potential) first: their lines run on through the
+    seeds = np.c_[x[sn], y[sn]]                  # bed downstream, later ones join them
+    owner = {}
+    ds = sp_m / 16.0
+    nmax = int(4 * (np.ptp(x) + np.ptp(y)) / ds)
+
+    def trace(P0, ids, sgn):
+        P = P0.copy()
+        lines = [[tuple(p)] for p in P]
+        alive = np.ones(len(P), bool)
+        for _ in range(nmax):
+            a = np.where(alive)[0]
+            if not len(a):
+                break
+            d1, ok1 = direction(P[a], sgn)
+            M, _ = wrap(P[a] + 0.5 * ds * d1)
+            d2, ok2 = direction(M, sgn)
+            Q, jump = wrap(P[a] + ds * d2)
+            good = ok1 & ok2
+            cells = ck(Q)
+            for q, n in enumerate(a):
+                if not good[q] or owner.setdefault(cells[q], ids[n]) != ids[n]:
+                    alive[n] = False
+                    if good[q] and not jump[q]:  # joined another line: end on it
+                        lines[n].append((Q[q, 0], Q[q, 1]))
+                    continue
+                if jump[q]:
+                    lines[n].append(None)
+                lines[n].append((Q[q, 0], Q[q, 1]))
+            P[a] = np.where(good[:, None], Q, P[a])
+        return lines
+
+    # in batches, upstream seeds first; a seed in a cell a line already took starts no line of its own
+    down, up, used = {}, {}, []
+    B = 24
+    for b0 in range(0, len(seeds), B):
+        ids = [n for n in range(b0, min(b0 + B, len(seeds))) if ck(seeds[n:n + 1])[0] not in owner]
+        if not ids:
+            continue
+        for n, c in zip(ids, ck(seeds[ids])):
+            owner.setdefault(c, n)
+        ids = [n for n, c in zip(ids, ck(seeds[ids])) if owner[c] == n]
+        for n, l_ in zip(ids, trace(seeds[ids], ids, 1.0)):
+            down[n] = l_
+        for n, l_ in zip(ids, trace(seeds[ids], ids, -1.0)):
+            up[n] = l_
+        used += ids
+    X, Y, Sz = [], [], []
+    for n in used:
+        ln = up[n][::-1][:-1] + down[n]          # upstream end .. seed .. downstream end
+        pieces, cur = [], []
+        for p in ln + [None]:
+            if p is None:
+                if len(cur) > 1:
+                    pieces.append(np.array(cur))
+                cur = []
+            else:
+                cur.append(p)
+        for pi, pc in enumerate(pieces):
+            kk = _rdp(pc / 50.0, 1.0)            # within 50 m of the traced line
+            pc = pc[kk]
+            X += (pc[:, 0] / 1e3).tolist() + [None]
+            Y += (pc[:, 1] / 1e3).tolist() + [None]
+            Sz += [0] * (len(pc) - 1) + [3 if pi == len(pieces) - 1 else 0, 0]
+    out = (X, Y, Sz)
+    _SHEET_FLOW_CACHE[key] = out
+    return out
 
 
 def streamlines_sector(top, spacing_km):
@@ -809,7 +977,7 @@ def _rdp(P, eps):
 
 def main():
     import plotly.graph_objects as go
-    global SHEET, HW_MAX, HW_LOG, MASK_PANEL, MELT_MAX, SHEET_VEL
+    global SHEET, HW_MAX, HW_LOG, MASK_PANEL, MELT_MAX, SHEET_VEL, SHEET_LINES, HW_ISO, SHEET_STREAM_KM
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
     global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD, SECTOR, SECTOR_A
     args = sys.argv[1:]
@@ -873,6 +1041,17 @@ def main():
     if "--melt-max" in args:
         k = args.index("--melt-max")
         MELT_MAX = float(args[k + 1])
+        del args[k:k + 2]
+    if "--no-sheet-lines" in args:
+        SHEET_LINES = False
+        args.remove("--no-sheet-lines")
+    if "--hw-iso" in args:
+        k = args.index("--hw-iso")
+        HW_ISO = [float(v) for v in args[k + 1].split(",") if v]
+        del args[k:k + 2]
+    if "--sheet-stream-km" in args:
+        k = args.index("--sheet-stream-km")
+        SHEET_STREAM_KM = float(args[k + 1])
         del args[k:k + 2]
     if "--hw-log" in args:
         HW_LOG = True
@@ -1125,6 +1304,18 @@ def main():
             print(f"water sheet colours: signed log, -1 km (red) .. 0 (white) .. 1 km (blue) (--hw-max H: linear 0 .. H);"
                   f" all frames: {np.nanmin(hv):.3g} .. {np.nanmax(hv):.3g} m")
             panels.append(("hwl", -L, L, "RdBu", "water sheet (m)", 0.645 if three else 1.0, "scene2"))
+    iso_levels = []
+    if sheet and SHEET_LINES:
+        if HW_ISO:
+            iso_levels = sorted(HW_ISO)
+        else:
+            top_ = float(np.nanmax(hv))
+            iso_levels = [m_ * 10.0 ** e_ for e_ in range(-3, 4) for m_ in (1.0, 3.0) if m_ * 10.0 ** e_ < top_]
+        has_phi = all("phi0" in b and "N" in b for _, _, b, _ in data)
+        print(f"sheet panel: iso-h lines at {', '.join(f'{v:g}' for v in iso_levels)} m (--hw-iso A,B,..); "
+              + (f"flow lines along -grad(Phi0 - N), seeds every {SHEET_STREAM_KM:g} km (--sheet-stream-km)" if has_phi
+                 else "no flow lines: the frames lack Phi0 Output / Effective Pressure Output (repack them with "
+                      "plots/vtu_frames.py)") + "; --no-sheet-lines: neither")
     if three and p3 == "melt":
         mv = np.concatenate([b["melt"] for _, _, b, _ in data])
         # the range of the melt where it is real: the grounded temperate bed (elsewhere it is 0 by definition or
@@ -1399,6 +1590,32 @@ def main():
                                        legendgroup="ctmask", scene=sc, showlegend=False, connectgaps=False,
                                        hovertemplate="cold | temperate at x %{x:.2f} km, y %{y:.2f} km<extra></extra>"))
         bedmap = f in ("hw", "hwl", "ctm", "melt")   # the bed maps (sheet, melt, mask): no GL or FS | SSA lines
+        if f in ("hw", "hwl") and SHEET_LINES and not cmp and base is not None and "hw" in base:
+            # iso-h lines and the sheet's flow lines, just above the flat map (always both traces: frames align)
+            lx, ly, lt = [], [], []
+            for lev in iso_levels:
+                cx_, cy_ = contour(base["x"], base["y"], base["hw"], lev, [])[:2]
+                for c in range(TILE):
+                    X_, Y_ = tile_xy(cx_, cy_, c, W)
+                    lx += X_ + [None]
+                    ly += Y_ + [None]
+                    lt += [f"h = {lev:g} m"] * (len(X_) + 1)
+            tr.append(go.Scatter3d(x=lx, y=ly, z=[None if v is None else ZFLAT + 2.0 for v in lx], mode="lines",
+                                   text=lt, line=dict(color="black", width=2), name="iso-h (sheet)",
+                                   legendgroup="hwiso", scene=sc, showlegend=True, connectgaps=False,
+                                   hovertemplate="%{text}<extra></extra>"))
+            fx, fy, fs = sheet_flow_lines(base, SHEET_STREAM_KM, SECTOR_A if SECTOR else 0.0, periodic=not WALLS)
+            qx, qy, qs = [], [], []
+            for c in range(TILE):
+                X_, Y_ = tile_xy(fx, fy, c, W)
+                qx += X_ + [None]
+                qy += Y_ + [None]
+                qs += list(fs) + [0]
+            tr.append(go.Scatter3d(x=qx, y=qy, z=[None if v is None else ZFLAT + 3.0 for v in qx],
+                                   mode="lines+markers", marker=dict(size=qs, color="#ff7f00", line=dict(width=0)),
+                                   line=dict(color="#ff7f00", width=2), name="sheet flow lines (dot: downstream)",
+                                   legendgroup="hwstream", scene=sc, showlegend=True, connectgaps=False,
+                                   hoverinfo="skip"))
         if base is not None and "mask" in base and not bedmap:
             # the grounding line through all copies (a jump at a seam: not periodic), in red on the surface and on
             # the base (just outside each, so neither surface hides it)
