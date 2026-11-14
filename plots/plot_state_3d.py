@@ -780,7 +780,7 @@ def sheet_flow_lines(base, spacing_km, sector_a=0.0, periodic=True):
     key = (id(base), spacing_km)
     if key in _SHEET_FLOW_CACHE:
         return _SHEET_FLOW_CACHE[key]
-    empty = ([], [], [])
+    empty = ([], [], [], [])
     if not all(n in base for n in ("phi0", "N", "hw", "mask")):
         _SHEET_FLOW_CACHE[key] = empty
         return empty
@@ -808,13 +808,13 @@ def sheet_flow_lines(base, spacing_km, sector_a=0.0, periodic=True):
     m = np.asarray(base["mask"], float)
     ct = np.asarray(base["ct"], float) if "ct" in base else np.ones(len(x))
     wet = ((m > -0.5) & ((ct > 0.5) | (m < 0.5)) & (np.asarray(base["hw"], float) > 2e-4)).astype(float)
-    vals = np.c_[-G, wet]                        # the flow direction (unnormalised) and the wet indicator
+    vals = np.c_[-G, wet, np.asarray(base["v"], float)]   # the flow direction (unnormalised), wet, the base height
     tk = "sheet" + hashlib.sha1(np.round(x, 1).tobytes() + np.round(y, 1).tobytes()).hexdigest()
     loc = _point_locator(np.c_[x, y], S, tk)
 
     def f(Q):
         kk, w = loc(Q)
-        out = np.full((len(Q), 3), np.nan)
+        out = np.full((len(Q), 4), np.nan)
         o = kk >= 0
         if o.any():
             out[o] = np.einsum("ni,nij->nj", w[o], vals[S[kk[o]]])
@@ -930,7 +930,7 @@ def sheet_flow_lines(base, spacing_km, sector_a=0.0, periodic=True):
         for n, l_ in zip(ids, trace(seeds[ids], ids, -1.0)):
             up[n] = l_
         used += ids.tolist()
-    X, Y, Sz = [], [], []
+    X, Y, Z, Sz = [], [], [], []
     for n in used:
         # upstream end .. seed .. downstream end: the upstream pieces reversed, then the downstream ones
         ups = [q[::-1] for q in up[n][::-1]]
@@ -941,10 +941,12 @@ def sheet_flow_lines(base, spacing_km, sector_a=0.0, periodic=True):
         for pi, pc in enumerate(pieces):
             kk = _rdp(pc / 50.0, 1.0)            # within 50 m of the traced line
             pc = pc[kk]
+            zb_ = f(pc)[:, 3]
+            Z += [None if not np.isfinite(v) else float(v) for v in zb_] + [None]
             X += (pc[:, 0] / 1e3).tolist() + [None]
             Y += (pc[:, 1] / 1e3).tolist() + [None]
             Sz += [0] * (len(pc) - 1) + [3 if pi == len(pieces) - 1 else 0, 0]
-    out = (X, Y, Sz)
+    out = (X, Y, Sz, Z)
     _SHEET_FLOW_CACHE[key] = out
     return out
 
@@ -1276,7 +1278,9 @@ def main():
         HWOV_CS = ([[0.0, "#b2182b"], [z0_, "#ffffff"], [1.0, "#08306b"]] if z0_ > 0 else
                    [[0.0, "#ffffff"], [1.0, "#08306b"]])
         print(f"water sheet overlay on the base (buttons sheet off / on): colours 0 .. {HWOV:.3g} m (--hw-max); "
-              f"all frames {np.nanmin(hv_):.3g} .. {np.nanmax(hv_):.3g} m")
+              f"all frames {np.nanmin(hv_):.3g} .. {np.nanmax(hv_):.3g} m"
+              + (f"; with it the sheet's flow lines (orange, dot downstream; --sheet-stream-km {SHEET_STREAM_KM:g}, "
+                 "--no-sheet-lines: none)" if SHEET_LINES else ""))
     if three and p3 == "ctm":
         for _, _, b, _ in data:                   # the bed's state: 1 temperate, -1 cold (grounded), 0 floating
             b["ctm"] = np.where(b["mask"] < -0.5, 0.0, np.where(np.nan_to_num(b["ct"], nan=-1.0) > 0, 1.0, -1.0))
@@ -1558,6 +1562,22 @@ def main():
                                     legendgroup="sheetov", visible=False, opacity=1.0, showlegend=False, meta="hw",
                                     hovertemplate="x %{x:.2f} km, y %{y:.2f} km<br>hw %{customdata[0]:.3g} m"
                                                   "<br>mask %{customdata[1]}<extra></extra>"))
+                if SHEET_LINES:
+                    # the sheet's flow lines on the overlay, just below it (seen from below), with it on the buttons
+                    fx, fy, fs, fz = sheet_flow_lines(base, SHEET_STREAM_KM, SECTOR_A if SECTOR else 0.0,
+                                                      periodic=not WALLS)
+                    qx, qy, qz, qs = [], [], [], []
+                    for c in range(TILE):
+                        X_, Y_ = tile_xy(fx, fy, c, W)
+                        qx += X_ + [None]
+                        qy += Y_ + [None]
+                        qz += [None if v is None else v - 8.0 for v in fz] + [None]
+                        qs += list(fs) + [0]
+                    tr.append(go.Scatter3d(x=qx, y=qy, z=qz, mode="lines+markers",
+                                           marker=dict(size=qs, color="#ff7f00", line=dict(width=0)),
+                                           line=dict(color="#ff7f00", width=2), name="sheet flow lines",
+                                           legendgroup="sheetov", visible=False, scene=sc, showlegend=False,
+                                           connectgaps=False, hoverinfo="skip"))
             if SHOW_BED and "bed" in B_:
                 tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["bed"] - 1.0, i=i, j=j,
                                     k=k, color="#999999", opacity=0.35, name="bedrock", hoverinfo="skip",
@@ -1624,7 +1644,7 @@ def main():
                                    text=lt, line=dict(color="black", width=2), name="iso-h (sheet)",
                                    legendgroup="hwiso", scene=sc, showlegend=True, connectgaps=False,
                                    hovertemplate="%{text}<extra></extra>"))
-            fx, fy, fs = sheet_flow_lines(base, SHEET_STREAM_KM, SECTOR_A if SECTOR else 0.0, periodic=not WALLS)
+            fx, fy, fs, _ = sheet_flow_lines(base, SHEET_STREAM_KM, SECTOR_A if SECTOR else 0.0, periodic=not WALLS)
             qx, qy, qs = [], [], []
             for c in range(TILE):
                 X_, Y_ = tile_xy(fx, fy, c, W)
