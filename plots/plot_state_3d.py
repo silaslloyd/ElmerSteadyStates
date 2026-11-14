@@ -1337,7 +1337,7 @@ def main():
             if sheet_ov and sc == "scene" and "hw" in B_:
                 # the overlay: the base again, 2 m below it (in front of it seen from below), coloured by the sheet
                 tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["v"] - 2.0, i=i, j=j, k=k,
-                                    intensity=B_["hw"], colorscale="Blues", cmin=0.0, cmax=HWOV, showscale=True,
+                                    intensity=B_["hw"], colorscale="Reds", cmin=0.0, cmax=HWOV, showscale=True,
                                     colorbar=dict(title="water sheet (m)", x=-0.08, len=0.6),
                                     lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0, roughness=1.0, fresnel=0.0),
                                     customdata=np.stack([B_["hw"], mask], 1), scene=sc, name="water sheet (base)",
@@ -1752,21 +1752,28 @@ gd.on('plotly_relayout', function (e) {
     if any(getattr(t_, "meta", None) == "hw" for t_ in first):
         hw_js = """
 (function () {
-  var g = document.getElementsByClassName('plotly-graph-div')[0], v = null;
+  var g = document.getElementsByClassName('plotly-graph-div')[0], v = null, w = null;
   var box = document.createElement('div');
   box.style.cssText = 'position:absolute;top:4px;left:8px;z-index:10;font:13px sans-serif;background:#fff;padding:2px 6px;'
     + 'border:1px solid #ccc;border-radius:4px';
-  box.innerHTML = 'sheet max (m) <input id="hwmax" type="number" step="any" min="0" style="width:70px">'
+  box.innerHTML = 'sheet min (m) <input id="hwmin" type="number" step="any" style="width:70px">'
+    + ' max (m) <input id="hwmax" type="number" step="any" style="width:70px">'
     + ' <button id="hwauto">auto</button>';
   g.parentNode.style.position = 'relative'; g.parentNode.insertBefore(box, g);
   function ids() { var r = []; g.data.forEach(function (t, i) { if (t.meta === 'hw') r.push(i); }); return r; }
   var i0 = ids(); if (!i0.length) return;
-  var auto = g.data[i0[0]].cmax; document.getElementById('hwmax').value = auto;
-  function apply() { var r = ids(); if (v !== null && r.length) Plotly.restyle(g, {cmax: Array(r.length).fill(v)}, r); }
+  var auto = g.data[i0[0]].cmax, auto0 = g.data[i0[0]].cmin;
+  document.getElementById('hwmax').value = auto; document.getElementById('hwmin').value = auto0;
+  function apply() { var r = ids(), u = {}; if (!r.length) return;
+    if (v !== null) u.cmax = Array(r.length).fill(v); if (w !== null) u.cmin = Array(r.length).fill(w);
+    if (Object.keys(u).length) Plotly.restyle(g, u, r); }
   document.getElementById('hwmax').addEventListener('change', function (e) {
-    var x = parseFloat(e.target.value); if (isFinite(x) && x > 0) { v = x; apply(); } });
+    var x = parseFloat(e.target.value); if (isFinite(x)) { v = x; apply(); } });
+  document.getElementById('hwmin').addEventListener('change', function (e) {
+    var x = parseFloat(e.target.value); if (isFinite(x)) { w = x; apply(); } });
   document.getElementById('hwauto').addEventListener('click', function () {
-    v = auto; document.getElementById('hwmax').value = auto; apply(); });
+    v = auto; w = auto0; document.getElementById('hwmax').value = auto; document.getElementById('hwmin').value = auto0;
+    apply(); });
   g.on('plotly_animated', apply);
 })();"""
     post = "\n".join(x for x in (sync, switch_js, hw_js) if x) or None
