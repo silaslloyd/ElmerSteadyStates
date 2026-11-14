@@ -48,13 +48,12 @@ rate (--mask-panel: the cold/temperate mask instead; --melt-max M: its colours
 in all frames (white 0, blue positive, red negative; --hw-max H:
 0 .. H m, thicker saturating; --hw-log: a signed log scale, ticks 1 cm .. 1 km), and the cold/temperate mask (red temperate, blue cold, grey floating); the cold/temperate boundary in magenta
 on all three ("temperate on").
-On the sheet panel: iso-h lines (black; the level in the hover; default 1, 3 per decade from 1 mm to the largest
-sheet; --hw-iso A,B,..: those levels in m) and the sheet's flow lines (orange, a dot at the downstream end): along
+On the sheet panel: the sheet's flow lines (orange, a dot at the downstream end): along
 -grad(Phi0 - N), the direction of the flux q = -K grad(Phi0 - N), traced over the wet grounded bed (temperate, or the
 grounding line, sheet > 0.2 mm) from seeds every --sheet-stream-km KM (default 8), each line stopped where it comes
 within half that of another, at the shelf, a dry or cold node or a stagnant point. Needs Phi0 Output and Effective
-Pressure Output in the frames (plots/vtu_frames.py packs them since 2026-11-14; repack older frames). Both toggle in
-the legend; --no-sheet-lines: neither.
+Pressure Output in the frames (plots/vtu_frames.py packs them since 2026-11-14; repack older frames). Toggled in the
+legend; --no-sheet-lines: none; --hw-iso A,B,..: iso-h lines (black) at those levels (m) as well.
 Writes <first input>_3d.html and opens it. Needs numpy and plotly.
 """
 import base64
@@ -100,7 +99,7 @@ SHEET = False            # --sheet: the second panel the water sheet (base only)
 HW_MAX = None            # --hw-max H: a linear colour scale 0 .. H m; default: linear over the data's min .. max
 HW_LOG = False           # --hw-log: the signed log scale instead
 SHEET_LINES = True       # iso-h and flow lines on the sheet panel (--no-sheet-lines: none)
-HW_ISO = None            # --hw-iso A,B,..: the iso-h levels (m); default 1, 3 per decade from 1 mm to the largest sheet
+HW_ISO = None            # --hw-iso A,B,..: iso-h lines at these levels (m); default none
 SHEET_STREAM_KM = 8.0    # --sheet-stream-km KM: the spacing of the sheet's flow lines
 SHEET_VEL = False        # --sheet-velocity: the first --sheet panel the velocity instead of the temperature
 MASK_PANEL = False       # --mask-panel: the third --sheet panel the cold/temperate mask instead of the melt rate
@@ -1306,13 +1305,9 @@ def main():
             panels.append(("hwl", -L, L, "RdBu", "water sheet (m)", 0.645 if three else 1.0, "scene2"))
     iso_levels = []
     if sheet and SHEET_LINES:
-        if HW_ISO:
-            iso_levels = sorted(HW_ISO)
-        else:
-            top_ = float(np.nanmax(hv))
-            iso_levels = [m_ * 10.0 ** e_ for e_ in range(-3, 4) for m_ in (1.0, 3.0) if m_ * 10.0 ** e_ < top_]
+        iso_levels = sorted(HW_ISO) if HW_ISO else []    # iso-h lines only when asked for (--hw-iso)
         has_phi = all("phi0" in b and "N" in b for _, _, b, _ in data)
-        print(f"sheet panel: iso-h lines at {', '.join(f'{v:g}' for v in iso_levels)} m (--hw-iso A,B,..); "
+        print((f"sheet panel: iso-h lines at {', '.join(f'{v:g}' for v in iso_levels)} m; " if iso_levels else "sheet panel: ")
               + (f"flow lines along -grad(Phi0 - N), seeds every {SHEET_STREAM_KM:g} km (--sheet-stream-km)" if has_phi
                  else "no flow lines: the frames lack Phi0 Output / Effective Pressure Output (repack them with "
                       "plots/vtu_frames.py)") + "; --no-sheet-lines: neither")
@@ -1600,7 +1595,8 @@ def main():
                     lx += X_ + [None]
                     ly += Y_ + [None]
                     lt += [f"h = {lev:g} m"] * (len(X_) + 1)
-            tr.append(go.Scatter3d(x=lx, y=ly, z=[None if v is None else ZFLAT + 2.0 for v in lx], mode="lines",
+            if iso_levels:
+              tr.append(go.Scatter3d(x=lx, y=ly, z=[None if v is None else ZFLAT + 2.0 for v in lx], mode="lines",
                                    text=lt, line=dict(color="black", width=2), name="iso-h (sheet)",
                                    legendgroup="hwiso", scene=sc, showlegend=True, connectgaps=False,
                                    hovertemplate="%{text}<extra></extra>"))
