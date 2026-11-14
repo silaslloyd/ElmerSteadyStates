@@ -1576,7 +1576,7 @@ def main():
                     tr.append(go.Scatter3d(x=qx, y=qy, z=qz, mode="lines+markers",
                                            marker=dict(size=qs, color="#ff7f00", line=dict(width=0)),
                                            line=dict(color="#ff7f00", width=2), name="sheet flow lines",
-                                           legendgroup="sheetov", visible=False, scene=sc, showlegend=False,
+                                           legendgroup="sheetflow", visible=False, scene=sc, showlegend=False,
                                            connectgaps=False, hoverinfo="skip"))
             if SHOW_BED and "bed" in B_:
                 tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["bed"] - 1.0, i=i, j=j,
@@ -1915,6 +1915,14 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
                               buttons=[dict(label="sheet off", method="restyle", args=[{"visible": False}, sv_idx]),
                                        dict(label="sheet on", method="restyle", args=[{"visible": True}, sv_idx])])]
         print("  water sheet overlay toggle on the base (view from below to see it)")
+    sf_idx = [n for n, t_ in enumerate(first) if getattr(t_, "legendgroup", None) in ("sheetflow", "hwstream")]
+    if sf_idx:
+        on0 = any(getattr(first[n], "visible", None) is not False for n in sf_idx)
+        menus = menus + [dict(type="buttons", direction="right", x=0.58, y=1.12, xanchor="left", yanchor="bottom",
+                              showactive=True, pad=dict(r=4, t=0), active=1 if on0 else 0,
+                              buttons=[dict(label="sheet flow off", method="restyle", args=[{"visible": False}, sf_idx]),
+                                       dict(label="sheet flow on", method="restyle", args=[{"visible": True}, sf_idx])])]
+        print("  the sheet's flow lines toggle (sheet flow off / on)")
     st_idx = [n for n, t_ in enumerate(first) if getattr(t_, "legendgroup", None) == "stream"]
     if st_idx:
         menus = menus + [dict(type="buttons", direction="right", x=0.84, y=1.06, xanchor="left", yanchor="bottom",
