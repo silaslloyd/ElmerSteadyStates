@@ -68,7 +68,7 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
   REAL(KIND=dp), ALLOCATABLE :: hwIt(:)     ! ESS: the sheet before this iteration's solve (non-convergence diagnostic)
   TYPE(Variable_t), POINTER :: gmDiag
   INTEGER :: jd, kd, kmax
-  REAL(KIND=dp) :: dmax, gmv
+  REAL(KIND=dp) :: dmax, gmv, gmax, dh, dg(6)
   LOGICAL :: Found, Newton, BulkUpdate, RHSUpdate, AllocationsDone = .FALSE.
   TYPE(Mesh_t), POINTER :: Mesh 
   TYPE(ValueList_t), POINTER :: BodyForce, Material, SolverParams 
@@ -289,27 +289,59 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
       hwIt = Solver % Variable % Values
     END IF
     Norm = DefaultSolve() 
-    ! ESS: non-convergence diagnostic. After 50, 100 and 150 iterations, on each rank, the node whose sheet changed
-    ! most in this iteration (if by more than 1 mm): where it is, its sheet before and after, its cold/temperate and
-    ! grounded masks. Finds the few nodes that keep a converged sheet from passing the solution change test.
+    ! ESS: non-convergence diagnostic. After 50, 100 and 150 iterations, over all ranks: how many nodes changed by more
+    ! than 0.1 mm and 0.01 mm in this iteration, split by grounded mask (floating / grounding line / grounded) and by
+    ! cold or temperate; and the node that changed most (printed by the rank that holds it): where, its sheet before
+    ! and after, its masks. Finds what keeps a converged-looking sheet from passing the solution change test.
     IF ( ALLOCATED( hwIt ) ) THEN
       hw => Solver % Variable % Values
-      dmax = 0.0_dp; kmax = 0
+      gmDiag => VariableGet( Mesh % Variables, 'GroundedMask' )
+      dmax = 0.0_dp; kmax = 0; dg = 0.0_dp
       DO jd = 1, Mesh % NumberOfNodes
         kd = hwPerm(jd)
         IF ( kd <= 0 ) CYCLE
-        IF ( ABS( hw(kd) - hwIt(kd) ) > dmax ) THEN
-          dmax = ABS( hw(kd) - hwIt(kd) ); kmax = jd
+        IF ( ParEnv % PEs > 1 ) THEN
+          IF ( Mesh % ParallelInfo % NeighbourList(jd) % Neighbours(1) /= ParEnv % myPe ) CYCLE   ! owned nodes only
+        END IF
+        dh = ABS( hw(kd) - hwIt(kd) )
+        IF ( dh > dmax ) THEN
+          dmax = dh; kmax = jd
+        END IF
+        IF ( dh > 1.0e-5_dp ) THEN
+          dg(1) = dg(1) + 1
+          IF ( dh > 1.0e-4_dp ) dg(2) = dg(2) + 1
+          gmv = 1.0_dp
+          IF ( ASSOCIATED( gmDiag ) ) THEN
+            IF ( gmDiag % Perm(jd) > 0 ) gmv = gmDiag % Values( gmDiag % Perm(jd) )
+          END IF
+          IF ( gmv < -0.5_dp ) THEN
+            dg(3) = dg(3) + 1
+          ELSE IF ( gmv < 0.5_dp ) THEN
+            dg(4) = dg(4) + 1
+          ELSE IF ( ctperm(jd) > 0 ) THEN
+            IF ( ctvals(ctperm(jd)) > 0 ) THEN
+              dg(5) = dg(5) + 1
+            ELSE
+              dg(6) = dg(6) + 1
+            END IF
+          END IF
         END IF
       END DO
-      IF ( kmax > 0 .AND. dmax > 1.0e-3_dp ) THEN
+      DO jd = 1, 6
+        dg(jd) = ParallelReduction( dg(jd) )
+      END DO
+      gmax = ParallelReduction( dmax, 2 )
+      WRITE( Message, '(A,I0,A,ES10.3,A,I0,A,I0,A,I0,A,I0,A,I0,A,I0)' ) 'sheet diag it ', iter, ': max change ', gmax, &
+          ' m | nodes > 0.01 mm ', NINT(dg(1)), ', > 0.1 mm ', NINT(dg(2)), ' | of those (> 0.01 mm): floating ', &
+          NINT(dg(3)), ', grounding line ', NINT(dg(4)), ', grounded temperate ', NINT(dg(5)), ', grounded cold ', NINT(dg(6))
+      CALL Info( SolverName, Message, Level=1 )
+      IF ( kmax > 0 .AND. dmax >= gmax ) THEN
         gmv = -9.0_dp
-        gmDiag => VariableGet( Mesh % Variables, 'GroundedMask' )
         IF ( ASSOCIATED( gmDiag ) ) THEN
           IF ( gmDiag % Perm(kmax) > 0 ) gmv = gmDiag % Values( gmDiag % Perm(kmax) )
         END IF
-        WRITE( Message, '(A,I0,A,I0,A,2F10.2,A,ES11.4,A,ES11.4,A,F5.1,A,F5.1)' ) 'sheet diag it ', iter, &
-            ' rank ', ParEnv % myPe, ': x, y (km)', Mesh % Nodes % x(kmax)/1.0e3_dp, Mesh % Nodes % y(kmax)/1.0e3_dp, &
+        WRITE( Message, '(A,I0,A,2F10.2,A,ES11.4,A,ES11.4,A,F5.1,A,F5.1)' ) 'sheet diag it ', iter, &
+            ' largest: x, y (km)', Mesh % Nodes % x(kmax)/1.0e3_dp, Mesh % Nodes % y(kmax)/1.0e3_dp, &
             ' | h before ', hwIt(hwPerm(kmax)), ' after ', hw(hwPerm(kmax)), ' | ColdTempMask ', &
             MERGE( ctvals(MAX(ctperm(kmax),1)), -9.0_dp, ctperm(kmax) > 0 ), ' GroundedMask ', gmv
         CALL Info( SolverName, Message, Level=1 )
