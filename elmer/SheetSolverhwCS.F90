@@ -62,6 +62,9 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
   INTEGER :: nfloor
   INTEGER :: i, j, m, n, n_nei, nb, nd, t, active,passive, istat, correctedvalues  , num_cold !, n = number of nodes (given element), n = number of degrees of freedom (given element), nd = number of DOFs on the boundary (given element), t = index for..., active = number of active element
   INTEGER :: iter, maxiter  ! nonlinear iteration number, max number of nonlinear iterations
+  INTEGER :: nBackOff                    ! ESS: Sheet Relaxation Back Off
+  REAL(KIND=dp) :: relaxNow
+  REAL(KIND=dp), SAVE :: relax0 = -1.0_dp   ! ESS: the set relaxation factor (read at the first call)
   LOGICAL :: Found, Newton, BulkUpdate, RHSUpdate, AllocationsDone = .FALSE.
   TYPE(Mesh_t), POINTER :: Mesh 
   TYPE(ValueList_t), POINTER :: BodyForce, Material, SolverParams 
@@ -189,11 +192,26 @@ SUBROUTINE SheetSolverhw( Model,Solver,dt,TransientSimulation )
   maxiter = ListGetInteger( GetSolverParams(),&
       'Nonlinear System Max Iterations',Found,minv=1)
   IF(.NOT. Found ) maxiter = 1
+  ! ESS "Sheet Relaxation Back Off" (integer N, 0: off): the relaxation factor halved every N iterations without
+  ! convergence (down to 0.05), back to its set value at the next call. Undamped Picard (factor 1) needs ~6
+  ! iterations a step but now and then cycles without converging, to the 200 cap at ~200 s (job 31770); a
+  ! damped one gets out of the cycle.
+  IF ( relax0 < 0 ) relax0 = GetCReal( SolverParams, 'Nonlinear System Relaxation Factor', Found )
+  IF ( .NOT. Found .AND. relax0 < 0 ) relax0 = 1.0_dp
+  nBackOff = ListGetInteger( SolverParams, 'Sheet Relaxation Back Off', Found )
+  relaxNow = relax0
+  CALL ListAddConstReal( SolverParams, 'Nonlinear System Relaxation Factor', relaxNow )
 
   ! Nonlinear iteration loop:
   !--------------------------
   DO iter=1,maxiter
     CALL Info('SheetSolverhw','Sheet solver iteration: '//I2S(iter))
+    IF ( nBackOff > 0 .AND. iter > 1 .AND. MOD( iter-1, nBackOff ) == 0 .AND. relaxNow > 0.05_dp ) THEN
+      relaxNow = MAX( 0.5_dp*relaxNow, 0.05_dp )
+      CALL ListAddConstReal( SolverParams, 'Nonlinear System Relaxation Factor', relaxNow )
+      WRITE( Message, '(A,I0,A,F6.3)' ) 'not converged after ', iter-1, ' iterations: relaxation factor now ', relaxNow
+      CALL Info( SolverName, Message, Level=1 )
+    END IF
 
     !Newton =  GetNewtonActive()  ! logical that is 1 if Newton iterations are to be used (Picard otherwise)
     Newton = .False.

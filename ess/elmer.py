@@ -346,6 +346,10 @@ class ElmerModel(Model):
         # ESS_SHEET_GL_OPEN, jobs SHEET_GL_OPEN; default 0)
         # the sheet solver's nonlinear relaxation factor (env ESS_SHEET_RELAX, jobs SHEET_RELAX; default 0.5, 1 = none)
         self.sheet_relax = float(os.environ.get("ESS_SHEET_RELAX") or e.get("sheet_relax", 0.5))
+        # halve the sheet's relaxation every N Picard iterations without convergence (env ESS_SHEET_BACKOFF, jobs
+        # SHEET_BACKOFF; default 25 with relaxation 1, 0 (off) otherwise)
+        self.sheet_backoff = int(os.environ.get("ESS_SHEET_BACKOFF") or e.get("sheet_backoff",
+                                                                             25 if self.sheet_relax >= 1 else 0))
         # the sheet solver's linear preconditioner (env ESS_SHEET_PREC, jobs SHEET_PREC; default ILU8, as ElmerStreams)
         self.sheet_prec = str(os.environ.get("ESS_SHEET_PREC") or e.get("sheet_prec", "ILU8"))
         self.sheet_gl_open = cs_ and str(os.environ.get("ESS_SHEET_GL_OPEN") or e.get("sheet_gl_open", "0")) \
@@ -1515,6 +1519,7 @@ Solver {sheet}
   Nonlinear System Max Iterations = 200
   Nonlinear System Min Iterations = 1
   Nonlinear System Relaxation Factor = Real {getattr(self, "sheet_relax", 0.5)!r}
+  Sheet Relaxation Back Off = Integer {getattr(self, "sheet_backoff", 0)}   ! halve the relaxation every N iterations without convergence (SheetSolverhwCS)
   Nonlinear System Convergence Measure = "solution"
   Nonlinear System Reset Newton = Logical True
   Nonlinear System Newton After Iterations = 20

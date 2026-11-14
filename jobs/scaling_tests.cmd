@@ -228,6 +228,9 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 [ -n "$SHEET_GL_OPEN" ] && export ESS_SHEET_GL_OPEN=$SHEET_GL_OPEN && echo "  water sheet open at the grounding line: $SHEET_GL_OPEN"
 # SHEET_PREC=P: the sheet solver's linear preconditioner (default ILU8; e.g. ILU0, ILU1)
 [ -n "$SHEET_PREC" ] && export ESS_SHEET_PREC=$SHEET_PREC && echo "  water sheet preconditioner: $SHEET_PREC"
+# SHEET_BACKOFF=N: halve the sheet's relaxation every N Picard iterations without convergence (default 25 with
+# SHEET_RELAX=1, else 0: off)
+[ -n "$SHEET_BACKOFF" ] && export ESS_SHEET_BACKOFF=$SHEET_BACKOFF && echo "  water sheet relaxation back-off: $SHEET_BACKOFF"
 # SHEET_RELAX=f: the sheet solver's nonlinear relaxation factor (default 0.5; 1 = no relaxation)
 [ -n "$SHEET_RELAX" ] && export ESS_SHEET_RELAX=$SHEET_RELAX && echo "  water sheet relaxation: $SHEET_RELAX"
 # SHEET_N=hr_over_h|marine_term: the sheet's effective pressure (default hr_over_h with SHEET=cs)
