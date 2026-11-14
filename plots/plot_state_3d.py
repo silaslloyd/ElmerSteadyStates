@@ -1069,6 +1069,10 @@ def main():
     if sheet_ov:
         hv_ = np.concatenate([b["hw"] for _, _, b, _ in data])
         HWOV = (HW_MAX or max(float(np.nanpercentile(hv_[hv_ > 0], 99)) if (hv_ > 0).any() else 0.0, 1e-3))
+        HWOV0 = min(float(np.nanmin(hv_)), 0.0)        # red below 0, white at 0, blue above
+        z0_ = -HWOV0 / (HWOV - HWOV0)
+        HWOV_CS = ([[0.0, "#b2182b"], [z0_, "#ffffff"], [1.0, "#08306b"]] if z0_ > 0 else
+                   [[0.0, "#ffffff"], [1.0, "#08306b"]])
         print(f"water sheet overlay on the base (buttons sheet off / on): colours 0 .. {HWOV:.3g} m (--hw-max); "
               f"all frames {np.nanmin(hv_):.3g} .. {np.nanmax(hv_):.3g} m")
     if three and p3 == "ctm":
@@ -1337,7 +1341,7 @@ def main():
             if sheet_ov and sc == "scene" and "hw" in B_:
                 # the overlay: the base again, 2 m below it (in front of it seen from below), coloured by the sheet
                 tr.append(go.Mesh3d(x=B_["x"] / 1e3, y=B_["y"] / 1e3, z=B_["v"] - 2.0, i=i, j=j, k=k,
-                                    intensity=B_["hw"], colorscale="Reds", cmin=0.0, cmax=HWOV, showscale=True,
+                                    intensity=B_["hw"], colorscale=HWOV_CS, cmin=HWOV0, cmax=HWOV, showscale=True,
                                     colorbar=dict(title="water sheet (m)", x=-0.08, len=0.6),
                                     lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0, roughness=1.0, fresnel=0.0),
                                     customdata=np.stack([B_["hw"], mask], 1), scene=sc, name="water sheet (base)",
@@ -1764,9 +1768,14 @@ gd.on('plotly_relayout', function (e) {
   var i0 = ids(); if (!i0.length) return;
   var auto = g.data[i0[0]].cmax, auto0 = g.data[i0[0]].cmin;
   document.getElementById('hwmax').value = auto; document.getElementById('hwmin').value = auto0;
-  function apply() { var r = ids(), u = {}; if (!r.length) return;
-    if (v !== null) u.cmax = Array(r.length).fill(v); if (w !== null) u.cmin = Array(r.length).fill(w);
-    if (Object.keys(u).length) Plotly.restyle(g, u, r); }
+  function apply() { var r = ids(), u = {}; if (!r.length || (v === null && w === null)) return;
+    var hi = (v !== null ? v : auto), lo = (w !== null ? w : auto0), cs;
+    if (!(hi > lo)) return;
+    if (lo < 0 && hi > 0) { var z = -lo / (hi - lo); cs = [[0, '#b2182b'], [z, '#ffffff'], [1, '#08306b']]; }
+    else if (hi <= 0) cs = [[0, '#b2182b'], [1, '#ffffff']];
+    else cs = [[0, '#ffffff'], [1, '#08306b']];          // red below 0, white at 0, blue above
+    u.cmax = Array(r.length).fill(hi); u.cmin = Array(r.length).fill(lo); u.colorscale = Array(r.length).fill(cs);
+    Plotly.restyle(g, u, r); }
   document.getElementById('hwmax').addEventListener('change', function (e) {
     var x = parseFloat(e.target.value); if (isFinite(x)) { v = x; apply(); } });
   document.getElementById('hwmin').addEventListener('change', function (e) {
