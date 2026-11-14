@@ -1920,6 +1920,17 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
                               buttons=[dict(label="sheet off", method="restyle", args=[{"visible": False}, sv_idx]),
                                        dict(label="sheet on", method="restyle", args=[{"visible": True}, sv_idx])])]
         print("  water sheet overlay toggle on the base (view from below to see it)")
+    # the ice itself on the velocity panel (surface, base, walls): "ice on / ice off", e.g. to see the bed and the
+    # sheet under it
+    ice_idx = [n for n, t_ in enumerate(first) if getattr(t_, "type", None) == "mesh3d"
+               and getattr(t_, "scene", None) in (None, "scene")
+               and getattr(t_, "name", None) in ("surface Zs", "base Zb", "end wall", "side wall")]
+    if ice_idx:
+        menus = menus + [dict(type="buttons", direction="right", x=0.32, y=1.12, xanchor="left", yanchor="bottom",
+                              showactive=True, pad=dict(r=4, t=0), active=0,
+                              buttons=[dict(label="ice on", method="restyle", args=[{"visible": True}, ice_idx]),
+                                       dict(label="ice off", method="restyle", args=[{"visible": False}, ice_idx])])]
+        print(f"  the ice toggle (ice on / off: {len(ice_idx)} surfaces of the velocity panel)")
     bd_idx = [n for n, t_ in enumerate(first) if getattr(t_, "legendgroup", None) == "bedsurf"]
     if bd_idx:
         for n in bd_idx:                          # hidden on the figure only (a frame with visible=False hid it again)
