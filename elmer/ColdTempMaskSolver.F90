@@ -74,6 +74,9 @@ SUBROUTINE ColdTempMaskSolver(Model,Solver,dt,TransientSimulation)
   TYPE(Variable_t), POINTER :: GmSol
   REAL(KIND=dp), POINTER :: GmValues(:)
   INTEGER, POINTER :: GmPerm(:)
+  ! ESS diagnostics: per call, over the nodes this rank decides (each once), summed over the ranks
+  LOGICAL, ALLOCATABLE :: Seen(:)
+  REAL(KIND=dp) :: dg(8), oldm
   INTEGER, POINTER :: ColdTempPerm(:), TempPerm(:), HwPerm(:)   ! Used to match up node number with solution value at that node (not obvious due to how Elmer stores values)
 
   CHARACTER(LEN=MAX_NAME_LEN) :: SolverName = 'ColdTempMaskSolver'
@@ -162,6 +165,7 @@ SUBROUTINE ColdTempMaskSolver(Model,Solver,dt,TransientSimulation)
   END IF
 
 CALL INFO( SolverName, 'setting vals', level=1 )
+  ALLOCATE( Seen(SIZE(ColdTempValues)) ); Seen = .FALSE.; dg = 0.0_dp
 ! ---------------------------------------------
 ! Set ColdTempMask values
 ! ---------------------------------------------
@@ -181,6 +185,19 @@ CALL INFO( SolverName, 'setting vals', level=1 )
       j = Element % NodeIndexes(i)
       
       IF (ParEnv % myPe .NE. Element % partIndex) CYCLE
+      ! ESS diagnostics (before this node's update): visited, previously temperate, its sheet as the decision sees it
+      ! (HwOld) and as it is now (HwValues), both <= 0
+      IF (.NOT. Seen(ColdTempPerm(j))) THEN
+        Seen(ColdTempPerm(j)) = .TRUE.
+        dg(1) = dg(1) + 1
+        IF (ColdTempPrev(ColdTempPerm(j)) .GE. 0.0_dp) THEN
+          dg(2) = dg(2) + 1
+          IF (HwOld(HwPerm(j)) .LE. 0) dg(3) = dg(3) + 1
+          IF (HwValues(HwPerm(j)) .LE. 0) dg(4) = dg(4) + 1
+        END IF
+        IF (ColdTempValues(ColdTempPerm(j)) * ColdTempPrev(ColdTempPerm(j)) < 0) dg(7) = dg(7) + 1
+      END IF
+      oldm = ColdTempValues(ColdTempPerm(j))
 
       ! ESS: floating and grounding-line nodes temperate, sheet untouched
       IF (FloatTemp) THEN
@@ -218,6 +235,8 @@ CALL INFO( SolverName, 'setting vals', level=1 )
         ! ones output after output)
         IF (ASSOCIATED(HwPrev)) HwPrev(HwPerm(j), 1) = 0.0001_dp
       END IF
+      IF (oldm > 0 .AND. ColdTempValues(ColdTempPerm(j)) <= 0) dg(5) = dg(5) + 1
+      IF (oldm <= 0 .AND. ColdTempValues(ColdTempPerm(j)) > 0) dg(6) = dg(6) + 1
     END DO
 
     
@@ -231,6 +250,17 @@ CALL INFO( SolverName, 'setting vals', level=1 )
   ! the pair at exactly T0, never the 1e-3 K above it that turns a cold node temperate (job 31699: seam pairs with
   ! equal T, hw and melt, master +1, image -1). The cold image then cut the sheet's flux along the whole seam.
   CALL PeriodicSymmetrize( Model, ColdTempValues, ColdTempPerm, 1, 'max', npairsP )
+
+  ! ESS diagnostics: nodes decided; of them previously temperate (by the mask's previous level); of those with the
+  ! sheet <= 0 as read for the decision (HwOld) and as now (HwValues); switched temperate -> cold and cold -> temperate
+  ! (by the current value before this call); current and previous mask disagreeing before the call
+  DO i = 1, 7
+    dg(i) = ParallelReduction(dg(i))
+  END DO
+  WRITE(Message, '(A,7I10)') 'ColdTempMask diag: decided, prev temperate, HwOld<=0, Hw<=0, T->C, C->T, cur/prev differ:', &
+      NINT(dg(1:7))
+  CALL INFO(SolverName, Message, level=1)
+  DEALLOCATE( Seen )
 
 CALL INFO(SolverName,'Done',level=1)
 
