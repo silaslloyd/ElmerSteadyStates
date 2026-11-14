@@ -773,7 +773,7 @@ def sheet_flow_lines(base, spacing_km, sector_a=0.0, periodic=True):
     flux q = -K grad Phi0 + K N' grad h = -K grad(Phi0 - N), K > 0, so only the direction matters), linear on the
     footprint triangles (each node the area-weighted mean of its triangles' gradients). Wet: grounded or grounding line
     (GroundedMask > -0.5), temperate or on the grounding line, sheet > 0.2 mm. Seeds one per spacing_km cell of the
-    wet nodes; each traced downstream, then upstream (RK2, steps spacing_km / 16), stopped on leaving the wet bed,
+    wet nodes; each traced downstream, then upstream (RK2, steps spacing_km / 8), stopped on leaving the wet bed,
     at a stagnant point, or on entering a cell (spacing_km / 2) another line has taken (evenly spaced lines).
     Periodic across the sides (a sector: rotated by its angle; a strip: y wrapped). Returns x, y (km) with None
     between the lines, and a marker size per point (the downstream end of each line 3, else 0)"""
@@ -848,7 +848,6 @@ def sheet_flow_lines(base, spacing_km, sector_a=0.0, periodic=True):
 
     sp_m = spacing_km * 1e3
     cell = 0.5 * sp_m
-    ck = lambda Q: list(zip(np.floor(Q[:, 0] / cell).astype(int).tolist(), np.floor(Q[:, 1] / cell).astype(int).tolist()))
     # seeds: the first wet node of each spacing cell
     wn = np.where(wet > 0.5)[0]
     if not len(wn):
@@ -858,62 +857,87 @@ def sheet_flow_lines(base, spacing_km, sector_a=0.0, periodic=True):
     sn = wn[first]
     sn = sn[np.argsort(-phi[sn])]                # upstream (high potential) first: their lines run on through the
     seeds = np.c_[x[sn], y[sn]]                  # bed downstream, later ones join them
-    owner = {}
-    ds = sp_m / 16.0
-    nmax = int(4 * (np.ptp(x) + np.ptp(y)) / ds)
+    # cell ownership on a grid (cells spacing_km / 2): a line stops on entering a cell another line has, or one of its
+    # own it left before (a loop, or circling a sink of the potential)
+    gx0, gy0 = x.min() - sp_m, y.min() - sp_m
+    nx_, ny_ = int(np.ptp(x) / cell) + 4, int(np.ptp(y) / cell) + 4
+    owner = -np.ones(nx_ * ny_, np.int64)
+    cid = lambda Q: (np.clip(((Q[:, 0] - gx0) / cell).astype(np.int64), 0, nx_ - 1) * ny_
+                     + np.clip(((Q[:, 1] - gy0) / cell).astype(np.int64), 0, ny_ - 1))
+    ds = sp_m / 8.0
+    nmax = int(1.5 * (np.ptp(x) + np.ptp(y)) / ds)
+    stay_max = int(3 * cell / ds)               # steps in one cell before it counts as stuck
 
     def trace(P0, ids, sgn):
+        """the lines from P0 (ids: their numbers), all at once; returns per line a list of point arrays (pieces)"""
         P = P0.copy()
-        lines = [[tuple(p)] for p in P]
+        ids = np.asarray(ids, np.int64)
         alive = np.ones(len(P), bool)
+        last = cid(P)
+        stay = np.zeros(len(P), int)
+        hist = [(np.arange(len(P)), P.copy(), np.zeros(len(P), bool))]
         for _ in range(nmax):
-            a = np.where(alive)[0]
-            if not len(a):
+            a_ = np.where(alive)[0]
+            if not len(a_):
                 break
-            d1, ok1 = direction(P[a], sgn)
-            M, _ = wrap(P[a] + 0.5 * ds * d1)
+            d1, ok1 = direction(P[a_], sgn)
+            M, _ = wrap(P[a_] + 0.5 * ds * d1)
             d2, ok2 = direction(M, sgn)
-            Q, jump = wrap(P[a] + ds * d2)
+            Q, jump = wrap(P[a_] + ds * d2)
             good = ok1 & ok2
-            cells = ck(Q)
-            for q, n in enumerate(a):
-                if not good[q] or owner.setdefault(cells[q], ids[n]) != ids[n]:
-                    alive[n] = False
-                    if good[q] and not jump[q]:  # joined another line: end on it
-                        lines[n].append((Q[q, 0], Q[q, 1]))
-                    continue
-                if jump[q]:
-                    lines[n].append(None)
-                lines[n].append((Q[q, 0], Q[q, 1]))
-            P[a] = np.where(good[:, None], Q, P[a])
-        return lines
+            c = cid(Q)
+            same = c == last[a_]
+            stay[a_] = np.where(same, stay[a_] + 1, 0)
+            free = good & (owner[c] < 0)
+            owner[c[free]] = ids[a_[free]]               # several lines into one free cell: one of them keeps it
+            mine = owner[c] == ids[a_]
+            ok = good & ((same & (stay[a_] < stay_max)) | (~same & mine & free))
+            join = good & ~ok & ~jump & ~same            # ran into another line: end on it
+            keep = ok | join
+            hist.append((a_[keep], Q[keep], jump[keep] & ok[keep]))
+            alive[a_[~ok]] = False
+            last[a_[ok]] = c[ok]
+            P[a_[ok]] = Q[ok]
+        # per line, its points in step order (a jump across a periodic side starts a new piece)
+        li = np.concatenate([h[0] for h in hist])
+        pts = np.concatenate([h[1] for h in hist])
+        jp = np.concatenate([h[2] for h in hist])
+        o = np.argsort(li, kind="stable")
+        li, pts, jp = li[o], pts[o], jp[o]
+        bounds = np.searchsorted(li, np.arange(len(P) + 1))
+        out = []
+        for n in range(len(P)):
+            pp, jj = pts[bounds[n]:bounds[n + 1]], jp[bounds[n]:bounds[n + 1]]
+            cuts = np.where(jj)[0]
+            out.append([q for q in np.split(pp, cuts)])
+        return out
 
-    # in batches, upstream seeds first; a seed in a cell a line already took starts no line of its own
+    # in a few batches, upstream seeds first (their lines run on downstream, later ones join them); a seed in a cell a
+    # line already took starts no line of its own
     down, up, used = {}, {}, []
-    B = 24
+    B = max(64, int(np.ceil(len(seeds) / 6)))
     for b0 in range(0, len(seeds), B):
-        ids = [n for n in range(b0, min(b0 + B, len(seeds))) if ck(seeds[n:n + 1])[0] not in owner]
-        if not ids:
+        cand = np.arange(b0, min(b0 + B, len(seeds)))
+        cc = cid(seeds[cand])
+        cand, cc = cand[owner[cc] < 0], cc[owner[cc] < 0]
+        if not len(cand):
             continue
-        for n, c in zip(ids, ck(seeds[ids])):
-            owner.setdefault(c, n)
-        ids = [n for n, c in zip(ids, ck(seeds[ids])) if owner[c] == n]
+        owner[cc[::-1]] = cand[::-1]                    # one seed per cell: the first
+        sel = owner[cc] == cand
+        ids = cand[sel]
         for n, l_ in zip(ids, trace(seeds[ids], ids, 1.0)):
             down[n] = l_
         for n, l_ in zip(ids, trace(seeds[ids], ids, -1.0)):
             up[n] = l_
-        used += ids
+        used += ids.tolist()
     X, Y, Sz = [], [], []
     for n in used:
-        ln = up[n][::-1][:-1] + down[n]          # upstream end .. seed .. downstream end
-        pieces, cur = [], []
-        for p in ln + [None]:
-            if p is None:
-                if len(cur) > 1:
-                    pieces.append(np.array(cur))
-                cur = []
-            else:
-                cur.append(p)
+        # upstream end .. seed .. downstream end: the upstream pieces reversed, then the downstream ones
+        ups = [q[::-1] for q in up[n][::-1]]
+        if ups:
+            ups[-1] = ups[-1][:-1]                       # the seed once
+        pieces = [q for q in ups[:-1] + ([np.concatenate([ups[-1], down[n][0]])] if ups else down[n][:1])
+                  + down[n][1:] if len(q) > 1]
         for pi, pc in enumerate(pieces):
             kk = _rdp(pc / 50.0, 1.0)            # within 50 m of the traced line
             pc = pc[kk]
