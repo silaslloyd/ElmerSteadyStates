@@ -20,6 +20,12 @@ echo "  Elmer run $(basename $(dirname $L)): $(grep 'MAIN: Time:' $L 2>/dev/null
 echo "  Stokes per step (s), last 10: $(grep 'Solver time.*stokes-vec' $L 2>/dev/null | tail -10 | awk '{printf "%.0f ", $(NF-1)}')"
 # the whole step: every solver's time (Solver Timing, TIMING=1) summed between the MAIN: Time lines (complete steps only)
 echo "  whole step (s, all solvers), last 10: $(awk '/MAIN: Time:/ {if (n) print t; n = 1; t = 0} /Solver time/ {t += $(NF-1)}' $L 2>/dev/null | tail -10 | awk '{printf "%.0f ", $1}')"
+# the most expensive solvers of the last complete step (TIMING=1): name and seconds, the five largest
+top=$(awk '/MAIN: Time:/ {if (n) {delete last; for (k in cur) last[k] = cur[k]}; delete cur; n = 1}
+           /Solver time \(CPU,REAL\) for/ {s = $0; sub(/.* for /, "", s); sub(/: .*/, "", s); cur[s] += $(NF-1)}
+           END {for (k in last) printf "%.1f|%s\n", last[k], k}' $L 2>/dev/null | sort -t'|' -k1,1 -rn | head -5 |
+      awk -F'|' '{printf "%s %s s; ", $2, $1}')
+[ -n "$top" ] && echo "  slowest solvers, last step: $top"
 # the water sheet (THERMAL=elmerstreams): its time per step (TIMING=1) and its nonlinear iterations per step (complete
 # steps; 200 = the cap, not converged)
 if grep -q 'Sheet solver iteration:' $L 2>/dev/null; then
