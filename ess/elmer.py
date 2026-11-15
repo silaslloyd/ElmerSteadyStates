@@ -547,6 +547,11 @@ class ElmerModel(Model):
         if kind != "iterative":
             raise ValueError(f"[elmer] linear solver must be 'direct', 'iterative' or 'block' (Stokes), not {kind!r}")
         tol = f"{self.iterative_tol:.1e}"
+        # ESS_HEAT_TOL (jobs HEAT_TOL): the heat and strain-heating solves' tolerance in time-stepping runs (the default
+        # iterative_tol, 1e-10, is for the Newton map's finite differences; GCR + ILU2 could not reach it in 2000
+        # iterations on 1024 ranks at CFL 2.5, job 31809, and the heat solve aborts the run when it does not converge)
+        if which in ("heat", "strain") and os.environ.get("ESS_HEAT_TOL"):
+            tol = f"{float(os.environ['ESS_HEAT_TOL']):.1e}"
         if which == "stokes" and self.stokes_iterative_tol is not None:
             tol = f"{float(self.stokes_iterative_tol):.1e}"
         if which == "stokes":
