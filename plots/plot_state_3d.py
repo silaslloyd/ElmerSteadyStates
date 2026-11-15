@@ -1887,16 +1887,28 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
         return tr
     tidy(first)
 
+    def same_mesh(t_, q):
+        f0 = first[q] if q < len(first) else None
+        return (f0 is not None and t_.type == "mesh3d" and f0.type == "mesh3d" and t_.i is not None
+                and len(t_.x) == len(f0.x) and len(t_.i) == len(f0.i)
+                and all(np.array_equal(np.asarray(t_[k]), np.asarray(f0[k])) for k in ("x", "y", "i", "j", "k")))
+    # slots whose mesh changes in some state (a remeshed run: several segments): never leaned, in any frame. A lean
+    # frame only sets z and colours, so after a frame on another mesh it kept that mesh's x, y and triangles and the
+    # first mesh's frames drew nothing (the ice missing on the first segment)
+    moving = set()
+    for tr in per[1:]:
+        for q, t_ in enumerate(tr):
+            if getattr(t_, "type", None) == "mesh3d" and not same_mesh(t_, q):
+                moving.add(q)
+    if moving:
+        print(f"  {len(moving)} surfaces change mesh between states (remeshed): their geometry in every frame")
+
     def lean(tr):
         """a frame's traces: the surfaces (Mesh3d with the first state's x, y and triangles: the same mesh) as their
         z and colours only, so the page holds the geometry once, not once per state"""
         out = []
         for q, t_ in enumerate(tr):
-            f0 = first[q] if q < len(first) else None
-            same = (f0 is not None and t_.type == "mesh3d" and f0.type == "mesh3d" and t_.i is not None
-                    and len(t_.x) == len(f0.x) and len(t_.i) == len(f0.i)
-                    and all(np.array_equal(np.asarray(t_[k]), np.asarray(f0[k])) for k in ("x", "y", "i", "j", "k")))
-            if same:
+            if q not in moving and same_mesh(t_, q):
                 d = dict(type="mesh3d", z=t_.z)
                 for k in ("intensity", "customdata", "cmin", "cmax"):
                     if t_[k] is not None:
