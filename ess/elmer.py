@@ -1425,6 +1425,9 @@ Solver {n}
   Exec Solver = "After Timestep"
   Equation = "Remesh trigger"
   Procedure = "{lib}" "RemeshTrigger"
+  ! a primary variable as StepCheck has (without one Elmer's AddEquationBasics divided by zero at start-up)
+  Variable = "Remesh Flag"
+  Variable DOFs = 1
   Exported Variable 1 = -dofs 1 "Remesh Distance"
   GL Safety Distance = Real {env("ESS_REMESH_GL_SAFETY", 5000.0)!r}
   Transition Safety Distance = Real {env("ESS_REMESH_CT_SAFETY", 1000.0)!r}
