@@ -44,6 +44,12 @@ def main():
     ap.add_argument("--width-km", type=float, default=10.0)
     ap.add_argument("--keep-above-km", type=float, default=None)
     ap.add_argument("--fit-r-km", type=float, nargs=2, default=(800.0, 1450.0))
+    ap.add_argument("--continue-slope", action="store_true",
+                    help="first replace the bed wherever it lies above the interior's linear fit (the flat stretch "
+                         "the extended domain got from the flowline it was transferred from: -224.1 m from r ~ 705 km "
+                         "to the front) by that line, all the way to the front; then the bend on top")
+    ap.add_argument("--force", action="store_true",
+                    help="write even if the bed under grounded ice changes (e.g. a bed template for jobs/thin_start.py)")
     a = ap.parse_args()
     s = load_state(a.src)
     allf = {**s.diag, **s.frozen}
@@ -58,6 +64,14 @@ def main():
     res = bed[fit] - (c0 + m * r[fit])
     print(f"{a.src}: {len(g)} nodes; bed fit over r {a.fit_r_km[0]:g} .. {a.fit_r_km[1]:g} km: "
           f"{c0:.2f} + {m * 1e3:.5f} m/km x r (rms misfit {np.sqrt(np.mean(res ** 2)):.3f} m)")
+    if a.continue_slope:
+        line = c0 + m * r
+        above = bed > line + 1e-6
+        bed0 = bed.copy()
+        bed = np.minimum(bed, line)
+        print(f"continue the slope: {int(above.sum())} nodes above the line lowered onto it (by up to "
+              f"{np.max(bed0 - bed):.1f} m; from r = {r[above].max() / 1e3 if above.any() else np.nan:.1f} km down)")
+        keep = np.inf                                  # the bend over the whole (now sloping) outer part
     near = np.abs(r - rb) < 3 * w
     s0 = np.polyfit(r[near], bed[near], 1)[0] if near.sum() > 10 else m
     add = a.factor * m - s0
@@ -65,6 +79,8 @@ def main():
     u = (rb - r) / w
     sp = np.where(u > 30, u, np.log1p(np.exp(np.minimum(u, 30))))
     new = np.where(r < keep, bed - add * w * sp, bed)
+    if a.continue_slope:
+        bed = bed0                                     # the changes (and the bases on the bed) against the original
     d = new - bed
     ch = np.abs(d) > 1e-6
     print(f"bed: slope {s0 * 1e3:.4f} m/km -> {a.factor * m * 1e3:.4f} m/km downstream of r = {rb / 1e3:g} km "
@@ -112,8 +128,8 @@ def main():
                 gap = (zb - new[j])[ch[j] & ~on]
                 print(f"  {on[ch[j]].sum()} bases on the bed moved with it; the floating ones stay above it "
                       f"(smallest gap {gap.min() if len(gap) else np.nan:.1f} m)")
-    if not ok:
-        raise SystemExit("not written")
+    if not ok and not a.force:
+        raise SystemExit("not written (--force: write anyway)")
     frozen = dict(s.frozen)
     frozen[kb] = (g, new)
     save_state(a.out, s.layout, xs, s.p, frozen, s.diag, **{k: v for k, v in s.meta.items()},
