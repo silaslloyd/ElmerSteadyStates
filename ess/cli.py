@@ -992,6 +992,29 @@ def cmd_transfer(args):
     log.info(f"wrote {out} (p = {src.p:g}); next: ess newton {args.config} --state {out}")
 
 
+def cmd_remesh(args):
+    """A new footprint for a cut sector from a state (size field: grounding line and margins fine, frozen bed and
+    plug flow coarse), partitioned, and the state interpolated onto it (ess/remesh.py)."""
+    cfg = load_config(args.config)
+    setup_logging(cfg, args.verbose)
+    from .remesh import remesh
+    if not args.state:
+        raise SystemExit("remesh: --state STATE.npz (the state to remesh from)")
+    src = load_state(args.state)
+    src_mesh = args.from_mesh or os.environ.get("ESS_MESH_DB") or str(src.meta.get("mesh_db", "")) or \
+        cfg["elmer"].get("mesh_db", "footprint")
+    n = int(args.ranks or os.environ.get("ESS_NPROCS", 0) or cfg["elmer"].get("n_procs", 1))
+    opt = dict(fine=args.fine, coarse=args.coarse, gl_band=args.gl_band_km * 1e3, margin_shear=args.margin_shear,
+               fast_speed=args.fast_speed, low_strain=args.low_strain, grade=args.grade)
+    log.info(f"remesh: {args.state} on mesh {src_mesh} -> mesh {args.name} ({n} partitions)")
+    layout, x, frozen, diag, rep = remesh(cfg, src, args.name, src_mesh, n, opt)
+    out = args.out or os.path.join(cfg["_work"], f"{args.name}_start.npz")
+    meta = {k: v for k, v in src.meta.items() if k not in ("mesh_db", "source", "remesh")}
+    save_state(out, layout, x, src.p, frozen, diag, mesh_db=args.name, source=args.state, remesh="; ".join(rep),
+               **meta)
+    log.info(f"wrote {out}: run on it with MESH_DB={args.name} START_STATE={out}")
+
+
 def cmd_stability(args):
     cfg = load_config(args.config)
     if args.name is not None:
@@ -1328,6 +1351,21 @@ def main(argv=None):
                    help="sector target, strip source: keep the strip's 2D pattern (arc fraction -> y), level by level, "
                         "instead of averaging across the strip")
     s.set_defaults(fn=cmd_transfer)
+
+    s = sub.add_parser("remesh")
+    common(s)
+    s.add_argument("--name", required=True, help="the new mesh's name in the case dir (e.g. m001)")
+    s.add_argument("--from-mesh", help="the state's mesh (default: ESS_MESH_DB, the state's mesh_db, [elmer] mesh_db)")
+    s.add_argument("--out", help="the state on the new mesh (default <work>/<name>_start.npz)")
+    s.add_argument("--ranks", type=int, help="partitions (default ESS_NPROCS / [elmer] n_procs)")
+    s.add_argument("--fine", type=float, default=500.0, help="element size at the grounding line and margins (m)")
+    s.add_argument("--coarse", type=float, default=2000.0, help="at least this on a frozen bed or in plug flow (m)")
+    s.add_argument("--gl-band-km", type=float, default=15.0, help="fine within this of the grounding line (km)")
+    s.add_argument("--margin-shear", type=float, default=0.01, help="fine where |lateral shear| > this (1/yr)")
+    s.add_argument("--fast-speed", type=float, default=50.0, help="plug flow: surface speed above this (m/yr)")
+    s.add_argument("--low-strain", type=float, default=0.002, help="plug flow: effective strain rate below (1/yr)")
+    s.add_argument("--grade", type=float, default=0.15, help="size growth per metre (h_i <= h_j + grade d)")
+    s.set_defaults(fn=cmd_remesh)
 
     s = sub.add_parser("stability")
     common(s)

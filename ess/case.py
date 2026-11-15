@@ -414,20 +414,21 @@ def _sector_cut_geo(points, L, angle_deg, r0, divide_r, seed, side_file):
     return "\n".join(out) + "\n"
 
 
-def sector_partition(case, mesh_db, n, angle_deg, front, elmergrid="ElmerGrid", metisper=True):
+def sector_partition(case, mesh_db, n, angle_deg, front, elmergrid="ElmerGrid", metisper=True, msh="footprint.msh",
+                     side_file=None):
     """partitioning.<n> of a sector footprint (sector_geo) in case/mesh_db, every periodic pair in one partition.
     metisper: ElmerGrid -periodic -metisper on a copy of the 2D mesh mapped to (r, (theta + A/2) front), on which the
     rotational periodic sides are translational (y' = 0 and y' = A front), then the partition files given back the
     true coordinates (by node id); else strips in x (-partition n 1 1: a pair has one x)."""
     tmp = f"fp_map{n}"
     shutil.rmtree(os.path.join(case, tmp), ignore_errors=True)
-    _run([elmergrid, "14", "2", "footprint.msh", "-autoclean", "-out", tmp], case)
+    _run([elmergrid, "14", "2", msh, "-autoclean", "-out", tmp], case)     # msh, side_file: a remeshed footprint
     d = os.path.join(case, tmp)
     nodes = os.path.join(d, "mesh.nodes")
     true = {}
     if metisper:
         A = np.radians(float(angle_deg))
-        side = os.path.join(case, "sector_side1.txt")
+        side = side_file or os.path.join(case, "sector_side1.txt")
         if os.path.exists(side):          # a CUT sector (jagged sides): the angle from side 1 at the node's radius,
             # so both sides map to straight lines y' = 0 and y' = A front (their vertices exactly; the interior
             # kept strictly between, ElmerGrid pairs the nodes on the two extreme lines)

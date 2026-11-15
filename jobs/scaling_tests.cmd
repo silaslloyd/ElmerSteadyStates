@@ -238,6 +238,9 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # SHEET_KH_FLOOR=1e-3: the floor of h in the sheet's advection speed K / max(h, floor) (default 0: K/h exactly; the
 # runs before 2026-11-14 had 1e-3)
 [ -n "$SHEET_KH_FLOOR" ] && export ESS_SHEET_KH_FLOOR=$SHEET_KH_FLOOR && echo "  water sheet K/h floor: $SHEET_KH_FLOOR"
+# MESH_DB=m001: run on another footprint in the case dir (made by `ess remesh`, partitioned for the rank count there),
+# with START_STATE the state on it (ess remesh --out)
+[ -n "$MESH_DB" ] && export ESS_MESH_DB=$MESH_DB && echo "  mesh: $MESH_DB (case dir)"
 # SHEET_TOL=1e-4: the sheet's Picard tolerance (default 1e-6)
 [ -n "$SHEET_TOL" ] && export ESS_SHEET_TOL=$SHEET_TOL && echo "  water sheet Picard tolerance: $SHEET_TOL"
 # SHEET_RELAX=f: the sheet solver's nonlinear relaxation factor (default 0.5; 1 = no relaxation)
