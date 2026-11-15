@@ -4,7 +4,8 @@ the same mesh (it gives the layout, the bed, the columns):
 
     Zs = bed + H0, Zb = bed (every node grounded: sea level below the bed), GroundedMask 1, ColdTempMask -1 (cold),
     Water Sheet Thickness 1e-4 m, the ice temperature the column's surface value of the source (its top level; the
-    surface condition sets it at the first step anyway), the bedrock's temperatures kept, velocity and pressure 0.
+    surface condition sets it at the first step anyway), the bedrock on the steady geothermal profile below that
+    (--keep-bedrock-T: the source's bedrock temperatures, with its streams' thermal pattern), velocity and pressure 0.
 
     python3 jobs/thin_start.py SRC.npz OUT.npz [--h0 100] [--sea-level -500]
 
@@ -33,10 +34,22 @@ def main():
     ap.add_argument("--h0", type=float, default=100.0, help="the initial ice thickness (m)")
     ap.add_argument("--sea-level", type=float, default=None)
     ap.add_argument("--float", action="store_true", help="float the ice where it is below flotation")
+    ap.add_argument("--keep-bedrock-T", action="store_true",
+                    help="keep the source's bedrock temperatures (by default they are reset: the column's surface "
+                         "temperature at the bed, rising downwards with the steady geothermal gradient gthf / "
+                         "heatconductivityrock of case/parameters.lua, so no thermal pattern of the source's ice "
+                         "streams is left in the bed)")
     a = ap.parse_args()
     if a.sea_level is None:
         a.sea_level = 0.0 if a.float else -500.0
     r = 920.0 / 1003.27
+    # the steady bedrock gradient (K/m) of case/parameters.lua: gthf / heatconductivityrock
+    ys, M = 365.25 * 86400.0, 1e6
+    rhoi, cp, k, grav, mu, Tsc = 920 / M / ys ** 2, 2097 * ys ** 2, 2.1 / M * ys, 9.81 * ys ** 2, 1e14 / M / ys, 5.0
+    u = (k * Tsc / mu) ** 0.5
+    xs = rhoi * cp ** 3 * u ** 5 * mu ** 2 / (k ** 3 * grav ** 2)
+    zs = (mu * u * xs / (rhoi * grav)) ** (1 / 3)
+    rock_grad = 0.5 * k * Tsc / zs / (3.0851 / M * ys)
     s = load_state(a.src)
     allf = {**s.diag, **s.frozen}
     gb, bed = s.frozen[find_name(s.frozen, "bedrock")]
@@ -78,9 +91,15 @@ def main():
             o = np.argsort(lev)
             top[col[o]] = T[o]                          # the last write per column is its top level
             T[ice] = top[col[ice]]
+            if a.keep_bedrock_T:
+                msg = f"{int((~ice).sum())} bedrock nodes kept"
+            else:                                       # the old run's bed (warm under its streams) would be kept
+                T[~ice] = top[col[~ice]] + rock_grad * (bz[~ice] - z[~ice])
+                msg = (f"{int((~ice).sum())} bedrock nodes on the steady geothermal profile from it "
+                       f"({rock_grad * 1e3:.3f} K/km, {T[~ice].min():.2f} .. {T[~ice].max():.2f} K)")
             x[sl[b.name]] = T
             print(f"temperature: {int(ice.sum())} ice nodes set to their column's surface value "
-                  f"({np.nanmin(top):.2f} .. {np.nanmax(top):.2f} K), {int((~ice).sum())} bedrock nodes kept")
+                  f"({np.nanmin(top):.2f} .. {np.nanmax(top):.2f} K), {msg}")
     frozen = dict(s.frozen)
     nfl = 0
     for nm, val, vfl in (("GroundedMask", 1.0, -1.0), ("ColdTempMask", -1.0, 1.0), ("Water Sheet Thickness", 1e-4, 0.1)):
