@@ -2084,7 +2084,11 @@ gd.on('plotly_relayout', function (e) {
     fig.write_html(out, include_plotlyjs="cdn", post_script=post, config=dict(responsive=True),
                    default_width="100%", default_height="95vh")
     print(f"wrote {out}")
-    if SHOW:
+    # no browser over ssh or without a display (pilsen from the Mac: webbrowser falls back to a terminal browser and
+    # the script hangs after writing the page); --no-show never opens it
+    headless = sys.platform.startswith("linux") and (
+        os.environ.get("SSH_CONNECTION") or not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")))
+    if SHOW and not headless:
         webbrowser.open("file://" + os.path.abspath(out))
 
 
