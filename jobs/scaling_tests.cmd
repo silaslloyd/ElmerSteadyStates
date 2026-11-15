@@ -212,7 +212,7 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # REMESH_AUTO=1: remesh when needed (ess run --remesh-auto: elmer/RemeshTrigger ends the run when the grounding line
 # or the cold/temperate transition comes near coarse mesh, ess remesh makes m001, m002, .. in the case dir and the run
 # goes on there with the steps left). REMESH_ARGS: ess remesh's size options, e.g. "--max-triangles 400000 --fine 500";
-# REMESH_GL_SAFETY / REMESH_CT_SAFETY (m, default 5000 / 1000), REMESH_CT_FRACTION (default 0.2): the trigger.
+# REMESH_GL_SAFETY / REMESH_CT_SAFETY (m, default 5000 / 1000), REMESH_CT_FRACTION (default 0.05): the trigger.
 # Needs make -C elmer RemeshTrigger.so, and gmsh + ElmerGrid in the job (as ess setup)
 # FS_LINTOL=1e-9: the iterative free-surface solves' tolerance (linear_free_surface = "iterative"; default 1e-12)
 [ -n "$FS_LINTOL" ] && export ESS_FS_LINTOL=$FS_LINTOL && echo "  free-surface linear tolerance $FS_LINTOL"
