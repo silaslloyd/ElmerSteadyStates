@@ -367,11 +367,26 @@ def cmd_run(args):
     t_off = float(getattr(args, "time_offset", 0.0) or 0.0)
     cfg, model, saved = _setup(args)
     if getattr(args, "remesh_auto", False) and not any(k.lower() == "remesh distance" for k in saved.frozen):
-        from .remesh import mark
-        g_, d_ = mark(cfg, saved, model.mesh_db, args.fine)
-        saved.frozen["Remesh Distance"] = (g_, d_)
-        if model.frozen is not saved.frozen:
-            model.frozen["Remesh Distance"] = (g_, d_)
+        # a state not remeshed yet (the original mesh: no fine band anywhere): remesh it before the first step,
+        # rather than run on the coarse mesh until the trigger may fire (REMESH_MIN_STEPS)
+        import copy
+        from .remesh import remesh
+        name = _next_mesh_name(cfg["paths"]["case_dir"], args.remesh_prefix)
+        log.info(f"run: the start state is on a mesh not fitted to it ({model.mesh_db}): remesh to {name} first")
+        layout, x_, frozen_, diag_, rep = remesh(cfg, saved, name, model.mesh_db, model.n_procs, _remesh_opt(args))
+        start = os.path.join(cfg["_work"], f"{name}_start.npz")
+        save_state(start, layout, x_, saved.p, frozen_, diag_, mesh_db=name, source=args.state, time=t_off,
+                   remesh="; ".join(rep))
+        _mesh_pngs(cfg, name, start, model.mesh_db, args.state)
+        os.environ["ESS_MESH_DB"] = name
+        a2 = copy.copy(args)
+        a2.state = start
+        if getattr(args, "warm_start", None):
+            a2.warm_start = start
+        a2.time_offset = t_off
+        a2.remesh_count = getattr(args, "remesh_count", 0)
+        log.info(f"run: starting on {name} from {start} (MESH_DB={name})")
+        return cmd_run(a2)
     if args.dt is not None:
         cfg.setdefault("map", {})["dt"] = args.dt
     if args.steps is not None:
