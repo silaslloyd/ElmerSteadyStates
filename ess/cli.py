@@ -302,6 +302,19 @@ def _next_mesh_name(case, prefix):
     return f"{prefix}{k:03d}"
 
 
+def _mesh_pngs(cfg, name, state, prev_mesh=None, prev_state=None):
+    """<work>/meshes/<name>_full.png and _gl.png (plots/mesh_map.py): never stops the run"""
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plots"))
+        from mesh_map import make_pngs
+        case = cfg["paths"]["case_dir"]
+        ps = make_pngs(os.path.join(case, name), state, os.path.join(cfg["_work"], "meshes"), name,
+                       os.path.join(case, prev_mesh) if prev_mesh else None, prev_state)
+        log.info("remesh: pictures " + " ".join(ps))
+    except Exception as e:                       # matplotlib missing etc.
+        log.warning(f"remesh: no mesh pictures ({e})")
+
+
 def _auto_remesh(args, cfg, model, out, t_abs, rm):
     """the run ended by RemeshTrigger: remesh from its final state (out), then carry on (cmd_run again) on the new
     mesh with the steps left"""
@@ -323,6 +336,7 @@ def _auto_remesh(args, cfg, model, out, t_abs, rm):
     save_state(start, layout, x, src.p, frozen, diag, mesh_db=name, source=out, time=t_abs, remesh="; ".join(rep))
     keep = os.path.splitext(out)[0] + f"_before_{name}.npz"
     shutil.copy(out, keep)
+    _mesh_pngs(cfg, name, start, model.mesh_db, keep)
     if left <= 0:
         log.info(f"run: no steps left; the state on {name} in {start}")
         return
@@ -1127,6 +1141,7 @@ def cmd_remesh(args):
     meta = {k: v for k, v in src.meta.items() if k not in ("mesh_db", "source", "remesh")}
     save_state(out, layout, x, src.p, frozen, diag, mesh_db=args.name, source=args.state, remesh="; ".join(rep),
                **meta)
+    _mesh_pngs(cfg, args.name, out, src_mesh, args.state)
     log.info(f"wrote {out}: run on it with MESH_DB={args.name} START_STATE={out}")
 
 

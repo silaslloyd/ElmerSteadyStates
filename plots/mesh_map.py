@@ -6,6 +6,8 @@ an optional zoom. Reads an Elmer 2D mesh directory (case/<mesh_db>: mesh.nodes, 
     python3 plots/mesh_map.py MESHDIR OUT.png [--zoom X0 X1 Y0 Y1 (km)] [--state S.npz]
                               [--compare OTHER_MESHDIR [--compare-state S2.npz]]
 
+    python3 plots/mesh_map.py --all WORKDIR [CASEDIR]   (the pictures of every m### not drawn yet, to WORKDIR/meshes)
+
 --compare: a second panel with another mesh (e.g. the original footprint) on the same axes.
 --state: a state on that mesh (e.g. <work>/m001_start.npz; for the original footprint the state remeshed from):
 its grounding line (red: GroundedMask -0.5, between grounded and floating) and cold/temperate transition on the
@@ -73,7 +75,63 @@ def panel(ax, meshdir, zoom, norm, state=None):
     return tc
 
 
+def make_pngs(meshdir, state, outdir, name, prev_mesh=None, prev_state=None):
+    """the PNGs of a new mesh (ess run --remesh-auto, ess remesh): <outdir>/<name>_full.png (beside the previous mesh
+    when given) and <name>_gl.png (zoom on the grounding line, +-40 km around it); returns their paths"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LogNorm
+    os.makedirs(outdir, exist_ok=True)
+    norm = LogNorm(400, 6000)
+    out = []
+    meshes = [(meshdir, state)] + ([(prev_mesh, prev_state)] if prev_mesh else [])
+    fig, axs = plt.subplots(len(meshes), 1, figsize=(16, 6 * len(meshes)), squeeze=False)
+    for ax, (m, st) in zip(axs[:, 0], meshes):
+        tc = panel(ax, m, None, norm, st)
+    fig.colorbar(tc, ax=axs[:, 0].tolist(), label="element size (m, mean edge)", shrink=0.8)
+    p = os.path.join(outdir, f"{name}_full.png")
+    fig.savefig(p, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    out.append(p)
+    # the grounding line's extent
+    _, x, y, tri = read_footprint(meshdir)
+    s = load_state(state)
+    f = {**s.diag, **s.frozen}
+    gm = np.nan_to_num(base_values(f[find_name(f, "groundedmask")], len(x)), nan=-1.0)
+    e = np.r_[tri[:, [0, 1]], tri[:, [1, 2]]]
+    mix = (gm[e[:, 0]] > -0.5) != (gm[e[:, 1]] > -0.5)
+    if mix.any():
+        gx, gy = x[e[mix].ravel()] / 1e3, y[e[mix].ravel()] / 1e3
+        z = [gx.min() - 40, gx.max() + 40, gy.min() - 40, gy.max() + 40]
+        fig, ax = plt.subplots(figsize=(12, 10))
+        tc = panel(ax, meshdir, z, norm, state)
+        fig.colorbar(tc, ax=ax, label="element size (m, mean edge)", shrink=0.8)
+        p = os.path.join(outdir, f"{name}_gl.png")
+        fig.savefig(p, dpi=130, bbox_inches="tight")
+        plt.close(fig)
+        out.append(p)
+    return out
+
+
+def make_all(work, case):
+    """the pictures of every remeshed mesh (case/m###, its state <work>/m###_start.npz) that has none yet in
+    <work>/meshes"""
+    import glob
+    made = []
+    for st in sorted(glob.glob(os.path.join(work, "m[0-9][0-9][0-9]_start.npz"))):
+        name = os.path.basename(st)[:-len("_start.npz")]
+        if os.path.exists(os.path.join(work, "meshes", f"{name}_full.png")) or not os.path.isdir(os.path.join(case, name)):
+            continue
+        made += make_pngs(os.path.join(case, name), st, os.path.join(work, "meshes"), name)
+    print("made: " + (" ".join(made) if made else "nothing new"))
+
+
 def main():
+    if len(sys.argv) >= 2 and sys.argv[1] == "--all":       # mesh_map.py --all WORK [CASE]: every new mesh's pictures
+        w = sys.argv[2]
+        make_all(w, sys.argv[3] if len(sys.argv) > 3 else os.path.join(w, "case"))
+        return
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("mesh")
     ap.add_argument("out")
