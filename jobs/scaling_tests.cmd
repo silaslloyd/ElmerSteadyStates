@@ -279,6 +279,8 @@ if [ -n "$DT_ADAPT" ]; then export ESS_DT_ADAPT=$DT_ADAPT ESS_STEP_CHECK=1; STEP
 [ -n "$SHEET_N" ] && export ESS_SHEET_N=$SHEET_N && echo "  water sheet effective pressure: $SHEET_N"
 # HEAT_SOLVER=METHOD:PREC or direct: the heat solve's linear solver (default BiCGStabL:ILU1), e.g. GCR:ILU0, GCR:ILU0:0.1 (ILU factor: diagonal shift), direct (MUMPS), hypre (BiCGStab + BoomerAMG)
 [ -n "$HEAT_SOLVER" ] && export ESS_HEAT_SOLVER=$HEAT_SOLVER && echo "  heat linear solver: $HEAT_SOLVER"
+# NO_ABORT=1: no solver ends the run when its linear system does not converge (it carries on unconverged)
+[ "$NO_ABORT" = 1 ] && export ESS_NO_ABORT=1 && echo "  no abort on unconverged linear solves"
 # HEAT_TOL=1e-7: the heat (and strain heating) linear solves' tolerance (default [elmer] iterative_tol, 1e-10)
 [ -n "$HEAT_TOL" ] && export ESS_HEAT_TOL=$HEAT_TOL && echo "  heat linear tolerance: $HEAT_TOL"
 # THERMAL=loads|nowater: [elmer] thermal; nowater: the cold/temperate mask moved every step (ColdTempMaskSolver) with the

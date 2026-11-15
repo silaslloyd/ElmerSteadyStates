@@ -857,10 +857,30 @@ End
         ck = os.environ.get("ESS_CHECKPOINT_EVERY")
         if ck and int(ck) > 0:
             text = self._checkpoint_every(text, int(ck))
+        if os.environ.get("ESS_NO_ABORT") == "1":
+            text = self._no_abort(text)
         left = sorted(set(PLACEHOLDER.findall(text)))
         if left:
             raise ValueError(f"unfilled placeholders in {self.template}: {', '.join(left)}")
         return text
+
+    @staticmethod
+    def _no_abort(text):
+        """ESS_NO_ABORT=1 (jobs NO_ABORT=1): no solver ends the run when its linear system does not converge (Elmer's
+        default for iterative solves is to abort): every "Linear System Abort Not Converged" False, and added to every
+        Solver section that solves iteratively without one. The run then carries on with the unconverged solution;
+        the log still has the "did not converge" lines."""
+        text = re.sub(r"^(\s*Linear System Abort Not Converged\s*=\s*)(Logical\s+)?True", r"\1Logical False", text,
+                      flags=re.M | re.I)
+        out, k = [], 0
+        for m in re.finditer(r"^Solver \d+[ \t]*\n.*?^End[ \t]*$", text, re.M | re.S):
+            blk = m.group(0)
+            if (re.search(r"Linear System Solver\s*=\s*\"?Iterative", blk, re.I)
+                    and not re.search(r"^\s*Linear System Abort Not Converged", blk, re.M | re.I)):
+                blk = blk[:blk.rindex("End")] + "  Linear System Abort Not Converged = Logical False   ! ESS_NO_ABORT\nEnd"
+            out.append(text[k:m.start()] + blk)
+            k = m.end()
+        return "".join(out) + text[k:]
 
     def _sector(self, text):
         """[case] sector_angle: the Stokes solver ESS's IncompressibleNS (the rotated slave frames), and in every Lua
