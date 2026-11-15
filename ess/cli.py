@@ -269,7 +269,8 @@ def cmd_check(args):
 def _remesh_opt(args):
     return dict(fine=args.fine, coarse=args.coarse, gl_band=args.gl_band_km * 1e3, margin_shear=args.margin_shear,
                 fast_speed=args.fast_speed, low_strain=args.low_strain, grade=args.grade,
-                max_triangles=args.max_triangles, h_max=args.h_max, ct_band=args.ct_band_km * 1e3, mode=args.mode)
+                max_triangles=args.max_triangles, h_max=args.h_max, ct_band=args.ct_band_km * 1e3, mode=args.mode,
+                jitter=args.jitter)
 
 
 def _add_remesh_args(s):
@@ -282,6 +283,8 @@ def _add_remesh_args(s):
                    "scaled to it; without it res_points as they are)")
     s.add_argument("--h-max", type=float, default=5000.0, help="curves: the largest element size (m)")
     s.add_argument("--grade", type=float, default=0.15, help="size growth per metre (h_i <= h_j + grade d)")
+    s.add_argument("--jitter", type=float, default=0.15, help="a random factor exp(+-jitter) on the size (per old "
+                   "node, then graded): no regular patches of triangles")
     s.add_argument("--mode", default="curves", choices=["curves", "thresholds"],
                    help="curves (default): --fine within --gl-band-km of the grounding line and --ct-band-km of the "
                         "cold/temperate transition, growing by --grade away from them, the background res_points "
