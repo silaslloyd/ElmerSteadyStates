@@ -99,54 +99,54 @@ class Locator:
         self.ntree = cKDTree(np.c_[x, y])
 
     def __call__(self, px, py, k=12, quiet=False):
+        """(nodes (n, 3), weights (n, 3)); a point in no triangle (just outside the old boundary, e.g. on an arc
+        between the old arc's chords) takes the nearest candidate triangle's barycentric weights clamped to >= 0
+        (the closest point of that triangle)"""
         n = len(px)
-        k = min(k, len(self.tri))
-        _, cand = self.tree.query(np.c_[px, py], k=k)
         T = np.full(n, -1)
         Wt = np.zeros((n, 3))
+        bestT = np.zeros(n, int)
+        bestM = np.full(n, -np.inf)
+        bestW = np.zeros((n, 3))
         todo = np.arange(n)
-        for j in range(k):
+        for kk in (min(k, len(self.tri)), min(96, len(self.tri))):      # then a wider search for the misses
             if not len(todo):
                 break
-            t = cand[todo, j]
-            i0, i1, i2 = self.tri[t, 0], self.tri[t, 1], self.tri[t, 2]
-            x0, y0 = self.x[i0], self.y[i0]
-            d = (self.x[i1] - x0) * (self.y[i2] - y0) - (self.x[i2] - x0) * (self.y[i1] - y0)
-            l1 = ((px[todo] - x0) * (self.y[i2] - y0) - (self.x[i2] - x0) * (py[todo] - y0)) / d
-            l2 = ((self.x[i1] - x0) * (py[todo] - y0) - (px[todo] - x0) * (self.y[i1] - y0)) / d
-            l0 = 1 - l1 - l2
-            ok = (l0 > -1e-9) & (l1 > -1e-9) & (l2 > -1e-9)
-            T[todo[ok]] = t[ok]
-            Wt[todo[ok]] = np.c_[l0, l1, l2][ok]
-            todo = todo[~ok]
-        if len(todo) and k < len(self.tri):          # misses: a wider search (large or thin triangles nearby)
-            k2 = min(96, len(self.tri))
-            _, cand2 = self.tree.query(np.c_[px[todo], py[todo]], k=k2)
-            sub = todo
-            for j in range(k2):
+            _, cand = self.tree.query(np.c_[px[todo], py[todo]], k=kk)
+            cand = cand.reshape(len(todo), -1)
+            sub = np.arange(len(todo))                 # rows of cand still looking
+            for j in range(cand.shape[1]):
                 if not len(sub):
                     break
-                idx = np.searchsorted(todo, sub)
-                t = cand2[idx, j]
+                q = todo[sub]
+                t = cand[sub, j]
                 i0, i1, i2 = self.tri[t, 0], self.tri[t, 1], self.tri[t, 2]
                 x0, y0 = self.x[i0], self.y[i0]
                 d = (self.x[i1] - x0) * (self.y[i2] - y0) - (self.x[i2] - x0) * (self.y[i1] - y0)
-                l1 = ((px[sub] - x0) * (self.y[i2] - y0) - (self.x[i2] - x0) * (py[sub] - y0)) / d
-                l2 = ((self.x[i1] - x0) * (py[sub] - y0) - (px[sub] - x0) * (self.y[i1] - y0)) / d
+                l1 = ((px[q] - x0) * (self.y[i2] - y0) - (self.x[i2] - x0) * (py[q] - y0)) / d
+                l2 = ((self.x[i1] - x0) * (py[q] - y0) - (px[q] - x0) * (self.y[i1] - y0)) / d
                 l0 = 1 - l1 - l2
-                ok = (l0 > -1e-9) & (l1 > -1e-9) & (l2 > -1e-9)
-                T[sub[ok]] = t[ok]
-                Wt[sub[ok]] = np.c_[l0, l1, l2][ok]
+                lm = np.minimum(np.minimum(l0, l1), l2)
+                better = lm > bestM[q]
+                bestM[q[better]] = lm[better]
+                bestT[q[better]] = t[better]
+                bestW[q[better]] = np.c_[l0, l1, l2][better]
+                ok = lm > -1e-9
+                T[q[ok]] = t[ok]
+                Wt[q[ok]] = np.c_[l0, l1, l2][ok]
                 sub = sub[~ok]
-            todo = sub
-        nodes = self.tri[np.maximum(T, 0)].copy()
-        if len(todo):
-            dist, nn = self.ntree.query(np.c_[px[todo], py[todo]])
-            nodes[todo] = nn[:, None]
-            Wt[todo] = [1.0, 0.0, 0.0]
+            todo = todo[sub]
+        if len(todo):                                   # outside every triangle: the closest point of the best one
+            T[todo] = bestT[todo]
+            w = np.clip(bestW[todo], 0, None)
+            Wt[todo] = w / np.maximum(w.sum(1), 1e-300)[:, None]
             if not quiet:
-                log.info(f"remesh: {len(todo)} new nodes outside the old triangles (largest distance "
-                         f"{dist.max():.3g} m; the arcs' chords): the nearest old node's values")
+                tri = self.tri[T[todo]]
+                qx, qy = np.sum(Wt[todo] * self.x[tri], 1), np.sum(Wt[todo] * self.y[tri], 1)
+                dist = np.hypot(qx - px[todo], qy - py[todo])
+                log.info(f"remesh: {len(todo)} new nodes just outside the old triangles (by at most {dist.max():.3g} m: "
+                         f"the arcs between the old chords): the closest point's values")
+        nodes = self.tri[np.maximum(T, 0)].copy()
         return nodes, np.clip(Wt, 0, 1) / np.maximum(np.clip(Wt, 0, 1).sum(1), 1e-300)[:, None]
 
 
@@ -588,7 +588,11 @@ def remesh(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, opt: di
     jit = float(opt.get("jitter", 0.15))
     if jit > 0:
         rng = np.random.default_rng(int(opt.get("seed", 0)) + len(R2))
-        h = grade(h * np.exp(rng.uniform(-jit, jit, len(h))), sx, sy, stri, opt["grade"])
+        _, area_ = node_areas(sx, sy, stri)
+        n0 = np.sum(area_ / h ** 2)
+        hj = grade(h * np.exp(rng.uniform(-jit, jit, len(h))), sx, sy, stri, opt["grade"])
+        # grading takes the smaller neighbour, so the jitter refines on balance: scaled back to the same count
+        h = hj * np.sqrt(np.sum(area_ / hj ** 2) / n0)
     write_pos(os.path.join(case, f"{name}_size.pos"), sx, sy, stri, h)
     with open(os.path.join(case, f"{name}.geo"), "w") as f:
         f.write(cut_geo_bg(R2, P2, A, divide is not None, f"{name}_size.pos"))
