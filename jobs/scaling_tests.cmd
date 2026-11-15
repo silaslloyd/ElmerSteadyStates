@@ -96,6 +96,8 @@ if [ ! -f "$START" ]; then
         > ${L}_setup.log 2>&1 || { echo "setup failed:"; tail -30 ${L}_setup.log; exit 1; }
     START=$WORK/start.npz
 fi
+# SETUP_ONLY=1: stop after the set-up (mesh, partitioning, <work>/start.npz), e.g. to edit the start state
+if [ "$SETUP_ONLY" = 1 ]; then echo "$(date +%T) SETUP_ONLY: $START written, stopping"; exit 0; fi
 echo "Elmer: $ELMER_MODULE -> $(command -v ElmerSolver); $RANKS ranks per run; runs $SET; start $START"
 echo "solver libraries linked to ElmerSolver: $(ldd $(command -v ElmerSolver) 2>/dev/null | grep -io 'lib[a-z_]*\(hypre\|trilinos\|epetra\|ml\|ifpack\|mumps\|petsc\)[a-z_]*' | sort -u | tr '\n' ' ')"
 partition() {   # $1 case dir (with footprint.msh), $2 config: add footprint/partitioning.$RANKS, converted from
