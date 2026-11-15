@@ -469,6 +469,40 @@ def interpolate_state(src: SavedState, nbs, sx, sy, stri, dx, dy, divide=None):
     return layout, x, frozen, diag
 
 
+def remesh_distance(x, y, tri, fine, nlev):
+    """'Remesh Distance' for elmer/RemeshTrigger.F90: at each footprint node the distance (m) to the nearest node whose
+    local size (the mean length of its edges) is above 1.3 fine, on every one of nlev levels: (gids, values)"""
+    from scipy.spatial import cKDTree
+    e = _edges(tri)
+    L = np.hypot(x[e[:, 0]] - x[e[:, 1]], y[e[:, 0]] - y[e[:, 1]])
+    s, c = np.zeros(len(x)), np.zeros(len(x))
+    for k in (0, 1):
+        np.add.at(s, e[:, k], L)
+        np.add.at(c, e[:, k], 1)
+    h = s / np.maximum(c, 1)
+    coarse = h > 1.3 * fine
+    d = cKDTree(np.c_[x[coarse], y[coarse]]).query(np.c_[x, y])[0] if coarse.any() else np.full(len(x), 1e9)
+    nb = len(x)
+    g = (np.arange(nlev)[:, None] * nb + np.arange(nb)[None, :] + 1).ravel().astype(np.int64)
+    return g, np.tile(d, nlev), h
+
+
+def levels_of(src: SavedState, nb):
+    """the number of extruded levels of a state on a footprint of nb nodes"""
+    f = {**src.diag, **src.frozen}
+    g, _ = f[find_name(f, "bedrock")]
+    return int((int(g.max()) - 1) // nb + 1)
+
+
+def mark(cfg, src: SavedState, mesh: str, fine: float):
+    """'Remesh Distance' of a state on its own (old) mesh, so a run on it can trigger the first remesh"""
+    ids, x, y, tri = read_footprint(os.path.join(cfg["paths"]["case_dir"], mesh))
+    g, d, h = remesh_distance(x, y, tri, fine, levels_of(src, len(ids)))
+    log.info(f"remesh: Remesh Distance on mesh {mesh}: {int(np.sum(h <= 1.3 * fine))} of {len(ids)} footprint nodes "
+             f"fine (<= {1.3 * fine:g} m)")
+    return g, d
+
+
 # ------------------------------------------------------------------ driver
 def remesh(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, opt: dict, run=None, dry=False):
     """the new footprint `name` in the case dir (geo, size view, msh, Elmer mesh, partitioning.<n_procs>) and the
@@ -532,4 +566,11 @@ def remesh(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, opt: di
         sector_partition(case, name, n_procs, float(c["sector_angle"]), front, eg,
                          metisper=c.get("partitioner") == "metisper", msh=f"{name}.msh", side_file=side_new)
     layout, x, frozen, diag = interpolate_state(src, nbs, sx, sy, stri, dx, dy, divide)
+    nlev = levels_of(src, nbs)
+    g, d, hn = remesh_distance(dx, dy, dtri, opt["fine"], nlev)
+    for k in [k for k in frozen if k.lower() == "remesh distance"]:
+        del frozen[k]
+    frozen["Remesh Distance"] = (g, d)
+    rep.append(f"new mesh: {int(np.sum(hn <= 1.3 * opt['fine']))} of {len(dx)} footprint nodes fine (<= "
+               f"{1.3 * opt['fine']:g} m)")
     return layout, x, frozen, diag, rep

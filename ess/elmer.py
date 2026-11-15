@@ -285,6 +285,12 @@ class ElmerModel(Model):
             for nm in ("CFL", "Step Change"):
                 if nm not in self.diagnostics:
                     self.diagnostics.append(nm)
+        # ESS_REMESH_AUTO=1 (ess run --remesh-auto): elmer/RemeshTrigger.F90 after every step ends the run when the
+        # grounding line or the cold/temperate transition comes too close to coarse mesh ("Remesh Distance", a frozen
+        # field written by ess remesh); safety distances ESS_REMESH_GL_SAFETY, ESS_REMESH_CT_SAFETY (m),
+        # ESS_REMESH_CT_FRACTION
+        self.remesh_auto = os.environ.get("ESS_REMESH_AUTO") == "1"
+        self.last_remesh = None
         self.width = float(c.get("width", P.get("Wmesh", 1000.0)))
         self.y_elements = int(c.get("y_elements", 1))
         # [case] slide_ybump: the sliding coefficient times 1 + slide_ybump sin(2 pi y / width) (periodic), so the
@@ -744,6 +750,8 @@ End
                 text = text.replace(fs, f'"{lib}" "FreeSurfaceSolver"   ! periodic-aware limiter')
         if self.step_check:
             text = self._step_check(text)
+        if self.remesh_auto:
+            text = self._remesh_trigger(text)
         text = self._fs_time_stepping(text)
         if self.linear_free_surface == "iterative":
             text = self._fs_iterative(text)
@@ -1371,6 +1379,30 @@ End
                 text = self._add_active(text, eq, [n])
         return text
 
+    def _remesh_trigger(self, text):
+        """elmer/RemeshTrigger.F90 after every time step on the ice base (see remesh_auto)"""
+        n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M)) + 1
+        lib = os.path.join(os.path.dirname(self.periodic_lib), "RemeshTrigger")
+        env = lambda k, d: float(os.environ.get(k) or d)
+        blk = f"""
+! ---- remesh trigger (ess run --remesh-auto): ends the run when the curves leave the fine mesh
+Solver {n}
+  Exec Solver = "After Timestep"
+  Equation = "Remesh trigger"
+  Procedure = "{lib}" "RemeshTrigger"
+  Exported Variable 1 = -dofs 1 "Remesh Distance"
+  GL Safety Distance = Real {env("ESS_REMESH_GL_SAFETY", 5000.0)!r}
+  Transition Safety Distance = Real {env("ESS_REMESH_CT_SAFETY", 1000.0)!r}
+  Transition Fraction = Real {env("ESS_REMESH_CT_FRACTION", 0.05)!r}
+End
+"""
+        k = text.index("!---------------- BOUNDARY CONDITIONS")
+        k = text.rindex("\n", 0, k - 1)
+        text = text[:k] + "\n" + blk + text[k:]
+        if 'Name = "interface equations"' not in text:
+            raise ValueError("remesh_auto: no interface equations (the ice base) in the template")
+        return self._add_active(text, "interface equations", [n])
+
     def _thermal_nowater(self, text):
         """the cold/temperate mask moved every step with the no-water sheet (see [elmer] thermal = "nowater"); after
         _thermal_loads (the periodic friction loads)"""
@@ -1844,6 +1876,7 @@ End
     def run(self, x, p, spec: MapSpec, tag="run", want_diag=False):
         if self.layout is None:
             raise RuntimeError("ElmerModel.run needs a state layout (run `ess extract` first)")
+        self.last_remesh = None
         key = self._key(x, p, spec)
         cache = os.path.join(self.work, "cache", key + ".npz")
         if self.use_cache and os.path.exists(cache):
@@ -1860,12 +1893,20 @@ End
         with open(os.path.join(run_dir, "run.sif"), "w") as f:
             f.write(self.build_sif(spec, runname=tag))
         secs = self._launch(run_dir, tag)
+        self.last_remesh = None
+        flag = os.path.join(run_dir, "remesh_needed")
+        if os.path.exists(flag):                 # RemeshTrigger ended the run early (remesh_auto)
+            f_ = open(flag).read().split()
+            self.last_remesh = dict(time=float(f_[0]), step=int(f_[1]), gl=(int(f_[2]), int(f_[3])),
+                                    transition=(int(f_[4]), int(f_[5])), run_dir=run_dir)
+            log.info(f"{tag}: the remesh trigger ended the run after step {f_[1]} (t = {float(f_[0]):g}; grounding "
+                     f"line {f_[2]} of {f_[3]} nodes close to coarse mesh, transition {f_[4]} of {f_[5]})")
         rec = self._read_out(run_dir, "state_out.bin", tag)
         xo = self.layout.to_vector(rec)
         names = {find_name(rec, n) for n in self.state_vars}
         diag = {k: v for k, v in rec.items() if k not in names}
         log.debug(f"{tag}: Elmer {secs:.0f} s in {run_dir}")
-        if self.use_cache:
+        if self.use_cache and self.last_remesh is None:   # an early end is not this map's value
             d = {"x": xo}
             for k, (g, v) in diag.items():
                 d["g::" + k] = g

@@ -207,6 +207,15 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # [elmer] thermal; T is not capped (no limiter; with BED=cold the grounded bed has the flux condition everywhere, so it
 # may go above T0, where subtemperate sliding saturates at the temperate value); T0 under the shelf
 [ -n "$HEAT" ] && opts="${opts/--stokes-only /}" && echo "heat and strain heating on"
+# REMESH_AUTO=1: remesh when needed (ess run --remesh-auto: elmer/RemeshTrigger ends the run when the grounding line
+# or the cold/temperate transition comes near coarse mesh, ess remesh makes m001, m002, .. in the case dir and the run
+# goes on there with the steps left). REMESH_ARGS: ess remesh's size options, e.g. "--max-triangles 400000 --fine 500";
+# REMESH_GL_SAFETY / REMESH_CT_SAFETY (m, default 5000 / 1000), REMESH_CT_FRACTION (default 0.05): the trigger.
+# Needs make -C elmer RemeshTrigger.so, and gmsh + ElmerGrid in the job (as ess setup)
+[ "$REMESH_AUTO" = 1 ] && opts="$opts --remesh-auto $REMESH_ARGS" && echo "  remesh when needed ($REMESH_ARGS)"
+[ -n "$REMESH_GL_SAFETY" ] && export ESS_REMESH_GL_SAFETY=$REMESH_GL_SAFETY
+[ -n "$REMESH_CT_SAFETY" ] && export ESS_REMESH_CT_SAFETY=$REMESH_CT_SAFETY
+[ -n "$REMESH_CT_FRACTION" ] && export ESS_REMESH_CT_FRACTION=$REMESH_CT_FRACTION
 [ "${CHUNKS:-1}" -gt 1 ] && opts="$opts --save-every ${SAVE_EVERY:-1} --add-diag Pressure" && echo "long run: $CHUNKS chunks of ${STEPS:-2} steps, states every ${SAVE_EVERY:-1} chunk(s)"
 # HEAT_LEGACY=1: the heat solver's legacy assembly (HeatSolveLegacy.so) instead of the vectorised HeatSolve
 [ -n "$HEAT_LEGACY" ] && export ESS_HEAT_LEGACY=1 && echo "  heat: legacy assembly"

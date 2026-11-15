@@ -51,6 +51,11 @@ ESSIncompressibleNS.so: ESSIncompressibleNS.F90
 StepCheck.so: StepCheck.F90
 	$(ELMERF90) -o $@ $<
 
+# the remesh trigger (ess run --remesh-auto): ends the run when the grounding line / cold-temperate transition
+# leave the fine mesh
+RemeshTrigger.so: RemeshTrigger.F90
+	$(ELMERF90) -o $@ $<
+
 # Elmer's FreeSurfaceSolver with a periodic-aware limiter (Zs, Zb with [case] periodic_sides; see the file's header)
 ESSFreeSurface.so: PeriodicUtils.F90 ESSFreeSurface.F90
 	$(ELMERF90) -o $@ $^
@@ -72,4 +77,4 @@ SheetSolverhwCS.so: SheetSolverhwCS.F90
 	$(ELMERF90) -o $@ $<
 
 clean:
-	rm -rf checked; rm -f SteadyStateIO.so Buoyancy.so RotateGuess.so GLDistance.so PeriodicGL.so FixPeriodicLoads.so ColdTempMask.so SheetSolverhw.so SheetSolverhwCS.so NoWaterSheet.so ESSFreeSurface.so StepCheck.so ESSIncompressibleNS.so *.mod
+	rm -rf checked; rm -f SteadyStateIO.so Buoyancy.so RotateGuess.so GLDistance.so PeriodicGL.so FixPeriodicLoads.so ColdTempMask.so SheetSolverhw.so SheetSolverhwCS.so NoWaterSheet.so ESSFreeSurface.so StepCheck.so RemeshTrigger.so ESSIncompressibleNS.so *.mod

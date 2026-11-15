@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shutil
 import sys
 
 import numpy as np
@@ -71,6 +72,8 @@ def _setup(args, need_state=True):
     saved = _saved(cfg, getattr(args, "state", None)) if need_state else None
     if saved is not None and saved.frozen:          # frozen fields the config no longer lists: Elmer's StateRead
         keep = {n.lower() for n in cfg["state"].get("frozen", [])}  # stops on fields the model does not have
+        if os.environ.get("ESS_REMESH_AUTO") == "1":                 # RemeshTrigger exports it
+            keep.add("remesh distance")
         drop = [k for k in saved.frozen if k.lower() not in keep]
         if drop:
             log.info(f"state: frozen fields not in [state] frozen, dropped: {', '.join(drop)}")
@@ -263,8 +266,85 @@ def cmd_check(args):
         log.info(f"masks: {mc}")
 
 
+def _remesh_opt(args):
+    return dict(fine=args.fine, coarse=args.coarse, gl_band=args.gl_band_km * 1e3, margin_shear=args.margin_shear,
+                fast_speed=args.fast_speed, low_strain=args.low_strain, grade=args.grade,
+                max_triangles=args.max_triangles, h_max=args.h_max, ct_band=args.ct_band_km * 1e3, mode=args.mode)
+
+
+def _add_remesh_args(s):
+    s.add_argument("--fine", type=float, default=500.0, help="element size at the grounding line and margins (m)")
+    s.add_argument("--coarse", type=float, default=2000.0, help="at least this on a frozen bed (m)")
+    s.add_argument("--gl-band-km", type=float, default=15.0, help="fine within this of the grounding line (km)")
+    s.add_argument("--ct-band-km", type=float, default=3.0, help="curves: fine within this of the cold/temperate "
+                   "transition (km)")
+    s.add_argument("--max-triangles", type=float, help="curves: the footprint's triangle budget (the background "
+                   "scaled to it; without it res_points as they are)")
+    s.add_argument("--h-max", type=float, default=5000.0, help="curves: the largest element size (m)")
+    s.add_argument("--grade", type=float, default=0.15, help="size growth per metre (h_i <= h_j + grade d)")
+    s.add_argument("--mode", default="curves", choices=["curves", "thresholds"],
+                   help="curves (default): --fine within --gl-band-km of the grounding line and --ct-band-km of the "
+                        "cold/temperate transition, growing by --grade away from them, the background res_points "
+                        "scaled to --max-triangles; thresholds: the strain-rate rules (--margin-shear, --fast-speed, "
+                        "--low-strain)")
+    s.add_argument("--margin-shear", type=float, default=0.01, help="thresholds: fine where |lateral shear| > this")
+    s.add_argument("--fast-speed", type=float, default=50.0, help="thresholds: plug flow above this speed (m/yr)")
+    s.add_argument("--low-strain", type=float, default=0.002, help="thresholds: plug flow below this strain rate")
+
+
+def _next_mesh_name(case, prefix):
+    k = 1
+    while os.path.exists(os.path.join(case, f"{prefix}{k:03d}")):
+        k += 1
+    return f"{prefix}{k:03d}"
+
+
+def _auto_remesh(args, cfg, model, out, t_abs, rm):
+    """the run ended by RemeshTrigger: remesh from its final state (out), then carry on (cmd_run again) on the new
+    mesh with the steps left"""
+    import copy
+    from .remesh import remesh
+    steps_total = args.steps if args.steps is not None else int(cfg["map"]["n_steps"])
+    left = steps_total - rm["step"]
+    nrem = getattr(args, "remesh_count", 0)
+    if nrem > 0 and rm["step"] <= 1:
+        raise SystemExit(f"remesh: the trigger fired again at the first step on the new mesh {model.mesh_db}: the "
+                         f"new mesh does not resolve the curves (larger --gl-band-km / --ct-band-km or smaller "
+                         f"safety distances)")
+    src = load_state(out)
+    name = _next_mesh_name(cfg["paths"]["case_dir"], args.remesh_prefix)
+    log.info(f"run: remesh {nrem + 1} at t = {t_abs:g} ({rm['step']} steps into this run, {left} left): "
+             f"{model.mesh_db} -> {name}")
+    layout, x, frozen, diag, rep = remesh(cfg, src, name, model.mesh_db, model.n_procs, _remesh_opt(args))
+    start = os.path.join(cfg["_work"], f"{name}_start.npz")
+    save_state(start, layout, x, src.p, frozen, diag, mesh_db=name, source=out, time=t_abs, remesh="; ".join(rep))
+    keep = os.path.splitext(out)[0] + f"_before_{name}.npz"
+    shutil.copy(out, keep)
+    if left <= 0:
+        log.info(f"run: no steps left; the state on {name} in {start}")
+        return
+    os.environ["ESS_MESH_DB"] = name
+    a2 = copy.copy(args)
+    a2.state, a2.warm_start, a2.steps = start, start, left
+    a2.time_offset = t_abs
+    a2.remesh_count = nrem + 1
+    log.info(f"run: continuing on {name} from {start} (MESH_DB={name}), {left} steps")
+    return cmd_run(a2)
+
+
 def cmd_run(args):
+    if getattr(args, "remesh_auto", False):
+        if args.chunks != 1:
+            raise SystemExit("--remesh-auto: one long run (--chunks 1, many --steps); the trigger ends it early")
+        os.environ["ESS_REMESH_AUTO"] = "1"
+    t_off = float(getattr(args, "time_offset", 0.0) or 0.0)
     cfg, model, saved = _setup(args)
+    if getattr(args, "remesh_auto", False) and not any(k.lower() == "remesh distance" for k in saved.frozen):
+        from .remesh import mark
+        g_, d_ = mark(cfg, saved, model.mesh_db, args.fine)
+        saved.frozen["Remesh Distance"] = (g_, d_)
+        if model.frozen is not saved.frozen:
+            model.frozen["Remesh Distance"] = (g_, d_)
     if args.dt is not None:
         cfg.setdefault("map", {})["dt"] = args.dt
     if args.steps is not None:
@@ -450,6 +530,9 @@ def cmd_run(args):
             log.info(f"run: chunk {c + 1}: sliding y bump {model.slide_ybump:.4g} -> {model.slide_ybump_end:.4g}")
         yn = prob.phi(y, p, tag=f"run{c}", want_diag=True)
         t = (c + 1) * prob.spec.horizon
+        rm = getattr(model, "last_remesh", None)
+        if rm:                                   # RemeshTrigger ended the run early
+            t = c * prob.spec.horizon + rm["step"] * prob.spec.dt
         dy = rms(yn - y)
         log.info(f"run: chunk {c + 1}/{args.chunks}  t = {t:g}  rms change {dy:.3e}")
         y = yn
@@ -482,7 +565,10 @@ def cmd_run(args):
                     new[miss] = old[miss]
                 saved.frozen[kf] = (g, new)
         # the state after this chunk, with the masks it ran with (before the remask)
-        save_state(out, saved.layout, prob.unscale(y), p, dict(saved.frozen), prob.last_diag, time=t)
+        save_state(out, saved.layout, prob.unscale(y), p, dict(saved.frozen), prob.last_diag, time=t + t_off,
+                   mesh_db=model.mesh_db)
+        if rm:
+            return _auto_remesh(args, cfg, model, out, t + t_off, rm)
         if args.save_every and (c + 1) % args.save_every == 0:
             save_state(os.path.join(sdir, f"state_{c + 1 + args.chunk_offset:04d}.npz"), saved.layout, prob.unscale(y), p,
                        dict(saved.frozen), prob.last_diag, time=t)
@@ -503,7 +589,8 @@ def cmd_run(args):
                 saved.frozen.update(frozen)
                 y = prob.scale(xn)
     nsteps_done = int(round(t_end / prob.spec.dt)) if prob.spec.dt else 0
-    save_state(out, saved.layout, prob.unscale(y), p, saved.frozen, prob.last_diag, time=t_end,
+    save_state(out, saved.layout, prob.unscale(y), p, saved.frozen, prob.last_diag, time=t_end + t_off,
+               mesh_db=model.mesh_db,
                elmer_seconds=prob.t_model, elmer_runs=prob.nfev, steps=nsteps_done,
                linear_stokes=str(getattr(model, "linear_stokes", "")))
     log.info(f"wrote {out}; Elmer {prob.t_model:.0f} s for {prob.nfev} runs, {nsteps_done} steps"
@@ -1004,9 +1091,7 @@ def cmd_remesh(args):
     src_mesh = args.from_mesh or os.environ.get("ESS_MESH_DB") or str(src.meta.get("mesh_db", "")) or \
         cfg["elmer"].get("mesh_db", "footprint")
     n = int(args.ranks or os.environ.get("ESS_NPROCS", 0) or cfg["elmer"].get("n_procs", 1))
-    opt = dict(fine=args.fine, coarse=args.coarse, gl_band=args.gl_band_km * 1e3, margin_shear=args.margin_shear,
-               fast_speed=args.fast_speed, low_strain=args.low_strain, grade=args.grade,
-               max_triangles=args.max_triangles, h_max=args.h_max, ct_band=args.ct_band_km * 1e3, mode=args.mode)
+    opt = _remesh_opt(args)
     log.info(f"remesh: {args.state} on mesh {src_mesh} -> mesh {args.name} ({n} partitions)")
     layout, x, frozen, diag, rep = remesh(cfg, src, args.name, src_mesh, n, opt, dry=args.dry_run)
     if args.dry_run:
@@ -1205,6 +1290,12 @@ def main(argv=None):
 
     s = sub.add_parser("run")
     common(s)
+    s.add_argument("--remesh-auto", action="store_true",
+                   help="remesh when needed: elmer/RemeshTrigger ends the run when the grounding line or the "
+                        "cold/temperate transition comes near coarse mesh; then ess remesh from the state and the run "
+                        "goes on on the new mesh (options as ess remesh)")
+    s.add_argument("--remesh-prefix", default="m", help="--remesh-auto: the new meshes' names (m001, m002, ..)")
+    _add_remesh_args(s)
     s.add_argument("--chunks", type=int, default=1, help="number of map evaluations ([map] dt, n_steps each)")
     s.add_argument("--dt", type=float, help="time step (years), overrides [map] dt for this run")
     s.add_argument("--steps", type=int, help="steps per chunk, overrides [map] n_steps for this run")
@@ -1362,23 +1453,7 @@ def main(argv=None):
     s.add_argument("--from-mesh", help="the state's mesh (default: ESS_MESH_DB, the state's mesh_db, [elmer] mesh_db)")
     s.add_argument("--out", help="the state on the new mesh (default <work>/<name>_start.npz)")
     s.add_argument("--ranks", type=int, help="partitions (default ESS_NPROCS / [elmer] n_procs)")
-    s.add_argument("--fine", type=float, default=500.0, help="element size at the grounding line and margins (m)")
-    s.add_argument("--coarse", type=float, default=2000.0, help="at least this on a frozen bed or in plug flow (m)")
-    s.add_argument("--gl-band-km", type=float, default=15.0, help="fine within this of the grounding line (km)")
-    s.add_argument("--margin-shear", type=float, default=0.01, help="fine where |lateral shear| > this (1/yr)")
-    s.add_argument("--fast-speed", type=float, default=50.0, help="plug flow: surface speed above this (m/yr)")
-    s.add_argument("--low-strain", type=float, default=0.002, help="plug flow: effective strain rate below (1/yr)")
-    s.add_argument("--grade", type=float, default=0.15, help="size growth per metre (h_i <= h_j + grade d)")
-    s.add_argument("--mode", default="curves", choices=["curves", "thresholds"],
-                   help="curves (default): --fine within --gl-band-km of the grounding line and --ct-band-km of the "
-                        "cold/temperate transition, growing by --grade away from them, the background res_points "
-                        "scaled to --max-triangles; thresholds: the strain-rate rules (--margin-shear, --fast-speed, "
-                        "--low-strain)")
-    s.add_argument("--ct-band-km", type=float, default=3.0, help="curves: fine within this of the cold/temperate "
-                   "transition (km)")
-    s.add_argument("--max-triangles", type=float, help="curves: the footprint's triangle budget (the background "
-                   "scaled to it; without it res_points as they are)")
-    s.add_argument("--h-max", type=float, default=5000.0, help="curves: the largest element size (m)")
+    _add_remesh_args(s)
     s.add_argument("--dry-run", action="store_true", help="only the size field and its report (triangle counts)")
     s.set_defaults(fn=cmd_remesh)
 
