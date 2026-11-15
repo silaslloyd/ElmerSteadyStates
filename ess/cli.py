@@ -576,6 +576,13 @@ def cmd_run(args):
         sl0 = float(np.interp(t_off, [a_ for a_, _ in pts], [b_ for _, b_ in pts]))
         log.info(f"run: sea level {args.sea_level} (m @ yr since the first run's start, piecewise linear), a "
                  f"function of time in Elmer (every step); {sl0:.2f} m at the start (t = {t_off:g})")
+    if getattr(args, "accumulation", None):
+        model.accum_schedule = sea_level_schedule(args.accumulation)
+        model.time_offset = t_off
+        pts = model.accum_schedule
+        f0 = float(np.interp(t_off, [a_ for a_, _ in pts], [b_ for _, b_ in pts]))
+        log.info(f"run: accumulation x {args.accumulation} (factor @ yr since the first run's start, piecewise "
+                 f"linear), a function of time in Elmer; x{f0:g} at the start (t = {t_off:g})")
     for c in range(args.chunks):
         if ramp:
             A0, nr = ramp
@@ -1354,6 +1361,9 @@ def main(argv=None):
                    "'-' is otherwise taken for an option; m @ yr since the run's start, piecewise "
                    "linear), evaluated by Elmer every time step (e.g. growing a marine sheet from land: "
                    "'-500@0,-500@15000,0@30000'); sets [elmer] sea_level_param")
+    s.add_argument("--accumulation", help="accumulation factor schedule --accumulation=F@T,F@T,.. (aDIM times F; "
+                   "yr since the run's start, piecewise linear, constant outside), evaluated by Elmer every time "
+                   "step, e.g. '10@0,10@9000,1@10000': ten times the accumulation for 9 kyr, back to normal by 10 kyr")
     s.add_argument("--remesh-prefix", default="m", help="--remesh-auto: the new meshes' names (m001, m002, ..)")
     _add_remesh_args(s)
     s.add_argument("--chunks", type=int, default=1, help="number of map evaluations ([map] dt, n_steps each)")

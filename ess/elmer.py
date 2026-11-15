@@ -79,6 +79,11 @@ class ElmerModel(Model):
         # each time step by the sea pressure (Buoyancy SeaPressure) and the SSA shelf's flotation (FSSSAShelf)
         self.sea_level_schedule = None
         self.time_offset = 0.0
+        # accum_schedule ([(t, f), ..], ess run --accumulation): the accumulation aDIM times a piecewise-linear factor
+        # of time (Lua ess_acc_t(Time + time_offset), the same offset as the sea level): every "= Real #aDIM" of the
+        # template becomes "= Variable Time, Real Lua aDIM*ess_acc_t(t)" (e.g. a boosted accumulation while growing
+        # a sheet from thin ice)
+        self.accum_schedule = None
         # ESS_MESH_DB (jobs MESH_DB): another footprint in the case dir, e.g. one made by `ess remesh`
         self.mesh_db = os.environ.get("ESS_MESH_DB") or e.get("mesh_db", "footprint")
         self.ess_lib = cfg["_path"](e.get("ess_lib", "elmer/SteadyStateIO"))
@@ -453,6 +458,15 @@ class ElmerModel(Model):
                                  "return V[#T] end")
             extra.pop("ess_sl", None)
             extra["ess_sl"] = "ess_sl_t(0.0)"           # the value at the run's start (for the constant uses)
+        acc = getattr(self, "accum_schedule", None)
+        if acc:
+            extra["ess_acc_ts"] = "{" + ", ".join(repr(float(t_)) for t_, _ in acc) + "}"
+            extra["ess_acc_vs"] = "{" + ", ".join(repr(float(v_)) for _, v_ in acc) + "}"
+            extra["ess_acc_off"] = repr(float(getattr(self, "time_offset", 0.0)))
+            extra["ess_acc_t"] = ("function(t) local x = t + ess_acc_off; local T, V = ess_acc_ts, ess_acc_vs; "
+                                  "if x <= T[1] then return V[1] end; for i = 2, #T do if x <= T[i] then "
+                                  "return V[i-1] + (V[i] - V[i-1]) * (x - T[i-1]) / (T[i] - T[i-1]) end end; "
+                                  "return V[#T] end")
         if extra:
             txt += "\n-- [lua] overrides from the ess config\n" + "".join(f"{k} = {v}\n" for k, v in extra.items())
         if getattr(self, "fnoise_lua", ""):
@@ -778,6 +792,8 @@ End
             text = self._surface_dirichlet(text)
         if self.marine and self.sea_level_param:
             text = self._sea_level_param(text)
+        if getattr(self, "accum_schedule", None):
+            text = self._accum_schedule(text)
         # (ESS_STOKES_NL_ITERS, set above, takes precedence: ElmerStreams' max n with a 1e-5 tolerance)
         if (self.marine and self.gl_mode == "contact" and self.contact_stokes_iters > 1
                 and not os.environ.get("ESS_STOKES_NL_ITERS")):
@@ -1040,6 +1056,15 @@ End
         old = m.group(2).split()
         new = old + [str(i) for i in ids]
         return text[:m.start()] + f"Active Solvers({len(new)}) = {' '.join(new)}" + text[m.end():]
+
+    def _accum_schedule(self, text):
+        """the accumulation a function of time: every "<keyword> = Real #aDIM" (Zs / Output / FSSA Accumulation)"""
+        pat = re.compile(r"^(\s*)([A-Za-z][A-Za-z ]*?) = Real #aDIM[ \t]*$", re.M)
+        n = len(pat.findall(text))
+        if n == 0:
+            raise ValueError("accum_schedule: no '= Real #aDIM' line in the template")
+        return pat.sub(lambda m: f'{m.group(1)}{m.group(2)} = Variable Time\n{m.group(1)}  Real Lua '
+                                 f'"aDIM * ess_acc_t(tx[0])"   ! ess run --accumulation', text)
 
     def _sea_level_param(self, text):
         """sea level = the Lua parameter ess_sl in the constants and in every material (see sea_level_param)"""
