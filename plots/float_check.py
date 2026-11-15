@@ -31,4 +31,5 @@ for a in range(int(R[fl].min()) // 5 * 5, int(R[fl].max()) + 5, 5):
         print(f"r {a:4d}-{a+5:<4d} km: n {m.sum():5d}  H {np.nanmedian(H[m]):7.1f}  Zs {np.nanmedian(zs_b[m]):8.1f}  "
               f"Zb {np.nanmedian(zb[m]):8.1f}  implied sea level {np.nanmedian(sl[m]):8.1f} ({np.nanmin(sl[m]):.1f} .. {np.nanmax(sl[m]):.1f})"
               + "".join(f"  {n_} {np.nanmedian(d['base_' + n_][k][m]):.3g}" for n_ in ("cfl", "dz", "vz") if 'base_' + n_ in d.files)
+              + (f"  mesh z - Zb {np.nanmedian(zb[m] - d['base_zbv'][k][m]):.1f}" if "base_zbv" in d.files else "")
               + (f"  speed {np.nanmedian(np.hypot(d['base_vx'][k][m], d['base_vy'][k][m])):.1f}" if "base_vx" in d.files else ""))

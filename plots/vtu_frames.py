@@ -29,7 +29,8 @@ from plot_state_3d import read_vtu, vtu_steps  # noqa: E402
 
 EXTRA = {"coldtempmask": "ct", "water sheet thickness": "hw", "melt rate": "melt", "cfl": "cfl", "step change": "dz",
          "groundedmask": "mask", "bedrock": "bed", "temperature": "T",
-         "phi0 output": "phi0", "effective pressure output": "N"}   # the sheet's potential (MPa): its flow lines
+         "phi0 output": "phi0", "effective pressure output": "N",
+         "zb": "zbv"}   # the Zb variable itself (the base's z is the mesh coordinate; plots/float_check.py compares)   # the sheet's potential (MPa): its flow lines
 
 
 def run_timing(rundir):
