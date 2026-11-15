@@ -214,7 +214,7 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # Needs make -C elmer RemeshTrigger.so, and gmsh + ElmerGrid in the job (as ess setup)
 # SEA_LEVEL="-500@0,-500@15000,0@30000": sea level (m) @ time (yr since the run's start), piecewise linear, a function
 # of time in Elmer (every step; one long run): growing a marine sheet from a land one (jobs/thin_start.py)
-[ -n "$SEA_LEVEL" ] && opts="$opts --sea-level $SEA_LEVEL" && echo "  sea level schedule $SEA_LEVEL"
+[ -n "$SEA_LEVEL" ] && opts="$opts --sea-level=$SEA_LEVEL" && echo "  sea level schedule $SEA_LEVEL"
 [ "$REMESH_AUTO" = 1 ] && opts="$opts --remesh-auto $REMESH_ARGS" && echo "  remesh when needed ($REMESH_ARGS)"
 [ -n "$REMESH_GL_SAFETY" ] && export ESS_REMESH_GL_SAFETY=$REMESH_GL_SAFETY
 [ -n "$REMESH_CT_SAFETY" ] && export ESS_REMESH_CT_SAFETY=$REMESH_CT_SAFETY

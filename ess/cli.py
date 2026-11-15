@@ -1315,7 +1315,8 @@ def main(argv=None):
                    help="remesh when needed: elmer/RemeshTrigger ends the run when the grounding line or the "
                         "cold/temperate transition comes near coarse mesh; then ess remesh from the state and the run "
                         "goes on on the new mesh (options as ess remesh)")
-    s.add_argument("--sea-level", help="sea level schedule 'SL@T,SL@T,..' (m @ yr since the run's start, piecewise "
+    s.add_argument("--sea-level", help="sea level schedule --sea-level=SL@T,SL@T,.. (with '=': a value starting with "
+                   "'-' is otherwise taken for an option; m @ yr since the run's start, piecewise "
                    "linear), evaluated by Elmer every time step (e.g. growing a marine sheet from land: "
                    "'-500@0,-500@15000,0@30000'); sets [elmer] sea_level_param")
     s.add_argument("--remesh-prefix", default="m", help="--remesh-auto: the new meshes' names (m001, m002, ..)")
