@@ -33,3 +33,19 @@ for a in range(int(R[fl].min()) // 5 * 5, int(R[fl].max()) + 5, 5):
               + "".join(f"  {n_} {np.nanmedian(d['base_' + n_][k][m]):.3g}" for n_ in ("cfl", "dz", "vz") if 'base_' + n_ in d.files)
               + (f"  mesh z - Zb {np.nanmedian(zb[m] - d['base_zbv'][k][m]):.1f}" if "base_zbv" in d.files else "")
               + (f"  speed {np.nanmedian(np.hypot(d['base_vx'][k][m], d['base_vy'][k][m])):.1f}" if "base_vx" in d.files else ""))
+# across the sector (the lateral direction): the floating ice within 10 km of the front and in the band just past the
+# full-Stokes strip, in angle bins
+ph = np.degrees(np.arctan2(by, bx))
+print("across the sector (angle bins; y at the front):")
+for lo_, hi_ in ((R[fl].min(), R[fl].min() + 10), (R[fl].min() + 10, R[fl].min() + 25)):
+    band = fl & (R >= lo_) & (R < hi_)
+    if not band.any():
+        continue
+    e = np.linspace(ph[band].min(), ph[band].max(), 9)
+    print(f"  r {lo_:.0f}-{hi_:.0f} km:")
+    for a, b in zip(e[:-1], e[1:]):
+        m = band & (ph >= a) & (ph <= b)
+        if m.sum():
+            yk = np.median(by[m]) / 1e3
+            print(f"    angle {a:6.2f}..{b:6.2f} (y ~{yk:7.1f} km): n {m.sum():5d}  H {np.nanmedian(H[m]):6.1f}  "
+                  f"Zs {np.nanmedian(zs_b[m]):7.1f}  Zb {np.nanmedian(zb[m]):7.1f}  implied sea level {np.nanmedian(sl[m]):7.1f}")
