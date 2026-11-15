@@ -1429,6 +1429,7 @@ Solver {n}
   GL Safety Distance = Real {env("ESS_REMESH_GL_SAFETY", 5000.0)!r}
   Transition Safety Distance = Real {env("ESS_REMESH_CT_SAFETY", 1000.0)!r}
   Transition Fraction = Real {env("ESS_REMESH_CT_FRACTION", 0.05)!r}
+  Minimum Steps = Integer {int(env("ESS_REMESH_MIN_STEPS", 1))}   ! steps on a mesh before it may trigger again
 End
 """
         k = text.index("!---------------- BOUNDARY CONDITIONS")
