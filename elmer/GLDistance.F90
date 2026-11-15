@@ -1306,7 +1306,7 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
   REAL(KIND=dp), ALLOCATABLE :: Hc(:), ubar(:), vbar(:), zbc(:), STIFF(:,:), FORCE(:), Basis(:), dBasisdx(:,:)
   REAL(KIND=dp), ALLOCATABLE :: nodal(:,:), wsum(:)
   REAL(KIND=dp) :: Dcut, mu, rhoi, rhow, g, r, detJ, Hg, Pg, ymin, ymax, tolw, wq, uq(2), dux(2), duy(2), &
-      dzb(2), ar, zb, zs, H, divu, wb, su, sv, umax, Norm, relax, dhh(2), umaxL, xm, ym
+      dzb(2), ar, zb, zs, H, divu, wb, su, sv, umax, Norm, relax, dhh(2), umaxL, xm, ym, zsl
   LOGICAL :: Found, walls, stat, ssaEl
   ! "SSA Periodic Angle" (radians): a sector -pa/2 .. +pa/2 about the x-axis with rotational periodic sides. Elmer
   ! ties the periodic SSA velocity component by component, so each slave node (side 2, +pa/2) is solved in its own
@@ -1331,6 +1331,10 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
   rhow = ListGetConstReal( Model % Constants, 'Water Density' )
   g = ListGetConstReal( Model % Constants, 'Gravity Norm' )
   r = rhoi / rhow
+  ! sea level (the constants' "Sea Level": ESS sea_level_param, possibly a function of time, so ListGetCReal): the
+  ! passive columns are floated about it
+  zsl = ListGetCReal( Model % Constants, 'Sea Level', Found )
+  IF ( .NOT. Found ) zsl = 0.0_dp
 
   dVar => VariableGet( Mesh % Variables, 'GL Distance' )
   zbVar => VariableGet( Mesh % Variables, 'Zb' )
@@ -1400,9 +1404,9 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
       IF ( essVal( gmVar, ib ) >= -0.5_dp ) inner(lc) = .FALSE.     ! grounded: never (distance 0)
     END IF
     IF ( inner(lc) ) THEN
-      zb = -r * H
+      zb = zsl - r * H
       zbVar % Values( essPerm( zbVar, ib ) ) = zb
-      zsVar % Values( essPerm( zsVar, it ) ) = (1.0_dp - r) * H
+      zsVar % Values( essPerm( zsVar, it ) ) = zsl + (1.0_dp - r) * H
       ninner = ninner + 1
     END IF
     Hc(lc) = H

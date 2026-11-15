@@ -74,6 +74,11 @@ class ElmerModel(Model):
         # [elmer] sea_level_param = true: sea level is the Lua parameter ess_sl (m, default 0; e.g. --lua ess_sl=50)
         # in the constants (hydrostatic loads of the contact) and every material (sea pressure), not a fixed 0
         self.sea_level_param = bool(e.get("sea_level_param", False)) or os.environ.get("ESS_SEA_LEVEL_PARAM") == "1"
+        # sea_level_schedule ([(t, sl), ..], ess run --sea-level): sea level a piecewise-linear function of time in
+        # the run (Lua ess_sl_t(Time + time_offset): Sea Level = Variable Time in the constants and materials), read
+        # each time step by the sea pressure (Buoyancy SeaPressure) and the SSA shelf's flotation (FSSSAShelf)
+        self.sea_level_schedule = None
+        self.time_offset = 0.0
         # ESS_MESH_DB (jobs MESH_DB): another footprint in the case dir, e.g. one made by `ess remesh`
         self.mesh_db = os.environ.get("ESS_MESH_DB") or e.get("mesh_db", "footprint")
         self.ess_lib = cfg["_path"](e.get("ess_lib", "elmer/SteadyStateIO"))
@@ -432,8 +437,22 @@ class ElmerModel(Model):
             else:
                 extra[k] = v
         txt = override_lua_assignment(txt, self.param_name, p)
+        sched = getattr(self, "sea_level_schedule", None)
         if getattr(self, "sea_level_param", False) and "ess_sl" not in self.lua_overrides:
             extra["ess_sl"] = "0.0"                     # sea level (m) of sea_level_param, unless overridden
+        if sched:
+            ts = ", ".join(repr(float(t_)) for t_, _ in sched)
+            ss = ", ".join(repr(float(v_)) for _, v_ in sched)
+            off = float(getattr(self, "time_offset", 0.0))
+            extra["ess_sl_ts"] = "{" + ts + "}"
+            extra["ess_sl_vs"] = "{" + ss + "}"
+            extra["ess_sl_off"] = repr(off)
+            extra["ess_sl_t"] = ("function(t) local x = t + ess_sl_off; local T, V = ess_sl_ts, ess_sl_vs; "
+                                 "if x <= T[1] then return V[1] end; for i = 2, #T do if x <= T[i] then "
+                                 "return V[i-1] + (V[i] - V[i-1]) * (x - T[i-1]) / (T[i] - T[i-1]) end end; "
+                                 "return V[#T] end")
+            extra.pop("ess_sl", None)
+            extra["ess_sl"] = "ess_sl_t(0.0)"           # the value at the run's start (for the constant uses)
         if extra:
             txt += "\n-- [lua] overrides from the ess config\n" + "".join(f"{k} = {v}\n" for k, v in extra.items())
         if getattr(self, "fnoise_lua", ""):
@@ -1019,10 +1038,13 @@ End
         a = "  Sea Level = Real 0.0"
         if text.count(a) != 2:
             raise ValueError("sea_level_param: the sea level lines of the template changed")
-        text = text.replace(a, "  Sea Level = Real #ess_sl")
+        line = "  Sea Level = Real #ess_sl"
+        if getattr(self, "sea_level_schedule", None):       # a function of time (ess run --sea-level)
+            line = '  Sea Level = Variable Time\n    Real Lua "ess_sl_t(tx[0])"'
+        text = text.replace(a, line)
         for m in ("Material 1", "Material 2"):              # the parent material of a bed element may be either
             k = text.index("\n" + m + "\n") + len(m) + 2
-            text = text[:k] + "  Sea Level = Real #ess_sl\n" + text[k:]
+            text = text[:k] + line + "\n" + text[k:]
         return text
 
     def _stokes_iterations(self, text, n):

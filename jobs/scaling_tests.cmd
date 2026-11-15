@@ -212,8 +212,8 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # goes on there with the steps left). REMESH_ARGS: ess remesh's size options, e.g. "--max-triangles 400000 --fine 500";
 # REMESH_GL_SAFETY / REMESH_CT_SAFETY (m, default 5000 / 1000), REMESH_CT_FRACTION (default 0.05): the trigger.
 # Needs make -C elmer RemeshTrigger.so, and gmsh + ElmerGrid in the job (as ess setup)
-# SEA_LEVEL="-500@0,-500@10000,0@20000": sea level (m) @ time (yr since the run's start), piecewise linear, one value
-# per chunk (use CHUNKS, e.g. CHUNKS=400 STEPS=10): growing a marine sheet from a land one (jobs/thin_start.py)
+# SEA_LEVEL="-500@0,-500@15000,0@30000": sea level (m) @ time (yr since the run's start), piecewise linear, a function
+# of time in Elmer (every step; one long run): growing a marine sheet from a land one (jobs/thin_start.py)
 [ -n "$SEA_LEVEL" ] && opts="$opts --sea-level $SEA_LEVEL" && echo "  sea level schedule $SEA_LEVEL"
 [ "$REMESH_AUTO" = 1 ] && opts="$opts --remesh-auto $REMESH_ARGS" && echo "  remesh when needed ($REMESH_ARGS)"
 [ -n "$REMESH_GL_SAFETY" ] && export ESS_REMESH_GL_SAFETY=$REMESH_GL_SAFETY
