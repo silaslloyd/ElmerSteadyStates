@@ -897,7 +897,10 @@ End
         # ESS_VTU_FIRST = "F:N0" (jobs VTU_FIRST): every F steps over the first N0 steps, then every `every`: the
         # run's single timestep interval split in two (same dt; Elmer's Exec Intervals are per timestep interval and
         # count the global step: Offset F-1 gives F, 2F, .., N0, then every-1 gives 2 every, 3 every, ..)
-        ex, off = [every] * 10, [every - 1] * 10
+        # step_offset (a run continuing a longer one, e.g. after a remesh: the steps done before it): the outputs at
+        # the multiples of `every` of the whole run's step count, not of this Elmer run's
+        o0 = (every - 1 - int(getattr(self, "step_offset", 0)) % every) % every
+        ex, off = [every] * 10, [o0] * 10
         first = os.environ.get("ESS_VTU_FIRST")
         if first:
             f_, _, n0 = first.partition(":")
@@ -942,9 +945,11 @@ End
         blk = text[i:j]
         n = max(int(v) for v in re.findall(r"^Solver (\d+)", text, re.M)) + 1
         blk = re.sub(r"^Solver \d+", f"Solver {n}", blk)
+        o0 = (every - 1 - int(getattr(self, "step_offset", 0)) % every) % every    # aligned with the whole run
         blk = blk.replace('Exec Solver = "After All"', 'Exec Solver = "After Timestep"\n'
                           f"  Exec Intervals(10) = Integer {' '.join([str(every)] * 10)}   ! per Timestep Interval\n"
-                          f"  Exec Intervals Offset(10) = Integer {' '.join([str(every - 1)] * 10)}   ! at steps N, 2N, ...")
+                          f"  Exec Intervals Offset(10) = Integer {' '.join([str(o0)] * 10)}   ! at steps N, 2N, ... "
+                          "of the whole run")
         blk = blk.replace('Equation = "StateWrite"', 'Equation = "StateWriteCheckpoint"')
         blk = re.sub(r'State File = File "[^"]*"', 'State File = File "checkpoint.bin"', blk)
         if "checkpoint.bin" not in blk or "After Timestep" not in blk:

@@ -369,6 +369,8 @@ def cmd_run(args):
     elif _marine(model):
         model.gl_mode = "frozen"           # --gl frozen also when the config says contact
     prob = _problem(cfg, model)
+    if t_off and prob.spec.dt:              # a continuation (after a remesh): outputs on the whole run's step count
+        model.step_offset = int(round(t_off / prob.spec.dt))
     log.info(f"run: dt = {prob.spec.dt:g}, {prob.spec.n_steps} steps per chunk, "
              f"rock heat capacity x {prob.spec.rock_heat_capacity:g}"
              + (", grounding line by contact every step (--gl contact)" if contact else ""))
