@@ -1972,18 +1972,51 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
                                        dict(label="streamlines on", method="restyle", args=[{"visible": True}, st_idx])])]
         print(f"  streamlines of the surface velocity: seeds every {STREAM_KM:g} km across (--stream-spacing, "
               f"--no-streamlines)")
+    mesh_js = None
     if MESH_TOGGLE and data[0][2] is not None:
+        # one mesh per distinct base mesh (a remeshed run: one per segment), each drawn at the base of its first state;
+        # the page shows the mesh of the state on screen (the frames do not touch these traces: a script after every
+        # frame change), "mesh off / mesh on" for all
+        def same_mesh_b(a, b):
+            return (a is not None and b is not None and len(a["x"]) == len(b["x"])
+                    and np.array_equal(a["x"], b["x"]) and np.array_equal(a["y"], b["y"]))
+        groups, fgroup = [], []
+        for n, (_, _, b_, _) in enumerate(data):
+            k = next((q for q, (b0, _) in enumerate(groups) if same_mesh_b(b0, b_)), None)
+            if k is None:
+                groups.append((b_, []))
+                k = len(groups) - 1
+            fgroup.append(k)
         midx = []
-        for P in panels:
-            t_ = mesh_lines(data[0][2], P)
-            t_.visible = SHOW_MESH
-            midx.append(len(first))
-            first.append(t_)
+        for k, (b0, _) in enumerate(groups):
+            ix = []
+            for P in panels:
+                t_ = mesh_lines(b0, P)
+                t_.visible = bool(SHOW_MESH and k == fgroup[0])
+                if k:
+                    t_.showlegend = False
+                ix.append(len(first))
+                first.append(t_)
+            midx.append(ix)
         menus = menus + [dict(type="buttons", direction="right", x=0.52 if two else 0.40, y=1.06, xanchor="left",
                               yanchor="bottom", showactive=True, pad=dict(r=4, t=0), active=1 if SHOW_MESH else 0,
-                              buttons=[dict(label="mesh off", method="restyle", args=[{"visible": False}, midx]),
-                                       dict(label="mesh on", method="restyle", args=[{"visible": True}, midx])])]
-        print(f"  base mesh toggle on {len(midx)} panel(s) (drawn at the first state's base)")
+                              buttons=[dict(label="mesh off", method="skip", args=[{}]),
+                                       dict(label="mesh on", method="skip", args=[{}])])]
+        mesh_js = """
+(function () {
+  var g = document.getElementsByClassName('plotly-graph-div')[0];
+  var MG = %s, FG = %s, on = %s, cur = 0;
+  function apply() { var ix = [], vis = [];
+    MG.forEach(function (r, k) { r.forEach(function (i) { ix.push(i); vis.push(on && k === FG[cur]); }); });
+    Plotly.restyle(g, {visible: vis}, ix); }
+  g.on('plotly_buttonclicked', function (e) {
+    if (e.button && (e.button.label === 'mesh on' || e.button.label === 'mesh off')) { on = e.button.label === 'mesh on'; apply(); } });
+  g.on('plotly_sliderchange', function (e) { var n = parseInt(e.step.args[0][0]); if (isFinite(n)) cur = n; });
+  g.on('plotly_animatingframe', function (e) { var n = parseInt(e.name); if (isFinite(n)) cur = n; });
+  g.on('plotly_animated', apply);
+})();""" % (json.dumps(midx), json.dumps(fgroup), "true" if SHOW_MESH else "false")
+        print(f"  base mesh toggle on {len(panels)} panel(s): {len(groups)} mesh(es), each at the base of its first "
+              f"state, the one of the state shown")
     frames = [go.Frame(data=lean(tidy(per[n] if n else frame0)), name=str(n))
               for n in range(len(data))]
     steps = [dict(method="animate", label=l, args=[[str(n)], dict(mode="immediate", frame=dict(duration=0, redraw=True),
@@ -2091,7 +2124,7 @@ gd.on('plotly_relayout', function (e) {
     apply(); });
   g.on('plotly_animated', apply);
 })();"""
-    post = "\n".join(x for x in (sync, switch_js, hw_js) if x) or None
+    post = "\n".join(x for x in (sync, switch_js, hw_js, mesh_js) if x) or None
     # the page width and height (no fixed size: no sideways scrolling; resizes with the window)
     fig.write_html(out, include_plotlyjs="cdn", post_script=post, config=dict(responsive=True),
                    default_width="100%", default_height="95vh")
