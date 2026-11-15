@@ -219,6 +219,105 @@ def size_field(src: SavedState, x, y, tri, h_res, opt):
     return h, rep
 
 
+def _edges(tri):
+    e = np.r_[tri[:, [0, 1]], tri[:, [1, 2]], tri[:, [2, 0]]]
+    return np.unique(np.sort(e, 1), axis=0)
+
+
+def _smooth(f, e, n=2):
+    """n passes of averaging each node with its edge neighbours"""
+    for _ in range(n):
+        s = f.copy()
+        c = np.ones(len(f))
+        np.add.at(s, e[:, 0], f[e[:, 1]])
+        np.add.at(s, e[:, 1], f[e[:, 0]])
+        np.add.at(c, e[:, 0], 1)
+        np.add.at(c, e[:, 1], 1)
+        f = s / c
+    return f
+
+
+def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
+    """the size from the distance to two curves, the background scaled to a triangle budget:
+
+        h = min( h_min + grade max(d_GL - b_GL, 0),           the grounding line (+- b_GL at h_min)
+                 h_min + grade max(d_CT - b_CT, 0),           the cold/temperate transition on the grounded bed
+                 clip(s h_res, h_min, h_max) )                the background ([case] res_points), scaled by s
+    and at least opt["coarse"] on a frozen grounded bed away from both curves; s found by bisection so the estimated
+    triangle count sum(area / (0.433 h^2)) is opt["max_triangles"] (no budget: s = 1). The stream margins of a
+    thermally controlled bed are the cold/temperate transition, so the distance to it puts the resolution there
+    without thresholds on strain rates. If even s at h_max overshoots the budget, the transition band is narrowed."""
+    nb = len(x)
+    f = {**src.diag, **src.frozen}
+    gm = base_values(f[find_name(f, "groundedmask")], nb)
+    ct = base_values(f[find_name(f, "coldtempmask")], nb)
+    e = _edges(tri)
+    grounded = np.nan_to_num(gm, nan=-1) > -0.5
+    tempe = np.nan_to_num(ct, nan=1) > 0
+    cold = grounded & ~tempe
+    from scipy.spatial import cKDTree
+    # the grounding line: grounded nodes with a floating neighbour (and the mask-0 nodes); the curve as edge midpoints
+    mix = grounded[e[:, 0]] != grounded[e[:, 1]]
+    glp = np.c_[0.5 * (x[e[mix, 0]] + x[e[mix, 1]]), 0.5 * (y[e[mix, 0]] + y[e[mix, 1]])]
+    m0 = np.abs(np.nan_to_num(gm, nan=-1)) < 0.5
+    glp = np.r_[glp, np.c_[x[m0], y[m0]]]
+    # the cold/temperate transition: edges between a cold and a temperate node, both grounded
+    tr = grounded[e[:, 0]] & grounded[e[:, 1]] & (tempe[e[:, 0]] != tempe[e[:, 1]])
+    ctp = np.c_[0.5 * (x[e[tr, 0]] + x[e[tr, 1]]), 0.5 * (y[e[tr, 0]] + y[e[tr, 1]])]
+    dist = lambda P: cKDTree(P).query(np.c_[x, y])[0] if len(P) else np.full(nb, np.inf)
+    dgl, dct = dist(glp), dist(ctp)
+    _, area = node_areas(x, y, tri)
+    hmin, hmax, hc, g = opt["fine"], opt["h_max"], opt["coarse"], opt["grade"]
+    count = lambda h: float(np.sum(area / (0.433 * h ** 2)))
+
+    def build(sc, bct):
+        hgl = hmin + g * np.maximum(dgl - opt["gl_band"], 0)
+        hct = hmin + g * np.maximum(dct - bct, 0)
+        hbg = np.clip(sc * h_res, hmin, hmax)
+        far = cold & (dgl > opt["gl_band"]) & (dct > bct)
+        hbg[far] = np.maximum(hbg[far], min(hc, hmax))
+        return grade(np.minimum(np.minimum(hgl, hct), hbg), x, y, tri, g)
+    bct = opt["ct_band"]
+    target = opt.get("max_triangles")
+    if not target:
+        sc, note = 1.0, "no budget: the background res_points as they are"
+    else:
+        target = float(target)
+        sc_max = hmax / max(float(h_res.min()), 1.0)
+        while count(build(sc_max, bct)) > target and bct > hmin:
+            bct *= 0.5                                       # even the coarsest background overshoots: narrower
+        if count(build(sc_max, bct)) > target:
+            sc, note = sc_max, f"the budget {target:.0f} is below the floor {count(build(sc_max, bct)):.0f}: using it"
+        elif count(build(hmin / max(float(h_res.max()), 1.0), bct)) <= target:
+            sc, note = hmin / max(float(h_res.max()), 1.0), "the budget allows the finest background"
+        else:
+            lo, hi = hmin / max(float(h_res.max()), 1.0), sc_max
+            for _ in range(60):
+                mid = np.sqrt(lo * hi)
+                if count(build(mid, bct)) > target:
+                    lo = mid
+                else:
+                    hi = mid
+                if hi / lo < 1.005:
+                    break
+            sc, note = hi, f"background res_points x {hi:.3g}"
+        if bct < opt["ct_band"]:
+            note += f"; the transition band narrowed to +- {bct / 1e3:g} km to fit"
+    h = build(sc, bct)
+    bins = [0, 1.5 * hmin, 1000, 2000, 4000, 1e9]
+    lab = [f"<= {1.5 * hmin:.0f} m", "..1 km", "1..2 km", "2..4 km", "> 4 km"]
+    fr = [np.sum(area[(h > a) & (h <= b)]) / area.sum() * 100 for a, b in zip(bins[:-1], bins[1:])]
+    rep = [f"curves: grounding line {len(glp)} points, cold/temperate transition {len(ctp)} points (grounded); "
+           f"{note}",
+           f"fine (<= {1.5 * hmin:.0f} m): GL band +- {opt['gl_band'] / 1e3:g} km {np.sum(area[dgl < opt['gl_band']]) / 1e6:.0f} km2, "
+           f"transition band +- {bct / 1e3:g} km {np.sum(area[dct < bct]) / 1e6:.0f} km2; growth {g:g} m/m away from "
+           f"them; frozen bed away from both >= {min(hc, hmax):g} m",
+           "area by size: " + ", ".join(f"{l} {v:.1f}%" for l, v in zip(lab, fr)),
+           f"triangles: old mesh {len(tri)}, new ~{count(h):.0f}" + (f" (budget {target:.0f})" if target else "")
+           + f"; footprint nodes ~{count(h) / 2:.0f}"]
+    return h, rep
+
+
 # ------------------------------------------------------------------ geometry
 def refine_side(R, P, hfun):
     """the cut side chain (R, P: side 1, r increasing) with each segment longer than hfun at its midpoint split into
@@ -371,7 +470,7 @@ def interpolate_state(src: SavedState, nbs, sx, sy, stri, dx, dy, divide=None):
 
 
 # ------------------------------------------------------------------ driver
-def remesh(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, opt: dict, run=None):
+def remesh(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, opt: dict, run=None, dry=False):
     """the new footprint `name` in the case dir (geo, size view, msh, Elmer mesh, partitioning.<n_procs>) and the
     state on it. Returns (layout, x, frozen, diag, report lines)."""
     from .case import sector_partition
@@ -389,9 +488,14 @@ def remesh(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, opt: di
     rs = np.hypot(sx, sy)
     sd = (divide - rs) if divide else rs
     h_res = np.interp(sd, pts[:, 0], pts[:, 1])
-    h, rep = size_field(src, sx, sy, stri, h_res, opt)
+    if opt.get("mode", "curves") == "curves":
+        h, rep = size_field_budget(src, sx, sy, stri, h_res, opt)
+    else:
+        h, rep = size_field(src, sx, sy, stri, h_res, opt)
     for line in rep:
         log.info("remesh: " + line)
+    if dry:
+        return None, None, None, None, rep
     # the side: the old chain, its segments split to the new size (at both sides: min of side 1 and its image)
     side_src = os.path.join(case, f"sector_side1_{src_mesh}.txt")
     if not os.path.exists(side_src):

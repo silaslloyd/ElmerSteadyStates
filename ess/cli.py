@@ -1005,9 +1005,13 @@ def cmd_remesh(args):
         cfg["elmer"].get("mesh_db", "footprint")
     n = int(args.ranks or os.environ.get("ESS_NPROCS", 0) or cfg["elmer"].get("n_procs", 1))
     opt = dict(fine=args.fine, coarse=args.coarse, gl_band=args.gl_band_km * 1e3, margin_shear=args.margin_shear,
-               fast_speed=args.fast_speed, low_strain=args.low_strain, grade=args.grade)
+               fast_speed=args.fast_speed, low_strain=args.low_strain, grade=args.grade,
+               max_triangles=args.max_triangles, h_max=args.h_max, ct_band=args.ct_band_km * 1e3, mode=args.mode)
     log.info(f"remesh: {args.state} on mesh {src_mesh} -> mesh {args.name} ({n} partitions)")
-    layout, x, frozen, diag, rep = remesh(cfg, src, args.name, src_mesh, n, opt)
+    layout, x, frozen, diag, rep = remesh(cfg, src, args.name, src_mesh, n, opt, dry=args.dry_run)
+    if args.dry_run:
+        log.info("remesh: --dry-run: the size field only (no mesh written)")
+        return
     out = args.out or os.path.join(cfg["_work"], f"{args.name}_start.npz")
     meta = {k: v for k, v in src.meta.items() if k not in ("mesh_db", "source", "remesh")}
     save_state(out, layout, x, src.p, frozen, diag, mesh_db=args.name, source=args.state, remesh="; ".join(rep),
@@ -1365,6 +1369,17 @@ def main(argv=None):
     s.add_argument("--fast-speed", type=float, default=50.0, help="plug flow: surface speed above this (m/yr)")
     s.add_argument("--low-strain", type=float, default=0.002, help="plug flow: effective strain rate below (1/yr)")
     s.add_argument("--grade", type=float, default=0.15, help="size growth per metre (h_i <= h_j + grade d)")
+    s.add_argument("--mode", default="curves", choices=["curves", "thresholds"],
+                   help="curves (default): --fine within --gl-band-km of the grounding line and --ct-band-km of the "
+                        "cold/temperate transition, growing by --grade away from them, the background res_points "
+                        "scaled to --max-triangles; thresholds: the strain-rate rules (--margin-shear, --fast-speed, "
+                        "--low-strain)")
+    s.add_argument("--ct-band-km", type=float, default=3.0, help="curves: fine within this of the cold/temperate "
+                   "transition (km)")
+    s.add_argument("--max-triangles", type=float, help="curves: the footprint's triangle budget (the background "
+                   "scaled to it; without it res_points as they are)")
+    s.add_argument("--h-max", type=float, default=5000.0, help="curves: the largest element size (m)")
+    s.add_argument("--dry-run", action="store_true", help="only the size field and its report (triangle counts)")
     s.set_defaults(fn=cmd_remesh)
 
     s = sub.add_parser("stability")
