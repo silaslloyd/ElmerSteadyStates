@@ -367,7 +367,10 @@ def cmd_run(args):
         os.environ["ESS_REMESH_AUTO"] = "1"
     t_off = float(getattr(args, "time_offset", 0.0) or 0.0)
     if getattr(args, "remesh_prefix", None) is None:   # each run's meshes numbered from 1 under its own label
-        args.remesh_prefix = re.sub(r"[^A-Za-z0-9_]", "_", os.environ.get("ESS_RUN_LABEL") or "run") + "_m"
+        # short: Elmer reads at most 127 characters of the mesh path (<case dir>/<name>), so the job number only
+        # ("job31802" -> 31802m001; job31802_m001 made it 129 in work/coarse_sector_inv38_cut_ext)
+        m_ = re.search(r"\d+", os.environ.get("ESS_RUN_LABEL") or "")
+        args.remesh_prefix = (m_.group(0) if m_ else "run") + "m"
     cfg, model, saved = _setup(args)
     if getattr(args, "remesh_auto", False) and not any(k.lower() == "remesh distance" for k in saved.frozen):
         # a state not remeshed yet (the original mesh: no fine band anywhere): remesh it before the first step,
@@ -1368,8 +1371,8 @@ def main(argv=None):
                    "yr since the run's start, piecewise linear, constant outside), evaluated by Elmer every time "
                    "step, e.g. '10@0,10@9000,1@10000': ten times the accumulation for 9 kyr, back to normal by 10 kyr")
     s.add_argument("--remesh-prefix", default=None,
-                   help="--remesh-auto: the new meshes' names <prefix>001, 002, .. (default <run label>_m: e.g. "
-                        "job31800_m001, numbered from 1 in each run; the run label ESS_RUN_LABEL, jobs: job<id>)")
+                   help="--remesh-auto: the new meshes' names <prefix>001, 002, .. (default <job number>m: e.g. "
+                        "31800m001, numbered from 1 in each run: the job number of the run label ESS_RUN_LABEL, jobs: job<id>)")
     _add_remesh_args(s)
     s.add_argument("--chunks", type=int, default=1, help="number of map evaluations ([map] dt, n_steps each)")
     s.add_argument("--dt", type=float, help="time step (years), overrides [map] dt for this run")
