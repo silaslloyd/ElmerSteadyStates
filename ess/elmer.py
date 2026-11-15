@@ -996,12 +996,15 @@ End
              '  Linear System Direct Method = $directsolver\n'
              '  Linear System Abort Not Converged = True\n'
              '  Linear System Convergence Tolerance = 1.0e-12')
+        # ESS_FS_LINTOL (jobs FS_LINTOL): the iterative solve's tolerance (default 1e-12). Thin ice with many nodes at
+        # the Min Zs limit (a growing sheet, 100 m): BiCGStab stalled at a relative residual of 1.5e-9 and aborted
+        tol = float(os.environ.get("ESS_FS_LINTOL") or 1e-12)
         b = ('  Linear System Solver = Iterative\n'
              '  Linear System Iterative Method = BiCGStab\n'
              '  Linear System Preconditioning = ILU1\n'
              '  Linear System Max Iterations = 2000\n'
              '  Linear System Abort Not Converged = True\n'
-             '  Linear System Convergence Tolerance = 1.0e-12')
+             f'  Linear System Convergence Tolerance = {tol!r}')
         for name in ('Equation = "Free Surface Sea/Shelf"', 'Equation = "Free Surface Top"'):
             k = text.find(name)
             if k < 0:

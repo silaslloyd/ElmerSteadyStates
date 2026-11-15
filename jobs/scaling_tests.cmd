@@ -212,6 +212,8 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # goes on there with the steps left). REMESH_ARGS: ess remesh's size options, e.g. "--max-triangles 400000 --fine 500";
 # REMESH_GL_SAFETY / REMESH_CT_SAFETY (m, default 5000 / 1000), REMESH_CT_FRACTION (default 0.05): the trigger.
 # Needs make -C elmer RemeshTrigger.so, and gmsh + ElmerGrid in the job (as ess setup)
+# FS_LINTOL=1e-9: the iterative free-surface solves' tolerance (linear_free_surface = "iterative"; default 1e-12)
+[ -n "$FS_LINTOL" ] && export ESS_FS_LINTOL=$FS_LINTOL && echo "  free-surface linear tolerance $FS_LINTOL"
 # SEA_LEVEL="-500@0,-500@15000,0@30000": sea level (m) @ time (yr since the run's start), piecewise linear, a function
 # of time in Elmer (every step; one long run): growing a marine sheet from a land one (jobs/thin_start.py)
 [ -n "$SEA_LEVEL" ] && opts="$opts --sea-level=$SEA_LEVEL" && echo "  sea level schedule $SEA_LEVEL"
