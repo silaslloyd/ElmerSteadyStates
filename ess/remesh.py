@@ -119,6 +119,26 @@ class Locator:
             T[todo[ok]] = t[ok]
             Wt[todo[ok]] = np.c_[l0, l1, l2][ok]
             todo = todo[~ok]
+        if len(todo) and k < len(self.tri):          # misses: a wider search (large or thin triangles nearby)
+            k2 = min(96, len(self.tri))
+            _, cand2 = self.tree.query(np.c_[px[todo], py[todo]], k=k2)
+            sub = todo
+            for j in range(k2):
+                if not len(sub):
+                    break
+                idx = np.searchsorted(todo, sub)
+                t = cand2[idx, j]
+                i0, i1, i2 = self.tri[t, 0], self.tri[t, 1], self.tri[t, 2]
+                x0, y0 = self.x[i0], self.y[i0]
+                d = (self.x[i1] - x0) * (self.y[i2] - y0) - (self.x[i2] - x0) * (self.y[i1] - y0)
+                l1 = ((px[sub] - x0) * (self.y[i2] - y0) - (self.x[i2] - x0) * (py[sub] - y0)) / d
+                l2 = ((self.x[i1] - x0) * (py[sub] - y0) - (px[sub] - x0) * (self.y[i1] - y0)) / d
+                l0 = 1 - l1 - l2
+                ok = (l0 > -1e-9) & (l1 > -1e-9) & (l2 > -1e-9)
+                T[sub[ok]] = t[ok]
+                Wt[sub[ok]] = np.c_[l0, l1, l2][ok]
+                sub = sub[~ok]
+            todo = sub
         nodes = self.tri[np.maximum(T, 0)].copy()
         if len(todo):
             dist, nn = self.ntree.query(np.c_[px[todo], py[todo]])
@@ -270,15 +290,19 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
     hmin, hmax, hc, g = opt["fine"], opt["h_max"], opt["coarse"], opt["grade"]
     count = lambda h: float(np.sum(area / (0.433 * h ** 2)))
 
-    def build(sc, bct):
+    def build(sc, bct, graded=False):
         hgl = hmin + g * np.maximum(dgl - opt["gl_band"], 0)
         hct = hmin + g * np.maximum(dct - bct, 0)
         hbg = np.clip(sc * h_res, hmin, hmax)
         far = cold & (dgl > opt["gl_band"]) & (dct > bct)
         hbg[far] = np.maximum(hbg[far], min(hc, hmax))
-        return grade(np.minimum(np.minimum(hgl, hct), hbg), x, y, tri, g)
+        h_ = np.minimum(np.minimum(hgl, hct), hbg)
+        return grade(h_, x, y, tri, g) if graded else h_
     bct = opt["ct_band"]
     target = opt.get("max_triangles")
+    # the budget search on the ungraded size (grading is the slow part), then once more with the target scaled by
+    # the grading's effect on the count (grading only refines: the graded count is the larger)
+    target0 = target
     if not target:
         sc, note = 1.0, "no budget: the background res_points as they are"
     else:
@@ -291,19 +315,24 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
         elif count(build(hmin / max(float(h_res.max()), 1.0), bct)) <= target:
             sc, note = hmin / max(float(h_res.max()), 1.0), "the budget allows the finest background"
         else:
-            lo, hi = hmin / max(float(h_res.max()), 1.0), sc_max
-            for _ in range(60):
-                mid = np.sqrt(lo * hi)
-                if count(build(mid, bct)) > target:
-                    lo = mid
-                else:
-                    hi = mid
-                if hi / lo < 1.005:
-                    break
-            sc, note = hi, f"background res_points x {hi:.3g}"
+            def search(tgt):
+                lo, hi = hmin / max(float(h_res.max()), 1.0), sc_max
+                for _ in range(60):
+                    mid = np.sqrt(lo * hi)
+                    if count(build(mid, bct)) > tgt:
+                        lo = mid
+                    else:
+                        hi = mid
+                    if hi / lo < 1.005:
+                        break
+                return hi
+            sc = search(target)
+            ratio = count(build(sc, bct, True)) / max(count(build(sc, bct)), 1.0)
+            sc = search(target / ratio)
+            note = f"background res_points x {sc:.3g} (grading adds {100 * (ratio - 1):.1f}%)"
         if bct < opt["ct_band"]:
             note += f"; the transition band narrowed to +- {bct / 1e3:g} km to fit"
-    h = build(sc, bct)
+    h = build(sc, bct, True)
     bins = [0, 1.5 * hmin, 1000, 2000, 4000, 1e9]
     lab = [f"<= {1.5 * hmin:.0f} m", "..1 km", "1..2 km", "2..4 km", "> 4 km"]
     fr = [np.sum(area[(h > a) & (h <= b)]) / area.sum() * 100 for a, b in zip(bins[:-1], bins[1:])]
@@ -394,41 +423,42 @@ def interpolate_state(src: SavedState, nbs, sx, sy, stri, dx, dy, divide=None):
     def onto(rec, name):
         g, v = rec
         lv, col = (g - 1) // nbs, (g - 1) % nbs
-        gids, vals = [], []
+        levels = np.unique(lv)
         ismask = name.lower() in MASKS
-        for L in np.unique(lv):
-            m = lv == L
-            full = np.full(nbs, np.nan)
-            full[col[m]] = v[m]
-            have = np.isfinite(full)
-            if have.mean() > 0.99:
-                cover = np.ones(nbd, bool)
-            else:                                          # a partial level: where the nearest old node has it
-                cover = have[near]
-            fill = full.copy()
-            if not have.all():                             # gaps (within a covered level): the nearest old value
-                idx = np.where(have)[0]
-                _, k = cKDTree(np.c_[sx[idx], sy[idx]]).query(np.c_[sx[~have], sy[~have]])
-                fill[~have] = full[idx[k]]
-            if ismask:
-                val = fill[near]
-            else:
-                val = np.sum(W * fill[nodes], 1)
+        full = np.full((int(levels.max()) + 1, nbs), np.nan)
+        full[lv, col] = v
+        gids, vals = [], []
+        whole = [L for L in levels if np.isfinite(full[L]).all()]
+        if whole:                                          # complete levels: all at once
+            F = full[whole]                                # (levels, nbs)
+            val = F[:, near] if ismask else np.einsum("lnk,nk->ln", F[:, nodes], W)
+            for i, L in enumerate(whole):
+                gids.append(L * nbd + np.arange(nbd) + 1)
+                vals.append(val[i])
+        for L in [L for L in levels if L not in set(whole)]:
+            have = np.isfinite(full[L])
+            cover = np.ones(nbd, bool) if have.mean() > 0.99 else have[near]   # partial: where the nearest has it
+            fill = full[L].copy()
+            idx = np.where(have)[0]                        # gaps: the nearest old value
+            _, k = cKDTree(np.c_[sx[idx], sy[idx]]).query(np.c_[sx[~have], sy[~have]])
+            fill[~have] = full[L][idx[k]]
+            val = fill[near] if ismask else np.sum(W * fill[nodes], 1)
             c = np.where(cover)[0]
             gids.append(L * nbd + c + 1)
             vals.append(val[c])
-        return np.concatenate(gids).astype(np.int64), np.concatenate(vals)
+        g2, v2 = np.concatenate(gids).astype(np.int64), np.concatenate(vals)
+        o = np.argsort(g2)
+        return g2[o], v2[o]
 
     recs = {}
     for b in src.layout.blocks:
         recs[b.name] = onto((b.gids, src.layout.split(src.x)[b.name]), b.name)
     frozen = {k: onto(r, k) for k, r in src.frozen.items()}
     diag = {}
-    for k, r in src.diag.items():
-        kl = k.lower()
-        if kl in ("coordinate 1", "coordinate 2"):
-            continue
-        diag[k] = onto(r, k)
+    for k, r in src.diag.items():            # only the warm start and the coordinates (the rest are outputs the next
+        kl = k.lower()                       # run writes again)
+        if kl in ("velocity 1", "velocity 2", "velocity 3", "pressure", "coordinate 3"):
+            diag[k] = onto(r, k)
     # the coordinates: the new mesh's x, y on every level the old ones covered
     for k in [k for k in src.diag if k.lower() in ("coordinate 1", "coordinate 2")]:
         g, _ = src.diag[k]

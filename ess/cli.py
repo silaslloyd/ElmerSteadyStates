@@ -275,8 +275,8 @@ def _remesh_opt(args):
 def _add_remesh_args(s):
     s.add_argument("--fine", type=float, default=500.0, help="element size at the grounding line and margins (m)")
     s.add_argument("--coarse", type=float, default=2000.0, help="at least this on a frozen bed (m)")
-    s.add_argument("--gl-band-km", type=float, default=15.0, help="fine within this of the grounding line (km)")
-    s.add_argument("--ct-band-km", type=float, default=3.0, help="curves: fine within this of the cold/temperate "
+    s.add_argument("--gl-band-km", type=float, default=25.0, help="fine within this of the grounding line (km)")
+    s.add_argument("--ct-band-km", type=float, default=4.0, help="curves: fine within this of the cold/temperate "
                    "transition (km)")
     s.add_argument("--max-triangles", type=float, help="curves: the footprint's triangle budget (the background "
                    "scaled to it; without it res_points as they are)")

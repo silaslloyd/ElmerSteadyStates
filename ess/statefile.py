@@ -84,7 +84,7 @@ def merge_partitions(paths: list[str], rtol: float = 1e-9) -> tuple[Records, dic
     for k in names:
         g = np.concatenate([p[k][0] for p in parts if k in p])
         v = np.concatenate([p[k][1] for p in parts if k in p])
-        order = np.lexsort((v, g))
+        order = np.argsort(g, kind="stable")       # (was lexsort on (g, v): 70 s for 768 files of a 3D sector)
         g, v = g[order], v[order]
         first = np.ones(len(g), bool)
         first[1:] = g[1:] != g[:-1]

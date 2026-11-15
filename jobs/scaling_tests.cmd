@@ -210,7 +210,7 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # REMESH_AUTO=1: remesh when needed (ess run --remesh-auto: elmer/RemeshTrigger ends the run when the grounding line
 # or the cold/temperate transition comes near coarse mesh, ess remesh makes m001, m002, .. in the case dir and the run
 # goes on there with the steps left). REMESH_ARGS: ess remesh's size options, e.g. "--max-triangles 400000 --fine 500";
-# REMESH_GL_SAFETY / REMESH_CT_SAFETY (m, default 5000 / 1000), REMESH_CT_FRACTION (default 0.05): the trigger.
+# REMESH_GL_SAFETY / REMESH_CT_SAFETY (m, default 5000 / 1000), REMESH_CT_FRACTION (default 0.2): the trigger.
 # Needs make -C elmer RemeshTrigger.so, and gmsh + ElmerGrid in the job (as ess setup)
 # FS_LINTOL=1e-9: the iterative free-surface solves' tolerance (linear_free_surface = "iterative"; default 1e-12)
 [ -n "$FS_LINTOL" ] && export ESS_FS_LINTOL=$FS_LINTOL && echo "  free-surface linear tolerance $FS_LINTOL"
@@ -221,7 +221,7 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 [ -n "$REMESH_GL_SAFETY" ] && export ESS_REMESH_GL_SAFETY=$REMESH_GL_SAFETY
 [ -n "$REMESH_CT_SAFETY" ] && export ESS_REMESH_CT_SAFETY=$REMESH_CT_SAFETY
 [ -n "$REMESH_CT_FRACTION" ] && export ESS_REMESH_CT_FRACTION=$REMESH_CT_FRACTION
-# REMESH_MIN_STEPS=N: at least N steps on a mesh before the next remesh (each Elmer run counts from its start; default 1)
+# REMESH_MIN_STEPS=N: at least N steps on a mesh before the next remesh (each Elmer run counts from its start; default 100)
 [ -n "$REMESH_MIN_STEPS" ] && export ESS_REMESH_MIN_STEPS=$REMESH_MIN_STEPS
 [ "${CHUNKS:-1}" -gt 1 ] && opts="$opts --save-every ${SAVE_EVERY:-1} --add-diag Pressure" && echo "long run: $CHUNKS chunks of ${STEPS:-2} steps, states every ${SAVE_EVERY:-1} chunk(s)"
 # HEAT_LEGACY=1: the heat solver's legacy assembly (HeatSolveLegacy.so) instead of the vectorised HeatSolve
