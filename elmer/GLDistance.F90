@@ -1407,6 +1407,12 @@ SUBROUTINE FSSSAShelf( Model, Solver, dt, Transient )
       zb = zsl - r * H
       zbVar % Values( essPerm( zbVar, ib ) ) = zb
       zsVar % Values( essPerm( zsVar, it ) ) = zsl + (1.0_dp - r) * H
+      ! the free-surface solvers step from their PrevValues, which Elmer copied from Values at the start of the time
+      ! step, before this (a Before Timestep solver) ran: floated in Values only, the float was undone by the next
+      ! free-surface solve, and the shelf drifted off flotation by (r a - dsl/dt) per year of age since it left the
+      ! full-Stokes strip (65 m at the front after 500 yr with 10x accumulation)
+      IF ( ASSOCIATED( zbVar % PrevValues ) ) zbVar % PrevValues( essPerm( zbVar, ib ), 1 ) = zb
+      IF ( ASSOCIATED( zsVar % PrevValues ) ) zsVar % PrevValues( essPerm( zsVar, it ), 1 ) = zsl + (1.0_dp - r) * H
       ninner = ninner + 1
     END IF
     Hc(lc) = H
