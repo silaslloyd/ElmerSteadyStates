@@ -1363,6 +1363,9 @@ def main(argv=None):
                    help="remesh when needed: elmer/RemeshTrigger ends the run when the grounding line or the "
                         "cold/temperate transition comes near coarse mesh; then ess remesh from the state and the run "
                         "goes on on the new mesh (options as ess remesh)")
+    s.add_argument("--time-offset", type=float, default=0.0,
+                   help="the model time (yr) this run starts at, e.g. a restart of a longer run from a checkpoint: the "
+                        "--sea-level / --accumulation schedules and the VTU output steps go by the whole run's time")
     s.add_argument("--sea-level", help="sea level schedule --sea-level=SL@T,SL@T,.. (with '=': a value starting with "
                    "'-' is otherwise taken for an option; m @ yr since the run's start, piecewise "
                    "linear), evaluated by Elmer every time step (e.g. growing a marine sheet from land: "

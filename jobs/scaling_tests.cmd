@@ -219,6 +219,9 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # SEA_LEVEL="-500@0,-500@15000,0@30000": sea level (m) @ time (yr since the run's start), piecewise linear, a function
 # of time in Elmer (every step; one long run): growing a marine sheet from a land one (jobs/thin_start.py)
 [ -n "$SEA_LEVEL" ] && opts="$opts --sea-level=$SEA_LEVEL" && echo "  sea level schedule $SEA_LEVEL"
+# TIME_OFFSET=T: the run starts at model time T (yr), e.g. a restart from a checkpoint of a longer run (SEA_LEVEL and
+# ACCUM keep the whole run's times)
+[ -n "$TIME_OFFSET" ] && opts="$opts --time-offset $TIME_OFFSET" && echo "  model time at the start: $TIME_OFFSET yr"
 # ACCUM="10@0,10@9000,1@10000": the accumulation times a factor @ time (yr since the run's start), piecewise linear
 # (ess run --accumulation; carried across remeshes with the true time, like SEA_LEVEL)
 [ -n "$ACCUM" ] && opts="$opts --accumulation=$ACCUM" && echo "  accumulation factor schedule $ACCUM"
