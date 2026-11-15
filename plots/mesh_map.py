@@ -3,9 +3,13 @@
 an optional zoom. Reads an Elmer 2D mesh directory (case/<mesh_db>: mesh.nodes, mesh.elements), e.g. one made by
 `ess remesh`.
 
-    python3 plots/mesh_map.py MESHDIR OUT.png [--zoom X0 X1 Y0 Y1 (km)] [--compare OTHER_MESHDIR]
+    python3 plots/mesh_map.py MESHDIR OUT.png [--zoom X0 X1 Y0 Y1 (km)] [--state S.npz]
+                              [--compare OTHER_MESHDIR [--compare-state S2.npz]]
 
 --compare: a second panel with another mesh (e.g. the original footprint) on the same axes.
+--state: a state on that mesh (e.g. <work>/m001_start.npz; for the original footprint the state remeshed from):
+its grounding line (red: GroundedMask -0.5, between grounded and floating) and cold/temperate transition on the
+grounded bed (white: ColdTempMask 0) drawn on top.
 """
 import argparse
 import os
@@ -14,10 +18,32 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from ess.remesh import read_footprint  # noqa: E402
+from ess.remesh import base_values, read_footprint  # noqa: E402
+from ess.statefile import find_name, load_state  # noqa: E402
 
 
-def panel(ax, meshdir, zoom, norm):
+def curves(ax, x, y, tri, state):
+    """the grounding line and the cold/temperate transition of a state on this footprint"""
+    s = load_state(state)
+    f = {**s.diag, **s.frozen}
+    nb = len(x)
+    gm = base_values(f[find_name(f, "groundedmask")], nb)
+    ct = base_values(f[find_name(f, "coldtempmask")], nb)
+    if np.isnan(gm).all():
+        raise SystemExit(f"{state}: its GroundedMask is not on this mesh ({nb} footprint nodes)")
+    gm, ct = np.nan_to_num(gm, nan=-1.0), np.nan_to_num(ct, nan=-1.0)
+    ax.tricontour(x, y, tri, gm, levels=[-0.5], colors="red", linewidths=1.6, linestyles="solid")
+    grounded = (gm[tri] > -0.5).all(1)
+    import matplotlib.tri as mtri
+    T = mtri.Triangulation(x, y, tri, mask=~grounded)
+    ax.tricontour(T, ct, levels=[0.0], colors="white", linewidths=0.9, linestyles="solid")
+    from matplotlib.lines import Line2D
+    ax.legend([Line2D([], [], color="red", lw=1.6), Line2D([], [], color="white", lw=0.9)],
+              ["grounding line", "cold/temperate transition (grounded)"], loc="upper right", framealpha=0.7,
+              facecolor="0.5")
+
+
+def panel(ax, meshdir, zoom, norm, state=None):
     from matplotlib.collections import LineCollection
     _, x, y, tri = read_footprint(meshdir)
     x, y = x / 1e3, y / 1e3
@@ -37,6 +63,8 @@ def panel(ax, meshdir, zoom, norm):
     lw = 0.15 if len(ee) > 2e5 else 0.3
     ax.add_collection(LineCollection(np.stack([np.c_[x[ee[:, 0]], y[ee[:, 0]]], np.c_[x[ee[:, 1]], y[ee[:, 1]]]], 1),
                                      colors="k", linewidths=lw, alpha=0.6))
+    if state:
+        curves(ax, x, y, tri, state)
     ax.set_aspect("equal")
     ax.set_xlabel("x (km)")
     ax.set_ylabel("y (km)")
@@ -51,6 +79,8 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--zoom", type=float, nargs=4)
     ap.add_argument("--compare")
+    ap.add_argument("--state")
+    ap.add_argument("--compare-state")
     a = ap.parse_args()
     import matplotlib
     matplotlib.use("Agg")
@@ -60,8 +90,9 @@ def main():
     meshes = [a.mesh] + ([a.compare] if a.compare else [])
     fig, axs = plt.subplots(len(meshes), 1, figsize=(16, 6 * len(meshes)) if not a.zoom else (12, 10 * len(meshes)),
                             squeeze=False)
-    for ax, m in zip(axs[:, 0], meshes):
-        tc = panel(ax, m, a.zoom, norm)
+    states = [a.state] + ([a.compare_state] if a.compare else [])
+    for ax, m, st in zip(axs[:, 0], meshes, states):
+        tc = panel(ax, m, a.zoom, norm, st)
     fig.colorbar(tc, ax=axs[:, 0].tolist(), label="element size (m, mean edge)", shrink=0.8)
     fig.savefig(a.out, dpi=150, bbox_inches="tight")
     print(f"wrote {a.out}")
