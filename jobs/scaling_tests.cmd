@@ -219,6 +219,10 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # SEA_LEVEL="-500@0,-500@15000,0@30000": sea level (m) @ time (yr since the run's start), piecewise linear, a function
 # of time in Elmer (every step; one long run): growing a marine sheet from a land one (jobs/thin_start.py)
 [ -n "$SEA_LEVEL" ] && opts="$opts --sea-level=$SEA_LEVEL" && echo "  sea level schedule $SEA_LEVEL"
+# DT_ADAPT="MIN:MAX[:CFL target[:calm steps]]": adaptive time step (DT the first one): StepCheck ends the run when
+# the step should change (the CFL target, default 1, within MIN .. MAX yr; up only after that many calm steps, default
+# 50) and ess run carries on with the new step to the same end time (STEPS x DT); needs STEP_CHECK (set here)
+if [ -n "$DT_ADAPT" ]; then export ESS_DT_ADAPT=$DT_ADAPT ESS_STEP_CHECK=1; STEP_CHECK=1; echo "  adaptive time step $DT_ADAPT (yr; CFL target)"; fi
 # TIME_OFFSET=T: the run starts at model time T (yr), e.g. a restart from a checkpoint of a longer run (SEA_LEVEL and
 # ACCUM keep the whole run's times)
 [ -n "$TIME_OFFSET" ] && opts="$opts --time-offset $TIME_OFFSET" && echo "  model time at the start: $TIME_OFFSET yr"

@@ -1434,7 +1434,7 @@ Solver {n}
   Ice Density = Real #rhoi
   Gravity = Real #gravity
   Viscosity = Real #viscosity
-End
+{self._dt_adapt_keys()}End
 """
         k = text.index("!---------------- BOUNDARY CONDITIONS")
         k = text.rindex("\n", 0, k - 1)
@@ -1443,6 +1443,21 @@ End
             if f'Name = "{eq}"' in text:
                 text = self._add_active(text, eq, [n])
         return text
+
+    def _dt_adapt_keys(self):
+        """ESS_DT_ADAPT = "MIN:MAX[:CFL target[:steps]]" (jobs DT_ADAPT): StepCheck ends the run when the time step should
+        change (the CFL target within MIN .. MAX yr; up only after `steps` calm steps, default 50) and ess run carries
+        on with the new step (see elmer/StepCheck.F90)"""
+        v = os.environ.get("ESS_DT_ADAPT")
+        if not v:
+            return ""
+        f = v.split(":")
+        lo, hi = float(f[0]), float(f[1])
+        tgt = float(f[2]) if len(f) > 2 and f[2] else 1.0
+        nup = int(f[3]) if len(f) > 3 and f[3] else 50
+        return (f"  Step Check Dt Control = Logical True\n  Step Check Dt Min = Real {lo!r}\n"
+                f"  Step Check Dt Max = Real {hi!r}\n  Step Check CFL Target = Real {tgt!r}\n"
+                f"  Step Check Dt Min Steps = Integer {nup}\n")
 
     def _remesh_trigger(self, text):
         """elmer/RemeshTrigger.F90 after every time step on the ice base (see remesh_auto)"""
@@ -1946,6 +1961,7 @@ End
         if self.layout is None:
             raise RuntimeError("ElmerModel.run needs a state layout (run `ess extract` first)")
         self.last_remesh = None
+        self.last_dtchange = None
         key = self._key(x, p, spec)
         cache = os.path.join(self.work, "cache", key + ".npz")
         if self.use_cache and os.path.exists(cache):
@@ -1970,12 +1986,20 @@ End
                                     transition=(int(f_[4]), int(f_[5])), run_dir=run_dir)
             log.info(f"{tag}: the remesh trigger ended the run after step {f_[1]} (t = {float(f_[0]):g}; grounding "
                      f"line {f_[2]} of {f_[3]} nodes close to coarse mesh, transition {f_[4]} of {f_[5]})")
+        self.last_dtchange = None
+        flag = os.path.join(run_dir, "dt_change")
+        if os.path.exists(flag):                 # StepCheck ended the run to change the time step (ESS_DT_ADAPT)
+            f_ = open(flag).read().split()
+            self.last_dtchange = dict(time=float(f_[0]), step=int(f_[1]), dt=float(f_[2]), cfl=float(f_[3]),
+                                      run_dir=run_dir)
+            log.info(f"{tag}: the time step control ended the run after step {f_[1]} (t = {float(f_[0]):g}, CFL "
+                     f"{float(f_[3]):.3g}): next dt {float(f_[2]):.3g} yr")
         rec = self._read_out(run_dir, "state_out.bin", tag)
         xo = self.layout.to_vector(rec)
         names = {find_name(rec, n) for n in self.state_vars}
         diag = {k: v for k, v in rec.items() if k not in names}
         log.debug(f"{tag}: Elmer {secs:.0f} s in {run_dir}")
-        if self.use_cache and self.last_remesh is None:   # an early end is not this map's value
+        if self.use_cache and self.last_remesh is None and self.last_dtchange is None:   # an early end: not the map
             d = {"x": xo}
             for k, (g, v) in diag.items():
                 d["g::" + k] = g

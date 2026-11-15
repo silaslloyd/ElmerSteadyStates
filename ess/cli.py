@@ -316,13 +316,38 @@ def _mesh_pngs(cfg, name, state, prev_mesh=None, prev_state=None):
         log.warning(f"remesh: no mesh pictures ({e})")
 
 
-def _auto_remesh(args, cfg, model, out, t_abs, rm):
+def model_dt(cfg, args):
+    """this run's time step (yr): --dt, else the config's"""
+    return args.dt if args.dt is not None else float(cfg.get("map", {}).get("dt", 1.0))
+
+
+def _dt_change(args, model, out, t_abs, dc):
+    """the run ended by the time step control (StepCheck, ESS_DT_ADAPT): carry on from its final state (out) with the
+    new time step, to the same end time"""
+    import copy
+    import math
+    dtn = float(dc["dt"])
+    left = int(math.ceil((args.t_end_abs - t_abs) / dtn - 1e-9))
+    start = os.path.splitext(out)[0] + "_dtstart.npz"
+    shutil.copy(out, start)
+    log.info(f"run: time step {args.dt} -> {dtn:.4g} yr at t = {t_abs:g} (CFL {dc['cfl']:.3g}); {left} steps to "
+             f"t = {args.t_end_abs:g}")
+    if left <= 0:
+        return
+    a2 = copy.copy(args)
+    a2.state, a2.warm_start, a2.steps, a2.dt = start, start, left, dtn
+    a2.time_offset = t_abs
+    return cmd_run(a2)
+
+
+def _auto_remesh(args, cfg, model, out, t_abs, rm, dc=None):
     """the run ended by RemeshTrigger: remesh from its final state (out), then carry on (cmd_run again) on the new
     mesh with the steps left"""
     import copy
     from .remesh import remesh
-    steps_total = args.steps if args.steps is not None else int(cfg["map"]["n_steps"])
-    left = steps_total - rm["step"]
+    import math
+    dtn = float(dc["dt"]) if dc else float(model_dt(cfg, args))   # a step change at the same step: taken along
+    left = int(math.ceil((args.t_end_abs - t_abs) / dtn - 1e-9))
     nrem = getattr(args, "remesh_count", 0)
     if nrem > 0 and rm["step"] <= 1:
         raise SystemExit(f"remesh: the trigger fired again at the first step on the new mesh {model.mesh_db}: the "
@@ -343,7 +368,7 @@ def _auto_remesh(args, cfg, model, out, t_abs, rm):
         return
     os.environ["ESS_MESH_DB"] = name
     a2 = copy.copy(args)
-    a2.state, a2.warm_start, a2.steps = start, start, left
+    a2.state, a2.warm_start, a2.steps, a2.dt = start, start, left, dtn
     a2.time_offset = t_abs
     a2.remesh_count = nrem + 1
     log.info(f"run: continuing on {name} from {start} (MESH_DB={name}), {left} steps")
@@ -404,6 +429,8 @@ def cmd_run(args):
     elif _marine(model):
         model.gl_mode = "frozen"           # --gl frozen also when the config says contact
     prob = _problem(cfg, model)
+    if getattr(args, "t_end_abs", None) is None:   # the model time the whole run ends at (across restarts)
+        args.t_end_abs = t_off + args.chunks * prob.spec.horizon
     if t_off and prob.spec.dt:              # a continuation (after a remesh): outputs on the whole run's step count
         model.step_offset = int(round(t_off / prob.spec.dt))
     log.info(f"run: dt = {prob.spec.dt:g}, {prob.spec.n_steps} steps per chunk, "
@@ -599,8 +626,11 @@ def cmd_run(args):
         yn = prob.phi(y, p, tag=f"run{c}", want_diag=True)
         t = (c + 1) * prob.spec.horizon
         rm = getattr(model, "last_remesh", None)
+        dc = getattr(model, "last_dtchange", None)
         if rm:                                   # RemeshTrigger ended the run early
             t = c * prob.spec.horizon + rm["step"] * prob.spec.dt
+        elif dc:                                 # the time step control (ESS_DT_ADAPT) ended it
+            t = c * prob.spec.horizon + dc["step"] * prob.spec.dt
         dy = rms(yn - y)
         log.info(f"run: chunk {c + 1}/{args.chunks}  t = {t:g}  rms change {dy:.3e}")
         y = yn
@@ -636,7 +666,9 @@ def cmd_run(args):
         save_state(out, saved.layout, prob.unscale(y), p, dict(saved.frozen), prob.last_diag, time=t + t_off,
                    mesh_db=model.mesh_db)
         if rm:
-            return _auto_remesh(args, cfg, model, out, t + t_off, rm)
+            return _auto_remesh(args, cfg, model, out, t + t_off, rm, dc)
+        if dc:
+            return _dt_change(args, model, out, t + t_off, dc)
         if args.save_every and (c + 1) % args.save_every == 0:
             save_state(os.path.join(sdir, f"state_{c + 1 + args.chunk_offset:04d}.npz"), saved.layout, prob.unscale(y), p,
                        dict(saved.frozen), prob.last_diag, time=t)

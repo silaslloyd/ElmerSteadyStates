@@ -19,6 +19,7 @@
 !> The maxima are reduced over all ranks and logged with their position (Info, level 3); the nodal values go to
 !> the exported variables "CFL" (advective) and "Step Change" (|dZs| on the surface, |dZb| on the floating base).
 !>
+!> Adaptive time step (Step Check Dt Control = True; Step Check CFL Target, Dt Min, Dt Max, Dt Min Steps): see below.
 !> Keywords (Solver section):  Variable = "CFL";  Exported Variable 1 = -dofs 1 "Step Change"
 !>   Ice Density = Real, Gravity = Real, Viscosity = Real    (the model's units)
 !------------------------------------------------------------------------------
@@ -41,7 +42,10 @@ SUBROUTINE StepCheck( Model, Solver, dt, Transient )
   REAL(KIND=dp) :: rhoi, grav, mu, uh, c, dz, hmin, e, thick, &
       cTop, cBot, dTop, dBot, rFrac, rMax, xs(3), ys(3), loc(6,2), nTop1, nBot1, tnow
   INTEGER :: t, i, j, k, n, a, b, nn, p
-  LOGICAL :: Found, top, bot, GotR
+  LOGICAL :: Found, top, bot, GotR, endRun
+  REAL(KIND=dp) :: cTgt, dtLo, dtHi, cMax, dtNew
+  INTEGER :: nUp
+  INTEGER, SAVE :: nCalls = 0, nCalm = 0
   CHARACTER(*), PARAMETER :: Caller = 'StepCheck'
 !------------------------------------------------------------------------------
   Params => GetSolverParams()
@@ -155,6 +159,39 @@ SUBROUTINE StepCheck( Model, Solver, dt, Transient )
       ' (x', loc(5,1)/1e3_dp, ' y', loc(5,2)/1e3_dp, '), relaxation number R ', rMax, &
       ' (x', loc(6,1)/1e3_dp, ' y', loc(6,2)/1e3_dp, '; explicit stable < 2)'
   CALL Info( Caller, Message, Level=3 )
+
+  ! adaptive time step ("Step Check Dt Control", ESS_DT_ADAPT): the step that would give the CFL target, within
+  ! [Dt Min, Dt Max]; when it is clearly smaller than this run's dt (now), or clearly larger for "Dt Min Steps" steps
+  ! in a row, the run is ended (Exit Condition, as RemeshTrigger) and the file dt_change written (time, step, the new
+  ! dt, the CFL): ess run continues from here with that dt (Elmer's dt is fixed within one run)
+  IF ( ListGetLogical( Params, 'Step Check Dt Control', Found ) ) THEN
+    nCalls = nCalls + 1
+    cTgt = ListGetConstReal( Params, 'Step Check CFL Target', Found ); IF ( .NOT. Found ) cTgt = 1.0_dp
+    dtLo = ListGetConstReal( Params, 'Step Check Dt Min', Found ); IF ( .NOT. Found ) dtLo = dt
+    dtHi = ListGetConstReal( Params, 'Step Check Dt Max', Found ); IF ( .NOT. Found ) dtHi = dt
+    nUp = ListGetInteger( Params, 'Step Check Dt Min Steps', Found ); IF ( .NOT. Found ) nUp = 50
+    cMax = MAX( cTop, cBot )
+    dtNew = dtHi
+    IF ( cMax > 0.0_dp ) dtNew = MIN( dtHi, dt * cTgt / cMax )
+    dtNew = MAX( dtLo, dtNew )
+    IF ( dtNew > 1.5_dp * dt ) THEN
+      nCalm = nCalm + 1
+    ELSE
+      nCalm = 0
+    END IF
+    endRun = ( dtNew < 0.8_dp * dt ) .OR. ( nCalm >= nUp )
+    WRITE( Message, '(A,F10.3,A,F8.3,A,F8.3,A,F8.3,A,I0,A,L1)' ) 'dt control t', tnow, ': CFL ', cMax, ', dt ', dt, &
+        ' -> ', dtNew, ' (calm steps ', nCalm, '), end ', endRun
+    CALL Info( Caller, Message, Level=3 )
+    IF ( endRun ) THEN
+      CALL ListAddConstReal( Model % Simulation, 'Exit Condition', 1.0_dp )
+      IF ( ParEnv % MyPe == 0 ) THEN
+        OPEN( 32, FILE='dt_change', STATUS='REPLACE' )
+        WRITE( 32, '(ES24.16,1X,I0,2(1X,ES24.16))' ) tnow, nCalls, dtNew, cMax
+        CLOSE( 32 )
+      END IF
+    END IF
+  END IF
   DEALLOCATE( h, zsN, zbN, zsOf )
 
 CONTAINS
