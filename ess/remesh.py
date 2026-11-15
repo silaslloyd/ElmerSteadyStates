@@ -294,7 +294,9 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
         hgl = hmin + g * np.maximum(dgl - opt["gl_band"], 0)
         hct = hmin + g * np.maximum(dct - bct, 0)
         hbg = np.clip(sc * h_res, hmin, hmax)
-        far = cold & (dgl > opt["gl_band"]) & (dct > bct)
+        # the grounded bed away from both curves, cold (frozen) or temperate (the streams' interiors: fast, little
+        # deformation), at least opt["coarse"]: only the boundaries are fine
+        far = grounded & (dgl > opt["gl_band"]) & (dct > bct)
         hbg[far] = np.maximum(hbg[far], min(hc, hmax))
         h_ = np.minimum(np.minimum(hgl, hct), hbg)
         return grade(h_, x, y, tri, g) if graded else h_
@@ -312,11 +314,12 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
             bct *= 0.5                                       # even the coarsest background overshoots: narrower
         if count(build(sc_max, bct)) > target:
             sc, note = sc_max, f"the budget {target:.0f} is below the floor {count(build(sc_max, bct)):.0f}: using it"
-        elif count(build(hmin / max(float(h_res.max()), 1.0), bct)) <= target:
-            sc, note = hmin / max(float(h_res.max()), 1.0), "the budget allows the finest background"
+        elif count(build(1.0, bct)) <= target:              # the budget is a cap: never finer than res_points
+            sc, note = 1.0, (f"the background res_points as they are: ~{count(build(1.0, bct, True)):.0f} triangles, "
+                             f"under the budget")
         else:
             def search(tgt):
-                lo, hi = hmin / max(float(h_res.max()), 1.0), sc_max
+                lo, hi = 1.0, sc_max
                 for _ in range(60):
                     mid = np.sqrt(lo * hi)
                     if count(build(mid, bct)) > tgt:
@@ -340,7 +343,7 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
            f"{note}",
            f"fine (<= {1.5 * hmin:.0f} m): GL band +- {opt['gl_band'] / 1e3:g} km {np.sum(area[dgl < opt['gl_band']]) / 1e6:.0f} km2, "
            f"transition band +- {bct / 1e3:g} km {np.sum(area[dct < bct]) / 1e6:.0f} km2; growth {g:g} m/m away from "
-           f"them; frozen bed away from both >= {min(hc, hmax):g} m",
+           f"them; grounded bed away from both (frozen or the streams' interiors) >= {min(hc, hmax):g} m",
            "area by size: " + ", ".join(f"{l} {v:.1f}%" for l, v in zip(lab, fr)),
            f"triangles: old mesh {len(tri)}, new ~{count(h):.0f}" + (f" (budget {target:.0f})" if target else "")
            + f"; footprint nodes ~{count(h) / 2:.0f}"]
