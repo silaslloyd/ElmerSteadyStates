@@ -1042,8 +1042,18 @@ End
         if text.count(a) != 2:
             raise ValueError("sea_level_param: the sea level lines of the template changed")
         line = "  Sea Level = Real #ess_sl"
+        # the surface limiter: the template's Min Zs = 1 m assumes sea level 0 (the surface above the sea);
+        # with sea level a parameter: Min Zs = max(bed, sea level) + 1 m (land ice where the bed is above the sea,
+        # e.g. a sheet grown with sea level lowered)
+        mz = ('  Min Zs = Variable "bedrock"\n'
+              '    Real Lua "math.max(tx[0], ess_sl) + 1.0"   ! [elmer] sea_level_param: max(bed, sea level) + 1')
         if getattr(self, "sea_level_schedule", None):       # a function of time (ess run --sea-level)
             line = '  Sea Level = Variable Time\n    Real Lua "ess_sl_t(tx[0])"'
+            mz = ('  Min Zs = Variable "bedrock", Time\n'
+                  '    Real Lua "math.max(tx[0], ess_sl_t(tx[1])) + 1.0"   ! max(bed, sea level(t)) + 1')
+        if text.count("  Min Zs = Real 1.0") != 1:
+            raise ValueError("sea_level_param: the Min Zs line of the template changed")
+        text = text.replace("  Min Zs = Real 1.0", mz)
         text = text.replace(a, line)
         for m in ("Material 1", "Material 2"):              # the parent material of a bed element may be either
             k = text.index("\n" + m + "\n") + len(m) + 2
