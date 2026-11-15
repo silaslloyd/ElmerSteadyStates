@@ -223,6 +223,8 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # the step should change (the CFL target, default 1, within MIN .. MAX yr; up only after that many calm steps, default
 # 50) and ess run carries on with the new step to the same end time (STEPS x DT); needs STEP_CHECK (set here)
 if [ -n "$DT_ADAPT" ]; then export ESS_DT_ADAPT=$DT_ADAPT ESS_STEP_CHECK=1; STEP_CHECK=1; echo "  adaptive time step $DT_ADAPT (yr; CFL target)"; fi
+# UNTIL=T: run to model time T (yr) instead of STEPS steps (ess run --until)
+[ -n "$UNTIL" ] && opts="$opts --until $UNTIL" && echo "  run to model time $UNTIL yr"
 # TIME_OFFSET=T: the run starts at model time T (yr), e.g. a restart from a checkpoint of a longer run (SEA_LEVEL and
 # ACCUM keep the whole run's times)
 [ -n "$TIME_OFFSET" ] && opts="$opts --time-offset $TIME_OFFSET" && echo "  model time at the start: $TIME_OFFSET yr"

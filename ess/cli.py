@@ -418,6 +418,12 @@ def cmd_run(args):
         a2.remesh_count = getattr(args, "remesh_count", 0)
         log.info(f"run: starting on {name} from {start} (MESH_DB={name})")
         return cmd_run(a2)
+    if getattr(args, "until", None) is not None:   # run to a model time, not a number of steps
+        import math
+        dt_ = model_dt(cfg, args)
+        args.t_end_abs = float(args.until)
+        args.steps = max(1, int(math.ceil((args.t_end_abs - t_off) / dt_ - 1e-9)))
+        log.info(f"run: until t = {args.t_end_abs:g} yr: {args.steps} steps of {dt_:g} yr from t = {t_off:g}")
     if args.dt is not None:
         cfg.setdefault("map", {})["dt"] = args.dt
     if args.steps is not None:
@@ -1395,6 +1401,9 @@ def main(argv=None):
                    help="remesh when needed: elmer/RemeshTrigger ends the run when the grounding line or the "
                         "cold/temperate transition comes near coarse mesh; then ess remesh from the state and the run "
                         "goes on on the new mesh (options as ess remesh)")
+    s.add_argument("--until", type=float, default=None,
+                   help="run to this model time (yr) instead of --steps: the steps from the start time (--time-offset) "
+                        "and dt, recomputed after every remesh or time step change")
     s.add_argument("--time-offset", type=float, default=0.0,
                    help="the model time (yr) this run starts at, e.g. a restart of a longer run from a checkpoint: the "
                         "--sea-level / --accumulation schedules and the VTU output steps go by the whole run's time")
