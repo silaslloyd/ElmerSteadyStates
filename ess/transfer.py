@@ -40,8 +40,8 @@ def _bed(f, gids, x):
     if np.array_equal(g[j], gids):
         return v[j]
     xb = _lookup(f, "coordinate 1", g)
-    o = np.argsort(xb)
-    return np.interp(x, xb[o], v[o])
+    from .case import extrapolate_linear
+    return extrapolate_linear(x, xb, v)
 
 
 def _block(s: SavedState, name):
@@ -160,7 +160,10 @@ def with_bed_of(dst: SavedState, src: SavedState) -> SavedState:
     gd, _ = dst.frozen[kd]
     xd = _lookup(fd, "coordinate 1", gd)
     frozen = dict(dst.frozen)
-    frozen[kd] = (gd, np.interp(xd, ux, prof))
+    from .case import extrapolate_linear
+    # beyond the source's extent (a target domain longer than the source's): the source's bed slope continued, not
+    # its last value held (that left the extended sectors' bed flat at -224.1 m from r ~ 705 km to the front)
+    frozen[kd] = (gd, extrapolate_linear(xd, ux, prof))
     log.info(f"transfer: the bedrock of the target from the source's bed profile ({len(gd)} nodes)")
     return replace(dst, frozen=frozen)
 

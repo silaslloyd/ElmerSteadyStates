@@ -44,10 +44,10 @@ def main():
     ap.add_argument("--width-km", type=float, default=10.0)
     ap.add_argument("--keep-above-km", type=float, default=None)
     ap.add_argument("--fit-r-km", type=float, nargs=2, default=(800.0, 1450.0))
-    ap.add_argument("--continue-slope", action="store_true",
-                    help="first replace the bed wherever it lies above the interior's linear fit (the flat stretch "
-                         "the extended domain got from the flowline it was transferred from: -224.1 m from r ~ 705 km "
-                         "to the front) by that line, all the way to the front; then the bend on top")
+    ap.add_argument("--keep-flat", dest="continue_slope", action="store_false",
+                    help="keep a flat outer stretch as it is (by default the bed wherever it lies above the "
+                         "interior's linear fit, i.e. the flat -224.1 m stretch the extended domain got from the shorter "
+                         "flowline, is put on that line, all the way to the front, and the bend added on top)")
     ap.add_argument("--force", action="store_true",
                     help="write even if the bed under grounded ice changes (e.g. a bed template for jobs/thin_start.py)")
     a = ap.parse_args()

@@ -98,6 +98,25 @@ def initial_geometry(P, n=4001, x_end=1.0, edge=30.0):
     return dict(x=x, bed=bed, zs=zs, H=H, gm=gm, ct=ct, Tb=Tb, Ts_surf=np.full_like(x, Ts))
 
 
+def extrapolate_linear(xq, xt, yt, frac=0.2):
+    """np.interp inside the table, beyond either end the straight line fitted to the table's last (first) frac of its
+    length: a bed keeps its slope instead of going flat"""
+    o = np.argsort(xt)
+    xt, yt = np.asarray(xt, float)[o], np.asarray(yt, float)[o]
+    out = np.interp(xq, xt, yt)
+    span = xt[-1] - xt[0]
+    hi, lo = xq > xt[-1], xq < xt[0]
+    if hi.any():
+        k = xt >= xt[-1] - frac * span
+        m_, c_ = np.polyfit(xt[k], yt[k], 1)
+        out[hi] = yt[-1] + m_ * (xq[hi] - xt[-1])
+    if lo.any():
+        k = xt <= xt[0] + frac * span
+        m_, c_ = np.polyfit(xt[k], yt[k], 1)
+        out[lo] = yt[0] + m_ * (xq[lo] - xt[0])
+    return out
+
+
 def marine_geometry(P, icdir, n=8001, rho_tol=0.5, x_max=None):
     """ElmerStreams Marine_Term initial state from its dimensional tables (x in m, values in m / K); x_max > L: the
     tables (they reach 1020 km) out to x_max (a mesh whose front is beyond L: [case] front_km)."""
@@ -105,7 +124,10 @@ def marine_geometry(P, icdir, n=8001, rho_tol=0.5, x_max=None):
     x = np.linspace(0, L, n)
     tab = lambda f: np.loadtxt(os.path.join(icdir, f))
     at = lambda f: np.interp(x, *tab(f).T)
-    bed, zs, zb, Tb = at("bed_dim.xy"), at("zs_dim.xy"), at("zb_dim.xy"), at("Tb_dim.xy")
+    # the bed beyond the tables (x_max > 1020 km): the tables' slope continued (np.interp would hold the last value:
+    # a flat bed out to the front)
+    bed = extrapolate_linear(x, *tab("bed_dim.xy").T)
+    zs, zb, Tb = at("zs_dim.xy"), at("zb_dim.xy"), at("Tb_dim.xy")
     zb = np.maximum(zb, bed)
     H = zs - zb
     gm = np.where(zb - bed < rho_tol, 1.0, -1.0)
