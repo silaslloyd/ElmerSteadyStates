@@ -332,7 +332,18 @@ def _auto_remesh(args, cfg, model, out, t_abs, rm):
     return cmd_run(a2)
 
 
+def sea_level_schedule(spec):
+    """'SL@T,SL@T,..' (m @ years, piecewise linear, constant outside): a function t -> sea level"""
+    pts = sorted((float(b), float(a)) for a, _, b in (k.strip().partition("@") for k in spec.split(",") if k.strip()))
+    if not pts:
+        raise SystemExit(f"--sea-level {spec!r}: give SL@T,SL@T,..")
+    ts, sl = np.array([p_[0] for p_ in pts]), np.array([p_[1] for p_ in pts])
+    return lambda t: float(np.interp(t, ts, sl))
+
+
 def cmd_run(args):
+    if getattr(args, "sea_level", None):
+        os.environ["ESS_SEA_LEVEL_PARAM"] = "1"
     if getattr(args, "remesh_auto", False):
         if args.chunks != 1:
             raise SystemExit("--remesh-auto: one long run (--chunks 1, many --steps); the trigger ends it early")
@@ -521,7 +532,18 @@ def cmd_run(args):
         ramp = (float(a0), max(1, int(nr or 1)))
         log.info(f"run: sliding y bump {ramp[0]:g} -> 0 linearly over the first {ramp[1]} chunk(s) "
                  f"({ramp[1] * prob.spec.horizon:g} yr), uniform after")
+    sl_of = sea_level_schedule(args.sea_level) if getattr(args, "sea_level", None) else None
+    if sl_of:
+        if not _marine(model) or not model.sea_level_param:
+            raise SystemExit("--sea-level: the marine template with sea_level_param")
+        if remask:
+            log.warning("run: --sea-level with the remask between chunks: its flotation test assumes sea level 0")
+        log.info(f"run: sea level {args.sea_level} (m @ yr, piecewise linear), constant within each chunk at its "
+                 f"value at the chunk's middle")
     for c in range(args.chunks):
+        if sl_of:
+            model.lua_overrides["ess_sl"] = repr(sl_of(t_off + (c + 0.5) * prob.spec.horizon))
+            log.info(f"run: chunk {c + 1}: sea level {float(model.lua_overrides['ess_sl']):.2f} m")
         if ramp:
             A0, nr = ramp
             model.slide_ybump = A0 * max(0.0, 1 - c / nr)
@@ -1294,6 +1316,9 @@ def main(argv=None):
                    help="remesh when needed: elmer/RemeshTrigger ends the run when the grounding line or the "
                         "cold/temperate transition comes near coarse mesh; then ess remesh from the state and the run "
                         "goes on on the new mesh (options as ess remesh)")
+    s.add_argument("--sea-level", help="sea level schedule 'SL@T,SL@T,..' (m @ yr since the run's start, piecewise "
+                   "linear), one value per chunk (e.g. growing a marine sheet from land: '-500@0,-500@10000,0@20000' "
+                   "with --chunks 400 --steps 10); sets [elmer] sea_level_param")
     s.add_argument("--remesh-prefix", default="m", help="--remesh-auto: the new meshes' names (m001, m002, ..)")
     _add_remesh_args(s)
     s.add_argument("--chunks", type=int, default=1, help="number of map evaluations ([map] dt, n_steps each)")

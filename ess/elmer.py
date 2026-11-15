@@ -73,7 +73,7 @@ class ElmerModel(Model):
         self.contact_function = str(e.get("contact_function", "elmerice"))
         # [elmer] sea_level_param = true: sea level is the Lua parameter ess_sl (m, default 0; e.g. --lua ess_sl=50)
         # in the constants (hydrostatic loads of the contact) and every material (sea pressure), not a fixed 0
-        self.sea_level_param = bool(e.get("sea_level_param", False))
+        self.sea_level_param = bool(e.get("sea_level_param", False)) or os.environ.get("ESS_SEA_LEVEL_PARAM") == "1"
         # ESS_MESH_DB (jobs MESH_DB): another footprint in the case dir, e.g. one made by `ess remesh`
         self.mesh_db = os.environ.get("ESS_MESH_DB") or e.get("mesh_db", "footprint")
         self.ess_lib = cfg["_path"](e.get("ess_lib", "elmer/SteadyStateIO"))
