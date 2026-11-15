@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import shutil
 import sys
 
@@ -365,6 +366,8 @@ def cmd_run(args):
             raise SystemExit("--remesh-auto: one long run (--chunks 1, many --steps); the trigger ends it early")
         os.environ["ESS_REMESH_AUTO"] = "1"
     t_off = float(getattr(args, "time_offset", 0.0) or 0.0)
+    if getattr(args, "remesh_prefix", None) is None:   # each run's meshes numbered from 1 under its own label
+        args.remesh_prefix = re.sub(r"[^A-Za-z0-9_]", "_", os.environ.get("ESS_RUN_LABEL") or "run") + "_m"
     cfg, model, saved = _setup(args)
     if getattr(args, "remesh_auto", False) and not any(k.lower() == "remesh distance" for k in saved.frozen):
         # a state not remeshed yet (the original mesh: no fine band anywhere): remesh it before the first step,
@@ -1364,7 +1367,9 @@ def main(argv=None):
     s.add_argument("--accumulation", help="accumulation factor schedule --accumulation=F@T,F@T,.. (aDIM times F; "
                    "yr since the run's start, piecewise linear, constant outside), evaluated by Elmer every time "
                    "step, e.g. '10@0,10@9000,1@10000': ten times the accumulation for 9 kyr, back to normal by 10 kyr")
-    s.add_argument("--remesh-prefix", default="m", help="--remesh-auto: the new meshes' names (m001, m002, ..)")
+    s.add_argument("--remesh-prefix", default=None,
+                   help="--remesh-auto: the new meshes' names <prefix>001, 002, .. (default <run label>_m: e.g. "
+                        "job31800_m001, numbered from 1 in each run; the run label ESS_RUN_LABEL, jobs: job<id>)")
     _add_remesh_args(s)
     s.add_argument("--chunks", type=int, default=1, help="number of map evaluations ([map] dt, n_steps each)")
     s.add_argument("--dt", type=float, help="time step (years), overrides [map] dt for this run")

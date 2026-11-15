@@ -115,11 +115,11 @@ def make_pngs(meshdir, state, outdir, name, prev_mesh=None, prev_state=None):
 
 
 def make_all(work, case):
-    """the pictures of every remeshed mesh (case/m###, its state <work>/m###_start.npz) that has none yet in
+    """the pictures of every remeshed mesh (case/[<label>_]m###, its state <work>/<name>_start.npz) that has none yet in
     <work>/meshes"""
     import glob
     made = []
-    for st in sorted(glob.glob(os.path.join(work, "m[0-9][0-9][0-9]_start.npz"))):
+    for st in sorted(glob.glob(os.path.join(work, "*m[0-9][0-9][0-9]_start.npz"))):
         name = os.path.basename(st)[:-len("_start.npz")]
         if os.path.exists(os.path.join(work, "meshes", f"{name}_full.png")) or not os.path.isdir(os.path.join(case, name)):
             continue
