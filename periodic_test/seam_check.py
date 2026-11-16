@@ -11,7 +11,9 @@ from ess.statefile import load_state, find_name
 
 ap = argparse.ArgumentParser()
 ap.add_argument("state")
-ap.add_argument("--fields", nargs="*", default=["Temperature", "Velocity 1", "Velocity 2", "Velocity 3", "Zs", "Zb"])
+ap.add_argument("--fields", nargs="*", default=["Temperature", "Velocity 1", "Velocity 2", "Velocity 3", "Zs", "Zb",
+                                                 "ColdTempMask", "GroundedMask", "Water Sheet Thickness"])
+ap.add_argument("--width", type=float, default=None, help="the periodic translation (m); default: found from the sides")
 a = ap.parse_args()
 s = load_state(a.state)
 allf = dict(s.diag); allf.update(s.frozen)
@@ -21,15 +23,39 @@ for b in s.layout.blocks:
 get = lambda n: allf[find_name(allf, n)]
 g, X = get("coordinate 1"); Y = get("coordinate 2")[1]; Z = get("coordinate 3")[1]
 ymin, ymax = Y.min(), Y.max(); eps = 1e-6 * (ymax - ymin)
-lo, hi = np.abs(Y - ymin) < eps, np.abs(Y - ymax) < eps
-def cols(m):          # x -> the side's nodes at that x, bottom to top (z may differ if the sides do)
-    c = {}
-    for x, z, gg in zip(X[m], Z[m], g[m]):
-        c.setdefault(round(x, 1), []).append((z, gg))
-    return {k: sorted(v) for k, v in c.items()}
-cl, ch = cols(lo), cols(hi)
-pairs = [(a_[1], b_[1], x, a_[0]) for x in cl if x in ch and len(cl[x]) == len(ch[x]) for a_, b_ in zip(cl[x], ch[x])]
-print(f"{a.state}: width {ymax - ymin:.0f} m, side nodes {lo.sum()} / {hi.sum()}, paired {len(pairs)}")
+if ymin < -1.0 and -ymin < 0.25 * abs(ymax):
+    # a strip with JAGGED periodic sides (configs/coarse_rect_ext.toml): side 1 the columns whose (x, y + W) is a
+    # column too, side 2 those; W the translation (the most common y offset between columns at the same x)
+    key = lambda xx, yy: (round(float(xx), 1), round(float(yy), 1))
+    colz = {}
+    for x, y, z, gg in zip(X, Y, Z, g):
+        colz.setdefault(key(x, y), []).append((z, gg))
+    W = a.width
+    if W is None:
+        lo_ = [k for k in colz if k[1] < ymin + 5e3]
+        byx = {}
+        for k in colz:
+            if k[1] > ymax - 5e3:
+                byx.setdefault(k[0], []).append(k[1])
+        d_ = [yh - k[1] for k in lo_ for yh in byx.get(k[0], [])]
+        v_, c_ = np.unique(np.round(d_, 0), return_counts=True)
+        W = float(v_[np.argmax(c_)])
+    pairs = []
+    for (x, y), v in colz.items():
+        w = colz.get(key(x, y + W))
+        if w is not None and len(w) == len(v):
+            pairs += [(p_[1], q_[1], x, p_[0]) for p_, q_ in zip(sorted(v), sorted(w))]
+    print(f"{a.state}: jagged sides, translation {W:.0f} m, paired {len(pairs)} nodes")
+else:
+    lo, hi = np.abs(Y - ymin) < eps, np.abs(Y - ymax) < eps
+    def cols(m):          # x -> the side's nodes at that x, bottom to top (z may differ if the sides do)
+        c = {}
+        for x, z, gg in zip(X[m], Z[m], g[m]):
+            c.setdefault(round(x, 1), []).append((z, gg))
+        return {k: sorted(v) for k, v in c.items()}
+    cl, ch = cols(lo), cols(hi)
+    pairs = [(a_[1], b_[1], x, a_[0]) for x in cl if x in ch and len(cl[x]) == len(ch[x]) for a_, b_ in zip(cl[x], ch[x])]
+    print(f"{a.state}: width {ymax - ymin:.0f} m, side nodes {lo.sum()} / {hi.sum()}, paired {len(pairs)}")
 if not pairs:
     raise SystemExit("no pairs (z differs between the sides? a slim state of a different mesh?)")
 gl = np.array([p[0] for p in pairs]); gh = np.array([p[1] for p in pairs]); px = np.array([p[2] for p in pairs])
