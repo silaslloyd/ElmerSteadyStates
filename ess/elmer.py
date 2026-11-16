@@ -966,15 +966,24 @@ End
                 log.info(f"VTU output every {f_} steps for the first {n0}, then every {every}")
             else:
                 log.info(f"ESS_VTU_FIRST {first}: not applied (a run of several timestep intervals, or too short)")
+        # a run on a new mesh (--remesh-auto, or any continuation of a longer run) also writes its FIRST step
+        # (basestart_t0001.pvtu, surfacestart_t0001.pvtu) unless that step is a regular output anyway: every mesh shows
+        # in the frames at once (plots/vtu_frames.py puts it first), not only once the next multiple of N comes
+        sets = [("base", "ESS Save Base", base + heat + sc, ex, off, ""),
+                ("surface", "ESS Save Surface", heat + sc, ex, off, "")]
+        if (self.remesh_auto or int(getattr(self, "step_offset", 0)) > 0) and o0 != 0:
+            big, zero = [1000000000] * 10, [0] * 10
+            sets += [("basestart", "ESS Save Base", base + heat + sc, big, zero, " start"),
+                     ("surfacestart", "ESS Save Surface", heat + sc, big, zero, " start")]
         out = ""
-        for m, (fname, key, fields) in enumerate((("base", "ESS Save Base", base + heat + sc),
-                                                  ("surface", "ESS Save Surface", heat + sc))):
+        for m, (fname, key, fields, ex_, off_, tag) in enumerate(sets):
+            eq = "base" if fname.startswith("base") else "surface"
             out += (f"\nSolver {n + m}\n"
                     '  Exec Solver = "After Timestep"\n'
-                    f"  Exec Intervals(10) = Integer {' '.join(map(str, ex))}   ! per Timestep Interval (ramps)\n"
+                    f"  Exec Intervals(10) = Integer {' '.join(map(str, ex_))}   ! per Timestep Interval (ramps)\n"
                     # at steps N, 2N, ... (Elmer: without the offset 1, N + 1, ...)
-                    f"  Exec Intervals Offset(10) = Integer {' '.join(map(str, off))}\n"
-                    f'  Equation = "vtu {fname}"\n'
+                    f"  Exec Intervals Offset(10) = Integer {' '.join(map(str, off_))}\n"
+                    f'  Equation = "vtu {eq}{tag}"\n'
                     '  Procedure = "ResultOutputSolve" "ResultOutputSolver"\n'
                     f'  Output File Name = "{fname}"\n'
                     '  Output Directory = "."\n'   # the run directory (default: the mesh directory)

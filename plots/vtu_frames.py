@@ -17,6 +17,7 @@ Fields: x, y, z (the surface / base elevation), velocity (vx, vy, vz), temperatu
 mask and the bedrock, and when the run wrote them ColdTempMask, Water Sheet Thickness, Melt Rate (THERMAL=nowater)
 and CFL, Step Change (STEP_CHECK=1).
 """
+import glob
 import os
 import re
 import sys
@@ -124,7 +125,10 @@ def main():
     out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(rundir),
                                                              os.path.basename(rundir) + "_frames.npz")
     steps = vtu_steps(rundir)
-    if not steps:
+    # the run's first step on a new mesh (basestart_t*.pvtu: ess writes it when that step is no regular output), always
+    # the first frame (not subject to --every / --keep): every mesh shows at once
+    start = sorted(glob.glob(os.path.join(rundir, "basestart_t*.pvtu")))[:1]
+    if not steps and not start:
         raise SystemExit(f"{rundir}: no base_t*.pvtu (a run with VTU_EVERY?)")
     every, dt, offset = run_timing(rundir)
     step_of = lambda k: offset + 1 + (k - 1) * every
@@ -150,6 +154,17 @@ def main():
         print(f"  the last output only: {os.path.basename(steps[0])}")
     frames = {"top": [], "base": []}
     times = []
+    if start and not last_only and (tmin is None or t0 + dt >= tmin - 1e-9):
+        try:
+            b, t = surface(start[0]), surface(start[0].replace("basestart_t", "surfacestart_t"))
+        except Exception as e:
+            b = t = None
+            print(f"  {os.path.basename(start[0])}: not readable ({e})")
+        if b is not None and t is not None:
+            frames["base"].append(b)
+            frames["top"].append(t)
+            times.append(t0 + dt)                 # after the run's first step
+            print(f"  the first step on this mesh ({os.path.basename(start[0])}) as the first frame, t {t0 + dt:g} yr")
     for f in steps:
         if tmin is not None:                      # --tmin: skip earlier outputs (before reading them)
             k_ = int(re.findall(r"_t(\d+)", os.path.basename(f))[0])

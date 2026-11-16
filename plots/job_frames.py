@@ -56,7 +56,8 @@ def main():
         keep = [n for n in range(nv) if (g0 + n) % every == 0 or g0 + n == total - 1]
         g0 += nv
         print(f"segment {k}: {os.path.basename(d)}: {nv} outputs ({len(keep)} kept), t {off:g} .. {off + tend:g} yr")
-        if keep:
+        has_start = bool(glob.glob(os.path.join(d, "basestart_t*.pvtu")))   # the first step on its mesh (always packed)
+        if keep or has_start:
             out = f"{outbase}_seg{k}.npz"
             r = subprocess.run([sys.executable, os.path.join(here, "vtu_frames.py"), d, out, "--t0", repr(off),
                                 "--keep", ",".join(map(str, keep))] + rest)
