@@ -1966,9 +1966,20 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
     if moving:
         print(f"  {len(moving)} surfaces change mesh between states (remeshed): their geometry in every frame")
 
+    # the traces the page's buttons switch on and off: their frames never carry "visible", so stepping through the
+    # states keeps whatever the buttons set (a frame with visible=False switched e.g. the sheet off at every step)
+    TOGGLED = {"sheetov", "sheetflow", "hwstream", "bedsurf", "stream", "ctmask"}
+    ICE = {"surface Zs", "base Zb", "end wall", "side wall"}
+
+    def toggled(t_):
+        return (getattr(t_, "legendgroup", None) in TOGGLED
+                or (getattr(t_, "type", None) == "mesh3d" and getattr(t_, "name", None) in ICE
+                    and getattr(t_, "scene", None) in (None, "scene")))
+
     def lean(tr):
         """a frame's traces: the surfaces (Mesh3d with the first state's x, y and triangles: the same mesh) as their
-        z and colours only, so the page holds the geometry once, not once per state"""
+        z and colours only, so the page holds the geometry once, not once per state; the toggled traces without
+        "visible" """
         out = []
         for q, t_ in enumerate(tr):
             if q not in moving and same_mesh(t_, q):
@@ -1976,6 +1987,10 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
                 for k in ("intensity", "customdata", "cmin", "cmax"):
                     if t_[k] is not None:
                         d[k] = t_[k]
+                out.append(d)
+            elif toggled(t_):
+                d = t_.to_plotly_json()
+                d.pop("visible", None)
                 out.append(d)
             else:
                 out.append(t_)
