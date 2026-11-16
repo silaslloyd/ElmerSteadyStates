@@ -37,6 +37,11 @@ SUBROUTINE RemeshTrigger( Model, Solver, dt, Transient )
   REAL(KIND=dp) :: dGL, dTr, frac, nGL, nGLc, nTr, nTrc, dminGL, dminTr, tnow, gm, ct
   INTEGER :: t, i, k, n, nn, minSteps, nCold, nTemp
   INTEGER, SAVE :: nCalls = 0
+  ! diagnostics: where the grounding-line nodes are (25 km bins of x) and how many lie within 2.5 km of a side
+  INTEGER, PARAMETER :: NB = 60
+  REAL(KIND=dp) :: hist(NB), nSeam, ysLo, ysHi
+  INTEGER :: ib
+  CHARACTER(LEN=400) :: hline, htmp
   LOGICAL :: Found, trigger
   CHARACTER(*), PARAMETER :: Caller = 'RemeshTrigger'
 !------------------------------------------------------------------------------
@@ -83,6 +88,11 @@ SUBROUTINE RemeshTrigger( Model, Solver, dt, Transient )
     END DO
   END IF
   nGL = 0; nGLc = 0; nTr = 0; nTrc = 0; dminGL = HUGE(1.0_dp); dminTr = HUGE(1.0_dp)
+  hist = 0.0_dp; nSeam = 0.0_dp
+  ysLo = MINVAL( Mesh % Nodes % y(1:nn) ); ysHi = MAXVAL( Mesh % Nodes % y(1:nn) )
+  IF ( ParEnv % PEs > 1 ) THEN
+    ysLo = ParallelReduction( ysLo, 1 ); ysHi = ParallelReduction( ysHi, 2 )
+  END IF
   DO t = 1, Solver % NumberOfActiveElements
     Element => GetActiveElement(t)
     n = GetElementNOFNodes( Element )
@@ -95,6 +105,9 @@ SUBROUTINE RemeshTrigger( Model, Solver, dt, Transient )
       gm = nval( gmVar, i )
       IF ( ABS( gm ) < 0.5_dp ) THEN
         nGL = nGL + 1
+        ib = MIN( MAX( INT( Mesh % Nodes % x(i) / 25000.0_dp ) + 1, 1 ), NB )
+        hist(ib) = hist(ib) + 1.0_dp
+        IF ( Mesh % Nodes % y(i) - ysLo < 2500.0_dp .OR. ysHi - Mesh % Nodes % y(i) < 2500.0_dp ) nSeam = nSeam + 1.0_dp
         dminGL = MIN( dminGL, nval( dVar, i ) )
         IF ( nval( dVar, i ) < dGL ) nGLc = nGLc + 1
       END IF
@@ -117,6 +130,23 @@ SUBROUTINE RemeshTrigger( Model, Solver, dt, Transient )
   WRITE( Message, '(A,F10.3,A,I0,A,I0,A,ES9.2,A,I0,A,I0,A,ES9.2,A)' ) 'remesh check t', tnow, ': grounding line ', &
       NINT(nGLc), ' of ', NINT(nGL), ' nodes within the safety distance (closest to coarse mesh ', dminGL, &
       ' m), transition ', NINT(nTrc), ' of ', NINT(nTr), ' (closest ', dminTr, ' m)'
+  CALL Info( Caller, Message, Level=3 )
+  ! where the grounding-line nodes are: nonzero 25 km bins of x (km at the bin's start: count), and those near a side
+  IF ( ParEnv % PEs > 1 ) THEN
+    DO ib = 1, NB
+      hist(ib) = ParallelReduction( hist(ib) )
+    END DO
+    nSeam = ParallelReduction( nSeam )
+  END IF
+  hline = ''
+  DO ib = 1, NB
+    IF ( hist(ib) > 0.5_dp .AND. LEN_TRIM(hline) < 380 ) THEN
+      WRITE( htmp, '(A,1X,I0,A,I0)' ) TRIM(hline), 25 * (ib - 1), ':', NINT(hist(ib))
+      hline = htmp
+    END IF
+  END DO
+  WRITE( Message, '(A,F10.3,A,I0,A,A)' ) 'remesh check GL nodes t', tnow, ': within 2.5 km of a side ', NINT(nSeam), &
+      '; by x (km: count)', TRIM(hline)
   CALL Info( Caller, Message, Level=3 )
   IF ( trigger .AND. nCalls >= minSteps ) THEN
     WRITE( Message, '(A,F10.3,A,I0)' ) 'REMESH NEEDED at t', tnow, ', step ', nCalls
