@@ -743,8 +743,33 @@ def cmd_run(args):
              + (f" ({prob.t_model / nsteps_done:.2f} s per step)" if nsteps_done else ""))
 
 
+def _mechanics_only(cfg, saved):
+    """the state reduced to the geometry (Zs, Zb): Temperature moved to the frozen fields (fixed), the config's
+    [state] lists changed to match; returns (saved_mech, the temperature record to put back)"""
+    from .statefile import Block, StateLayout
+    tb = next(b for b in saved.layout.blocks if b.name.lower() == "temperature")
+    parts = saved.layout.split(saved.x)
+    keep = [b for b in saved.layout.blocks if b.name.lower() != "temperature"]
+    lay = StateLayout([Block(b.name, b.gids, b.scale) for b in keep])
+    x = np.concatenate([parts[b.name] for b in keep])
+    trec = (tb.gids, parts[tb.name].copy())
+    frozen = {**saved.frozen, tb.name: trec}
+    cfg["state"]["variables"] = [b.name for b in keep]
+    cfg["state"]["frozen"] = list(dict.fromkeys(list(cfg["state"].get("frozen", [])) + [tb.name]))
+    return SavedState(lay, x, saved.p, frozen, saved.diag, dict(saved.meta)), trec
+
+
 def cmd_newton(args):
     cfg, model, saved = _setup(args)
+    full = None
+    if getattr(args, "stokes_only", False):
+        # mechanics only (Stokes and the free surfaces, no heat): Newton on the geometry; for a bed whose sliding does
+        # not depend on temperature (sliding = temperate, or frozen: no slip), where heat does not feed back
+        full = saved
+        saved, _ = _mechanics_only(cfg, saved)
+        model = build_model(cfg, saved)
+        model.stokes_only = True
+        log.info(f"newton: mechanics only (Zs, Zb; temperature frozen; sliding {model.sliding})")
     prob = _problem(cfg, model)
     p = saved.p if args.p is None else args.p
     ck = os.path.join(cfg["_work"], "newton_checkpoint.npz")
@@ -757,6 +782,17 @@ def cmd_newton(args):
     x = prob.unscale(r.y)
     out = args.out or os.path.join(cfg["_work"], f"steady_p{p:g}.npz")
     mc = _mask_cols(cfg, model, saved, x, prob.last_diag)
+    if full is not None:          # back to the full state (Temperature as before, the solved geometry)
+        parts = saved.layout.split(x)
+        pf = full.layout.split(full.x)
+        xf = np.concatenate([parts[b.name] if b.name in parts else pf[b.name] for b in full.layout.blocks])
+        fz = {k: v for k, v in saved.frozen.items() if k.lower() != "temperature"}
+        save_state(out, full.layout, xf, p, fz, prob.last_diag, converged=r.converged, rms_F=r.history[-1],
+                   newton_its=r.iterations, mechanics_only=1, sliding=model.sliding)
+        log.info(f"newton: {'converged' if r.converged else 'NOT converged'} in {r.iterations} its, "
+                 f"{prob.nfev} model runs ({prob.t_model / 3600:.2f} h); wrote {out} (mechanics only)"
+                 + (f"; masks {mc}" if mc else ""))
+        return 0 if r.converged else 1
     save_state(out, saved.layout, x, p, saved.frozen, prob.last_diag, converged=r.converged,
                rms_F=r.history[-1], newton_its=r.iterations)
     log.info(f"newton: {'converged' if r.converged else 'NOT converged'} in {r.iterations} its, "
@@ -1547,6 +1583,10 @@ def main(argv=None):
     s = sub.add_parser("newton")
     common(s)
     s.add_argument("--out")
+    s.add_argument("--stokes-only", action="store_true",
+                   help="mechanics only: Newton on the geometry (Zs, Zb) with the temperature fixed, no heat solve; for "
+                        "a bed whose sliding does not depend on temperature ([elmer] sliding = temperate or frozen, env "
+                        "ESS_SLIDING); the output is the full state (its temperature unchanged)")
     s.set_defaults(fn=cmd_newton)
 
     s = sub.add_parser("continue")

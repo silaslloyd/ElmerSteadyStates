@@ -831,8 +831,10 @@ End
             raise ValueError(f"[elmer] thermal must be 'frozen', 'loads', 'nowater' or 'elmerstreams', not {self.thermal!r}")
         if self.sliding == "temperate":
             text = self._sliding_temperate(text)
+        elif self.sliding == "frozen":
+            text = self._sliding_frozen(text)
         elif self.sliding != "subtemperate":
-            raise ValueError(f"[elmer] sliding must be 'subtemperate' or 'temperate', not {self.sliding!r}")
+            raise ValueError(f"[elmer] sliding must be 'subtemperate', 'temperate' or 'frozen', not {self.sliding!r}")
         if os.environ.get("ESS_HEAT_LEGACY"):       # the heat solver's legacy (non-vectorised) assembly (HeatSolveLegacy.so)
             k = text.index('Procedure =  File "HeatSolveVec" "HeatSolver"')
             j = text.index('  Variable = String "Temperature"\n', k) + len('  Variable = String "Temperature"\n')
@@ -1362,6 +1364,20 @@ End
         i = text.index(a, k)
         j = text.index("External Temperature =", i)
         return text[:i] + text[i + len(a):j] + "Temperature =" + text[j + len("External Temperature ="):]
+
+    def _sliding_frozen(self, text):
+        """[elmer] sliding = "frozen" (env ESS_SLIDING=frozen): a fully cold bed frozen to its substrate, no sliding at
+        all where grounded: the tangential velocities (Velocity 2, 3 of the normal-tangential frame) 0 on grounded bed
+        nodes, as the normal one; floating ice as before. The frozen grounding line only (the contact sliding function
+        decides grounding through the sliding)."""
+        if self.gl_mode != "frozen":
+            raise ValueError("sliding = frozen: with the frozen grounding line only (gl_mode = frozen)")
+        a = ('  Velocity 1 = 0.0\n  Velocity 1 Condition = Variable GroundedMask\n    Real MATC "tx[0] + 0.5"\n')
+        if text.count(a) != 1:
+            raise ValueError("sliding = frozen: the bed's Velocity 1 condition of the template changed")
+        b = "".join(f'  Velocity {c} = 0.0   ! sliding = frozen: no slip where grounded\n'
+                    f'  Velocity {c} Condition = Variable GroundedMask\n    Real MATC "tx[0] + 0.5"\n' for c in (2, 3))
+        return text.replace(a, a + b)
 
     def _sliding_temperate(self, text):
         """Weertman friction as at the melting point everywhere: TDepSliding(fcoeff, T, dT, x) -> fcoeff"""
