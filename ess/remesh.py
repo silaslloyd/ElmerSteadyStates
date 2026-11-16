@@ -261,7 +261,8 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
     """the size from the distance to two curves, the background scaled to a triangle budget:
 
         h = min( h_min + grade max(d_GL - b_GL, 0),           the grounding line (+- b_GL at h_min)
-                 h_min + grade max(d_CT - b_CT, 0),           the cold/temperate transition on the grounded bed
+                 h_ct + grade max(d_CT - b_CT, 0),            the cold/temperate transition on the grounded bed (the
+                                                              stream margins; h_ct opt["fine_ct"], default h_min)
                  clip(s h_res, h_min, h_max) )                the background ([case] res_points), scaled by s
     and at least opt["coarse"] on a grounded bed away from both curves, opt["far_h"] farther than opt["far"] from both; s found by bisection so the estimated
     triangle count sum(area / (0.433 h^2)) is opt["max_triangles"] (no budget: s = 1). The stream margins of a
@@ -292,7 +293,7 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
 
     def build(sc, bct, graded=False):
         hgl = hmin + g * np.maximum(dgl - opt["gl_band"], 0)
-        hct = hmin + g * np.maximum(dct - bct, 0)
+        hct = opt.get("fine_ct", hmin) + g * np.maximum(dct - bct, 0)   # the margins: their own (finer) size
         hbg = np.clip(sc * h_res, hmin, hmax)
         # the grounded bed away from both curves, cold (frozen) or temperate (the streams' interiors: fast, little
         # deformation), at least opt["coarse"]: only the boundaries are fine
