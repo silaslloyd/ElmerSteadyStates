@@ -4,7 +4,7 @@ of the job(s) (runs/*_job<JOB>_*: one per mesh with `ess run --remesh-auto`) pac
 OUTBASE_seg001.npz, OUTBASE_seg002.npz, .. in time order, each with its true model time. plots/plot_state_3d.py takes
 them all at once (one page, the mesh changing where the run remeshed):
 
-    python3 plots/job_frames.py WORKDIR JOB[,JOB2,..] OUTBASE [--every N] [--t0 T0] [vtu_frames options: --tmin, ...]
+    python3 plots/job_frames.py WORKDIR JOB[,JOB2,..] OUTBASE [--every N | --every-yr Y] [--t0 T0] [vtu_frames options]
     python3 plots/plot_state_3d.py OUTBASE_seg*.npz ...
 
 Times: each run directory's start time is read from its parameters.lua (ess_sl_off / ess_acc_off: the model time the
@@ -13,7 +13,8 @@ earlier segments ran (their logs' last "MAIN: Time") plus T0 (--t0, default 0).
 Several jobs (a run restarted from a checkpoint): in the order given; a job's frames after the next job's start are
 left out (the restart replaced them).
 --every N: every N-th regular output, counted across all segments (and the very last); each segment's first step on
-its new mesh (basestart, see ess/elmer.py) is always kept. Default 1: every output.
+its new mesh (basestart, see ess/elmer.py) is always kept. Default 1: every output. --every-yr Y instead: the
+outputs at multiples of Y yr of model time (e.g. 1000: 1000, 2000, ..), whatever the segments.
 Old OUTBASE_seg*.npz files are removed first, so a glob never mixes in another job's segments.
 """
 import glob
@@ -56,6 +57,11 @@ def main():
         k = rest.index("--t0")
         t0 = float(rest[k + 1])
         del rest[k:k + 2]
+    every_yr = None                                # --every-yr Y: the outputs at multiples of Y yr (model time)
+    if "--every-yr" in rest:
+        k = rest.index("--every-yr")
+        every_yr = float(rest[k + 1])
+        del rest[k:k + 2]
     every = 1
     if "--every" in rest:
         k = rest.index("--every")
@@ -86,7 +92,17 @@ def main():
     total = sum(counts)
     g0, made = 0, []
     for k, ((ji, d, ts, ln), nv) in enumerate(zip(segs, counts), 1):
-        keep = [n for n in range(nv) if (g0 + n) % every == 0 or g0 + n == total - 1]
+        if every_yr:                               # by model time: output n at ts + its step x dt
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from vtu_frames import output_steps, run_timing
+            ev, dt_, of_ = run_timing(d)
+            sched = output_steps(d)
+            stp = (lambda q: sched[q - 1]) if sched else (lambda q: of_ + 1 + (q - 1) * ev)
+            tt = [ts + stp(n + 1) * dt_ for n in range(nv)]
+            keep = [n for n in range(nv) if abs(tt[n] / every_yr - round(tt[n] / every_yr)) < 1e-6
+                    or g0 + n == total - 1]
+        else:
+            keep = [n for n in range(nv) if (g0 + n) % every == 0 or g0 + n == total - 1]
         g0 += nv
         tmax = cut.get(ji)
         if tmax is not None and ts >= tmax - 1e-9:
