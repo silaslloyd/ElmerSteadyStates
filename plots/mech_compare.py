@@ -44,7 +44,7 @@ class Run:
     def __init__(self, arg):
         self.dir = find_run(arg)
         self.every, self.dt, offset = run_timing(self.dir)
-        step_of = (lambda k: k * self.every) if offset else (lambda k: (k - 1) * self.every + 1)
+        step_of = lambda k: offset + 1 + (k - 1) * self.every
         sif = open(os.path.join(self.dir, "run.sif")).read()
         self.mode = "adapted" if "[elmer] fssa = adapted" in sif else "full"
         m = re.search(r"Steady State Max Iterations\s*=\s*(?:Integer\s*)?(\d+)", sif)

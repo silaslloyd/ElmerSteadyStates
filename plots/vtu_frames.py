@@ -36,10 +36,13 @@ EXTRA = {"coldtempmask": "ct", "water sheet thickness": "hw", "melt rate": "melt
 def run_timing(rundir):
     """(output interval in steps, dt in years) from the run's sif"""
     sif = open(os.path.join(rundir, "run.sif")).read()
-    m = re.search(r'Exec Intervals\(\d+\)\s*=\s*Integer\s+(\d+)[^\n]*\n(\s*Exec Intervals Offset[^\n]*\n)?'
-                  r'\s*Equation = "vtu base"', sif)
+    m = re.search(r'Exec Intervals\(\d+\)\s*=\s*Integer\s+(\d+)[^\n]*\n(\s*Exec Intervals Offset[^=]*=\s*Integer\s+(\d+)'
+                  r'[^\n]*\n)?\s*Equation = "vtu base"', sif)
     every = int(m.group(1)) if m else 1
-    offset = bool(m and m.group(2))       # with the offset: output k at step k N; without (older runs): (k-1) N + 1
+    # Elmer writes at the steps t with MOD(t - 1 - offset, N) = 0: output k at step offset + 1 + (k - 1) N (offset N - 1:
+    # k N; a run continuing a longer one after a remesh: the offset that keeps the whole run's multiples of N; no
+    # offset, older runs: (k - 1) N + 1)
+    offset = int(m.group(3)) if (m and m.group(3)) else 0
     m = re.search(r"Timestep Sizes(?:\(\d+\))?\s*=\s*(?:Real\s*)?([-+0-9.eE]+)", sif)
     dt = float(m.group(1)) if m else 1.0
     return every, dt, offset
@@ -119,7 +122,7 @@ def main():
     if not steps:
         raise SystemExit(f"{rundir}: no base_t*.pvtu (a run with VTU_EVERY?)")
     every, dt, offset = run_timing(rundir)
-    step_of = (lambda k: k * every) if offset else (lambda k: (k - 1) * every + 1)
+    step_of = lambda k: offset + 1 + (k - 1) * every
     sched = output_steps(rundir)
     if sched:                                     # several timestep intervals (e.g. denser output at first)
         print(f"  output steps from the run's schedule: {', '.join(map(str, sched[:8]))}{', ..' if len(sched) > 8 else ''}")
