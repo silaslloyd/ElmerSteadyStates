@@ -6,6 +6,23 @@
 j=${1:-$(squeue -u $USER -h -t R -o %i | head -1)}
 [ -n "$j" ] || { echo "no running job"; squeue -u $USER; exit 0; }
 echo "job $j  $(squeue -h -j $j -o '%T %M (limit %l) on %D nodes' 2>/dev/null)"
+# remeshing right now (ess run --remesh-auto): the driver's last remesh line is after its last start on a mesh
+RL=$(ls -t slurms/scaling_${j}_*.log 2>/dev/null | grep -v "_setup\|_partition\|_cutprep\|_avgprep\|_checked" | head -1)
+if [ -n "$RL" ]; then
+    lr=$(grep -n "run: remesh [0-9]* at t\|remesh to .* first" $RL | tail -1 | cut -d: -f1)
+    lc=$(grep -n "run: continuing on\|run: starting on" $RL | tail -1 | cut -d: -f1)
+    if [ -n "$lr" ] && [ "${lr:-0}" -gt "${lc:-0}" ]; then
+        echo
+        echo "  ##################################################"
+        echo "  ###                                            ###"
+        echo "  ###              R E M E S H I N G             ###"
+        echo "  ###                                            ###"
+        echo "  ##################################################"
+        sed -n "${lr}p" $RL | sed 's/.*run: /  /' | cut -c1-200
+        tail -1 $RL | sed 's/^[0-9:]* //; s/^/  now: /' | cut -c1-200
+        echo
+    fi
+fi
 f=slurms/scaling_$j.out
 w=$(grep -o "runs continue from [^:]*" $f 2>/dev/null | head -1 | sed 's|runs continue from ||; s|/[^/]*\.npz$||; s|/scaling_.*$||')
 [ -n "$w" ] || w=work
