@@ -12,7 +12,8 @@
 # work/flowline_rect_ext/spin.npz; SPIN_CHUNKS x 100 x 10 yr, default 10, the frozen grounding line moved by flotation
 # between chunks), then Newton on the geometry (ess newton --stokes-only; the grounding line moved between solves).
 # Same ranks as the mesh's partitioning (128). Steps skipped when their output exists. WHICH="cold temperate" (default
-# both, in that order).
+# both, in that order). SPIN_DT (yr, default 10); NEWTON=0: time stepping only (the spin-up's state is the bound; its
+# "rms change" per chunk in the log shows how steady it got).
 #   sbatch jobs/flowline_bounds.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
@@ -32,11 +33,11 @@ for which in ${WHICH:-cold temperate}; do
     case $which in cold) sl=frozen;; temperate) sl=temperate;; *) echo "WHICH: cold | temperate"; exit 1;; esac
     export ESS_SLIDING=$sl
     if [ ! -f $W/bound_${which}_spin.npz ]; then
-        echo "$(date +%T) $which bound: mechanics-only spin-up from $START (sliding $sl), ${SPIN_CHUNKS:-10} x 100 x 10 yr"
+        echo "$(date +%T) $which bound: mechanics-only spin-up from $START (sliding $sl), ${SPIN_CHUNKS:-10} x 100 x ${SPIN_DT:-10} yr"
         python3 -u -m ess run $CFG --state $START --stokes-only --gl frozen --chunks ${SPIN_CHUNKS:-10} --steps 100 \
-            --dt 10 --out $W/bound_${which}_spin.npz
+            --dt ${SPIN_DT:-10} --out $W/bound_${which}_spin.npz
     fi
-    if [ ! -f $W/bound_${which}.npz ]; then
+    if [ "${NEWTON:-1}" = 1 ] && [ ! -f $W/bound_${which}.npz ]; then
         echo "$(date +%T) $which bound: Newton on the geometry"
         python3 -u -m ess newton $CFG --state $W/bound_${which}_spin.npz --stokes-only --out $W/bound_${which}.npz || \
             echo "$(date +%T) $which bound: Newton did not converge (see the log)"
