@@ -6,7 +6,10 @@ and the cold/temperate transition on the grounded bed (magenta), the mesh drawn 
 Two steps, since the meshes are on tethys and plotly on pilsen:
 
     python3 plots/mesh_3d.py pack MESHDIR OUT.npz [--state STATE.npz]     (tethys: numpy only; a few MB)
-    python3 plots/mesh_3d.py plot IN.npz [OUT.html] [--flat] [--zoom X0 X1 Y0 Y1 (km)]   (pilsen: plotly)
+    python3 plots/mesh_3d.py plot IN.npz [OUT.html] [--flat] [--edges] [--zoom X0 X1 Y0 Y1 (km)]   (pilsen: plotly)
+
+The triangles are filled by element size (flat shading, so each one shows); --edges also draws every edge as a line
+(large: best with --zoom).
 
 MESHDIR: the mesh directory in the case dir, e.g. work/<dir>/case/31811m009 (or test250); STATE: a state on that
 mesh, e.g. <work>/<mesh>_start.npz (the state it was made from, interpolated onto it). --flat: z = 0 instead of the
@@ -64,7 +67,7 @@ def contour_lines(x, y, tri, v, level, mask=None):
     return X, Y
 
 
-def plot(inp, out=None, flat=False, zoom=None):
+def plot(inp, out=None, flat=False, zoom=None, edges=False):
     import plotly.graph_objects as go
     d = np.load(inp, allow_pickle=True)
     x, y, tri = d["x"].astype(float) / 1e3, d["y"].astype(float) / 1e3, d["tri"].astype(np.int64)
@@ -85,15 +88,16 @@ def plot(inp, out=None, flat=False, zoom=None):
                                       ticktext=[str(t) for t in ticks]),
                         customdata=np.round(hs).astype(int), hovertemplate="size %{customdata} m<extra></extra>",
                         flatshading=True, lighting=dict(ambient=1, diffuse=0, specular=0), name="elements")]
-    e = np.r_[tri[:, [0, 1]], tri[:, [1, 2]], tri[:, [2, 0]]]
-    e = np.unique(np.sort(e, 1), axis=0)
-    zl = z + (0 if flat else 1.0)
-    P = np.full((len(e), 3), np.nan)
-    ex, ey, ez = P.copy(), P.copy(), P.copy()
-    ex[:, :2], ey[:, :2], ez[:, :2] = x[e], y[e], zl[e]
     nn = lambda a: [None if np.isnan(v) else round(float(v), 3) for v in a.ravel()]
-    traces.append(go.Scatter3d(x=nn(ex), y=nn(ey), z=nn(ez), mode="lines", line=dict(color="#333333", width=1),
-                               hoverinfo="skip", name="edges"))
+    if edges:                                     # every edge as a line: large (~3 points per edge)
+        e = np.r_[tri[:, [0, 1]], tri[:, [1, 2]], tri[:, [2, 0]]]
+        e = np.unique(np.sort(e, 1), axis=0)
+        zl = z + (0 if flat else 1.0)
+        P = np.full((len(e), 3), np.nan)
+        ex, ey, ez = P.copy(), P.copy(), P.copy()
+        ex[:, :2], ey[:, :2], ez[:, :2] = x[e], y[e], zl[e]
+        traces.append(go.Scatter3d(x=nn(ex), y=nn(ey), z=nn(ez), mode="lines", line=dict(color="#333333", width=1),
+                                   hoverinfo="skip", name="edges"))
     curves = []
     if "gm" in d.files:
         gm = np.nan_to_num(d["gm"].astype(float), nan=-1.0)
@@ -123,7 +127,8 @@ def plot(inp, out=None, flat=False, zoom=None):
         updatemenus=[dict(type="buttons", direction="right", x=0.4, y=1.06, xanchor="left", yanchor="bottom",
                           showactive=True, active=1,
                           buttons=[dict(label="edges off", method="restyle", args=[{"visible": vis(False)}]),
-                                   dict(label="edges on", method="restyle", args=[{"visible": vis(True)}])])])
+                                   dict(label="edges on", method="restyle", args=[{"visible": vis(True)}])])]
+        if edges else [])
     out = out or os.path.splitext(inp)[0] + "_mesh3d.html"
     fig.write_html(out, include_plotlyjs="cdn", config=dict(responsive=True), default_width="100%",
                    default_height="95vh")
@@ -144,14 +149,14 @@ def main():
             raise SystemExit(__doc__)
         pack(a[1], a[2], st)
     else:
-        flat = "--flat" in a
-        a = [v for v in a if v != "--flat"]
+        flat, edges = "--flat" in a, "--edges" in a
+        a = [v for v in a if v not in ("--flat", "--edges")]
         zoom = None
         if "--zoom" in a:
             k = a.index("--zoom")
             zoom = [float(v) for v in a[k + 1:k + 5]]
             del a[k:k + 5]
-        plot(a[1], a[2] if len(a) > 2 else None, flat, zoom)
+        plot(a[1], a[2] if len(a) > 2 else None, flat, zoom, edges)
 
 
 if __name__ == "__main__":
