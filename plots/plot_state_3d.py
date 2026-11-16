@@ -37,6 +37,7 @@ range. The speed/vx/vy/vz buttons are off (their data was a large share of the p
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
     python plots/plot_state_3d.py OUT_seg*.npz --x 560 1116 --true-aspect     # x and y on one scale (a strip: true shape)
     python plots/plot_state_3d.py OUT_seg*.npz --z-scale 0.2                   # the vertical stretch 5x smaller
+    python plots/plot_state_3d.py OUT_seg*.npz --at-yr 1000                    # only the frames at 1000, 2000, .. yr
     python plots/plot_state_3d.py STATES... --no-switch                    # no vx/vy/vz buttons (a smaller page)
 Speed colours max out at 100 m/yr (--vmax V; --vmax-gl: the surface speed on the grounding line; --vmax-all: the largest).
 Structured footprints and the unstructured triangle ones (configs/*_tri.toml; Delaunay, needs scipy).
@@ -1198,6 +1199,11 @@ def main():
         k = args.index("--every-yr")              # (and the last): e.g. 500 with a denser start (VTU_FIRST)
         every_yr = float(args[k + 1])
         args = args[:k] + args[k + 2:]
+    at_yr = None
+    if "--at-yr" in args:                         # --at-yr Y: ONLY the frames at multiples of Y yr (no first / last)
+        k = args.index("--at-yr")
+        at_yr = float(args[k + 1])
+        args = args[:k] + args[k + 2:]
     if "--every" in args:                         # --every N: every N-th state (the last one always kept)
         k = args.index("--every")
         every = max(1, int(args[k + 1]))
@@ -1224,6 +1230,10 @@ def main():
                  if n in (0, len(items) - 1) or tvy(it[0]) is None or early(it)
                  or abs(tvy(it[0]) / every_yr - round(tvy(it[0]) / every_yr)) < 1e-6]
         print(f"  frames: the first, then every {every_yr:g} yr" + (f" (all up to {dense:g} yr)" if dense else ""))
+    if at_yr:
+        items = [it for it in items if tvy(it[0]) is None
+                 or abs(tvy(it[0]) / at_yr - round(tvy(it[0]) / at_yr)) < 1e-6]
+        print(f"  frames: only at multiples of {at_yr:g} yr")
     if every > 1 and len(items) > 1:
         ne = sum(1 for it in items if early(it))
         items = [it for n, it in enumerate(items) if early(it) or (n - ne) % every == 0 or n == len(items) - 1]
