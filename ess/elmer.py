@@ -1372,13 +1372,15 @@ End
         decides grounding through the sliding). With the contact grounding line (gl_mode = contact: the grounding line
         moves every step, the contact test needs the bed free to slip in the sliding law), the bed is frozen by friction
         instead: the Weertman coefficient where grounded the subtemperate law's cold limit, fcoeff x ess_slide_maxfactor
-        (1e6 if 0), the same "frozen for practical purposes" as a bed ~2 K below melting under subtemperate sliding."""
+        (1e6 if 0), the same "frozen for practical purposes" as a bed ~2 K below melting under subtemperate sliding;
+        env ESS_FROZEN_FACTOR overrides the factor."""
         if self.gl_mode == "contact":
             a = "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2])"
             if a not in text:
                 raise ValueError("sliding = frozen: the Weertman Friction Coefficient expression of the template changed")
-            return text.replace(a, "fcoeff * (ess_slide_maxfactor > 0 and ess_slide_maxfactor or 1.0e6)"
-                                   " * ess_grounded(tx[2])")
+            fac = os.environ.get("ESS_FROZEN_FACTOR")      # e.g. 1e3: kinder to the iterative Stokes solver
+            f = repr(float(fac)) if fac else "(ess_slide_maxfactor > 0 and ess_slide_maxfactor or 1.0e6)"
+            return text.replace(a, f"fcoeff * {f} * ess_grounded(tx[2])")
         if self.gl_mode != "frozen":
             raise ValueError("sliding = frozen: gl_mode must be 'frozen' or 'contact'")
         a = ('  Velocity 1 = 0.0\n  Velocity 1 Condition = Variable GroundedMask\n    Real MATC "tx[0] + 0.5"\n')

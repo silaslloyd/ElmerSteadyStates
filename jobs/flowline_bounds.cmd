@@ -18,6 +18,9 @@
 # config's direct solver. SPIN_GL (default contact): the grounding line moves every step as in the 3D transient runs
 # (ElmerStreams contact; the cold bed then frozen by friction, fcoeff x ess_slide_maxfactor, instead of no slip);
 # frozen: the grounded mask moved by flotation between chunks only (as Newton; the cold bed no-slip).
+# FROZEN_FACTOR: the cold bed's friction factor with contact (default ess_slide_maxfactor, 1e6; GCR + ILU stalls there,
+# so with 1e6 the cold bound needs SPIN_LINEAR_COLD=direct). SPIN_LINEAR_COLD: the cold bound's Stokes solver
+# (default SPIN_LINEAR).
 #   sbatch jobs/flowline_bounds.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
@@ -36,10 +39,17 @@ START=${START:-$W/spin.npz}
 for which in ${WHICH:-cold temperate}; do
     case $which in cold) sl=frozen;; temperate) sl=temperate;; *) echo "WHICH: cold | temperate"; exit 1;; esac
     export ESS_SLIDING=$sl
+    lin=${SPIN_LINEAR:-iterative}
+    if [ $which = cold ]; then
+        lin=${SPIN_LINEAR_COLD:-$lin}
+        [ -n "$FROZEN_FACTOR" ] && export ESS_FROZEN_FACTOR=$FROZEN_FACTOR
+    else
+        unset ESS_FROZEN_FACTOR
+    fi
     if [ ! -f $W/bound_${which}_spin.npz ]; then
-        echo "$(date +%T) $which bound: mechanics-only spin-up from $START (sliding $sl, grounding line ${SPIN_GL:-contact}), ${SPIN_CHUNKS:-10} x 100 x ${SPIN_DT:-10} yr, Stokes ${SPIN_LINEAR:-iterative}"
+        echo "$(date +%T) $which bound: mechanics-only spin-up from $START (sliding $sl, grounding line ${SPIN_GL:-contact}), ${SPIN_CHUNKS:-10} x 100 x ${SPIN_DT:-10} yr, Stokes $lin${ESS_FROZEN_FACTOR:+, frozen friction factor $ESS_FROZEN_FACTOR}"
         python3 -u -m ess run $CFG --state $START --stokes-only --gl ${SPIN_GL:-contact} --chunks ${SPIN_CHUNKS:-10} --steps 100 \
-            --dt ${SPIN_DT:-10} --linear-stokes ${SPIN_LINEAR:-iterative} --out $W/bound_${which}_spin.npz
+            --dt ${SPIN_DT:-10} --linear-stokes $lin --out $W/bound_${which}_spin.npz
     fi
     if [ "${NEWTON:-1}" = 1 ] && [ ! -f $W/bound_${which}.npz ]; then
         echo "$(date +%T) $which bound: Newton on the geometry"
