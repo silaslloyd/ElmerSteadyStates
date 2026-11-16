@@ -271,14 +271,17 @@ def _remesh_opt(args):
     return dict(fine=args.fine, coarse=args.coarse, gl_band=args.gl_band_km * 1e3, margin_shear=args.margin_shear,
                 fast_speed=args.fast_speed, low_strain=args.low_strain, grade=args.grade,
                 max_triangles=args.max_triangles, h_max=args.h_max, ct_band=args.ct_band_km * 1e3, mode=args.mode,
-                jitter=args.jitter)
+                jitter=args.jitter, far=args.far_km * 1e3, far_h=args.far_h)
 
 
 def _add_remesh_args(s):
     s.add_argument("--fine", type=float, default=500.0, help="element size at the grounding line and margins (m)")
     s.add_argument("--coarse", type=float, default=2000.0, help="at least this on a frozen bed (m)")
     s.add_argument("--gl-band-km", type=float, default=25.0, help="fine within this of the grounding line (km)")
-    s.add_argument("--ct-band-km", type=float, default=4.0, help="curves: fine within this of the cold/temperate "
+    s.add_argument("--far-km", type=float, default=200.0,
+                   help="curves: grounded ice farther than this from both curves (km) at least --far-h")
+    s.add_argument("--far-h", type=float, default=5000.0, help="curves: the element size far from both curves (m)")
+    s.add_argument("--ct-band-km", type=float, default=10.0, help="curves: fine within this of the cold/temperate "
                    "transition (km)")
     s.add_argument("--max-triangles", type=float, help="curves: the footprint's triangle budget (the background "
                    "scaled to it; without it res_points as they are)")

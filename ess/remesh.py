@@ -263,7 +263,7 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
         h = min( h_min + grade max(d_GL - b_GL, 0),           the grounding line (+- b_GL at h_min)
                  h_min + grade max(d_CT - b_CT, 0),           the cold/temperate transition on the grounded bed
                  clip(s h_res, h_min, h_max) )                the background ([case] res_points), scaled by s
-    and at least opt["coarse"] on a frozen grounded bed away from both curves; s found by bisection so the estimated
+    and at least opt["coarse"] on a grounded bed away from both curves, opt["far_h"] farther than opt["far"] from both; s found by bisection so the estimated
     triangle count sum(area / (0.433 h^2)) is opt["max_triangles"] (no budget: s = 1). The stream margins of a
     thermally controlled bed are the cold/temperate transition, so the distance to it puts the resolution there
     without thresholds on strain rates. If even s at h_max overshoots the budget, the transition band is narrowed."""
@@ -298,6 +298,9 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
         # deformation), at least opt["coarse"]: only the boundaries are fine
         far = grounded & (dgl > opt["gl_band"]) & (dct > bct)
         hbg[far] = np.maximum(hbg[far], min(hc, hmax))
+        # and coarser still far from both (default 5 km beyond 200 km): the interior away from any margin
+        far2 = grounded & (np.minimum(dgl, dct) > opt.get("far", np.inf))
+        hbg[far2] = np.maximum(hbg[far2], min(opt.get("far_h", hc), hmax))
         h_ = np.minimum(np.minimum(hgl, hct), hbg)
         return grade(h_, x, y, tri, g) if graded else h_
     bct = opt["ct_band"]
