@@ -15,7 +15,8 @@ left out (the restart replaced them).
 --every N: every N-th regular output, counted across all segments (and the very last); each segment's first step on
 its new mesh (basestart, see ess/elmer.py) is always kept. Default 1: every output. --every-yr Y instead: the
 outputs at multiples of Y yr of model time (e.g. 1000: 1000, 2000, ..), whatever the segments.
-Old OUTBASE_seg*.npz files are removed first, so a glob never mixes in another job's segments.
+The new segments are written under temporary names and replace the old OUTBASE_seg*.npz (all of them, also another
+job's) only at the end, so a glob never mixes sets and a download during packing still gets the old, complete set.
 """
 import glob
 import os
@@ -85,8 +86,6 @@ def main():
         nxt = [s for s in segs if s[0] == ji + 1]
         if nxt:
             cut[ji] = nxt[0][2]
-    for old in glob.glob(f"{outbase}_seg*.npz"):
-        os.remove(old)
     here = os.path.dirname(os.path.abspath(__file__))
     counts = [len(glob.glob(os.path.join(d, "base_t*.pvtu"))) for _, d, _, _ in segs]
     total = sum(counts)
@@ -111,13 +110,20 @@ def main():
         print(f"segment {k}: {os.path.basename(d)}: {nv} outputs ({len(keep)} kept), t {ts:g} .. {ts + ln:g} yr")
         has_start = bool(glob.glob(os.path.join(d, "basestart_t*.pvtu")))   # the first step on its mesh (always packed)
         if keep or has_start:
-            out = f"{outbase}_seg{len(made) + 1:03d}.npz"
+            out = f"{outbase}_seg{len(made) + 1:03d}.npz.part.npz"   # renamed when all are done (a download
+                                                                      # meanwhile still finds the old set)
             extra = ["--tmax", repr(tmax - 1e-6)] if tmax is not None else []
             r = subprocess.run([sys.executable, os.path.join(here, "vtu_frames.py"), d, out, "--t0", repr(ts),
                                 "--keep", ",".join(map(str, keep))] + extra + rest)
             if r.returncode == 0:
                 made.append(out)
-    print("packed: " + " ".join(made))
+    final = [m[:-len(".part.npz")] for m in made]
+    for old in glob.glob(f"{outbase}_seg*.npz"):     # the old set (also another job's), then the new one in place
+        if old not in made:
+            os.remove(old)
+    for m, f in zip(made, final):
+        os.replace(m, f)
+    print("packed: " + " ".join(final))
 
 
 if __name__ == "__main__":
