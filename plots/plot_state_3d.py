@@ -1499,6 +1499,14 @@ def main():
             for xe in (xs.min(), xs.max()):                       # the x ends of the window
                 m = np.where(np.abs(xs - xe) < 1)[0]
                 wall(m[np.argsort(ys[m])], dy, "end wall")
+        if ys.min() < -1.0:       # jagged periodic sides: side 1 the nodes whose image (x, y + W) is a node, side 2 those
+            from scipy.spatial import cKDTree
+            d_, j_ = cKDTree(np.c_[xs, ys]).query(np.c_[xs, ys + W])
+            s1 = np.where(d_ < 1.0)[0]
+            s1 = s1[np.argsort(xs[s1])]
+            wall(s1, 0.0, "side wall")
+            wall(j_[s1], (TILE - 1) * W / 1e3, "side wall")
+            return out
         ylo, yhi = ys.min(), ys.max()
         for ye, c in ((ylo, 0), (yhi, TILE - 1)):                 # the outer sides
             m = np.where(np.abs(ys - ye) < 1)[0]
