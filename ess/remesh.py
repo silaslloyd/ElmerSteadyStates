@@ -33,7 +33,7 @@ import subprocess
 
 import numpy as np
 
-from .statefile import Block, SavedState, StateLayout, find_name
+from .statefile import Block, SavedState, StateLayout, find_name, load_state
 
 log = logging.getLogger("ess")
 
@@ -287,17 +287,79 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
     ctp = np.c_[0.5 * (x[e[tr, 0]] + x[e[tr, 1]]), 0.5 * (y[e[tr, 0]] + y[e[tr, 1]])]
     dist = lambda P: cKDTree(P).query(np.c_[x, y])[0] if len(P) else np.full(nb, np.inf)
     dgl, dct = dist(glp), dist(ctp)
+    # directional bands (opt["prev_state"]: the state this mesh was made from, the curves at the last remesh): how far
+    # each piece of each curve moved since, and to which side; the band ahead of a moving piece reaches look x that
+    # distance (plus the minimum band), behind it and along still pieces only the minimum band
+    band_gl = np.full(nb, float(opt["gl_band"]))
+    band_ct = np.full(nb, float(opt["ct_band"]))
+    prev = opt.get("prev_state")
+    if prev is not None:
+        fp = {**prev.diag, **prev.frozen}
+        gm0 = base_values(fp[find_name(fp, "groundedmask")], nb)
+        ct0 = base_values(fp[find_name(fp, "coldtempmask")], nb)
+        if np.isnan(gm0).all():
+            raise SystemExit("remesh --directional: the previous state is not on this mesh")
+        g0 = np.nan_to_num(gm0, nan=-1) > -0.5
+        t0 = np.nan_to_num(ct0, nan=1) > 0
+        look, jump = opt.get("look", 1.5), opt.get("band_max", 50e3)
+        hn = 2.0 * opt["fine"]                                 # displacements below this: noise of the masks
+        report_dir = []
+
+        def bands(Pnow, ein, pos_now, pos_prev, ok_prev, bmin, bdef, label):
+            """per node the band of its nearest current curve piece: ahead / behind by the piece's motion"""
+            if not len(Pnow):
+                return np.full(nb, float(bdef))
+            mix0 = ok_prev[e[:, 0]] & ok_prev[e[:, 1]] & (pos_prev[e[:, 0]] != pos_prev[e[:, 1]])
+            P0 = np.c_[0.5 * (x[e[mix0, 0]] + x[e[mix0, 1]]), 0.5 * (y[e[mix0, 0]] + y[e[mix0, 1]])]
+            if not len(P0):
+                return np.full(nb, float(bdef))
+            # each current piece (edge midpoint): how far the old curve is along the piece's normal (the curve's local
+            # direction from the pieces within 3 km; the nearest old point's offset projected on the normal, so a
+            # stream's sides that grew with its head count as still), on the old positive side or not
+            d0, i0 = cKDTree(P0).query(Pnow)
+            off = P0[i0] - Pnow
+            tn = cKDTree(Pnow)
+            nrm = np.zeros_like(Pnow)
+            for q, nb_ in enumerate(tn.query_ball_point(Pnow, r=3e3)):
+                Q = Pnow[nb_] - Pnow[nb_].mean(0)
+                if len(nb_) < 3:
+                    nrm[q] = off[q] / max(np.hypot(*off[q]), 1e-9)
+                    continue
+                w, v = np.linalg.eigh(Q.T @ Q)
+                nrm[q] = v[:, 0]                                   # the smaller principal axis: the normal
+            dn = np.abs(np.sum(off * nrm, 1))
+            a, b = e[ein, 0], e[ein, 1]
+            side0 = np.where(pos_prev[a] & pos_prev[b], 1.0, np.where(~pos_prev[a] & ~pos_prev[b], -1.0, 0.0))
+            disp = np.maximum(dn - hn, 0.0) * side0                # signed: > 0 moved into the positive side
+            new = d0 > jump                                        # no old curve near: a new piece, default band
+            ahead_w = np.where(new, bdef, np.minimum(bmin + look * np.abs(disp), jump))
+            j = cKDTree(Pnow).query(np.c_[x, y])[1]
+            node_pos = np.where(pos_now, 1.0, -1.0)
+            is_ahead = (np.sign(disp[j]) == node_pos) & (disp[j] != 0)
+            bnd = np.where(new[j], bdef, np.where(is_ahead, ahead_w[j], bmin))
+            mv = np.abs(disp) > 0
+            report_dir.append(f"{label}: {mv.sum()} of {len(Pnow)} pieces moved (median {np.median(np.abs(disp[mv])) / 1e3 if mv.any() else 0:.1f} km, "
+                              f"max {np.abs(disp).max() / 1e3:.1f} km; {int(np.sum(disp > 0))} into the "
+                              f"{'grounded' if label == 'grounding line' else 'temperate'} side), {int(new.sum())} new")
+            return bnd
+        band_gl = bands(glp[:mix.sum()], mix, grounded, g0, np.ones(nb, bool), opt.get("band_min_gl", 5e3),
+                        opt["gl_band"], "grounding line")
+        band_ct = bands(ctp, tr, tempe, t0, g0 & grounded, opt.get("band_min_ct", 2e3), opt["ct_band"],
+                        "cold/temperate transition")
+        for r_ in report_dir:
+            log.info(f"remesh: directional: {r_}")
     _, area = node_areas(x, y, tri)
     hmin, hmax, hc, g = opt["fine"], opt["h_max"], opt["coarse"], opt["grade"]
     count = lambda h: float(np.sum(area / (0.433 * h ** 2)))
 
     def build(sc, bct, graded=False):
-        hgl = hmin + g * np.maximum(dgl - opt["gl_band"], 0)
-        hct = opt.get("fine_ct", hmin) + g * np.maximum(dct - bct, 0)   # the margins: their own (finer) size
+        bct_n = band_ct * (bct / opt["ct_band"])               # the budget's narrowing scales the bands too
+        hgl = hmin + g * np.maximum(dgl - band_gl, 0)
+        hct = opt.get("fine_ct", hmin) + g * np.maximum(dct - bct_n, 0)   # the margins: their own (finer) size
         hbg = np.clip(sc * h_res, hmin, hmax)
         # the grounded bed away from both curves, cold (frozen) or temperate (the streams' interiors: fast, little
         # deformation), at least opt["coarse"]: only the boundaries are fine
-        far = grounded & (dgl > opt["gl_band"]) & (dct > bct)
+        far = grounded & (dgl > band_gl) & (dct > bct_n)
         hbg[far] = np.maximum(hbg[far], min(hc, hmax))
         # and coarser still far from both (default 5 km beyond 200 km): the interior away from any margin
         far2 = grounded & (np.minimum(dgl, dct) > opt.get("far", np.inf))
@@ -562,6 +624,9 @@ def remesh(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, opt: di
     sd = (divide - rs) if divide else rs
     h_res = np.interp(sd, pts[:, 0], pts[:, 1])
     if opt.get("mode", "curves") == "curves":
+        if opt.get("prev") and opt.get("prev_state") is None:
+            opt = dict(opt, prev_state=load_state(opt["prev"]))
+            log.info(f"remesh: directional bands from the motion since {opt['prev']}")
         h, rep = size_field_budget(src, sx, sy, stri, h_res, opt)
     else:
         h, rep = size_field(src, sx, sy, stri, h_res, opt)

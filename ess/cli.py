@@ -271,7 +271,22 @@ def _remesh_opt(args):
     return dict(fine=args.fine, coarse=args.coarse, gl_band=args.gl_band_km * 1e3, margin_shear=args.margin_shear,
                 fast_speed=args.fast_speed, low_strain=args.low_strain, grade=args.grade,
                 max_triangles=args.max_triangles, h_max=args.h_max, ct_band=args.ct_band_km * 1e3, mode=args.mode,
-                jitter=args.jitter, far=args.far_km * 1e3, far_h=args.far_h, fine_ct=args.fine_margin)
+                jitter=args.jitter, far=args.far_km * 1e3, far_h=args.far_h, fine_ct=args.fine_margin,
+                prev=getattr(args, "prev", None), look=args.look, band_max=args.band_max_km * 1e3,
+                band_min_ct=args.band_min_ct_km * 1e3, band_min_gl=args.band_min_gl_km * 1e3)
+
+
+def _prev_for(args, cfg, mesh, keep_given=False):
+    """--directional: the state the mesh `mesh` was made from (<work>/<mesh>_start.npz: the curves at that remesh);
+    keep_given: an explicit --prev (ess remesh) wins"""
+    if not getattr(args, "directional", False) or (keep_given and getattr(args, "prev", None)):
+        return
+    args.prev = None
+    p = os.path.join(cfg["_work"], f"{mesh}_start.npz")
+    if os.path.exists(p):
+        args.prev = p
+    else:
+        log.info(f"remesh: --directional: no {p} (the first mesh): symmetric bands this time")
 
 
 def _add_remesh_args(s):
@@ -280,6 +295,18 @@ def _add_remesh_args(s):
     s.add_argument("--gl-band-km", type=float, default=25.0, help="fine within this of the grounding line (km)")
     s.add_argument("--fine-margin", type=float, default=250.0,
                    help="curves: element size at the cold/temperate transition, the stream margins (m)")
+    s.add_argument("--directional", action="store_true",
+                   help="curves: bands by how each piece of the grounding line / transition moved since the mesh was "
+                        "made (from <work>/<mesh>_start.npz, or --prev): wide ahead of moving pieces, narrow behind and "
+                        "along still ones")
+    s.add_argument("--prev", help="--directional: the earlier state on the same mesh to measure the motion from")
+    s.add_argument("--look", type=float, default=1.5, help="--directional: band ahead = band min + LOOK x the distance moved")
+    s.add_argument("--band-max-km", type=float, default=50.0, help="--directional: the widest band ahead (km); pieces "
+                   "farther than this from the old curve count as new (the default band)")
+    s.add_argument("--band-min-ct-km", type=float, default=2.0, help="--directional: the transition's band behind and "
+                   "along still pieces (km)")
+    s.add_argument("--band-min-gl-km", type=float, default=5.0, help="--directional: the grounding line's band behind "
+                   "and along still pieces (km)")
     s.add_argument("--far-km", type=float, default=200.0,
                    help="curves: grounded ice farther than this from both curves (km) at least --far-h")
     s.add_argument("--far-h", type=float, default=5000.0, help="curves: the element size far from both curves (m)")
@@ -362,6 +389,7 @@ def _auto_remesh(args, cfg, model, out, t_abs, rm, dc=None):
     name = _next_mesh_name(cfg["paths"]["case_dir"], args.remesh_prefix)
     log.info(f"run: remesh {nrem + 1} at t = {t_abs:g} ({rm['step']} steps into this run, {left} left): "
              f"{model.mesh_db} -> {name}")
+    _prev_for(args, cfg, model.mesh_db)
     layout, x, frozen, diag, rep = remesh(cfg, src, name, model.mesh_db, model.n_procs, _remesh_opt(args))
     start = os.path.join(cfg["_work"], f"{name}_start.npz")
     save_state(start, layout, x, src.p, frozen, diag, mesh_db=name, source=out, time=t_abs, remesh="; ".join(rep))
@@ -409,6 +437,7 @@ def cmd_run(args):
         from .remesh import remesh
         name = _next_mesh_name(cfg["paths"]["case_dir"], args.remesh_prefix)
         log.info(f"run: the start state is on a mesh not fitted to it ({model.mesh_db}): remesh to {name} first")
+        _prev_for(args, cfg, model.mesh_db)
         layout, x_, frozen_, diag_, rep = remesh(cfg, saved, name, model.mesh_db, model.n_procs, _remesh_opt(args))
         start = os.path.join(cfg["_work"], f"{name}_start.npz")
         save_state(start, layout, x_, saved.p, frozen_, diag_, mesh_db=name, source=args.state, time=t_off,
@@ -1202,6 +1231,7 @@ def cmd_remesh(args):
     src_mesh = args.from_mesh or os.environ.get("ESS_MESH_DB") or str(src.meta.get("mesh_db", "")) or \
         cfg["elmer"].get("mesh_db", "footprint")
     n = int(args.ranks or os.environ.get("ESS_NPROCS", 0) or cfg["elmer"].get("n_procs", 1))
+    _prev_for(args, cfg, src_mesh, keep_given=True)
     opt = _remesh_opt(args)
     log.info(f"remesh: {args.state} on mesh {src_mesh} -> mesh {args.name} ({n} partitions)")
     layout, x, frozen, diag, rep = remesh(cfg, src, args.name, src_mesh, n, opt, dry=args.dry_run)
