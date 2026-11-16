@@ -96,6 +96,11 @@ def main():
     t0, tmax, keep_every, keep_yr = 0.0, None, 1, None
     last_only = "--last" in args                  # --last: only the newest output
     args = [a for a in args if a != "--last"]
+    keep_idx = None                               # --keep i,j,..: only these outputs (0-based, in time order)
+    if "--keep" in args:
+        k = args.index("--keep")
+        keep_idx = {int(v) for v in args[k + 1].split(",") if v != ""}
+        args = args[:k] + args[k + 2:]
     tmin = None
     for opt in ("--t0", "--tmin", "--tmax", "--every", "--every-yr"):
         if opt in args:
@@ -127,7 +132,10 @@ def main():
     if sched:                                     # several timestep intervals (e.g. denser output at first)
         print(f"  output steps from the run's schedule: {', '.join(map(str, sched[:8]))}{', ..' if len(sched) > 8 else ''}")
         step_of = lambda k: sched[k - 1] if k <= len(sched) else sched[-1] + (k - len(sched)) * every
-    if keep_every > 1 or keep_yr:                 # thin the outputs before reading them
+    if keep_idx is not None:
+        steps = [f for n, f in enumerate(steps) if n in keep_idx]
+        print(f"  {len(steps)} outputs kept (--keep)")
+    elif keep_every > 1 or keep_yr:               # thin the outputs before reading them
         kof = lambda f: int(re.findall(r"_t(\d+)", os.path.basename(f))[0])
         last = len(steps) - 1
         if keep_yr:
