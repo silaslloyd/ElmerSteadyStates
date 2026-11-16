@@ -530,6 +530,13 @@ def interpolate_state(src: SavedState, nbs, sx, sy, stri, dx, dy, divide=None):
         kl = k.lower()                       # run writes again)
         if kl in ("velocity 1", "velocity 2", "velocity 3", "pressure", "coordinate 3"):
             diag[k] = onto(r, k)
+    # the water sheet: a state of the run (carried between runs as an output, "water sheet thickness" in diag), so
+    # onto the new mesh too, as the frozen field the next run starts its sheet from; without it every remesh
+    # restarted the sheet from its initial condition (jobs up to 31811)
+    if not any(k.lower() == "water sheet thickness" for k in frozen):
+        ks = [k for k in src.diag if k.lower() == "water sheet thickness"]
+        if ks:
+            frozen["Water Sheet Thickness"] = onto(src.diag[ks[0]], ks[0])
     # the coordinates: the new mesh's x, y on every level the old ones covered
     for k in [k for k in src.diag if k.lower() in ("coordinate 1", "coordinate 2")]:
         g, _ = src.diag[k]
