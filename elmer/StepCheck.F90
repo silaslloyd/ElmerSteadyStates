@@ -42,10 +42,10 @@ SUBROUTINE StepCheck( Model, Solver, dt, Transient )
   REAL(KIND=dp) :: rhoi, grav, mu, uh, c, dz, hmin, e, thick, &
       cTop, cBot, dTop, dBot, rFrac, rMax, xs(3), ys(3), loc(6,2), nTop1, nBot1, tnow
   INTEGER :: t, i, j, k, n, a, b, nn, p
-  LOGICAL :: Found, top, bot, GotR, endRun
-  REAL(KIND=dp) :: cTgt, dtLo, dtHi, cMax, dtNew
+  LOGICAL :: Found, top, bot, GotR, endRun, gotT
+  REAL(KIND=dp) :: cTgt, dtLo, dtHi, cMax, dtNew, tHeat, thHi, thLo
   INTEGER :: nUp
-  INTEGER, SAVE :: nCalls = 0, nCalm = 0
+  INTEGER, SAVE :: nCalls = 0, nCalm = 0, nSlow = 0
   CHARACTER(*), PARAMETER :: Caller = 'StepCheck'
 !------------------------------------------------------------------------------
   Params => GetSolverParams()
@@ -171,17 +171,46 @@ SUBROUTINE StepCheck( Model, Solver, dt, Transient )
     dtHi = ListGetConstReal( Params, 'Step Check Dt Max', Found ); IF ( .NOT. Found ) dtHi = dt
     nUp = ListGetInteger( Params, 'Step Check Dt Min Steps', Found ); IF ( .NOT. Found ) nUp = 50
     cMax = MAX( cTop, cBot )
-    dtNew = dtHi
-    IF ( cMax > 0.0_dp ) dtNew = MIN( dtHi, dt * cTgt / cMax )
-    dtNew = MAX( dtLo, dtNew )
-    IF ( dtNew > 1.5_dp * dt ) THEN
-      nCalm = nCalm + 1
+    IF ( ListGetString( Params, 'Step Check Dt Mode', Found ) == 'heat' ) THEN
+      ! by the heat solve's time ("res: linsys real time temperature", Linear System Timing in the heat solver): half
+      ! the step after 2 steps in a row slower than Heat Time Max (s), double it after Dt Min Steps faster than Heat
+      ! Time Min; within [Dt Min, Dt Max]
+      tHeat = ListGetConstReal( Model % Simulation, 'res: linsys real time temperature', Found )
+      thHi = ListGetConstReal( Params, 'Step Check Heat Time Max', gotT ); IF ( .NOT. gotT ) thHi = 10.0_dp
+      thLo = ListGetConstReal( Params, 'Step Check Heat Time Min', gotT ); IF ( .NOT. gotT ) thLo = 3.0_dp
+      dtNew = dt
+      IF ( Found ) THEN
+        IF ( tHeat > thHi ) THEN
+          nSlow = nSlow + 1
+        ELSE
+          nSlow = 0
+        END IF
+        IF ( tHeat < thLo ) THEN
+          nCalm = nCalm + 1
+        ELSE
+          nCalm = 0
+        END IF
+        IF ( nSlow >= 2 .AND. dt > dtLo * 1.0001_dp ) dtNew = MAX( dtLo, 0.5_dp * dt )
+        IF ( nCalm >= nUp .AND. dt < dtHi * 0.9999_dp ) dtNew = MIN( dtHi, 2.0_dp * dt )
+      ELSE
+        tHeat = -1.0_dp
+      END IF
+      endRun = ABS( dtNew - dt ) > 1.0e-6_dp * dt
+      WRITE( Message, '(A,F10.3,A,F8.2,A,F8.3,A,F8.3,A,F8.3,A,I0,A,I0,A,L1)' ) 'dt control t', tnow, ': heat solve ', &
+          tHeat, ' s, CFL ', cMax, ', dt ', dt, ' -> ', dtNew, ' (slow steps ', nSlow, ', calm ', nCalm, '), end ', endRun
     ELSE
-      nCalm = 0
+      dtNew = dtHi
+      IF ( cMax > 0.0_dp ) dtNew = MIN( dtHi, dt * cTgt / cMax )
+      dtNew = MAX( dtLo, dtNew )
+      IF ( dtNew > 1.5_dp * dt ) THEN
+        nCalm = nCalm + 1
+      ELSE
+        nCalm = 0
+      END IF
+      endRun = ( dtNew < 0.8_dp * dt ) .OR. ( nCalm >= nUp )
+      WRITE( Message, '(A,F10.3,A,F8.3,A,F8.3,A,F8.3,A,I0,A,L1)' ) 'dt control t', tnow, ': CFL ', cMax, ', dt ', dt, &
+          ' -> ', dtNew, ' (calm steps ', nCalm, '), end ', endRun
     END IF
-    endRun = ( dtNew < 0.8_dp * dt ) .OR. ( nCalm >= nUp )
-    WRITE( Message, '(A,F10.3,A,F8.3,A,F8.3,A,F8.3,A,I0,A,L1)' ) 'dt control t', tnow, ': CFL ', cMax, ', dt ', dt, &
-        ' -> ', dtNew, ' (calm steps ', nCalm, '), end ', endRun
     CALL Info( Caller, Message, Level=3 )
     IF ( endRun ) THEN
       CALL ListAddConstReal( Model % Simulation, 'Exit Condition', 1.0_dp )

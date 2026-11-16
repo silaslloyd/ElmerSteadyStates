@@ -225,6 +225,9 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 if [ -n "$DT_ADAPT" ]; then export ESS_DT_ADAPT=$DT_ADAPT ESS_STEP_CHECK=1; STEP_CHECK=1; echo "  adaptive time step $DT_ADAPT (yr; CFL target)"; fi
 # UNTIL=T: run to model time T (yr) instead of STEPS steps (ess run --until)
 [ -n "$UNTIL" ] && opts="$opts --until $UNTIL" && echo "  run to model time $UNTIL yr"
+# DT_ADAPT_HEAT="MAX:MIN" (s): with DT_ADAPT, the step by the heat solve's time instead of the CFL: halved after 2
+# heat solves slower than MAX in a row, doubled after the calm steps (DT_ADAPT's 4th field, default 50) faster than MIN
+[ -n "$DT_ADAPT_HEAT" ] && export ESS_DT_ADAPT_HEAT=$DT_ADAPT_HEAT && echo "  time step by the heat solve's time: $DT_ADAPT_HEAT s"
 # TIME_OFFSET=T: the run starts at model time T (yr), e.g. a restart from a checkpoint of a longer run (SEA_LEVEL and
 # ACCUM keep the whole run's times)
 [ -n "$TIME_OFFSET" ] && opts="$opts --time-offset $TIME_OFFSET" && echo "  model time at the start: $TIME_OFFSET yr"

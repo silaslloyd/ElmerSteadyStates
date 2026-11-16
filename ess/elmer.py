@@ -857,6 +857,15 @@ End
         ck = os.environ.get("ESS_CHECKPOINT_EVERY")
         if ck and int(ck) > 0:
             text = self._checkpoint_every(text, int(ck))
+        if os.environ.get("ESS_DT_ADAPT_HEAT"):   # the heat solve's time for the time step control
+            m = re.search(r'^Solver \d+[ \t]*\n(?:(?!^End).)*?Equation = String "Homologous Temperature Equation".*?^End[ \t]*$',
+                          text, re.M | re.S)
+            if not m:
+                raise ValueError("ESS_DT_ADAPT_HEAT: no heat solver section")
+            blk = m.group(0)
+            if not re.search(r"Linear System Timing", blk):
+                blk = blk[:blk.rindex("End")] + "  Linear System Timing = Logical True   ! ESS_DT_ADAPT_HEAT\nEnd"
+            text = text[:m.start()] + blk + text[m.end():]
         if os.environ.get("ESS_NO_ABORT") == "1":
             text = self._no_abort(text)
         left = sorted(set(PLACEHOLDER.findall(text)))
@@ -1480,9 +1489,17 @@ Solver {n}
         lo, hi = float(f[0]), float(f[1])
         tgt = float(f[2]) if len(f) > 2 and f[2] else 1.0
         nup = int(f[3]) if len(f) > 3 and f[3] else 50
-        return (f"  Step Check Dt Control = Logical True\n  Step Check Dt Min = Real {lo!r}\n"
+        keys = (f"  Step Check Dt Control = Logical True\n  Step Check Dt Min = Real {lo!r}\n"
                 f"  Step Check Dt Max = Real {hi!r}\n  Step Check CFL Target = Real {tgt!r}\n"
                 f"  Step Check Dt Min Steps = Integer {nup}\n")
+        # ESS_DT_ADAPT_HEAT = "MAX:MIN" (s; jobs DT_ADAPT_HEAT): by the heat solve's time instead of the CFL (half the
+        # step after 2 heat solves slower than MAX in a row, double it after the calm steps faster than MIN)
+        ht = os.environ.get("ESS_DT_ADAPT_HEAT")
+        if ht:
+            f = ht.split(":")
+            keys += (f'  Step Check Dt Mode = String "heat"\n  Step Check Heat Time Max = Real {float(f[0])!r}\n'
+                     f"  Step Check Heat Time Min = Real {float(f[1]) if len(f) > 1 and f[1] else 3.0!r}\n")
+        return keys
 
     def _remesh_trigger(self, text):
         """elmer/RemeshTrigger.F90 after every time step on the ice base (see remesh_auto)"""
