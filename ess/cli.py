@@ -430,7 +430,10 @@ def cmd_run(args):
         m_ = re.search(r"\d+", os.environ.get("ESS_RUN_LABEL") or "")
         args.remesh_prefix = (m_.group(0) if m_ else "run") + "m"
     cfg, model, saved = _setup(args)
-    if getattr(args, "remesh_auto", False) and not any(k.lower() == "remesh distance" for k in saved.frozen):
+    first = getattr(args, "remesh_first", False)
+    if first:
+        args.remesh_first = False                 # once: the run on the new mesh must not remesh again at its start
+    if getattr(args, "remesh_auto", False) and (first or not any(k.lower() == "remesh distance" for k in saved.frozen)):
         # a state not remeshed yet (the original mesh: no fine band anywhere): remesh it before the first step,
         # rather than run on the coarse mesh until the trigger may fire (REMESH_MIN_STEPS)
         import copy
@@ -1439,6 +1442,9 @@ def main(argv=None):
                    help="remesh when needed: elmer/RemeshTrigger ends the run when the grounding line or the "
                         "cold/temperate transition comes near coarse mesh; then ess remesh from the state and the run "
                         "goes on on the new mesh (options as ess remesh)")
+    s.add_argument("--remesh-first", action="store_true",
+                   help="with --remesh-auto: remesh the start state before the first step even if it is on a fitted "
+                        "mesh (e.g. a restart with other remesh settings: a smaller --max-triangles)")
     s.add_argument("--until", type=float, default=None,
                    help="run to this model time (yr) instead of --steps: the steps from the start time (--time-offset) "
                         "and dt, recomputed after every remesh or time step change")

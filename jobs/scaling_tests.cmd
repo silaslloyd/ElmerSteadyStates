@@ -235,6 +235,9 @@ if [ -n "$DT_ADAPT" ]; then export ESS_DT_ADAPT=$DT_ADAPT ESS_STEP_CHECK=1; STEP
 # (ess run --accumulation; carried across remeshes with the true time, like SEA_LEVEL)
 [ -n "$ACCUM" ] && opts="$opts --accumulation=$ACCUM" && echo "  accumulation factor schedule $ACCUM"
 [ "$REMESH_AUTO" = 1 ] && opts="$opts --remesh-auto $REMESH_ARGS" && echo "  remesh when needed ($REMESH_ARGS)"
+# REMESH_FIRST=1 (with REMESH_AUTO=1): remesh the start state before the first step even on a fitted mesh (a restart
+# with other remesh settings, e.g. a smaller --max-triangles)
+[ "$REMESH_FIRST" = 1 ] && opts="$opts --remesh-first" && echo "  remesh the start state first"
 [ -n "$REMESH_GL_SAFETY" ] && export ESS_REMESH_GL_SAFETY=$REMESH_GL_SAFETY
 [ -n "$REMESH_CT_SAFETY" ] && export ESS_REMESH_CT_SAFETY=$REMESH_CT_SAFETY
 [ -n "$REMESH_CT_FRACTION" ] && export ESS_REMESH_CT_FRACTION=$REMESH_CT_FRACTION
