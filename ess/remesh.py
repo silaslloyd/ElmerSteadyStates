@@ -301,7 +301,7 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
             raise SystemExit("remesh --directional: the previous state is not on this mesh")
         g0 = np.nan_to_num(gm0, nan=-1) > -0.5
         t0 = np.nan_to_num(ct0, nan=1) > 0
-        look, jump = opt.get("look", 1.5), opt.get("band_max", 50e3)
+        look, jump = opt.get("look", 2.5), opt.get("band_max", 50e3)
         hn = 2.0 * opt["fine"]                                 # displacements below this: noise of the masks
         report_dir = []
 

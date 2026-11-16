@@ -300,7 +300,7 @@ def _add_remesh_args(s):
                         "made (from <work>/<mesh>_start.npz, or --prev): wide ahead of moving pieces, narrow behind and "
                         "along still ones")
     s.add_argument("--prev", help="--directional: the earlier state on the same mesh to measure the motion from")
-    s.add_argument("--look", type=float, default=1.5, help="--directional: band ahead = band min + LOOK x the distance moved")
+    s.add_argument("--look", type=float, default=2.5, help="--directional: band ahead = band min + LOOK x the distance moved")
     s.add_argument("--band-max-km", type=float, default=50.0, help="--directional: the widest band ahead (km); pieces "
                    "farther than this from the old curve count as new (the default band)")
     s.add_argument("--band-min-ct-km", type=float, default=2.0, help="--directional: the transition's band behind and "
