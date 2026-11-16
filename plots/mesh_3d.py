@@ -119,11 +119,11 @@ def panel_traces(inp, scene, flat=False, zoom=None, edges=False, first=True):
     for lab, X, Y, col in curves:
         Xa = np.array([np.nan if v is None else v for v in X], float)
         Ya = np.array([np.nan if v is None else v for v in Y], float)
-        Za = np.zeros_like(Xa) + 2.0 if zi is None else zi(Xa, Ya) + 3.0
+        Za = np.zeros_like(Xa) if zi is None else zi(Xa, Ya) + 3.0   # flat: on the mesh, z = 0
         traces.append(go.Scatter3d(x=nn(Xa), y=nn(Ya), z=nn(Za), mode="lines", line=dict(color=col, width=5),
                                    hoverinfo="skip", name=lab, legendgroup=lab, showlegend=first, scene=scene))
     title = f"{name}: {nb} nodes, {ntri} triangles" + (f", t {float(d['time']):g} yr" if "time" in d.files else "")
-    asp = dict(x=3, y=3 * (np.ptp(y) / max(np.ptp(x), 1e-9)), z=0.3)
+    asp = dict(x=3, y=3 * (np.ptp(y) / max(np.ptp(x), 1e-9)), z=0.02 if zi is None else 0.3)
     return traces, title, asp
 
 
@@ -141,6 +141,8 @@ def plot(inps, out=None, flat=False, zoom=None, edges=False):
             fig.add_trace(t_, row=k + 1, col=1)
         fig.layout["scene" if k == 0 else f"scene{k + 1}"].update(
             aspectmode="manual", aspectratio=asp, xaxis_title="x (km)", yaxis_title="y (km)", zaxis_title="z (m)")
+        if flat:                                  # a fixed thin z range: the curves on the mesh, no stretched z
+            fig.layout["scene" if k == 0 else f"scene{k + 1}"].zaxis.update(range=[-1, 1], visible=False)
     fig.update_layout(legend=dict(x=0, y=1))
     # the panels' cameras linked: rotating or zooming one moves the others
     sync = None
