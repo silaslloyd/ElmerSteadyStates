@@ -1,0 +1,123 @@
+# "Flowline of the extended strip": the 2D (one element wide) version of configs/coarse_rect_ext.toml, for steady
+# states by Newton-Krylov (ess newton / continue / stability) as the starting point of the 3D runs. The same flowline:
+# the divide at x = 0, the calving front at x = 1116 km, the bed carried from the cold Marine_Term flowline state and
+# continued linearly beyond it (ess transfer), with the same shelf break (jobs/shelf_break.py --strip-divide-r-km 1520.8
+# --r-break-km 450 --factor 30 --width-km 10: the bend at x = 1070.8 km), so a 2D steady state carries onto the 3D
+# strip column by column (ess transfer, uniform across). 1 km wide with free-slip walls; 500 m elements along x.
+# Physics for a smooth map: the grounded and cold/temperate masks frozen within each Newton solve and moved between
+# solves ([masks] auto: flotation; melting / refreezing), no water sheet; heat with strain heating and frictional heating
+# as a flux (C |u_b|^2); subtemperate sliding; sea level 0, accumulation x 1, Tsurf 268.15. Direct solvers (an exact,
+# repeatable map for the finite-difference Jacobian products). Pipeline: jobs/flowline_steady.cmd.
+#
+[paths]
+work_dir = "work/flowline_rect_ext"
+case_dir = "{work}/case"                # mesh and initial conditions, written by `ess setup`
+
+[case]
+geometry = "marine"                     # ice shelf, sea pressure, frozen grounded mask (steady_template_marine.sif)
+marine_ics = "case/marine_ics"          # ElmerStreams Marine_Term Initialisation/Dimensional_ICs tables
+parameters = "case/parameters_fine2x.lua"      # physical parameters (as the 3D strip's)
+res_points = [[0, 500], [1116, 500]]    # 500 m along x everywhere (ess/case.py mirror_geo)
+front_km = 1116.0                       # the calving front, as the 3D strip
+width = 1000.0                          # m across: a flowline (free-slip walls)
+y_elements = 1
+periodic_sides = false                  # walls
+slide_ybump = 0.0                       # uniform friction
+gmsh = "gmsh"
+elmergrid = "ElmerGrid"
+
+[model]
+type = "elmer"
+
+[elmer]
+template = "elmer/steady_template_marine.sif"
+buoyancy_lib = "elmer/Buoyancy"
+mesh_db = "footprint"
+ess_lib = "elmer/SteadyStateIO"
+ess_utils = "elmer/ess_utils.lua"
+n_procs = 0                             # 0: $SLURM_NTASKS. `ess setup` partitions the mesh for this many.
+mpirun = "mpirun -np {n}"
+solver = "ElmerSolver"
+timeout = 21600
+keep_runs = false
+cache = true                            # a resubmitted job repeats no Elmer run
+friction_heat = "flux"                  # C(T) |u_b|^2 as a basal heat flux (smooth; the 3D runs use the loads)
+strain_heat = true                      # as the 3D runs
+sliding = "subtemperate"
+mumps_workspace = 200
+diagnostics = ["Temperature Loads", "Temperature Boundary Weights", "Velocity 1", "Velocity 3", "ColdTempMask",
+               "GroundedMask"]
+
+[state]
+variables = ["Temperature", "Zs", "Zb"]
+scales = { Temperature = 5.0, Zs = 50.0, Zb = 50.0 }
+frozen = ["ColdTempMask", "GroundedMask", "bedrock"]
+
+[lua]
+minh = 50.0
+ess_slide_maxfactor = 1.0e6
+
+[masks]
+auto = true
+max_rounds = 6
+
+[extract]
+restart_before_ics = true
+
+[parameter]
+name = "Tsurf"
+value = 268.15
+scale = 1.0
+
+# the map of Newton / continuation: as configs/marine_flowline.toml (dt 50 yr, a 2000 yr horizon, the bedrock's heat
+# capacity x 0.001: the same fixed points, the slow rock modes sped up)
+[map]
+dt = 50.0
+n_steps = 40
+coupled_iters = 1
+rock_heat_capacity = 0.001
+
+[stability_map]
+dt = 50.0
+n_steps = 100
+rock_heat_capacity = 1.0
+
+[fd]
+eps = 1e-6
+scheme = "central"
+
+[newton]
+tol = 1e-5
+maxit = 15
+eta_max = 0.1
+eta_min = 1e-5
+gmres_restart = 60
+gmres_maxiter = 150
+max_step = 2.0
+linesearch = 6
+
+[continuation]
+name = "Tsurf"
+ds = 0.5
+ds_min = 1e-3
+ds_max = 2.0
+dp0 = 0.01
+p_min = 255.0
+p_max = 273.0
+max_points = 150
+max_folds = 4
+tol = 1e-5
+predictor = "parameter"
+maxit = 8
+target_its = 3
+eta = 1e-3
+gmres_restart = 60
+gmres_maxiter = 150
+max_step = 2.0
+stability_every = 0
+stability_m = 10
+
+[stability]
+m = 50
+nev = 10
+tol = 1e-2
