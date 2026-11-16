@@ -48,6 +48,10 @@ def main():
                     help="keep a flat outer stretch as it is (by default the bed wherever it lies above the "
                          "interior's linear fit, i.e. the flat -224.1 m stretch the extended domain got from the shorter "
                          "flowline, is put on that line, all the way to the front, and the bend added on top)")
+    ap.add_argument("--strip-divide-r-km", type=float, default=None,
+                    help="a periodic strip (x from the divide): r = this - x, the radius of the sector it stands for "
+                         "(1520.8 for configs/coarse_rect_ext.toml, as coarse_sector_inv38_cut_ext), so --r-break-km "
+                         "and --fit-r-km mean the same as on the sector")
     ap.add_argument("--force", action="store_true",
                     help="write even if the bed under grounded ice changes (e.g. a bed template for jobs/thin_start.py)")
     a = ap.parse_args()
@@ -56,7 +60,8 @@ def main():
     kb = find_name(s.frozen, "bedrock")
     g, bed = s.frozen[kb]
     x, y = lookup(allf, "coordinate 1", g), lookup(allf, "coordinate 2", g)
-    r = np.hypot(x, y)
+    # a periodic strip (a sector of infinite radius): the radius of the sector it stands for, divide r D at x = 0
+    r = (a.strip_divide_r_km * 1e3 - x) if a.strip_divide_r_km else np.hypot(x, y)
     rb, w = a.r_break_km * 1e3, a.width_km * 1e3
     keep = (a.keep_above_km * 1e3) if a.keep_above_km is not None else rb + 10 * w
     fit = (r > a.fit_r_km[0] * 1e3) & (r < a.fit_r_km[1] * 1e3)
