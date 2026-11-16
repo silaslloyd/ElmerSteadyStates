@@ -35,6 +35,7 @@ range. The speed/vx/vy/vz buttons are off (their data was a large share of the p
     python plots/plot_state_3d.py work/<config>/runs/<run>                  # a run with ESS_VTU_EVERY: every step
     python plots/plot_state_3d.py A.npz --diff B.npz                      # colours: A minus B (same mesh)
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
+    python plots/plot_state_3d.py OUT_seg*.npz --x 560 1116 --true-aspect     # x and y on one scale (a strip: true shape)
     python plots/plot_state_3d.py STATES... --no-switch                    # no vx/vy/vz buttons (a smaller page)
 Speed colours max out at 100 m/yr (--vmax V; --vmax-gl: the surface speed on the grounding line; --vmax-all: the largest).
 Structured footprints and the unstructured triangle ones (configs/*_tri.toml; Delaunay, needs scipy).
@@ -73,6 +74,7 @@ from ess.statefile import find_name, load_state  # noqa: E402
 # ---- settings
 PHASES = ("spinup", "retreat", "advance")
 X_WINDOW = None          # (xmin, xmax) km; None: from 60 km behind the most inland grounding line to the front
+TRUE_ASPECT = False      # --true-aspect: x and y on one scale (the horizontal shape as it is)
 Z_EXAGGERATION = 1.0     # extra vertical stretch on top of the automatic aspect ratio
 ASPECT = dict(x=4.0, y=1.0, z=1.2)
 SHOW_BED = False         # the bedrock surface under the ice: hidden at first, "bed on" shows it (--bed: shown at first)
@@ -119,8 +121,13 @@ STREAM_KM = 5.0          # km between the streamlines' seeds across the flow (--
 
 
 def collect(args):
-    """[(label, path)] in order"""
+    """[(label, path)] in order; several frames files (segments of a remeshed run) in the order of their first time,
+    whatever the order given (a shell glob puts seg10 before seg2)"""
     out = []
+    fr = [a for a in args if a.endswith(".npz") and is_frames(a)]
+    if len(fr) > 1:
+        it = iter(sorted(fr, key=lambda f: float(_frames(f)["frame_times"][0])))
+        args = [next(it) if (a.endswith(".npz") and a in fr) else a for a in args]
     for a in args:
         if a.endswith(".npz") and is_frames(a):   # plots/vtu_frames.py: every output step of one long run
             t = _frames(a)["frame_times"]
@@ -1049,7 +1056,7 @@ def main():
     import plotly.graph_objects as go
     global SHEET, HW_MAX, HW_LOG, MASK_PANEL, MELT_MAX, SHEET_VEL, SHEET_LINES, HW_ISO, SHEET_STREAM_KM
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
-    global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD, SECTOR, SECTOR_A
+    global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD, SECTOR, SECTOR_A, TRUE_ASPECT
     args = sys.argv[1:]
     if "--vmax-all" in args:
         VMAX_GL, VMAX = False, None
@@ -1070,6 +1077,9 @@ def main():
     if "--no-show" in args:                       # only write the page (e.g. to view it from another machine)
         SHOW = False
         args.remove("--no-show")
+    if "--true-aspect" in args:                   # x and y on one scale (a strip: its real width against the window)
+        TRUE_ASPECT = True
+        args.remove("--true-aspect")
     if "--full" in args:                          # the whole ice sheet, divide to front
         X_WINDOW = (-1.0, 1e9)
         args.remove("--full")
@@ -2080,6 +2090,8 @@ gdv.on('plotly_animated', function () { if (cur.f !== OWN) showField(); });
     asp = dict(ASPECT)
     asp["z"] = ASPECT["z"] * Z_EXAGGERATION
     asp["y"] = ASPECT["y"] * TILE * (2.25 if COMPARE else 1.0)
+    if TRUE_ASPECT and not SECTOR:   # x and y on one scale: the window's length against the copies' width
+        asp["y"] = asp["x"] * (TILE * W / 1e3 * (2.25 if COMPARE else 1.0)) / max(x1 - x0, 1e-9)
     if SECTOR:                    # the copies' true shape: x and y on ONE scale (a different stretch in y than in x
         # shears the rotated copies), over the extent of all copies
         allx = np.concatenate([tp["x"] for _, tp, _, _ in data if tp is not None])
