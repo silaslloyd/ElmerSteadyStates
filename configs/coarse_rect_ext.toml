@@ -20,6 +20,7 @@ width = 100000.0                        # m across the flow (the periodic transl
 y_elements = 50                         # only the seam row band in GLDistance: width / y_elements = 2 km (~2 rows)
 partitioner = "metisper"                # METIS with periodic partners together (ElmerGrid -metisper)
 periodic_sides = true                   # side 2 (y = W) the periodic image of side 1 (y = 0)
+strip_cut_seed = 1                      # jagged periodic sides at the 1 km element size (a cut strip, as a cut sector)
 slide_ybump = 0.0                       # uniform friction
 gmsh = "gmsh"
 elmergrid = "ElmerGrid"

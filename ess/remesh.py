@@ -528,17 +528,6 @@ class Periodic:
                 f"Physical Curve(25) = {{{j(s2)}}};"]
         return "\n".join(out) + "\n"
 
-    def elmergrid(self, eg, msh, name, n_procs, c):
-        """the ElmerGrid conversion; a strip's periodicity is a translation, which ElmerGrid pairs (and -metisper
-        partitions) by itself; a sector's rotation is mapped to one first (ess/case.py sector_partition, after)"""
-        cmd = [eg, "14", "2", msh, "-autoclean", "-out", name]
-        if self.strip:
-            cmd += ["-periodic", "0", "1", "0"]
-            if n_procs > 1:
-                cmd += (["-metisper", str(n_procs)] if c.get("partitioner") == "metisper"
-                        else ["-partition", str(n_procs), "1", "1"])
-        return cmd
-
 
 def refine_chain(X, Y, hfun):
     """a side chain (points X, Y) with each segment longer than hfun at its midpoint split into equal straight parts
@@ -747,14 +736,16 @@ def remesh(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, opt: di
     out = os.path.join(case, name)
     if os.path.isdir(out):
         shutil.rmtree(out)
-    run(fr.elmergrid(eg, f"{name}.msh", name, n_procs, c))
+    run([eg, "14", "2", f"{name}.msh", "-autoclean", "-out", name])
     _, dx, dy, dtri = read_footprint(out)
     rep.append(f"new mesh {name}: {len(dx)} nodes, {len(dtri)} triangles (old {nbs} nodes, {len(stri)} triangles); "
                f"side segments {len(R) - 1} -> {len(R2) - 1}")
     log.info("remesh: " + rep[-1])
-    if n_procs > 1 and not fr.strip:
-        sector_partition(case, name, n_procs, float(c["sector_angle"]), front, eg,
-                         metisper=c.get("partitioner") == "metisper", msh=f"{name}.msh", side_file=side_new)
+    if n_procs > 1:   # periodic partners together, on the map that makes both sides straight (a sector's r, angle;
+                      # a strip's x, y - side 1)
+        sector_partition(case, name, n_procs, float(np.degrees(fr.A)), front, eg,
+                         metisper=c.get("partitioner") == "metisper", msh=f"{name}.msh", side_file=side_new,
+                         strip_width=fr.W if fr.strip else None)
     layout, x, frozen, diag = interpolate_state(src, nbs, sx, sy, stri, dx, dy, fr.divide, along=fr.along)
     nlev = levels_of(src, nbs)
     g, d, hn = remesh_distance(dx, dy, dtri, opt["fine"], nlev)
