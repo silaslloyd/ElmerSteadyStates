@@ -7,7 +7,7 @@ Two steps, since the meshes are on tethys and plotly on pilsen:
 
     python3 plots/mesh_3d.py pack MESHDIR OUT.npz [--state STATE.npz]     (tethys: numpy only; a few MB)
     python3 plots/mesh_3d.py plot IN.npz [IN2.npz ..] [OUT.html] [--flat] [--edges] [--zoom X0 X1 Y0 Y1 (km)]
-        (pilsen: plotly; several meshes: one panel each, one above the other, the cameras linked; OUT default
+        (pilsen: plotly; several meshes: side by side across y in one view, in the order given; OUT default
          <first>_mesh3d.html, or <first>_cmp_mesh3d.html for several)
 
 The triangles are filled by element size (flat shading, so each one shows); --edges also draws every edge as a line
@@ -69,8 +69,8 @@ def contour_lines(x, y, tri, v, level, mask=None):
     return X, Y
 
 
-def panel_traces(inp, scene, flat=False, zoom=None, edges=False, first=True):
-    """the traces of one mesh in the 3D scene `scene`, and its title"""
+def panel_traces(inp, scene, flat=False, zoom=None, edges=False, first=True, dy=0.0):
+    """the traces of one mesh in the 3D scene `scene` (shifted by dy km across y: meshes side by side), its title"""
     import plotly.graph_objects as go
     d = np.load(inp, allow_pickle=True)
     x, y, tri = d["x"].astype(float) / 1e3, d["y"].astype(float) / 1e3, d["tri"].astype(np.int64)
@@ -81,6 +81,7 @@ def panel_traces(inp, scene, flat=False, zoom=None, edges=False, first=True):
     if zoom:
         keep = ((x[tri] > zoom[0]) & (x[tri] < zoom[1]) & (y[tri] > zoom[2]) & (y[tri] < zoom[3])).any(1)
         tri = tri[keep]
+    y = y + dy
     # element size: the mean edge length (m)
     L = [np.hypot(x[tri[:, a_]] - x[tri[:, b_]], y[tri[:, a_]] - y[tri[:, b_]]) for a_, b_ in ((0, 1), (1, 2), (2, 0))]
     hs = np.mean(L, 0) * 1e3
@@ -123,44 +124,40 @@ def panel_traces(inp, scene, flat=False, zoom=None, edges=False, first=True):
         traces.append(go.Scatter3d(x=nn(Xa), y=nn(Ya), z=nn(Za), mode="lines", line=dict(color=col, width=5),
                                    hoverinfo="skip", name=lab, legendgroup=lab, showlegend=first, scene=scene))
     title = f"{name}: {nb} nodes, {ntri} triangles" + (f", t {float(d['time']):g} yr" if "time" in d.files else "")
+    keep_nodes = np.unique(tri)
+    traces.append(go.Scatter3d(x=[float(x[keep_nodes].max()) + 15], y=[float(y[keep_nodes].mean())],
+                               z=[0.0 if zi is None else float(np.nanmax(z)) + 50], mode="text", text=[title],
+                               textposition="middle right", showlegend=False, hoverinfo="skip", scene=scene))
     asp = dict(x=3, y=3 * (np.ptp(y) / max(np.ptp(x), 1e-9)), z=0.02 if zi is None else 0.3)
     return traces, title, asp
 
 
 def plot(inps, out=None, flat=False, zoom=None, edges=False):
-    """one page: each mesh in its own 3D panel, one above the other, the cameras linked"""
+    """one page, one view: the meshes side by side across y (each shifted by the first one's width plus a gap)"""
     import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-    n = len(inps)
-    parts = [panel_traces(f, "scene" if k == 0 else f"scene{k + 1}", flat, zoom, edges, k == 0)
-             for k, f in enumerate(inps)]
-    fig = make_subplots(rows=n, cols=1, specs=[[{"type": "scene"}] for _ in range(n)],
-                        subplot_titles=[t for _, t, _ in parts], vertical_spacing=0.03)
-    for k, (tr, _, asp) in enumerate(parts):
-        for t_ in tr:
-            fig.add_trace(t_, row=k + 1, col=1)
-        fig.layout["scene" if k == 0 else f"scene{k + 1}"].update(
-            aspectmode="manual", aspectratio=asp, xaxis_title="x (km)", yaxis_title="y (km)", zaxis_title="z (m)")
-        if flat:                                  # a fixed thin z range: the curves on the mesh, no stretched z
-            fig.layout["scene" if k == 0 else f"scene{k + 1}"].zaxis.update(range=[-1, 1], visible=False)
-    fig.update_layout(legend=dict(x=0, y=1))
-    # the panels' cameras linked: rotating or zooming one moves the others
-    sync = None
-    if n > 1:
-        sync = """
-(function () {
-  var g = document.getElementsByClassName('plotly-graph-div')[0], busy = false;
-  var S = %s;
-  g.on('plotly_relayout', function (e) {
-    if (busy) return; var cam = null, src = null;
-    S.forEach(function (s) { if (e[s + '.camera']) { cam = e[s + '.camera']; src = s; } });
-    if (!cam) return; var u = {}; S.forEach(function (s) { if (s !== src) u[s + '.camera'] = cam; });
-    busy = true; Plotly.relayout(g, u).then(function () { busy = false; });
-  });
-})();""" % ([("scene" if k == 0 else f"scene{k + 1}") for k in range(n)],)
-    out = out or os.path.splitext(inps[0])[0] + ("_cmp" if n > 1 else "") + "_mesh3d.html"
+    d0 = np.load(inps[0], allow_pickle=True)
+    y0 = d0["y"].astype(float) / 1e3
+    if zoom:
+        y0 = y0[(y0 > zoom[2]) & (y0 < zoom[3])]
+    step = float(np.ptp(y0)) * 1.08
+    traces, titles = [], []
+    for k, f in enumerate(inps):
+        tr, t_, _ = panel_traces(f, "scene", flat, zoom, edges, k == 0, dy=k * step)
+        traces += tr
+        titles.append(t_)
+    fig = go.Figure(traces)
+    xs = np.concatenate([np.asarray([v for v in t_.x if v is not None], float) for t_ in traces
+                         if getattr(t_, "x", None) is not None and t_.type == "mesh3d"])
+    ys = np.concatenate([np.asarray(t_.y, float) for t_ in traces if t_.type == "mesh3d"])
+    asp = dict(x=3, y=3 * float(np.ptp(ys)) / max(float(np.ptp(xs)), 1e-9), z=0.02 if flat else 0.3)
+    fig.update_layout(title=" | ".join(titles) if len(titles) > 1 else titles[0], legend=dict(x=0, y=1),
+                      scene=dict(aspectmode="manual", aspectratio=asp, xaxis_title="x (km)",
+                                 yaxis_title="y (km; the meshes side by side)", zaxis_title="z (m)"))
+    if flat:                                      # a fixed thin z range: the curves on the mesh, no stretched z
+        fig.layout.scene.zaxis.update(range=[-1, 1], visible=False)
+    out = out or os.path.splitext(inps[0])[0] + ("_cmp" if len(inps) > 1 else "") + "_mesh3d.html"
     fig.write_html(out, include_plotlyjs="cdn", config=dict(responsive=True), default_width="100%",
-                   default_height=f"{95 * n}vh" if n > 1 else "95vh", post_script=sync)
+                   default_height="95vh")
     print(f"wrote {out} ({os.path.getsize(out) / 1e6:.0f} MB)")
 
 
