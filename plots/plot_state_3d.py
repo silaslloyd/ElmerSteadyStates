@@ -370,6 +370,39 @@ def triangles(x, y):
     return _TRI_CACHE[key]
 
 
+def is_sector(y):
+    """a sector footprint: symmetric about the x-axis (y from about -ymax to ymax). Not a strip with jagged periodic
+    sides (configs/coarse_rect_ext.toml: y from about -h/2 to W + h/2, also below 0)"""
+    y = np.asarray(y, float)
+    return bool(y.min() < -1.0 and -y.min() > 0.25 * abs(y.max()))
+
+
+_WIDTH_CACHE = {}
+
+
+def strip_width(x, y):
+    """the period of a strip footprint across the flow: its y extent, or with jagged sides (y below 0) the translation
+    that maps side 1 onto side 2 (the most common y offset between nodes at the same x near the two sides)"""
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    ext = float(np.ptp(y))
+    if y.min() >= -1.0:
+        return ext
+    key = (len(x), float(x.sum()), float(y.sum()))
+    if key not in _WIDTH_CACHE:
+        band = min(5e3, 0.25 * ext)
+        lo, hi = y < y.min() + band, y > y.max() - band
+        hx = {}
+        for xv, yv in zip(np.round(x[hi], 1), y[hi]):
+            hx.setdefault(xv, []).append(yv)
+        d = [yh - yv for xv, yv in zip(np.round(x[lo], 1), y[lo]) for yh in hx.get(xv, [])]
+        if d:
+            v, c = np.unique(np.round(d, 0), return_counts=True)
+            _WIDTH_CACHE[key] = float(v[np.argmax(c)])
+        else:
+            _WIDTH_CACHE[key] = ext
+    return _WIDTH_CACHE[key]
+
+
 def sector_angle(x, y):
     """a sector footprint's angle (radians): the span of the nodes on its outer arc (whose two corners are on the
     straight-side line also on a cut sector with jagged sides, ess/case.py sector_geo cut_seed)"""
@@ -403,7 +436,7 @@ def _triangles(x, y):
     triangle meshes: their footprint is a rectangle, so Delaunay covers it like the mesh)"""
     if not structured(x, y):
         from scipy.spatial import Delaunay
-        if np.min(y) < -1.0:      # a sector: Delaunay in (r, arc at the mean radius), where it is a rectangle (in x, y
+        if is_sector(y):          # a sector: Delaunay in (r, arc at the mean radius), where it is a rectangle (in x, y
             r = np.hypot(x, y)    # its inner arc is concave, and Delaunay would bridge it)
             t = Delaunay(np.c_[r, np.arctan2(y, x) * np.mean(r)] / 1e3).simplices
         else:
@@ -419,7 +452,19 @@ def _triangles(x, y):
         if (~ok).any():
             print(f"  footprint triangles: {int((~ok).sum())} slivers dropped (of {len(t)})")
         t = t[ok]
-        if np.min(y) < -1.0:      # a sector: no triangle outside it (Delaunay fills the notches of a jagged side)
+        if not is_sector(y) and np.min(y) < -1.0:   # a strip with jagged sides: no triangle outside it (in the notches)
+            Wd = strip_width(x, y)
+            d_, j_ = __import__("scipy.spatial", fromlist=["cKDTree"]).cKDTree(P_).query(np.c_[x, y + Wd])
+            s1 = np.where(d_ < 1.0)[0]
+            if len(s1) > 1:
+                s1 = s1[np.argsort(x[s1])]
+                cx, cy = P_[t].mean(1).T
+                rel = cy - np.interp(cx, x[s1], y[s1])
+                ins = (rel > -1e-6) & (rel < Wd + 1e-6)
+                if (~ins).any():
+                    print(f"  footprint triangles: {int((~ins).sum())} outside the strip dropped")
+                t = t[ins]
+        if is_sector(y):          # a sector: no triangle outside it (Delaunay fills the notches of a jagged side)
             A = sector_angle(x, y)
             i1, _ = sector_sides(x, y, A)
             if len(i1) > 1:
@@ -558,9 +603,9 @@ def gl_distance(base, periodic=True):
     fl = np.where(base["mask"] < -0.5)[0]
     if not len(gx) or not len(fl):
         return d
-    W = (base["y"].max() - base["y"].min()) / 1e3
+    W = strip_width(base["x"], base["y"]) / 1e3
     pts = np.c_[gx, gy]
-    if periodic and base["y"].min() < -1.0:      # a sector: the images rotated by +- the sector angle
+    if periodic and is_sector(base["y"]):      # a sector: the images rotated by +- the sector angle
         A = sector_angle(base["x"], base["y"])
         rot = lambda a: np.c_[np.cos(a) * pts[:, 0] - np.sin(a) * pts[:, 1], np.sin(a) * pts[:, 0] + np.cos(a) * pts[:, 1]]
         pts = np.r_[pts, rot(A), rot(-A)]
@@ -697,7 +742,7 @@ def streamlines(top, spacing_km, width_m, periodic=True):
             out[ok] = np.einsum("ni,nij->nj", w[ok], vals_[tri_.simplices[k[ok]]])
         return out
     x0, x1, y0 = x.min(), x.max(), y.min()
-    W = width_m if width_m > 0 else float(np.ptp(y))
+    W = width_m if width_m > 0 else strip_width(x, y)
     n = max(1, int(round(W / (spacing_km * 1e3))))
     P = np.c_[np.full(n, min(x0 + 20e3, 0.5 * (x0 + x1))), y0 + (np.arange(n) + 0.5) * W / n]
     ds, keep = 500.0, 4
@@ -829,7 +874,7 @@ def sheet_flow_lines(base, spacing_km, sector_a=0.0, periodic=True):
         return d, good
 
     A = sector_a
-    y0, Wy = y.min(), float(np.ptp(y))
+    y0, Wy = y.min(), (strip_width(x, y) if A <= 0 else float(np.ptp(y)))
 
     def wrap(Q):
         """back into the footprint across a periodic side; True where it crossed"""
@@ -1194,7 +1239,7 @@ def main():
                    f"min {np.min(gx):.2f} mean {np.mean(gx):.2f} max {np.max(gx):.2f} over {len(gx)} rows")
             print(f"  {label}: grounding line {per} km; mask values {np.unique(base['mask'])}")
     # window around the grounding line
-    SECTOR = any(tp is not None and float(np.min(tp["y"])) < -1.0 for _, tp, _, _ in data)
+    SECTOR = any(tp is not None and is_sector(tp["y"]) for _, tp, _, _ in data)
     if SECTOR:
         tp0 = next(tp for _, tp, _, _ in data if tp is not None)
         SECTOR_A = sector_angle(tp0["x"], tp0["y"])
@@ -1373,7 +1418,7 @@ def main():
         else:
             panels.append(("cmp", 0.0, smax, SPEED_CS, "speed (m/yr)", 1.0, "scene"))
 
-    W = max(float(np.ptp(tp["y"])) for _, tp, _, _ in data if tp is not None)      # strip width (m)
+    W = max(strip_width(tp["x"], tp["y"]) for _, tp, _, _ in data if tp is not None)      # strip width (m)
     CMP_SHIFT = 1.25 * W * TILE                   # --compare: the second run this far along y (a gap of W/4)
 
     def mesh_lines(base, P):

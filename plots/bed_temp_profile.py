@@ -25,7 +25,7 @@ def profile(path, binkm, beta):
     x = _lookup(f, "coordinate 1", gT)
     y = _lookup(f, "coordinate 2", gT)
     z = _lookup(f, "coordinate 3", gT)
-    sector = np.min(y) < -1.0
+    sector = bool(np.min(y) < -1.0 and -np.min(y) > 0.25 * abs(np.max(y)))   # not a strip with jagged sides
     if sector:
         r = np.hypot(x, y)
         inverted = None
