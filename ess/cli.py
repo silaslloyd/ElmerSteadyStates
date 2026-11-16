@@ -516,7 +516,10 @@ def cmd_run(args):
             model.warm_records[nm] = allws[k]
             got.append(nm)
         if not got:
-            raise SystemExit(f"--warm-start {args.warm_start}: no Velocity / Pressure in its diagnostics")
+            # e.g. a thin start (jobs/thin_start.py) from a state without velocities: its flow is zero anyway, so the
+            # zero initial guess is the same warm start
+            log.warning(f"run: --warm-start {args.warm_start}: no Velocity / Pressure in its diagnostics; "
+                        "starting Stokes from zero")
         log.info(f"run: warm start from {args.warm_start}: {', '.join(got)}"
                  + ("" if "Pressure" in got else " (no Pressure: write it with --add-diag Pressure)"))
     if args.linear_stokes:
