@@ -640,9 +640,13 @@ def interpolate_state(src: SavedState, nbs, sx, sy, stri, dx, dy, divide=None, a
     return layout, x, frozen, diag
 
 
-def remesh_distance(x, y, tri, fine, nlev):
+def remesh_distance(x, y, tri, fine, nlev, h_target=None):
     """'Remesh Distance' for elmer/RemeshTrigger.F90: at each footprint node the distance (m) to the nearest node whose
-    local size (the mean length of its edges) is above 1.3 fine, on every one of nlev levels: (gids, values)"""
+    size is above 1.3 fine, on every one of nlev levels: (gids, values, measured sizes). The size: h_target, the size
+    field the mesh was made from (before the random jitter), when given; else the measured local size (the mean length
+    of the node's edges). The measured one put nodes inside the fine bands above 1.3 fine (gmsh's edges scatter
+    around the target, and the jitter adds up to 16 %), so the grounding line was "in coarse mesh" right after every
+    remesh and the trigger fired at the minimum step count every time (job 31838)"""
     from scipy.spatial import cKDTree
     e = _edges(tri)
     L = np.hypot(x[e[:, 0]] - x[e[:, 1]], y[e[:, 0]] - y[e[:, 1]])
@@ -651,7 +655,7 @@ def remesh_distance(x, y, tri, fine, nlev):
         np.add.at(s, e[:, k], L)
         np.add.at(c, e[:, k], 1)
     h = s / np.maximum(c, 1)
-    coarse = h > 1.3 * fine
+    coarse = (h if h_target is None else h_target) > 1.3 * fine
     d = cKDTree(np.c_[x[coarse], y[coarse]]).query(np.c_[x, y])[0] if coarse.any() else np.full(len(x), 1e9)
     nb = len(x)
     g = (np.arange(nlev)[:, None] * nb + np.arange(nb)[None, :] + 1).ravel().astype(np.int64)
@@ -716,6 +720,7 @@ def remesh(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, opt: di
     R, R2 = X, X2
     # a random factor on the size (log-uniform, +- opt["jitter"], one per old node, then graded): no regular patches
     # even where the size is uniform
+    h0 = h.copy()                         # the designed size, before the jitter: what Remesh Distance measures from
     jit = float(opt.get("jitter", 0.15))
     if jit > 0:
         rng = np.random.default_rng(int(opt.get("seed", 0)) + len(R2))
@@ -745,10 +750,13 @@ def remesh(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, opt: di
                          strip_width=fr.W if fr.strip else None)
     layout, x, frozen, diag = interpolate_state(src, nbs, sx, sy, stri, dx, dy, fr.divide, along=fr.along)
     nlev = levels_of(src, nbs)
-    g, d, hn = remesh_distance(dx, dy, dtri, opt["fine"], nlev)
+    nd_, w_ = hl(dx, dy, quiet=True)
+    ht = np.sum(w_ * h0[nd_], 1)          # the designed size at the new nodes
+    g, d, hn = remesh_distance(dx, dy, dtri, opt["fine"], nlev, h_target=ht)
     for k in [k for k in frozen if k.lower() == "remesh distance"]:
         del frozen[k]
     frozen["Remesh Distance"] = (g, d)
-    rep.append(f"new mesh: {int(np.sum(hn <= 1.3 * opt['fine']))} of {len(dx)} footprint nodes fine (<= "
-               f"{1.3 * opt['fine']:g} m)")
+    rep.append(f"new mesh: {int(np.sum(ht <= 1.3 * opt['fine']))} of {len(dx)} footprint nodes in the fine bands "
+               f"(designed size <= {1.3 * opt['fine']:g} m; measured mean edge there "
+               f"{np.median(hn[ht <= 1.3 * opt['fine']]) if np.any(ht <= 1.3 * opt['fine']) else 0:.0f} m median)")
     return layout, x, frozen, diag, rep
