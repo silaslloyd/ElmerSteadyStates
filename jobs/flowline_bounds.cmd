@@ -9,13 +9,15 @@
 #   cold       the grounded bed frozen to its substrate, no sliding (ESS_SLIDING=frozen)   -> bound_cold.npz
 #   temperate  the grounded bed sliding as at the melting point everywhere (ESS_SLIDING=temperate) -> bound_temperate.npz
 # Each: a short mechanics-only spin-up by time stepping from START (default the spin-up of jobs/flowline_steady.cmd,
-# work/flowline_rect_ext/spin.npz; SPIN_CHUNKS x 100 x 10 yr, default 10, the frozen grounding line moved by flotation
-# between chunks), then Newton on the geometry (ess newton --stokes-only; the grounding line moved between solves).
+# work/flowline_rect_ext/spin.npz; SPIN_CHUNKS x 100 x 10 yr, default 10), then Newton on the geometry (ess newton
+# --stokes-only; the grounding line moved between solves).
 # Same ranks as the mesh's partitioning (128). Steps skipped when their output exists. WHICH="cold temperate" (default
 # both, in that order). SPIN_DT (yr, default 10); NEWTON=0: time stepping only (the spin-up's state is the bound; its
 # "rms change" per chunk in the log shows how steady it got). SPIN_LINEAR (default iterative: GCR + ILU, several times
 # faster than MUMPS here; the spin-up needs no exact map) is the spin-up's Stokes linear solver; Newton keeps the
-# config's direct solver.
+# config's direct solver. SPIN_GL (default contact): the grounding line moves every step as in the 3D transient runs
+# (ElmerStreams contact; the cold bed then frozen by friction, fcoeff x ess_slide_maxfactor, instead of no slip);
+# frozen: the grounded mask moved by flotation between chunks only (as Newton; the cold bed no-slip).
 #   sbatch jobs/flowline_bounds.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
@@ -35,8 +37,8 @@ for which in ${WHICH:-cold temperate}; do
     case $which in cold) sl=frozen;; temperate) sl=temperate;; *) echo "WHICH: cold | temperate"; exit 1;; esac
     export ESS_SLIDING=$sl
     if [ ! -f $W/bound_${which}_spin.npz ]; then
-        echo "$(date +%T) $which bound: mechanics-only spin-up from $START (sliding $sl), ${SPIN_CHUNKS:-10} x 100 x ${SPIN_DT:-10} yr, Stokes ${SPIN_LINEAR:-iterative}"
-        python3 -u -m ess run $CFG --state $START --stokes-only --gl frozen --chunks ${SPIN_CHUNKS:-10} --steps 100 \
+        echo "$(date +%T) $which bound: mechanics-only spin-up from $START (sliding $sl, grounding line ${SPIN_GL:-contact}), ${SPIN_CHUNKS:-10} x 100 x ${SPIN_DT:-10} yr, Stokes ${SPIN_LINEAR:-iterative}"
+        python3 -u -m ess run $CFG --state $START --stokes-only --gl ${SPIN_GL:-contact} --chunks ${SPIN_CHUNKS:-10} --steps 100 \
             --dt ${SPIN_DT:-10} --linear-stokes ${SPIN_LINEAR:-iterative} --out $W/bound_${which}_spin.npz
     fi
     if [ "${NEWTON:-1}" = 1 ] && [ ! -f $W/bound_${which}.npz ]; then
