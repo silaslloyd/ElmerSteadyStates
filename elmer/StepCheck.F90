@@ -170,7 +170,16 @@ SUBROUTINE StepCheck( Model, Solver, dt, Transient )
     dtLo = ListGetConstReal( Params, 'Step Check Dt Min', Found ); IF ( .NOT. Found ) dtLo = dt
     dtHi = ListGetConstReal( Params, 'Step Check Dt Max', Found ); IF ( .NOT. Found ) dtHi = dt
     nUp = ListGetInteger( Params, 'Step Check Dt Min Steps', Found ); IF ( .NOT. Found ) nUp = 50
-    cMax = MAX( cTop, cBot )
+    ! "Step Check CFL Source": "max" (default: the larger of the surface and the floating base), "base" (the floating
+    ! base only: the shelf), "surface"
+    SELECT CASE ( TRIM( ListGetString( Params, 'Step Check CFL Source', Found ) ) )
+    CASE ( 'base' )
+      cMax = cBot
+    CASE ( 'surface' )
+      cMax = cTop
+    CASE DEFAULT
+      cMax = MAX( cTop, cBot )
+    END SELECT
     IF ( ListGetString( Params, 'Step Check Dt Mode', Found ) == 'heat' ) THEN
       ! by the heat solve's time ("res: linsys real time temperature", Linear System Timing in the heat solver): half
       ! the step after 2 steps in a row slower than Heat Time Max (s), double it after Dt Min Steps faster than Heat

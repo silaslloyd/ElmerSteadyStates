@@ -1502,6 +1502,13 @@ Solver {n}
         keys = (f"  Step Check Dt Control = Logical True\n  Step Check Dt Min = Real {lo!r}\n"
                 f"  Step Check Dt Max = Real {hi!r}\n  Step Check CFL Target = Real {tgt!r}\n"
                 f"  Step Check Dt Min Steps = Integer {nup}\n")
+        # ESS_DT_ADAPT_CFL = base | surface | max (jobs DT_ADAPT_CFL): which CFL the step follows (default max: the larger
+        # of the surface and the floating base; base: the shelf only)
+        src = os.environ.get("ESS_DT_ADAPT_CFL")
+        if src:
+            if src not in ("base", "surface", "max"):
+                raise ValueError(f"ESS_DT_ADAPT_CFL must be base, surface or max, not {src!r}")
+            keys += f'  Step Check CFL Source = String "{src}"\n'
         # ESS_DT_ADAPT_HEAT = "MAX:MIN" (s; jobs DT_ADAPT_HEAT): by the heat solve's time instead of the CFL (half the
         # step after 2 heat solves slower than MAX in a row, double it after the calm steps faster than MIN)
         ht = os.environ.get("ESS_DT_ADAPT_HEAT")

@@ -223,6 +223,9 @@ opts="--stokes-only --chunks ${CHUNKS:-1} --steps ${STEPS:-2} --no-remask --gl $
 # the step should change (the CFL target, default 1, within MIN .. MAX yr; up only after that many calm steps, default
 # 50) and ess run carries on with the new step to the same end time (STEPS x DT); needs STEP_CHECK (set here)
 if [ -n "$DT_ADAPT" ]; then export ESS_DT_ADAPT=$DT_ADAPT ESS_STEP_CHECK=1; STEP_CHECK=1; echo "  adaptive time step $DT_ADAPT (yr; CFL target)"; fi
+# DT_ADAPT_CFL=base|surface|max: which CFL the adaptive step follows (default max of the surface and the floating base;
+# base: the shelf only)
+[ -n "$DT_ADAPT_CFL" ] && export ESS_DT_ADAPT_CFL=$DT_ADAPT_CFL && echo "  adaptive time step by the $DT_ADAPT_CFL CFL"
 # UNTIL=T: run to model time T (yr) instead of STEPS steps (ess run --until)
 [ -n "$UNTIL" ] && opts="$opts --until $UNTIL" && echo "  run to model time $UNTIL yr"
 # DT_ADAPT_HEAT="MAX:MIN" (s): with DT_ADAPT, the step by the heat solve's time instead of the CFL: halved after 2
