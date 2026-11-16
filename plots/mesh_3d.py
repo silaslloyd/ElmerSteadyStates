@@ -7,7 +7,7 @@ Two steps, since the meshes are on tethys and plotly on pilsen:
 
     python3 plots/mesh_3d.py pack MESHDIR OUT.npz [--state STATE.npz]     (tethys: numpy only; a few MB)
     python3 plots/mesh_3d.py plot IN.npz [IN2.npz ..] [OUT.html] [--flat] [--edges] [--zoom X0 X1 Y0 Y1 (km)]
-        (pilsen: plotly; several meshes: side by side across y in one view, in the order given; OUT default
+        (pilsen: plotly; several meshes: tiled as periodic copies of the sector (mesh k rotated by k times the sector angle), in the order given; OUT default
          <first>_mesh3d.html, or <first>_cmp_mesh3d.html for several)
 
 The triangles are filled by element size (flat shading, so each one shows); --edges also draws every edge as a line
@@ -69,8 +69,16 @@ def contour_lines(x, y, tri, v, level, mask=None):
     return X, Y
 
 
-def panel_traces(inp, scene, flat=False, zoom=None, edges=False, first=True, dy=0.0):
-    """the traces of one mesh in the 3D scene `scene` (shifted by dy km across y: meshes side by side), its title"""
+def sector_angle(x, y):
+    """a sector footprint's angle (radians): the span of the nodes on its outer arc (as plots/plot_state_3d.py)"""
+    r, ph = np.hypot(x, y), np.arctan2(y, x)
+    m = r > r.max() - 1.0
+    return float(ph[m].max() - ph[m].min()) if m.sum() > 1 else float(np.ptp(ph))
+
+
+def panel_traces(inp, scene, flat=False, zoom=None, edges=False, first=True, rot=0.0):
+    """the traces of one mesh in the 3D scene `scene`, rotated by rot (radians) about the sector's apex: copy k of a
+    periodic sector at k times its angle, so the copies meet at the periodic sides; and its title"""
     import plotly.graph_objects as go
     d = np.load(inp, allow_pickle=True)
     x, y, tri = d["x"].astype(float) / 1e3, d["y"].astype(float) / 1e3, d["tri"].astype(np.int64)
@@ -81,7 +89,8 @@ def panel_traces(inp, scene, flat=False, zoom=None, edges=False, first=True, dy=
     if zoom:
         keep = ((x[tri] > zoom[0]) & (x[tri] < zoom[1]) & (y[tri] > zoom[2]) & (y[tri] < zoom[3])).any(1)
         tri = tri[keep]
-    y = y + dy
+    if rot:
+        x, y = np.cos(rot) * x - np.sin(rot) * y, np.sin(rot) * x + np.cos(rot) * y
     # element size: the mean edge length (m)
     L = [np.hypot(x[tri[:, a_]] - x[tri[:, b_]], y[tri[:, a_]] - y[tri[:, b_]]) for a_, b_ in ((0, 1), (1, 2), (2, 0))]
     hs = np.mean(L, 0) * 1e3
@@ -133,16 +142,14 @@ def panel_traces(inp, scene, flat=False, zoom=None, edges=False, first=True, dy=
 
 
 def plot(inps, out=None, flat=False, zoom=None, edges=False):
-    """one page, one view: the meshes side by side across y (each shifted by the first one's width plus a gap)"""
+    """one page, one view: the meshes as periodic copies of the sector, each rotated by the sector angle from the last"""
     import plotly.graph_objects as go
     d0 = np.load(inps[0], allow_pickle=True)
-    y0 = d0["y"].astype(float) / 1e3
-    if zoom:
-        y0 = y0[(y0 > zoom[2]) & (y0 < zoom[3])]
-    step = float(np.ptp(y0)) * 1.08
+    A = sector_angle(d0["x"].astype(float), d0["y"].astype(float))   # the copies tile periodically: copy k at k A
+    print(f"sector angle {np.degrees(A):.3f} deg: mesh k rotated by k times it (they meet at the periodic sides)")
     traces, titles = [], []
     for k, f in enumerate(inps):
-        tr, t_, _ = panel_traces(f, "scene", flat, zoom, edges, k == 0, dy=k * step)
+        tr, t_, _ = panel_traces(f, "scene", flat, zoom, edges, k == 0, rot=k * A)
         traces += tr
         titles.append(t_)
     fig = go.Figure(traces)
@@ -152,7 +159,7 @@ def plot(inps, out=None, flat=False, zoom=None, edges=False):
     asp = dict(x=3, y=3 * float(np.ptp(ys)) / max(float(np.ptp(xs)), 1e-9), z=0.02 if flat else 0.3)
     fig.update_layout(title=" | ".join(titles) if len(titles) > 1 else titles[0], legend=dict(x=0, y=1),
                       scene=dict(aspectmode="manual", aspectratio=asp, xaxis_title="x (km)",
-                                 yaxis_title="y (km; the meshes side by side)", zaxis_title="z (m)"))
+                                 yaxis_title="y (km)", zaxis_title="z (m)"))
     if flat:                                      # a fixed thin z range: the curves on the mesh, no stretched z
         fig.layout.scene.zaxis.update(range=[-1, 1], visible=False)
     out = out or os.path.splitext(inps[0])[0] + ("_cmp" if len(inps) > 1 else "") + "_mesh3d.html"
