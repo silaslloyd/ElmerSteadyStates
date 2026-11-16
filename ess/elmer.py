@@ -585,7 +585,7 @@ class ElmerModel(Model):
                     '  Linear System Abort Not Converged = True\n'
                     '  Linear System Residual Output = 200   ! ESS_HEAT_SOLVER=hypre')
         if hs:
-            parts = hs.split(":")                    # METHOD[:PREC[:ILU factor, a diagonal shift]]
+            parts = hs.split(":")                    # METHOD[:PREC[:ILU factor, a diagonal shift | ILUT: drop tolerance]]
             meth = parts[0]
             prec = parts[1] if len(parts) > 1 else "ILU1"
             fac = parts[2] if len(parts) > 2 else ""
@@ -596,7 +596,8 @@ class ElmerModel(Model):
                     f'  Linear System Iterative Method = {meth}\n' + extra +
                     '  Linear System Max Iterations = 2000\n'
                     f'  Linear System Preconditioning = {prec}\n'
-                    + (f'  Linear System ILU Factor = Real {float(fac)}\n' if fac else '') +
+                    + (f'  Linear System ILUT Tolerance = Real {float(fac) if fac else 1e-3}\n' if prec.upper() == "ILUT"
+                       else f'  Linear System ILU Factor = Real {float(fac)}\n' if fac else '') +
                     f'  Linear System Convergence Tolerance = {tol}\n'
                     '  Linear System Abort Not Converged = True\n'
                     '  Linear System Residual Output = 200   ! ESS_HEAT_SOLVER')
