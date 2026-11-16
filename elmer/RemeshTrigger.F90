@@ -17,7 +17,7 @@
 !>
 !> Keywords (Solver section): Exported Variable 1 = -dofs 1 "Remesh Distance"
 !>   GL Safety Distance = Real (m, default 5000), Transition Safety Distance = Real (m, default 1000),
-!>   Transition Fraction = Real (default 0.05 here; ess passes 0.2), Minimum Steps = Integer (default 1)
+!>   Transition Fraction = Real (default 0.05; ess passes ESS_REMESH_CT_FRACTION, default 0.05), Minimum Steps = Integer (default 1)
 !------------------------------------------------------------------------------
 SUBROUTINE RemeshTrigger( Model, Solver, dt, Transient )
 !------------------------------------------------------------------------------

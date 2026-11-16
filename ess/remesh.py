@@ -3,16 +3,13 @@ Remeshing a CUT SECTOR footprint from a state (`ess remesh`): a new 2D footprint
 state, the same domain (the same jagged periodic sides, their segments only subdivided; the same arcs), partitioned,
 and the state interpolated onto it level by level (Elmer extrudes the footprint: node id = level * nb + base id).
 
-Element size h (m) at the old footprint's nodes, then limited in growth (h_i <= h_j + grade |x_i - x_j|):
-  1. the base size: [case] res_points along the distance from the divide (as `ess setup`);
-  2. coarse (h at least --coarse, default 2 km) on the grounded bed where it is frozen (ColdTempMask cold), or where
-     the ice is fast and barely deforming (surface speed > --fast-speed and effective strain rate < --low-strain:
-     the interior of an ice stream, plug flow);
-  3. fine (h at most --fine, default 500 m) within --gl-band of the grounding line (either side: the full-Stokes
-     strip beyond it and its migration) and in the shear margins (lateral shear strain rate |e_ns| > --margin-shear,
-     n across the flow).
-Strain rates from the surface velocity (the top level of the state's Velocity 1/2), per footprint triangle,
-averaged to the nodes; the velocity in m/yr, so the rates in 1/yr.
+Element size h (m): size_field_budget (the default, --mode curves): from the distance to the grounding line and to
+the cold/temperate transition on the grounded bed (--fine, default 250 m at the grounding line; --fine-margin, 250 m
+at the transition; bands --gl-band-km 25, --ct-band-km 10, optionally directional: --directional), growing by --grade
+away from them; the background [case] res_points scaled to a triangle budget (--max-triangles); the grounded bed away
+from both curves at least --coarse (2 km), beyond --far-km (200) at least --far-h (5 km); a random factor exp(+-jitter).
+(--mode thresholds: the older strain-rate thresholds, size_field.) Sectors and strips alike (class Periodic: a strip is
+the sector of infinite radius).
 
 The new geometry: ess/case.py's cut sector with a background size field (gmsh PostView) instead of size points; the
 side chain the old one's (case/sector_side1.txt or the source mesh's own side file) with every segment longer than

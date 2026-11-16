@@ -1,0 +1,709 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{amsmath}
+\usepackage[hidelinks]{hyperref}
+\usepackage{microtype}
+\DisableLigatures[-]{encoding=T1, family=tt*}
+\usepackage{parskip}
+
+\definecolor{codebg}{gray}{0.95}
+\definecolor{accent}{RGB}{0,70,140}
+\hypersetup{colorlinks=true,linkcolor=accent,urlcolor=accent}
+\lstset{basicstyle=\ttfamily\footnotesize,breaklines=true,columns=fullflexible,keepspaces=true,
+  frame=single,rulecolor=\color{gray!40},backgroundcolor=\color{codebg},
+  postbreak=\mbox{\textcolor{gray}{$\hookrightarrow$}\space},showstringspaces=false,upquote=true}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\setlist{itemsep=1pt,topsep=2pt}
+\setcounter{tocdepth}{2}
+\sloppy
+\setlength{\emergencystretch}{3em}
+
+\title{\textbf{ElmerSteadyStates (ESS)}\\[4pt]\large Complete documentation: what it is, how it differs from ElmerStreams,\\ every change, and how to run it}
+\author{Repository \code{silaslloyd/ElmerSteadyStates}}
+\date{State of the code on 16 November 2026 (commit \code{cf5d3d8} and later)}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+%======================================================================
+\section{What ESS is}
+%======================================================================
+
+ElmerSteadyStates (ESS) is a Python driver plus a set of Elmer/Ice extension modules (Fortran) around the
+ElmerStreams ice-sheet set-ups (\code{Land_Term}, \code{Marine_Term} of \code{silaslloyd/ElmerStreams}). It
+started as a tool for \emph{steady states, continuation and linear stability} (Newton--Krylov on the Elmer time
+stepper) and has grown into the production framework for the \emph{long transient 3D marine runs}: periodic strips
+and rotationally periodic sectors, a moving full-Stokes region with a shallow-shelf (SSA) shelf, the thermal chain
+with the cold/temperate mask and water sheet, time-dependent sea level and accumulation, adaptive time stepping and
+automatic remeshing.
+
+Two layers:
+
+\begin{description}
+\item[Python driver (\code{ess/})] reads a TOML config, builds the mesh and initial conditions (\code{ess setup}),
+renders the Elmer input file (\code{.sif}) from a template plus a long list of switchable transformations, launches
+\code{mpirun ElmerSolver}, reads the state back exactly (binary, by global node number), and does the numerical work
+(Newton, continuation, Arnoldi, remeshing, restarts).
+\item[Elmer modules (\code{elmer/*.F90})] new solvers and user functions loaded by the rendered \code{.sif}: exact
+state I/O, the grounding-line distance and FS--SSA coupling, periodic utilities, the step check and adaptive time
+step, the remesh trigger, and modified copies of ElmerStreams' and Elmer's own solvers.
+\end{description}
+
+The batch layer (\code{jobs/}) wraps the driver for SLURM on tethys; \code{plots/} and \code{periodic_test/} hold the
+analysis and plotting tools.
+
+\subsection{Repository layout}
+
+\begin{longtable}{L{3.2cm}L{12.6cm}}
+\toprule
+Path & Contents \\ \midrule
+\endhead
+\code{ess/} & The driver: \code{cli.py} (all \code{ess} commands), \code{elmer.py} (the Elmer model: sif rendering,
+runs, cache), \code{case.py} (meshes, geometry, initial conditions, partitioning), \code{remesh.py} (remeshing),
+\code{transfer.py} (moving states between meshes), \code{statefile.py} (state files), \code{masks.py} (mask updates),
+\code{newton.py}, \code{continuation.py}, \code{stability.py}, \code{spanwise.py}, \code{spectrum.py},
+\code{linalg.py} (GMRES, Arnoldi), \code{toy.py} (an Elmer-free test model), \code{config.py}. \\
+\code{elmer/} & Templates (\code{steady_template.sif} land, \code{steady_template_marine.sif} marine), Lua
+(\code{ess_utils.lua}, \code{ess_hydro.lua}), the Fortran modules, \code{Makefile}, Stokes linear-solver snippets
+(\code{stokes_*.sif.in}) and Elmer source patches (\code{patches/}). \\
+\code{case/} & \code{parameters.lua} (physics, from ElmerStreams), \code{parameters_fine2x.lua}, the gmsh
+\code{.geo.in} templates, \code{marine_ics/} (Marine\_Term's initial-condition tables). \\
+\code{configs/} & One TOML per set-up (flowlines, test strips, sectors, the 100 km strip). \\
+\code{jobs/} & SLURM scripts: \code{scaling_tests.cmd} (the production run script), \code{scaling_sweep.sh} (submits
+it), \code{watch_run.sh}, \code{ess.cmd}, \code{build_elmer.cmd}, solver test series; state editors
+\code{shelf_break.py}, \code{thin_start.py}, \code{latest_state.py}. \\
+\code{plots/} & Packing and plotting (\code{vtu_frames.py}, \code{job_frames.py}, \code{plot_state_3d.py},
+\code{mesh_map.py}, \code{mesh_3d.py}, \ldots) and checks (\code{float_check.py}, \code{cfl_dt.py}, \ldots). \\
+\code{periodic_test/} & The periodic-BC and grounding-line test suites, checkpoint and seam tools. \\
+\code{tests/} & \code{pytest} tests with a fake Elmer (\code{fake_elmer.py}). \\
+\code{work/}, \code{slurms/} & Outputs (not in git): per config \code{work/<name>/} (case, runs, states, meshes);
+job logs \code{slurms/scaling_<job>.out} and \code{slurms/scaling_<job>_<letter>.log}. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Where things live on the machines}
+
+\begin{itemize}
+\item \textbf{tethys} (runs): \code{/SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates}.
+Elmer: module \code{elmerfem/2026-10-28} with the self-built, patched install \code{/SCRATCH/slloyd/elmer/install2}
+(\code{ELMER_PREFIX}).
+\item \textbf{pilsen} (plotting): repository \code{/import/ontap-m-glaciology/Lloyd/ElmerSteadyStates}, data one
+folder per work dir under \code{/import/ontap-m-glaciology/Lloyd}. Run plots with
+\code{OPENBLAS_CORETYPE=Nehalem}. The pilsen$\to$tethys rsync must be typed in the pilsen terminal.
+\item \textbf{Mac}: fetches the finished pages and PNGs from pilsen through the jump host
+(\code{ssh -J} via \code{sshproxy-m.geophysik}\allowbreak\code{.uni-muenchen.de}); its rsync is 2.6.9 (one remote source per call), its
+shell zsh.
+\end{itemize}
+
+%======================================================================
+\section{Differences from ElmerStreams}\label{sec:diff}
+%======================================================================
+
+This section lists everything that differs from \code{silaslloyd/ElmerStreams} (commit \code{f914f93}): physics,
+the Elmer input files, and every Fortran source.
+
+\subsection{Physical parameters}
+
+\code{case/parameters.lua} is ElmerStreams' \code{parameters.lua} with the \emph{same physical values} (densities
+920 / 1003.27, Newtonian viscosity $10^{14}$\,Pa\,s, the dimensionless scalings, $\delta = 0.03$, $\gamma_0 = 0.1$,
+geothermal flux $G = 0.5$, \ldots). Differences:
+\begin{itemize}
+\item the hydrology parameters ($k$, $l_r$, $h_r$, $N_0$, $k_0$, $D_0$, \code{eps}, \code{Ncut}, \ldots) are removed
+here and live in \code{elmer/ess_hydro.lua} (unchanged values), loaded only with the ElmerStreams thermal chain;
+\item the mesh block is ESS's own (\code{Wmesh}, \code{BoundaryRes}, \code{MarginRes}, \code{y_nodes}); the
+production configs use \code{case/parameters_fine2x.lua} (identical but half the land-flowline element sizes);
+\item the file is kept to plain \code{name = expression} lines, because the driver evaluates it in Python too and
+overrides single assignments (the continuation parameter, \code{--lua NAME=VALUE}, \code{[lua]} sections).
+\end{itemize}
+
+\subsection{The Elmer input files (templates)}
+
+ESS does not use ElmerStreams' \code{ThermoCoupled_template.sif} directly. \code{elmer/steady_template.sif} (land) and
+\code{elmer/steady_template_marine.sif} (marine) keep the same mesh, extrusion, five bodies (bedrock, filler, ice, bed
+interface, surface), materials, Stokes, heat and free-surface solvers, sliding law and boundary conditions, with the
+following differences. Everything marked \emph{switchable} is restored or replaced at run time by the driver
+(Section~\ref{sec:features}).
+
+\begin{longtable}{L{4.2cm}L{5.4cm}L{6.2cm}}
+\toprule
+Item & ElmerStreams & ESS \\ \midrule
+\endhead
+State in/out & restart files & \code{StateIO} (\code{SteadyStateIO.F90}): exact binary read before the run, write after
+it (and optional checkpoints / initial write). \\
+Masks & \code{GroundedSolver} three times per step; \code{ColdTempMaskSolver} every step & Frozen fields owned by
+\code{ESSNoOp} and read from the state. Switchable: contact grounding line (\code{gl_mode = contact}), mask solver
+every step (\code{thermal = nowater / elmerstreams}). \\
+Noise & \code{Grid2DInterpolator} reads a noise table; $C(1+\text{noise}/10)$ & No noise by default. Switchable:
+coherent periodic fractal noise in Lua (\code{friction_noise}). \\
+Distance & \code{DistanceSolver1} (GL distance) & Not used; \code{GLDistance} (new) when the FS--SSA region is on. \\
+Sliding & \code{TDepSlidingExp}: $C\,e^{-(T-T_0)/\gamma}$, frontal zone $C/2$ within 10\,km of $L$ & \code{TDepSliding}:
+same law, the factor capped (\code{ess_slide_maxfactor}, $10^6$ in the marine configs); \textbf{no frontal zone on
+marine runs} (it sat at a fixed 806\,km, under grounded ice once the grounding line advanced). Switchable:
+\code{sliding = temperate} ($C$ everywhere), the \code{slide_ybump}, noise. \\
+Heat BC at the bed & Dirichlet $T_0$ where $gm\,ct\,(gm+1)+1>0$ & \code{tempbc}: $T_0$ on temperate grounded nodes and
+on \emph{all} nodes with $gm<0.5$ (shelf and grounding-line nodes) on marine runs; flux elsewhere. \\
+Surface temperature & Robin, external $T$ ramped to $T_0$ under thin ice & Marine: Dirichlet $T = T_\text{surf}$
+(\code{surface_bc = dirichlet}); land: Robin (\code{surface_bc = robin}); optional snout ramp
+(\code{surface_temp = snout}). \\
+Accumulation & \code{Accumulation(y,t,x,\ldots)} (time argument) & Marine: uniform \code{aDIM}; optional factor
+(\code{accumulation_factor}, sectors) and time schedule (\code{--accumulation}). \\
+Strain heating & always (\code{DeformationalHeat}) & Switchable (\code{strain_heat}); off by default. \\
+Friction heating & nodal Stokes loads, halved at $y<1$ & \code{friction_heat = flux} ($C|u_b|^2$ per area, default),
+\code{loads} (periodic-aware copies, no halving), or \code{none}. \\
+Hydrology & \code{SheetSolverhw}, \code{ComputeDevStress} every step & Off by default; switchable chains
+\code{nowater} and \code{elmerstreams} (Section~\ref{sec:thermal}). \\
+Free surfaces & copies \code{../SRC/FreeSurfaceSolver.so}, \code{FreeSurfaceSolver2.so} & Elmer's stock
+\code{FreeSurfaceSolver}; with periodic sides \code{ESSFreeSurface} (periodic-safe limiter). FSSA \code{full} as
+ElmerStreams; alternatives \code{normal}, \code{transposed}, \code{none}, \code{adapted}. \\
+Stokes & P1+bubbles, GCR + ILU1, 2 nonlinear iterations & Template default P2/P1 + MUMPS (for Newton); production:
+bubbles, GCR + ILU0 with targeted rebuilds and adaptive ILU level, 2 nonlinear iterations with the contact grounding
+line, rotated initial guess. \\
+Shelf & full Stokes everywhere & Optional moving full-Stokes region + SSA shelf (\code{fs_ssa_km},
+\code{fs_ssa_shelf = ssa}); production uses 10\,km. \\
+Sea level & fixed 0 & Optional Lua parameter / time schedule (\code{--sea-level}). \\
+Sides & walls (\code{Velocity 2 = 0}); periodic lines commented out & Walls, translational periodic sides
+(\code{periodic_sides}), rotational periodic sectors, jagged (``cut'') periodic sides. \\
+Time stepping & fixed list \code{1e-4 1e-2 1e-1 2 5} & \code{__DT__} from the driver: fixed, ramps
+(\code{DT_RAMP}), or adaptive (\code{DT_ADAPT}). \\
+Limiters & \code{Min Zs = 1} & Same, plus \code{Min Zb = bedrock} on marine runs (\code{zb_limiter}); with a sea-level
+parameter \code{Min Zs = max(bed, SL(t)) + 1}. \\
+Diagnostics & stress, Fw, distance, mask solvers & Removed unless a feature needs them; optional step check, VTU of
+the base and surface, solver timing. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Lua functions}
+
+\code{elmer/ess_utils.lua} replaces ElmerStreams' \code{utils.lua}: \code{IfThenElse}, \code{max}, \code{min},
+\code{frontdist}, \code{TDepSliding}, \code{tempbc}, \code{ess_grounded}, \code{frictionloads} (unchanged, including the
+$y<1$ halving, which ESS avoids by using periodic load copies), \code{Accumulation}, \code{AccumulationSmooth},
+\code{surfaceT}. Nothing depends on time unless a schedule is switched on (the steady-state work needs an autonomous
+model). \code{elmer/ess_hydro.lua} holds the hydrology functions (\code{N}, \code{conductivity}, \code{dkappadN},
+\code{dNdh}, \code{InitialSheet}, \code{getmeltrate}); \code{dkappadN} was wrong in ElmerStreams and is fixed here
+(Section~\ref{sec:sheet}). The driver appends generated Lua: \code{ess_sl_t(t)} (sea level), \code{ess_acc_t(t)}
+(accumulation factor), \code{ess_fnoise(x,y)} (noise), and overrides.
+
+\subsection{Fortran sources: ElmerStreams and Elmer files and their ESS versions}
+
+\begin{longtable}{L{3.6cm}L{3.4cm}L{8.6cm}}
+\toprule
+Original & ESS file & Status \\ \midrule
+\endhead
+\code{SRC/Buoyancy.f90} & \code{Buoyancy.F90} & Unchanged (SeaPressure, SeaSpring; gravity from Body 3). \\
+\code{SRC/sheetsolverhw.f90} & \code{SheetSolverhw.F90} & Unchanged copy (\code{sheet_solver = elmerstreams}). \\
+user's CS version of the sheet solver (11 Nov 2026) & \code{SheetSolverhwCS.F90} & The user's file plus two compile
+fixes, then the changes of Section~\ref{sec:sheet} (\code{sheet_solver = cs}). \\
+\code{SRC/ColdTempMaskSolver.f90} & \code{ColdTempMaskSolver.F90} & Six additions, all switch-guarded or bug fixes
+(Section~\ref{sec:coldtemp}). \\
+\code{SRC/contact.f90} & \code{ContactPeriodic.F90} & Periodic-aware grounding-line test (\code{periodic_gl = fix});
+\code{Periodic Contact = False} gives the original. \\
+Elmer \code{FreeSurfaceSolver} & \code{ESSFreeSurface.F90} & One change: the limiter never overwrites a periodic
+image row. \\
+Elmer \code{IncompressibleNS} & \code{ESSIncompressibleNS.F90} & Adapted (subtraction) FSSA with the corrected
+right-hand-side quadrature; rotated slave frames for sectors. \\
+--- & \code{SteadyStateIO.F90} & New: \code{StateIO}, \code{ESSNoOp}. \\
+--- & \code{GLDistance.F90} & New: \code{GLDistance}, \code{FSSSALinsolve}, \code{FSSSAShelf}, \code{FSSSAAfterLinsolve}. \\
+--- & \code{PeriodicUtils.F90}, \code{FixPeriodicLoads.F90} & New: periodic groups and symmetrisation of nodal fields. \\
+--- & \code{RotateGuess.F90} & New: Stokes initial guess rotated to the normal--tangential frame. \\
+--- & \code{NoWaterSheet.F90} & New: the no-storage limit of the sheet. \\
+--- & \code{StepCheck.F90} & New: CFL, change per step, relaxation number; adaptive time step. \\
+--- & \code{RemeshTrigger.F90} & New: ends a run when the curves leave the fine mesh. \\
+\bottomrule
+\end{longtable}
+
+\subsubsection{ColdTempMaskSolver: the changes}\label{sec:coldtemp}
+
+ElmerStreams' logic (per bed node, from the previous step): a temperate node (mask $\ge 0$) stays temperate while its
+sheet $h_w>0$, else turns cold; a cold node turns temperate when $T - T_m \ge 10^{-3}$\,K; cold nodes get
+$h_w = 10^{-4}$. ESS adds:
+\begin{enumerate}
+\item \textbf{Use Current Values} (keyword; with the coupled loop, \code{MASK_IN_LOOP=1}): decide from the latest
+iteration instead of the previous time step.
+\item \textbf{Floating Nodes Temperate} (keyword, on in the ESS chains, commit \code{b8b309b}): floating and
+grounding-line nodes ($gm<0.5$) always temperate and their sheet never reset. Before, they were cold and reset to
+$10^{-4}$ every step, so water drained out at the grounding line each step.
+\item \textbf{Periodic mask} (\code{e08ffc0}): after the pass, \code{PeriodicSymmetrize(..., 'max')}: a pair is
+temperate if either node is. A seam image could stay cold next to its temperate master forever (T tied across the seam
+at exactly $T_0$, never $10^{-3}$ above), cutting the sheet along the seam.
+\item \textbf{Reset of the previous sheet level} (\code{c21718b}): a node made cold gets $h_w = 10^{-4}$ at the previous
+time level too (\code{HwPrev}), because the sheet solver holds cold nodes at their previous value.
+\item \textbf{Each node decided once per call} (\code{2bfa84f}): a node is met through each of its elements; after the
+reset in 4, the next visit turned it straight back temperate, so no node could ever go cold (job 31762).
+\item \textbf{Diagnostics} (\code{6b619ab}): per call, nodes decided, previously temperate, $h_w\le 0$ as read and as now,
+switches T$\to$C and C$\to$T, summed over ranks (log line \code{ColdTempMask diag}).
+\end{enumerate}
+
+\subsubsection{The water sheet (SheetSolverhwCS) and its changes}\label{sec:sheet}
+
+Equation (as ElmerStreams): $\partial_t h + \nabla\cdot q = m$, $q = -K(N)\nabla(\Phi_0 - N(h))$,
+$\Phi_0 = -\sigma_{zz} + \rho_w g z_b$, $K = D_0[\mathrm{sp}(N)^{-k_0} - \mathrm{sp}(N(0))^{-k_0}]$, melt $m$ from the
+heat solver's Dirichlet reaction at temperate nodes (\code{getmeltrate}), Picard iterations. The user's CS version:
+no flux on elements with a cold node, $\partial_t h = 0$ on cold nodes. ESS changes, each a keyword set by the driver
+(job variable in brackets):
+\begin{longtable}{L{4.6cm}L{11cm}}
+\toprule
+Change & Why / effect \\ \midrule
+\endhead
+Nonnegative Sheet Diffusion (\code{SHEET_DCAP}, default on) & $-K\,dN/dh$ and $K$ capped at 0: no backward diffusion. \\
+$N = N_0 h_r/\sqrt{h_+^2+\varepsilon^2}$ (\code{SHEET_N=hr_over_h}, default with cs) & $N>0$ always, $K$ bounded
+($\le 3.5\times10^8$); $h_+=\max(h,0)$: no flux out of an empty or negative sheet. \code{marine_term} gives the old
+$N_0(h_r-h)/h + 0.01$. \\
+Minimum thickness (\code{SHEET_HMIN}, default off) & floor after every linear solve. \\
+Implicit Sheet Advection (\code{SHEET_IMPLICIT=1}) & $q_0=-K\nabla\Phi_0$ written as $(K/h_+)\,h$ with $h$ in the
+matrix (not lagged). \\
+Advection upwinding (\code{SHEET_UPWIND}, default off) & streamline diffusion; no effect once the GL is open. \\
+Sheet Open At Grounding Line (\code{SHEET_GL_OPEN=1}) & floating \emph{and} grounding-line nodes not ``cold'' for the
+flux switch-off: the grounding line is an outlet into the Dirichlet $h_r$ shelf nodes, not a wall. \textbf{This was
+the cause of the 2026-11-12 blow-ups} ($h=\pm10^{10}$\,m): water driven by $\nabla\Phi_0$ piled onto the last
+grounded node. \\
+Relaxation (\code{SHEET_RELAX}, default 0.5) and back-off (\code{SHEET_BACKOFF}, default 25 with relaxation 1) &
+halve the relaxation every $N$ unconverged Picard iterations. \\
+Convergence measure (\code{SHEET_CONV=norm}) and tolerance (\code{SHEET_TOL}, default $10^{-6}$) & the norm's change
+instead of the nodal change; production $10^{-4}$. \\
+Preconditioner (\code{SHEET_PREC}, default ILU8) & as ElmerStreams. \\
+Newton (\code{SHEET_NEWTON=1}, needs implicit) & $[A + A_N]h = b + A_N h_k$ with the derivatives of $K/h$ and
+$-KN'$; \code{dkappadN} fixed (ElmerStreams' had the wrong exponent and sigmoid). Verified against a finite-difference
+Jacobian ($1.5\times10^{-9}$). \\
+$K/h$ floor (\code{SHEET_KH_FLOOR}, default 0) & runs before 14 Nov had $10^{-3}$\,m. \\
+Non-convergence diagnostics & counts of nodes still changing by kind, and the worst node, after 50/100/150
+iterations. \\
+\bottomrule
+\end{longtable}
+Where the shelf is: the sheet is solved on the whole base (body ``interface''), but floating nodes are held at $h_r$
+by \code{Water Sheet Thickness Condition = IfThenElse(Time > 1e-5, -GroundedMask, -1)}: Dirichlet where
+$gm<0$; grounding-line nodes ($gm=0$) are free unknowns.
+
+\subsubsection{ContactPeriodic (periodic\_gl = fix)}
+
+ElmerStreams' \code{contact.f90} (Elmer/Ice \code{SlidCoef_Contact} reading \code{Fw2}, plus a tiny shelf drag) with
+the grounding-line test on periodic copies of its three inputs: the Stokes loads (``folded''), the hydrostatic loads
+(``split''), the bed normals (``mean'', renormalised), so master and image decide alike; afterwards the grounded mask
+is made periodic (minimum over the copies). No \code{Fw2} doubling needed. Keywords \code{Periodic Contact},
+\code{Hydrostatic Loads Variable}. \code{periodic_gl = elmerstreams} reproduces the ElmerStreams treatment,
+\code{none} uses Elmer/Ice's function.
+
+\subsubsection{ESSFreeSurface}
+
+Elmer's limiter (\code{Apply Dirichlet}) overwrote a limited node's matrix row; on a periodic image that row is the
+periodic tie, so the tie was cut and the master solved alone: in a 50\,km periodic run one seam node at the GL was
+pinned at \code{Min Zs = 1} while its master reached 1668\,m. ESS never overwrites image rows; the limiter acts on the
+group's master and images take its active set. Used for Zs and Zb whenever \code{periodic_sides} is on
+(\code{ESS_STOCK_FREESURFACE=1}: stock).
+
+\subsubsection{ESSIncompressibleNS: adapted FSSA}
+
+The ``adapted'' (subtraction) FSSA of Ahlkrona, Henry \& Löfgren (GMD 19, 2333, 2026, Eq.~21), from a collaborator's
+file: the full-FSSA stiffness term on the left, and from the second coupled iteration on
+$-\theta\Delta t\,(u_{r-1}\cdot n)\,\rho g$ on the right. \textbf{Bug found and fixed (2 Nov, \code{776a802})}: the
+right-hand side used the previous iterate at the test node only (a row-lumped mass), which never cancels the
+consistent-mass stiffness term and acts as anti-FSSA of twice the strength on the node-to-node zig-zag. Fix: interpolate
+$u_{r-1}\cdot n$ at the Gauss point. Also hosts the rotated slave frames for sectors. Status: paused (less accurate than
+full FSSA at dt 50 and 2.3$\times$ the cost).
+
+\subsection{Elmer itself: patches}
+
+\code{jobs/build_elmer.cmd} builds Elmer (revision \code{dd6aef5e2}) with \code{elmer/patches/}:
+\begin{enumerate}
+\item \code{01-hypre-options.patch}: BoomerAMG as a solver set up with the matrix it solves (crash fix); extra
+BoomerAMG and Hypre-ILU keywords.
+\item \code{02-column-coarse.patch}: an optional two-level preconditioner with a coarse level of column modes
+(\code{Linear System Column Coarse}); not used in production.
+\item \code{03-elmergrid-metisper.patch}: \code{ElmerGrid -metisper N}: METIS on the element dual graph with periodic
+partners kept in one partition (and the vertex-only-touch fix). Needed by every periodic production mesh.
+\end{enumerate}
+Also: heat in the bedrock/filler uses \code{Convection = "None"} (the vectorised heat solver segfaulted with
+\code{Computed} there); \code{HEAT_LEGACY=1} selects \code{HeatSolveLegacy.so}. The self-built library directories are
+put first on \code{LD_LIBRARY_PATH}.
+
+%======================================================================
+\section{The driver}
+%======================================================================
+
+\subsection{Configs}
+A TOML file per set-up. Sections: \code{[paths]} (work dir, case dir), \code{[case]} (geometry and mesh),
+\code{[model]}, \code{[elmer]} (everything about the Elmer runs), \code{[state]} (state and frozen variables, scales),
+\code{[lua]} (parameter overrides), \code{[masks]}, \code{[parameter]}, \code{[map]} (dt, steps per chunk),
+\code{[stability_map]}, \code{[fd]}, \code{[newton]}, \code{[continuation]}, \code{[stability]}, \code{[hydrology]}.
+Most \code{[elmer]} keys have an environment override \code{ESS_*} (set by the job variables of
+Section~\ref{sec:jobvars}).
+
+\subsection{State files}
+\code{.npz} files: the state vector (\code{[state] variables}, e.g. Temperature, Zs, Zb) with its layout, the frozen
+fields (masks, bedrock, water sheet, \ldots), diagnostics (velocities, \ldots), node coordinates, parameter value and
+metadata (time). Elmer reads and writes them through \code{StateIO} as binary records keyed by global node number
+(exact, no interpolation). One file per partition is written and merged by the driver.
+
+\subsection{How a run is built}
+\code{ElmerModel.build_sif} takes the template, fills placeholders (\code{__DT__}, executions, element, limiters),
+then applies in order the switched-on transformations: dt ramp, Cartesian bed, periodic sides, step check, remesh
+trigger, free-surface stepping (FSSA, coupling), iterative free surfaces, Dirichlet surface, sea-level parameter,
+accumulation schedule, Stokes nonlinear iterations, shelf cut, FS--SSA, Stokes module, y-bump, thermal chain, sliding
+law, sector rewrite, friction noise, VTU output, checkpoints, no-abort. Each run gets a directory
+\code{work/<cfg>/runs/<date>_run<k>_<label>_<hash>/} with \code{run.sif}, \code{elmer.log}, the state files and any
+VTU/checkpoints (\code{keep_runs}); with \code{cache = true} identical runs are reused from \code{work/<cfg>/cache}.
+The run label is \code{job<SLURM id>} in batch jobs.
+
+\subsection{Commands}
+
+\begin{longtable}{L{3.0cm}L{12.6cm}}
+\toprule
+Command & What it does \\ \midrule
+\endhead
+\code{setup} & mesh (gmsh + ElmerGrid, partitioned), initial-condition tables, \code{ics.lua}. \\
+\code{init} & one Elmer run from the initial conditions $\to$ \code{state0.npz}. \\
+\code{extract} & a state from an Elmer restart file. \\
+\code{transfer} & a state onto another mesh, column by column (\code{--from}; \code{--keep-pattern},
+\code{--pattern-copies} for sectors). \\
+\code{run} & time integration: \code{--chunks}, \code{--steps}, \code{--dt}, \code{--until}, \code{--time-offset},
+\code{--sea-level=}, \code{--accumulation=}, \code{--remesh-auto} (+ remesh options), \code{--gl contact|frozen},
+\code{--bed}, \code{--warm-start}, \code{--rotate-guess}, \code{--stokes-only}, \code{--heat-only},
+\code{--friction-heat}, \code{--periodic-gl}, \code{--lua}, \code{--ybump-ramp}, \code{--add-diag}, \ldots \\
+\code{remesh} & a new footprint from a state, partitioned, the state interpolated onto it (\code{--name},
+\code{--from-mesh}, \code{--ranks}, \code{--dry-run}, size options). \\
+\code{newton}, \code{continue}, \code{stability}, \code{check}, \code{remask}, \code{spectrum},
+\code{spectrum-down}, \code{temperate-sweep}, \code{velocity}, \code{toy-demo} & the steady-state machinery
+(Section~\ref{sec:steady}). \\
+\bottomrule
+\end{longtable}
+
+%======================================================================
+\section{Model features}\label{sec:features}
+%======================================================================
+
+\subsection{Geometries}
+\begin{description}
+\item[Flowlines] one element wide, land (\code{land_flowline}, \code{land_margin}) or marine
+(\code{marine_flowline}: 816\,km, bed $-96$ to $-224$\,m, shelf to a fixed front, ICs from Marine\_Term's tables).
+\item[Strips] \code{width}, \code{y_elements}; walls or \code{periodic_sides = true} (side 2 the image of side 1 for
+bedrock, filler and ice; \code{ElmerGrid -periodic 0 1 0}). Mirror-symmetric unstructured meshes
+(\code{flowline_marine_gl_mirror.geo.in}) or, with \code{strip_cut_seed}, \textbf{jagged periodic sides}: side 1 a chain
+of single element edges offset at random by up to $h/2$ (turns $\le 60^\circ$), side 2 its translation by $W$
+(\code{strip_cut_geo}, side saved as \code{strip_side1_<mesh>.txt}). Production: \code{configs/coarse_rect_ext.toml}
+(100\,km wide, front at 1116\,km, 1\,km everywhere before the first remesh).
+\item[Sectors] rotationally periodic wedges (\code{sector_angle} or \code{sector_copies}): the velocity periodic in
+$(v_r, v_\theta, v_z)$ by stock \code{Periodic BC Rotate} and rotated normal--tangential slave frames; every
+\code{Coordinate 1} in Lua replaced by the radius. \code{sector_inverted = true}: the divide on the outer arc, the flow
+converging inwards. \code{sector_cut_seed}: jagged sides. \code{accumulation_factor = "match"} scales the accumulation
+so the flux at the grounding line matches the strip's (0.649 for inv38). Production sector:
+\code{coarse_sector_inv38_cut_ext} (38 copies, 9.474$^\circ$, divide arc 251.5\,km at $r=1520.8$\,km, front at
+$r=404.8$\,km). The normal (divide at centre) wedge is parked: Stokes stalls after a few hundred years.
+\item[A strip is a sector of infinite radius] the remesher and partitioner treat both through one \code{Periodic}
+frame (rotation vs translation).
+\end{description}
+
+\textbf{Partitioning}: \code{partitioner = "metisper"}. For jagged sides (\code{sector_partition}) both sides are mapped
+to straight lines first, \code{ElmerGrid -periodic -metisper} pairs them, and the real coordinates are restored.
+
+\subsection{Moving full-Stokes region and SSA shelf (FS--SSA)}
+\begin{enumerate}
+\item \code{GLDistance} (before every step): the horizontal distance of each node to the grounding line (all ranks'
+GL nodes gathered; wraps across seams, rotated for sectors). Ice more than \code{fs_ssa_km} (production 10\,km) beyond
+the GL is passive for Stokes. The region is renewed when the GL has moved \code{fs_ssa_update_km} (1\,km). Seam
+consistency: periodic pairs are made active/passive together.
+\item \code{FSSSALinsolve} (Stokes ``Before Linsolve''): the shelf's force on the active/passive interface added to the
+right-hand side (Elmer's \code{Passive Target} crashes in 3D); rotates the initial guess; forces ILU rebuilds only on
+ranks whose active set or grounded mask changed, at a cheaper level (\code{REBUILD_PREC}); the adaptive ILU level
+(\code{ADAPTIVE_PREC=ILU0:ILU1:ILU2}: one level up after a slow or unconverged solve, back down after
+\code{ADAPTIVE_PREC_CALM} easy ones).
+\item \code{FSSSAShelf} (\code{fs_ssa_shelf = ssa}): linear-viscous floating SSA on the passive base faces, inflow the
+depth-averaged Stokes velocity, natural calving front, periodic or walls; the passive columns re-floated each step at
+the current sea level (also in PrevValues) and given the SSA plug flow; the interface stress from the SSA strain rate,
+relaxed (\code{SSA_RELAX}, 0.25).
+\end{enumerate}
+Result: marine cost per step equal to land; accuracy within 0.02\,m/a grounded velocity over 60 yr against the full
+shelf, GL identical.
+
+\subsection{Thermal options}\label{sec:thermal}
+\begin{description}
+\item[\code{thermal = frozen}] (default) masks from the state, never recomputed (needed for Newton).
+\item[\code{loads}] friction heating from periodic Stokes-load copies; masks frozen.
+\item[\code{nowater}] \code{ColdTempMaskSolver} every step with \code{NoWaterSheet}: $h_w=\mathrm{sign}(\text{melt})$ on
+grounded temperate nodes (no storage): a node freezes the step after its balance at $T_0$ turns to freezing.
+\item[\code{elmerstreams}] ElmerStreams' full chain: mask solver (with the ESS fixes), \code{ComputeDevStress} for
+$\sigma_{zz}$, periodic copies of the loads, the sheet solver (\code{SHEET=cs} for the CS version). Production setting:
+\code{THERMAL=elmerstreams SHEET=cs SHEET_IMPLICIT=1 SHEET_GL_OPEN=1 SHEET_RELAX=1 SHEET_CONV=norm SHEET_TOL=1e-4}.
+\end{description}
+Heat linear solver: \code{HEAT_SOLVER=METHOD:PREC[:x]} (default BiCGStabL:ILU1; \code{GCR:ILUT:1e-3} converges at
+CFL $\approx 10$ where GCR:ILU2 and hypre fail, 2--3\,s per step, 16 Nov), \code{HEAT_TOL} (production $10^{-7}$).
+
+\subsection{Free surface and time stepping}
+\begin{itemize}
+\item FSSA flag (\code{fssa}), coupled loop (\code{FS_COUPLED}, \code{COUPLED_ITERS}), SSA in the loop.
+\item Sea spring time step \code{SPRING_DT} must match the step (a 1\,yr spring at 5\,yr steps put every solve at the
+cap); the sweep sets it to \code{DT}.
+\item \code{STEP_CHECK=1}: \code{StepCheck} logs the surface and floating-base CFL $|u_h|\Delta t/h$, the largest
+$|\Delta Z_s|$, $|\Delta Z_b|$, and the relaxation number $R=\Delta t\rho_i g\min(h,H)/(2\pi\mu)$ (explicit stability
+needs $R<2$).
+\item \textbf{Adaptive time step} \code{DT_ADAPT=MIN:MAX[:CFL target[:calm steps]]}: StepCheck ends the run (Exit
+Condition, file \code{dt_change}) when dt should change; \code{ess run} continues with the new dt to the same end
+time. \code{DT_ADAPT_HEAT=MAX:MIN} (s): by the heat solve's time instead (halve after 2 slow solves, double after the
+calm steps). \code{UNTIL=T}: run to a model time instead of a step count.
+\item \code{NO_ABORT=1}: no solver ends the run on an unconverged linear solve.
+\end{itemize}
+
+\subsection{Time-dependent forcing}
+\code{SEA_LEVEL="SL@T,..."} and \code{ACCUM="F@T,..."}: piecewise-linear schedules evaluated by Elmer every step
+(Lua \code{ess_sl_t}, \code{ess_acc_t} of \code{Time + time_offset}); sea pressure, the contact test and the SSA
+flotation follow it. \code{TIME_OFFSET} keeps the schedules on the whole run's clock across restarts and remeshes.
+
+\subsection{Friction}
+\code{SLIDING=subtemperate|temperate}, \code{FRIC} (factor on \code{fcoeff}), \code{SLIDE_YBUMP} and
+\code{YBUMP_RAMP} (old test pattern; 0 now), \code{FNOISE}, \code{FNOISE_KM}, \code{FNOISE_SEED} (coherent periodic
+noise), \code{FRICTION_HEAT=flux|loads|none}.
+
+\subsection{Remeshing}
+\begin{itemize}
+\item \textbf{Trigger} (\code{REMESH_AUTO=1}, \code{RemeshTrigger}): every step, remesh when any grounding-line node
+($|gm|<0.5$) is closer than 5\,km (\code{REMESH_GL_SAFETY}) to coarse mesh, or more than 5\,\%
+(\code{REMESH_CT_FRACTION}) of the cold/temperate-transition nodes are closer than 1\,km (\code{REMESH_CT_SAFETY});
+at least \code{REMESH_MIN_STEPS} (100) steps per mesh. ``Coarse'' is read from \code{Remesh Distance}, written by the
+remesher (distance to the nearest element coarser than $1.3\times$ \code{--fine}). A start state not yet remeshed is
+remeshed before the first step.
+\item \textbf{Size field} (\code{size_field_budget}): $h=\min(h_\text{GL}, h_\text{CT}, h_\text{bg})$ with
+$h_\text{GL}=$\code{--fine}$+g\max(d_\text{GL}-b_\text{GL},0)$, $h_\text{CT}=$\code{--fine-margin}$+g\max(d_\text{CT}-b_\text{CT},0)$,
+background \code{res_points} scaled to the triangle budget \code{--max-triangles}; grounded bed away from both curves
+at least \code{--coarse}, beyond \code{--far-km} at least \code{--far-h}; graded by \code{--grade}; random factor
+$e^{\pm\,\text{jitter}}$. Defaults: fine 250\,m (GL), fine-margin 250\,m, GL band $\pm$25\,km, CT band $\pm$10\,km,
+coarse 2\,km, far 200\,km $\to$ 5\,km, grade 0.15 (production 0.05), jitter 0.15.
+\item \textbf{Directional} (\code{--directional}): compares each piece of each curve with the state the current mesh was
+made from; ahead of a moving piece the band is $b_\text{min} +$ \code{look}$\times$distance moved (look 2.5, capped at
+50\,km), behind it and along still pieces only the minimum band (2\,km CT, 5\,km GL); new pieces get the default band.
+\item \textbf{Geometry}: the same domain and side chain (segments subdivided), gmsh Delaunay with a background field,
+partitioned as setup.
+\item \textbf{Interpolation}: linear on every level in the old triangles; masks nearest-node; bed radial (or linear),
+$Z_b$ on the bed where grounded; the water sheet carried. Meshes are named \code{<job>m001}, \code{m002}, \ldots (Elmer's
+127-character path limit); PNGs in \code{work/<cfg>/meshes/}.
+\end{itemize}
+
+\subsection{Output, checkpoints, restarts}
+\code{VTU_EVERY=N} (base and surface VTU every $N$ steps; \code{VTU_FIRST=F:N0} denser at the start), checkpoints
+every output by default (\code{CHECKPOINT_EVERY}), output steps counted on the whole run across remeshes. A stopped
+run restarts from its last checkpoint: \code{jobs/latest_state.py WORK [JOB]} writes \code{work/<cfg>/latest_<job>.npz}
+and prints its time and \code{MESH=}; restart with \code{START_STATE}, \code{MESH_DB} and \code{TIME_OFFSET}.
+
+%======================================================================
+\section{How to run}
+%======================================================================
+
+\subsection{Build}
+\begin{lstlisting}
+module load elmerfem/2026-10-28
+bash jobs/build_elmer.cmd elmergrid      # once: the patched ElmerGrid (-metisper); sbatch it for a full Elmer build
+make -C elmer                            # SteadyStateIO, Buoyancy, RotateGuess, GLDistance
+make -C elmer PeriodicGL.so ESSFreeSurface.so ESSIncompressibleNS.so StepCheck.so RemeshTrigger.so thermal
+\end{lstlisting}
+Production jobs rebuild what they need themselves (\code{periodic_test/run_gl_ess.cmd build}, called by
+\code{scaling_tests.cmd}).
+
+\subsection{How a production job is put together}
+\code{bash jobs/scaling_sweep.sh POINT} (on the login node) submits \code{jobs/scaling_tests.cmd} with \code{sbatch
+--ntasks=<ranks> --export=ALL,...}. The point's letter picks the config and its number the ranks (\code{q1024}:
+\code{configs/coarse_rect_ext.toml} on 1024 ranks; \code{z}: the extended sector; \code{e}: the 1\,km sector). Job
+variables set in the shell before the command travel through \code{ALL}. The job then:
+\begin{enumerate}
+\item rebuilds the ESS libraries, loads Elmer;
+\item sets up the mesh if \code{work/<cfg>/start.npz} does not exist (from \code{FROM}), partitions for the rank count
+(stops here with \code{SETUP_ONLY=1});
+\item runs a warm-up (\code{WARMUP}), or continues from \code{START_STATE} (as \code{WARMUP_STATE});
+\item runs \code{python3 -m ess run CFG --state ... --gl contact --linear-stokes block ...} for each letter of
+\code{SET} (production \code{F}: GCR + ILU0), with output \code{work/<cfg>/scaling_<ranks><TAG>_F.npz};
+\item prints a summary at the end of \code{slurms/scaling_<job>.out}; the per-run log is
+\code{slurms/scaling_<job>_F.log}, the Elmer log in the run directory.
+\end{enumerate}
+
+\subsection{The growth run on the strip (current, 16 Nov 2026)}
+Same settings as the sector run 31811, on the strip, heat by GCR + ILUT, DT 10.
+
+1. Set up the strip (mesh, 1024-rank partitioning, start state from the cold flowline):
+\begin{lstlisting}
+cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && git pull && SETUP_ONLY=1 TL=02:00:00 bash jobs/scaling_sweep.sh q1024
+\end{lstlisting}
+2. Shelf break (factor 30, 10\,km wide, at $r=450$\,km, i.e. $x=1070.8$\,km) and thin start (100\,m, floating where
+below flotation at sea level $-250$\,m):
+\begin{lstlisting}
+cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && W=work/coarse_rect_ext && python3 jobs/shelf_break.py $W/start.npz $W/bed30.npz --strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10 --force | head -12 && python3 jobs/thin_start.py $W/bed30.npz $W/thin100f.npz --h0 100 --float --sea-level -250
+\end{lstlisting}
+3. Growth run (sea level $-250\to0$\,m by 5\,kyr, accumulation $\times10$ to 9\,kyr then back to 1 by 10\,kyr, to
+100\,kyr, remeshing):
+\begin{lstlisting}
+cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && START_STATE=work/coarse_rect_ext/thin100f.npz SEA_LEVEL="-250@0,0@5000" ACCUM="10@0,10@9000,1@10000" UNTIL=100000 NO_ABORT=1 HEAT_TOL=1e-7 ADAPTIVE_PREC=ILU0:ILU1:ILU2 HEAT_SOLVER=GCR:ILUT:1e-3 REMESH_AUTO=1 REMESH_ARGS="--max-triangles 800000 --grade 0.05 --directional" FS_LINTOL=1e-9 SHEET_RELAX=1 SHEET_CONV=norm SHEET_TOL=1e-4 THERMAL=elmerstreams SHEET=cs SHEET_IMPLICIT=1 SHEET_GL_OPEN=1 TIMING=1 FRICTION_HEAT=loads HEAT=1 STRAIN_HEAT=1 STEP_CHECK=1 RECOMPUTE=2 TL=3-00:00:00 DT=10 VTU_EVERY=50 TAG=_grow100k bash jobs/scaling_sweep.sh q1024
+\end{lstlisting}
+For the sector, the same with \code{z1024} and \code{work/coarse_sector_inv38_cut_ext}; there the shelf break used
+\code{fric_v3c_ckpt.npz} without \code{--strip-divide-r-km}.
+
+\subsection{Watching a run}
+\begin{lstlisting}
+cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && watch -n 20 bash jobs/watch_run.sh
+\end{lstlisting}
+Shows: the Elmer run and model time, Stokes and whole-step times, the slowest solvers, heat or sheet time and
+iterations, GCR iterations of the last solves (2000 = the cap), mask counts, the step check (CFL, $R$), the last
+preconditioner change. Other checks: \code{periodic_test/step_check_summary.py}, \code{plots/cfl_dt.py MESHDIR
+STATE} (dt for CFL 1), \code{plots/float_check.py} (implied sea level).
+
+\subsection{Restarting from a checkpoint}
+\begin{lstlisting}
+cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && python3 jobs/latest_state.py work/coarse_rect_ext
+\end{lstlisting}
+then submit the growth command with \code{START_STATE=work/coarse_rect_ext/latest_<job>.npz}, \code{MESH_DB=} the printed
+mesh and \code{TIME_OFFSET=} the printed time (the schedules and \code{UNTIL} stay on the whole run's clock).
+
+\subsection{Packing and plotting}
+On tethys (every 5th output across the job's remeshes, and PNGs of new meshes):
+\begin{lstlisting}
+cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && git pull && J=$(squeue -u slloyd -h -n scaling -t R -o %i | head -1) && python3 plots/job_frames.py work/coarse_rect_ext $J work/coarse_rect_ext/grow100k --every 5 && python3 plots/mesh_map.py --all work/coarse_rect_ext
+\end{lstlisting}
+On pilsen (velocity panel only):
+\begin{lstlisting}
+cd /import/ontap-m-glaciology/Lloyd && mkdir -p coarse_rect_ext/meshes && R=slloyd@tethys-3g:/SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && rsync -av "$R/work/coarse_rect_ext/grow100k_seg*.npz" coarse_rect_ext/ && rsync -av "$R/work/coarse_rect_ext/meshes/" coarse_rect_ext/meshes/ && cd ElmerSteadyStates && git pull && OPENBLAS_CORETYPE=Nehalem python3 plots/plot_state_3d.py ../coarse_rect_ext/grow100k_seg*.npz --full --fs-ssa 10 --no-temp --tile 1
+\end{lstlisting}
+On the Mac:
+\begin{lstlisting}
+mkdir -p ~/Desktop/coarse_rect_ext/meshes && rsync -av -e "ssh -J slloyd@sshproxy-m.geophysik.uni-muenchen.de" "slloyd@pilsen:/import/ontap-m-glaciology/Lloyd/coarse_rect_ext/*_3d.html" ~/Desktop/coarse_rect_ext/ && rsync -av -e "ssh -J slloyd@sshproxy-m.geophysik.uni-muenchen.de" "slloyd@pilsen:/import/ontap-m-glaciology/Lloyd/coarse_rect_ext/meshes/" ~/Desktop/coarse_rect_ext/meshes/ && open ~/Desktop/coarse_rect_ext/*_3d.html && open ~/Desktop/coarse_rect_ext/meshes
+\end{lstlisting}
+Sectors: no \code{--tile}, add \code{--no-streamlines}. An interactive mesh page: \code{plots/mesh_3d.py pack} on
+tethys, \code{plot} on pilsen (\code{--flat}, \code{--edges}, \code{--zoom}; several meshes tiled periodically).
+
+\subsection{Steady states, continuation, stability}\label{sec:steady}
+The original purpose (README): \code{sbatch jobs/ess.cmd <command> configs/<cfg>.toml}. \code{setup}, \code{init},
+\code{check} (round-trip exact, repeatability, FD linearity), \code{run --chunks N} (spin-up), \code{newton}
+(Newton--Krylov on $\Phi(x)-x$ with the time stepper as preconditioner), \code{continue} (pseudo-arclength, folds
+located), \code{stability} (Arnoldi on $D\Phi$; \code{--spanwise} for 3D strips), \code{remask}, \code{spectrum}.
+Resubmitting resumes (runs cached by input hash). \code{python3 -m pytest tests} runs everything on the toy model.
+
+%======================================================================
+\section{Reference: job variables}\label{sec:jobvars}
+%======================================================================
+Set in the shell before \code{bash jobs/scaling_sweep.sh POINT} (or in \code{--export}).
+
+\small
+\begin{longtable}{L{3.5cm}L{12.1cm}}
+\toprule
+Variable & Meaning (default) \\ \midrule
+\endhead
+\multicolumn{2}{l}{\textit{Job and start}} \\
+\code{TL} & wall-time limit (3\,h; longer for few ranks). \\
+\code{TAG} & output name suffix (\code{_sweep}). \\
+\code{FROM} & state to carry onto a new mesh at setup. \\
+\code{SETUP_ONLY=1} & stop after setup and partitioning. \\
+\code{START_STATE} & continue from this state (no warm-up). \\
+\code{WARMUP}, \code{WARMUP_STATE}, \code{WARMUP_ILU} & ramp-up run and its state, its ILU level. \\
+\code{MESH_DB} & run on another footprint in the case dir (a remeshed one). \\
+\code{AFTER}, \code{HERE=1} & wait for a job; run inside an existing allocation. \\
+\code{SET} & runs (letters; \code{F} = GCR + ILU0). \\
+\multicolumn{2}{l}{\textit{Time}} \\
+\code{DT}, \code{STEPS}, \code{CHUNKS}, \code{UNTIL} & step (yr), steps per run, runs, end time. \\
+\code{DT_RAMP} & sequence of steps, e.g. \code{1e-4:1e-2:0.1*3}. \\
+\code{DT_ADAPT}, \code{DT_ADAPT_HEAT} & adaptive step (Section~\ref{sec:features}). \\
+\code{TIME_OFFSET} & model time at the start. \\
+\code{SEA_LEVEL}, \code{ACCUM} & schedules \code{V@T,V@T}. \\
+\code{SPRING_DT} & sea-spring step (= DT). \\
+\multicolumn{2}{l}{\textit{Mechanics}} \\
+\code{GLMODE}, \code{NL} & contact GL, 2 Stokes iterations. \\
+\code{FS_SSA}, \code{FS_SSA_SHELF}, \code{FS_SSA_UPDATE}, \code{FS_SSA_TARGET} & FS--SSA region (10\,km), SSA shelf, renewal (1\,km). \\
+\code{SSA_IN_LOOP}, \code{SSA_STRESS}, \code{SSA_RELAX} & SSA variants. \\
+\code{RECOMPUTE}, \code{REBUILD}, \code{REBUILD_PREC} & ILU reuse and targeted rebuilds. \\
+\code{ADAPTIVE_PREC}, \code{_FACTOR}, \code{_CALM} & adaptive ILU level. \\
+\code{TOL}, \code{MAXIT}, \code{ROT}, \code{STOKES_ELEMENT}, \code{STOKES_SOLVER}, \code{CART} & Stokes solve. \\
+\code{FSSA}, \code{FS_COUPLED}, \code{COUPLED_ITERS}, \code{FSSA_PREV_TIMESTEP} & free-surface scheme. \\
+\code{FS_LINTOL}, \code{MESHUPDATE} & free-surface tolerance; bedrock/filler update once or every step. \\
+\code{SLIDING}, \code{FRIC}, \code{SLIDE_YBUMP}, \code{YBUMP_RAMP}, \code{FNOISE*}, \code{LUA} & friction and parameters. \\
+\code{BED} & \code{cold}, \code{temperate}, \code{none} (the state's own). \\
+\multicolumn{2}{l}{\textit{Heat and hydrology}} \\
+\code{HEAT=1}, \code{STRAIN_HEAT}, \code{FRICTION_HEAT}, \code{HEAT_LEGACY} & heat on and its sources. \\
+\code{HEAT_SOLVER}, \code{HEAT_TOL} & heat linear solver and tolerance. \\
+\code{THERMAL} & \code{loads}, \code{nowater}, \code{elmerstreams}. \\
+\code{MASK_IN_LOOP} & mask in the coupled loop. \\
+\code{SHEET}, \code{SHEET_*} & sheet solver and options (Section~\ref{sec:sheet}). \\
+\multicolumn{2}{l}{\textit{Remeshing}} \\
+\code{REMESH_AUTO=1}, \code{REMESH_ARGS} & remesh when needed, with these \code{ess remesh} options. \\
+\code{REMESH_GL_SAFETY}, \code{REMESH_CT_SAFETY}, \code{REMESH_CT_FRACTION}, \code{REMESH_MIN_STEPS} & trigger (5000\,m, 1000\,m, 0.05, 100). \\
+\multicolumn{2}{l}{\textit{Output and diagnostics}} \\
+\code{VTU_EVERY}, \code{VTU_FIRST}, \code{CHECKPOINT_EVERY} & output and checkpoints. \\
+\code{STEP_CHECK=1}, \code{TIMING=1}, \code{KEEP_WARM}, \code{CHECKED=1} & diagnostics, bounds-checked build. \\
+\code{NO_ABORT=1} & never stop on unconverged linear solves. \\
+\bottomrule
+\end{longtable}
+\normalsize
+
+\subsection*{\code{ess remesh} options}
+\code{--fine} (250\,m, GL), \code{--fine-margin} (250\,m, CT), \code{--coarse} (2000), \code{--gl-band-km} (25),
+\code{--ct-band-km} (10), \code{--far-km} (200), \code{--far-h} (5000), \code{--max-triangles}, \code{--h-max} (5000),
+\code{--grade} (0.15), \code{--jitter} (0.15), \code{--directional}, \code{--prev}, \code{--look} (2.5),
+\code{--band-max-km} (50), \code{--band-min-ct-km} (2), \code{--band-min-gl-km} (5), \code{--mode curves|thresholds}.
+
+%======================================================================
+\section{Reference: tools}
+%======================================================================
+\small
+\begin{longtable}{L{6.6cm}L{9.0cm}}
+\toprule
+Tool & Purpose \\ \midrule
+\endhead
+\code{jobs/watch_run.sh} & live progress of a job. \\
+\code{jobs/latest_state.py} & a job's last checkpoint as a state, its mesh and time. \\
+\code{jobs/thin_start.py} & thin-ice start on any state's mesh (bedrock T reset to the geothermal profile). \\
+\code{jobs/shelf_break.py} & a shelf break in the bed (sector radius, or strip with \code{--strip-divide-r-km}). \\
+\code{periodic_test/checkpoint_state.py} & state from a run's checkpoint. \\
+\code{plots/vtu_frames.py}, \code{job_frames.py} & pack VTU output (one run / a whole remeshing job). \\
+\code{plots/plot_state_3d.py} & interactive 3D page (velocity; \code{--sheet}, \code{--mesh-toggle}, \code{--tile}). \\
+\code{plots/mesh_map.py} & mesh PNGs (\code{--all}). \\
+\code{plots/mesh_3d.py} & interactive mesh page. \\
+\code{plots/float_check.py}, \code{float_check_state.py} & implied sea level of the floating ice. \\
+\code{plots/cfl_dt.py} & dt for CFL 1 on a mesh. \\
+\code{plots/sector_circle.py}, \code{frames_gif.py} & full-circle maps, GIFs. \\
+\code{plots/gl_flux.py}, \code{gl_moves.py}, \code{frame_diff.py}, \code{inspect_point.py} & GL flux and motion, frame differences, a point through time. \\
+\code{plots/bed_profile.py}, \code{bed_temp_profile.py}, \code{base_strain.py}, \code{sheet_gl_profile.py} & bed, basal temperature, strain rates, sheet forcing. \\
+\code{periodic_test/seam_check.py}, \code{sector_seam_check.py}, \code{check_periodic_partitions.py} & periodicity checks. \\
+\code{periodic_test/step_check_summary.py}, \code{thermal_start.py}, \code{filler_check.py}, \code{thickcheck.py} & run summaries and state checks. \\
+\code{plots/plot_branch.py}, \code{plot_state.py}, \code{plot_mode_3d.py}, \code{plot_spectrum.py} & steady-state results. \\
+\bottomrule
+\end{longtable}
+\normalsize
+
+%======================================================================
+\section{History}
+%======================================================================
+\begin{description}
+\item[Before 30 Oct] Steady-state driver, land and marine flowlines, Newton, continuation, stability, spectrum;
+periodic-BC test suites (loads, contact, partitions); Stokes linear-solver tests.
+\item[30--31 Oct] Moving full-Stokes region + SSA shelf; METIS periodic partitioning; GCR + ILU0 with targeted rebuilds:
+marine costs as land per step. Strong scaling to 720 ranks without iteration growth.
+\item[1 Nov] Heat on: Elmer build fixes, heat costs, sea spring = dt, the Zs seam spike $\to$ \code{ESSFreeSurface},
+uniform friction, \code{THERMAL=nowater}.
+\item[2 Nov] Adapted FSSA quadrature bug found and fixed.
+\item[6--10 Nov] Rotational periodic sectors (inverted, cyclic, cut); the normal wedge parked; roadmap set.
+\item[11--12 Nov] Friction noise, no marine frontal zone, the user's CS sheet solver; the sheet blow-up traced to the
+grounding-line wall and fixed (\code{SHEET_GL_OPEN}); \code{ColdTempMaskSolver} fixes.
+\item[13--14 Nov] Mask fixes (previous-level reset, once per call); sheet relaxation, convergence, Newton; shelf break.
+\item[15 Nov] Remeshing (size field, trigger, automatic), growing a marine sheet from thin ice (sea-level and
+accumulation schedules, thin start), SSA flotation in PrevValues, restarts with true time, adaptive dt, \code{UNTIL},
+\code{NO_ABORT}, \code{HEAT_TOL}.
+\item[16 Nov] Heat-time adaptive dt, \code{HEAT_SOLVER=GCR:ILUT}, remesh at 250\,m with wider and directional bands,
+sheet carried across remeshes, mesh tools, strips as sectors of infinite radius with jagged sides.
+\end{description}
+
+%======================================================================
+\section{Known open problems}
+%======================================================================
+\begin{itemize}
+\item The water sheet runs away (metres) when restarted from a built-up sheet or carried across remeshes; unresolved.
+\item At dt = 10\,yr the surface CFL and relaxation number reach $\approx10$ and Stokes hits the 2000-iteration cap on
+most steps; adaptive dt (CFL $\le$ 5) is the remedy, currently not used by choice.
+\item Inland cold edges are still no-flux walls for the sheet (isolated temperate nodes fill at the melt rate).
+\item The normal (divide at centre) sector stalls; the adapted FSSA work is paused.
+\item The strip set-up code (jagged sides, straightened partitioning) has not yet run on tethys.
+\end{itemize}
+
+\end{document}
