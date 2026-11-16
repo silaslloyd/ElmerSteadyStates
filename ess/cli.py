@@ -890,10 +890,24 @@ def cmd_spectrum(args):
     nopt = newton_options(cfg)
     if args.maxit:
         nopt = _replace(nopt, maxit=args.maxit)
+    _patch_diagnostics(model)
+    if model.marine:
+        # marine: temperate patches from the grounding line upstream, swept by length; the CS sheet's law
+        from .spectrum import cs_sheet_params, run_spectrum_marine
+        out = args.out or os.path.join(cfg["_work"], f"spectrum_p{p0:g}")
+        rows = run_spectrum_marine(prob, model, saved, prob.scale(saved.x), p0, nopt, out,
+                                   d_step=args.d_step_km * 1e3,
+                                   d_max=None if args.d_max_km is None else args.d_max_km * 1e3, tol_T=args.tol_T,
+                                   gl_rounds=args.gl_rounds, stop_after_dry=args.stop_after_dry,
+                                   hp=cs_sheet_params(cfg), rhoi=P["rhoi"], Lw=P["Lw"], rhow=P["rhow"],
+                                   gravity=P["gravity"])
+        kept = [r for r in rows if str(r["kept"]) == "1"]
+        log.info(f"spectrum (marine): p = {p0:g}: {len(kept)} consistent states of {len(rows)} tried; "
+                 f"{out}/spectrum.csv")
+        return 0 if kept else 1
     hydro = _hydro_params(cfg)
     log.info(f"spectrum: hydrology K(h) = {hydro['K0']:g} h^{hydro['alpha']:g}, h0 = {hydro['h0']:g} m at the "
              f"margin, potential {hydro['c_N']:g}/h - phi0")
-    _patch_diagnostics(model)
     if args.p_step:
         p_end = args.p_end if args.p_end is not None else float(cfg.get("continuation", {}).get("p_max", p0))
         n = int(np.floor((p_end - p0) / args.p_step + 1e-9)) + 1
@@ -1560,6 +1574,11 @@ def main(argv=None):
                         "state; default: the frozen GroundedMask (the glaciated mask of the initial geometry)")
     s.add_argument("--maxit", type=int, help="Newton iterations per state (overrides [newton] maxit)")
     s.add_argument("--out", help="output directory (default <work>/spectrum_p<P>)")
+    s.add_argument("--d-step-km", type=float, default=5.0,
+                   help="marine: the temperate patch grows by this (km) per state, from the grounding line upstream")
+    s.add_argument("--d-max-km", type=float, help="marine: the longest patch (km; default: to the divide)")
+    s.add_argument("--gl-rounds", type=int, default=6,
+                   help="marine: Newton solves per patch with the grounding line moved by flotation in between")
     s.set_defaults(fn=cmd_spectrum)
 
     s = sub.add_parser("temperate-sweep")

@@ -463,3 +463,255 @@ def run_spectrum_down(prob, saved, y0, p, newton_opt, outdir, *, k_step=5, k_min
             log.warning(f"spectrum-down: no converged state below k = {k_last} (even a step of 1); stopping")
             break
     return rows
+
+
+# ================================================================ marine: temperate patches from the grounding line
+# The marine flowline (configs/flowline_rect_ext.toml): the water leaves the bed at the grounding line, so a drainable
+# temperate patch reaches from the grounding line upstream. The sweep is over the patch LENGTH d (km, along the flow;
+# meshes unstructured across: no columns), each d solved by Newton with the cold/temperate mask frozen, the grounded
+# mask moved by flotation between solves (the patch re-anchored at the new grounding line each time), then checked:
+#   thermal    no cold grounded bed node above T0 + tol_T
+#   hydrology  the steady sheet of the 3D runs' CS solver (elmer/SheetSolverhwCS.F90, ess_hydro.lua, sheet_n hr_over_h):
+#                  q = -K(N(h)) d/dx (Phi0 - N(h)),  N = N0 hr / sqrt(h+^2 + eps^2),
+#                  K(N) = D0 [sp(N)^-k0 - sp(N(0))^-k0],  sp(N) = log(1 + exp(10 N)) / 10,
+#                  Phi0 = -sigma_zz + rho_w g z_b (the Stokes pressure for -sigma_zz),
+#                  dq/dx = m (the melt rate from the heat loads, negative where the bed freezes), q = 0 at the head,
+#              integrated upstream from h = hr at the grounding line (the floating nodes' Dirichlet value): the patch
+#              is DRY (inconsistent) where h reaches 0 before its head.
+# Kept states: <out>/points/state_XXXX.npz (XXXX = d in 100 m), every d a row of spectrum.csv.
+
+MCOLS = ["d_km", "x_gl_km", "x_head_km", "gl_rounds", "converged", "newton_its", "rms_F", "n_cold_above_Tm",
+         "Tb_cold_max", "h_head", "h_min", "q_gl", "q_min", "melt_mean", "hydro_status", "thermal_ok", "hydro_ok",
+         "kept", "note"]
+
+
+def cs_sheet_params(cfg):
+    """the CS sheet's parameters (elmer/ess_hydro.lua: Marine_Term's values), [hydrology] overriding"""
+    hy = cfg.get("hydrology", {})
+    g = lambda k, d: float(hy.get(k, d))
+    return dict(N0=g("N0", 1.0), hr=g("hr", 0.1), eps=g("eps_N", 1e-3), D0=g("D0", 1e7), k0=g("k0", 4.0 / 3.0),
+                h_max=g("h_max", 1e3))
+
+
+def _sp(N):
+    return np.logaddexp(0.0, 10.0 * N) / 10.0
+
+
+def cs_N(h, hp):
+    hpos = max(h, 0.0)
+    return hp["N0"] * hp["hr"] / np.sqrt(hpos * hpos + hp["eps"] ** 2)
+
+
+def cs_dNdh(h, hp):
+    hpos = max(h, 0.0)
+    return -hp["N0"] * hp["hr"] * hpos / (hpos * hpos + hp["eps"] ** 2) ** 1.5
+
+
+def cs_K(N, hp):
+    N0 = hp["N0"] * hp["hr"] / hp["eps"]            # N(0)
+    return hp["D0"] * (_sp(N) ** (-hp["k0"]) - _sp(N0) ** (-hp["k0"]))
+
+
+def hydrology_cs(x_prof, melt_prof, phi0_prof, hp):
+    """The steady CS sheet on a patch, x_prof increasing from the patch head to the grounding line (last point).
+    q(x) = int_head^x m; then h from h = hr at the grounding line upstream:
+        q = -K(N(h)) (Phi0' - N'(h) h')   =>   dh/dx = (Phi0' + q / K(N(h))) / N'(h)
+    Returns (h (NaN where not reached), q, ok, status: ok | dry | flood)."""
+    from scipy.integrate import solve_ivp
+    xs = np.asarray(x_prof, float)
+    ms = np.nan_to_num(np.asarray(melt_prof, float))
+    ph = np.asarray(phi0_prof, float)
+    n = len(xs)
+    q = np.concatenate([[0.0], np.cumsum(0.5 * (ms[1:] + ms[:-1]) * np.diff(xs))]) if n > 1 else np.zeros(n)
+    h = np.full(n, np.nan)
+    h[-1] = hp["hr"]
+    if n < 2:
+        return h, q, True, "ok"
+    dphi = np.diff(ph) / np.diff(xs)
+    hdry = 1e-6
+
+    def rhs(x, y):
+        hh = min(max(y[0], hdry), 10 * hp["h_max"])
+        j = min(max(np.searchsorted(xs, x) - 1, 0), n - 2)
+        qq = np.interp(x, xs, q)
+        K = cs_K(cs_N(hh, hp), hp)
+        dN = cs_dNdh(hh, hp)
+        if K <= 0 or dN == 0:
+            return [0.0]
+        return [(dphi[j] + qq / K) / dN]
+
+    def dry(x, y):
+        return y[0] - hdry
+    dry.terminal, dry.direction = True, -1
+
+    def flood(x, y):
+        return y[0] - hp["h_max"]
+    flood.terminal, flood.direction = True, 1
+    import warnings
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            sol = solve_ivp(rhs, (xs[-1], xs[0]), [hp["hr"]], t_eval=xs[::-1], events=(dry, flood), method="LSODA",
+                            rtol=1e-8, atol=1e-9, min_step=1e-3)
+    except ValueError:
+        return h, q, False, "dry"
+    got = sol.y[0] if sol.y.size else np.zeros(0)
+    hv = np.full(n, np.nan)
+    hv[::-1][:len(got)] = got
+    dried, flooded = len(sol.t_events[0]) > 0, len(sol.t_events[1]) > 0
+    if sol.status == -1 and not (dried or flooded):
+        xl = sol.t[-1] if len(sol.t) else xs[-1]
+        hl = got[-1] if len(got) else hp["hr"]
+        dried = bool(rhs(xl, [hl])[0] > 0)
+        flooded = not dried
+    ok = not dried and (not np.isfinite(hv).any() or np.nanmin(hv) >= 0)
+    return hv, q, bool(ok), ("dry" if dried else "flood" if flooded else "ok")
+
+
+def _bed(frozen, diag):
+    """the bed nodes (the ColdTempMask gids), their x, grounded flag"""
+    g_ct = frozen[find_name(frozen, "ColdTempMask")][0]
+    _, _, xpos = _xy_key(diag, g_ct)
+    gm = _on(*frozen[find_name(frozen, "GroundedMask")], g_ct, fill=-1.0)
+    return g_ct, xpos, gm > -0.5
+
+
+def gl_position(frozen, diag):
+    g_ct, xpos, grounded = _bed(frozen, diag)
+    return float(xpos[grounded].max()) if grounded.any() else np.nan
+
+
+def patch_mask(frozen, diag, d):
+    """temperate (+1) on grounded nodes within d (m) upstream of the grounding line, and on every floating node (as
+    Floating Nodes Temperate); cold (-1) elsewhere"""
+    g_ct, xpos, grounded = _bed(frozen, diag)
+    xg = float(xpos[grounded].max()) if grounded.any() else -np.inf
+    temp = (~grounded) | (grounded & (xpos >= xg - d - 1.0))
+    return g_ct, np.where(temp, 1.0, -1.0), xg
+
+
+def patch_hydrology_cs(diag, layout, x, frozen, xg, d, hp, *, rhoi, Lw, rhow, gravity, dx_bin=250.0):
+    """the steady CS sheet on the patch [xg - d, xg]: melt and Phi0 binned along x (dx_bin), integrated (hydrology_cs).
+    Returns (ok, status, row fields, {Water Sheet Thickness, Water Flux, Melt Rate} on the bed nodes)."""
+    g_ct, xpos, grounded = _bed(frozen, diag)
+    m = melt_rate(diag, g_ct, rhoi, Lw)
+    phi0 = phi0_bed(diag, g_ct, rhow, gravity, layout, x)
+    if m is None or phi0 is None:
+        return False, "no-diag", {"note": "no Temperature Loads / Boundary Weights / Pressure in the diagnostics"}, {}
+    inp = grounded & (xpos >= xg - d - 1.0)
+    edges = np.arange(xg - d, xg + dx_bin, dx_bin) if d > 0 else np.array([xg - dx_bin, xg])
+    b = np.clip(np.digitize(xpos[inp], edges) - 1, 0, len(edges) - 2)
+    xb = 0.5 * (edges[:-1] + edges[1:])
+    mb = fill_columns(xb, [m[inp][b == i] for i in range(len(xb))])
+    pb = fill_columns(xb, [phi0[inp][b == i] for i in range(len(xb))])
+    h, q, ok, st = hydrology_cs(xb, mb, pb, hp)
+    hn = np.full(len(g_ct), np.nan)
+    qn = np.full(len(g_ct), np.nan)
+    hn[inp] = np.interp(xpos[inp], xb, np.nan_to_num(h, nan=-1.0))
+    hn[inp & (hn < 0)] = np.nan
+    qn[inp] = np.interp(xpos[inp], xb, q)
+    o = np.argsort(g_ct)
+    hyd = {"Water Sheet Thickness": (g_ct[o], hn[o]), "Water Flux": (g_ct[o], qn[o]),
+           "Melt Rate": (g_ct[o], np.where(inp, m, np.nan)[o])}
+    row = dict(h_head=float(h[0]), h_min=float(np.nanmin(h)) if np.isfinite(h).any() else np.nan,
+               q_gl=float(q[-1]), q_min=float(np.min(q)), melt_mean=float(np.nanmean(mb)), hydro_status=st)
+    return ok, st, row, hyd
+
+
+def run_spectrum_marine(prob, model, saved, y0, p, newton_opt, outdir, *, d_step=5e3, d_max=None, tol_T=0.0,
+                        gl_rounds=6, stop_after_dry=None, hp, rhoi, Lw, rhow, gravity):
+    """the marine sweep over the patch length d = 0, d_step, 2 d_step, .. (m) (see above); resumes after the last row"""
+    from .masks import n_changes, update_masks
+    from .newton import newton_krylov
+    from .statefile import load_state
+    os.makedirs(os.path.join(outdir, "points"), exist_ok=True)
+    csvf = os.path.join(outdir, "spectrum.csv")
+    rows = []
+    if os.path.exists(csvf):
+        with open(csvf) as f:
+            rows = list(csv.DictReader(f))
+    layout, frozen = saved.layout, saved.frozen
+    kct, kgm = find_name(frozen, "ColdTempMask"), find_name(frozen, "GroundedMask")
+    y, diag = y0, saved.diag
+    d = 0.0
+    if rows:
+        d = float(rows[-1]["d_km"]) * 1e3 + d_step
+        last = [r_ for r_ in rows if str(r_.get("converged")) == "1"]
+        if last:
+            s = load_state(os.path.join(outdir, "points", f"state_{int(round(float(last[-1]['d_km']) * 10)):04d}.npz"))
+            y, diag = prob.scale(s.x), s.diag
+            frozen[kgm] = s.frozen[find_name(s.frozen, "GroundedMask")]
+        log.info(f"spectrum (marine): resuming at d = {d / 1e3:g} km")
+    xg0 = gl_position(frozen, diag)
+    if d_max is None:
+        d_max = xg0
+    log.info(f"spectrum (marine): p = {p:g}, grounding line {xg0 / 1e3:.2f} km, patch lengths 0 .. {d_max / 1e3:g} km "
+             f"step {d_step / 1e3:g} km; sheet N0 {hp['N0']:g}, hr {hp['hr']:g} m, D0 {hp['D0']:g}, k0 {hp['k0']:.4g}")
+    n_bad = 0
+    for r_ in reversed(rows):
+        if str(r_.get("converged")) != "1" or str(r_.get("hydro_ok")) == "0":
+            n_bad += 1
+        else:
+            break
+    while d <= d_max + 1e-6:
+        if stop_after_dry and n_bad >= stop_after_dry:
+            log.info(f"spectrum (marine): {n_bad} consecutive failures, stopping")
+            break
+        r, x, rounds = None, None, 0
+        for rounds in range(1, gl_rounds + 1):
+            g_ct, ct, xg = patch_mask(frozen, diag, d)
+            frozen[kct] = (g_ct, ct)
+            r = newton_krylov(prob, y, p, newton_opt, label=f"spectrum d={d / 1e3:g} km (GL round {rounds})")
+            x = prob.unscale(r.y)
+            diag = prob.last_diag
+            if not r.converged:
+                break
+            y = r.y
+            # the grounding line by flotation (the cold/temperate mask is the sweep's, not moved here)
+            ct_keep = frozen[kct]
+            xn, fr, rep = update_masks(layout, x, frozen, diag, marine=True, rho_ratio=model.rho_ratio, apply=True)
+            fr[kct] = ct_keep
+            moved = int(rep.get("to_grounded", 0)) + int(rep.get("to_floating", 0))
+            if moved == 0:
+                break
+            frozen.update(fr)
+            y = prob.scale(xn)
+            log.info(f"spectrum (marine): d = {d / 1e3:g} km: grounding line {rep.get('x_gl', np.nan) / 1e3:.2f} -> "
+                     f"{rep.get('x_gl_new', np.nan) / 1e3:.2f} km ({moved} nodes); solving again")
+        g_ct, ct, xg = patch_mask(frozen, diag, d)
+        row = dict(d_km=d / 1e3, x_gl_km=xg / 1e3, x_head_km=(xg - d) / 1e3, gl_rounds=rounds,
+                   converged=int(r.converged), newton_its=r.iterations, rms_F=r.history[-1] if r.history else np.nan)
+        hyd, kept, hydro_ok, note = {}, False, False, ""
+        if r.converged:
+            Tb = basal_temperature(layout, x, g_ct)
+            _, xpos, grounded = _bed(frozen, diag)
+            cold = grounded & (ct < 0)
+            hot = cold & (Tb > T0 + tol_T)
+            row.update(n_cold_above_Tm=int(hot.sum()),
+                       Tb_cold_max=float(np.nanmax(Tb[cold])) if cold.any() else np.nan)
+            thermal_ok = not hot.any()
+            hydro_ok, st, hrow, hyd = patch_hydrology_cs(diag, layout, x, frozen, xg, d, hp, rhoi=rhoi, Lw=Lw,
+                                                          rhow=rhow, gravity=gravity)
+            row.update(hrow)
+            kept = thermal_ok and hydro_ok
+            note = (f"{int(hot.sum())} cold bed nodes above melting" if not thermal_ok else
+                    "" if hydro_ok else f"water sheet {st}: h reaches 0 inside the patch")
+            row.update(thermal_ok=int(thermal_ok), hydro_ok=int(hydro_ok))
+            save_state(os.path.join(outdir, "points", f"state_{int(round(d / 100)):04d}.npz"), layout, x, p,
+                       dict(frozen), {**diag, **hyd}, spectrum_d=d, x_gl=xg, kept=int(kept))
+        else:
+            note = "Newton did not converge"
+        row.update(kept=int(kept), note=note)
+        rows.append({c: row.get(c, "") for c in MCOLS})
+        with open(csvf + ".tmp", "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=MCOLS)
+            w.writeheader()
+            w.writerows(rows)
+        os.replace(csvf + ".tmp", csvf)
+        log.info(f"spectrum (marine): d = {d / 1e3:g} km: {'KEPT' if kept else 'discarded'}"
+                 + (f" ({note})" if note else "") + f"; GL {xg / 1e3:.2f} km, head {(xg - d) / 1e3:.2f} km"
+                 + (f", h at the head {row.get('h_head', np.nan):.3g} m, q at the GL {row.get('q_gl', np.nan):.3g}"
+                    if r.converged else ""))
+        n_bad = n_bad + 1 if (not r.converged or not hydro_ok) and d > 0 else 0
+        d += d_step
+    return rows
