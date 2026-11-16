@@ -89,7 +89,9 @@ def panel_traces(inp, scene, flat=False, zoom=None, edges=False, first=True, rot
     if zoom:
         keep = ((x[tri] > zoom[0]) & (x[tri] < zoom[1]) & (y[tri] > zoom[2]) & (y[tri] < zoom[3])).any(1)
         tri = tri[keep]
-    if rot:
+    if isinstance(rot, tuple):                    # a strip: translated across the flow (a sector of infinite radius)
+        y = y + rot[1] / 1e3
+    elif rot:
         x, y = np.cos(rot) * x - np.sin(rot) * y, np.sin(rot) * x + np.cos(rot) * y
     # element size: the mean edge length (m)
     L = [np.hypot(x[tri[:, a_]] - x[tri[:, b_]], y[tri[:, a_]] - y[tri[:, b_]]) for a_, b_ in ((0, 1), (1, 2), (2, 0))]
@@ -145,11 +147,17 @@ def plot(inps, out=None, flat=False, zoom=None, edges=False):
     """one page, one view: the meshes as periodic copies of the sector, each rotated by the sector angle from the last"""
     import plotly.graph_objects as go
     d0 = np.load(inps[0], allow_pickle=True)
-    A = sector_angle(d0["x"].astype(float), d0["y"].astype(float))   # the copies tile periodically: copy k at k A
-    print(f"sector angle {np.degrees(A):.3f} deg: mesh k rotated by k times it (they meet at the periodic sides)")
+    x0, y0 = d0["x"].astype(float), d0["y"].astype(float)
+    strip = float(y0.min()) > -1.0                # a strip (0 <= y <= W); a sector is symmetric about y = 0
+    if strip:
+        Wd = float(np.ptp(y0))
+        print(f"strip width {Wd / 1e3:g} km: mesh k translated by k times it (they meet at the periodic sides)")
+    else:
+        A = sector_angle(x0, y0)                  # the copies tile periodically: copy k at k A
+        print(f"sector angle {np.degrees(A):.3f} deg: mesh k rotated by k times it (they meet at the periodic sides)")
     traces, titles = [], []
     for k, f in enumerate(inps):
-        tr, t_, _ = panel_traces(f, "scene", flat, zoom, edges, k == 0, rot=k * A)
+        tr, t_, _ = panel_traces(f, "scene", flat, zoom, edges, k == 0, rot=(0.0, k * Wd) if strip else k * A)
         traces += tr
         titles.append(t_)
     fig = go.Figure(traces)
