@@ -275,7 +275,7 @@ def _remesh_opt(args):
 
 
 def _add_remesh_args(s):
-    s.add_argument("--fine", type=float, default=500.0, help="element size at the grounding line and margins (m)")
+    s.add_argument("--fine", type=float, default=250.0, help="element size at the grounding line (m)")
     s.add_argument("--coarse", type=float, default=2000.0, help="at least this on a frozen bed (m)")
     s.add_argument("--gl-band-km", type=float, default=25.0, help="fine within this of the grounding line (km)")
     s.add_argument("--fine-margin", type=float, default=250.0,
