@@ -6,7 +6,7 @@
 #
 # A 2D steady state of the extended strip's flowline (configs/flowline_rect_ext.toml) by Newton-Krylov, as the starting
 # point of the 3D runs. Steps, each skipped when its output exists (resubmitting resumes; finished Elmer runs are cached):
-#   1. setup: the flowline mesh (1116 km, 500 m, 1 km wide), ess init, the cold Marine_Term flowline state carried onto
+#   1. setup: the flowline mesh (1116 km, 250 m from 620 km, 1 km upstream, 1 km wide), ess init, the cold Marine_Term flowline state carried onto
 #      it (ess transfer: the bed continued linearly beyond the old 816 km)              -> work/flowline_rect_ext/start.npz
 #   2. the shelf break, as the 3D strip's (jobs/shelf_break.py --strip-divide-r-km 1520.8 --r-break-km 450 --factor 30
 #      --width-km 10)                                                                    -> bed30.npz

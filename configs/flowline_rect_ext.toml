@@ -3,7 +3,8 @@
 # the divide at x = 0, the calving front at x = 1116 km, the bed carried from the cold Marine_Term flowline state and
 # continued linearly beyond it (ess transfer), with the same shelf break (jobs/shelf_break.py --strip-divide-r-km 1520.8
 # --r-break-km 450 --factor 30 --width-km 10: the bend at x = 1070.8 km), so a 2D steady state carries onto the 3D
-# strip column by column (ess transfer, uniform across). 1 km wide with free-slip walls; 500 m elements along x.
+# strip column by column (ess transfer, uniform across). 1 km wide with free-slip walls; 250 m elements from 620 km to the
+# front (the grounding line and the temperate patch, as the 3D remeshes' 250 m), 1 km upstream of 600 km.
 # Physics for a smooth map: the grounded and cold/temperate masks frozen within each Newton solve and moved between
 # solves ([masks] auto: flotation; melting / refreezing), no water sheet; heat with strain heating and frictional heating
 # as a flux (C |u_b|^2); subtemperate sliding; sea level 0, accumulation x 1, Tsurf 268.15. Direct solvers (an exact,
@@ -17,7 +18,7 @@ case_dir = "{work}/case"                # mesh and initial conditions, written b
 geometry = "marine"                     # ice shelf, sea pressure, frozen grounded mask (steady_template_marine.sif)
 marine_ics = "case/marine_ics"          # ElmerStreams Marine_Term Initialisation/Dimensional_ICs tables
 parameters = "case/parameters_fine2x.lua"      # physical parameters (as the 3D strip's)
-res_points = [[0, 500], [1116, 500]]    # 500 m along x everywhere (ess/case.py mirror_geo)
+res_points = [[0, 1000], [600, 1000], [620, 250], [1116, 250]]   # 250 m where the GL and the temperate patch can be, 1 km upstream
 front_km = 1116.0                       # the calving front, as the 3D strip
 width = 1000.0                          # m across: a flowline (free-slip walls)
 y_elements = 1
