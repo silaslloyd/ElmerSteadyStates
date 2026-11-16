@@ -701,7 +701,13 @@ sheet carried across remeshes, mesh tools, strips as sectors of infinite radius 
 \item The water sheet runs away (metres) when restarted from a built-up sheet or carried across remeshes; unresolved.
 \item At dt = 10\,yr the surface CFL and relaxation number reach $\approx10$ and Stokes hits the 2000-iteration cap on
 most steps; adaptive dt (CFL $\le$ 5) is the remedy, currently not used by choice.
-\item Inland cold edges are still no-flux walls for the sheet (isolated temperate nodes fill at the melt rate).
+\item Cold/temperate edges inland are no-flux boundaries for the sheet. Physically that is reasonable (no flow into a
+frozen bed), and freeze-on is already handled: where the heat balance at $T_0$ is freezing, the melt rate is negative
+and the sheet loses water, with the latent heat in the Dirichlet reaction. What remains is numerical and minor:
+the flux is cut on every element with a cold node, so the effective edge sits up to one element inside the temperate
+bed (mesh dependent); a \emph{melting} edge node with the potential gradient pointing into the cold bed has no outlet,
+so water piles up there; and a melting pocket without an outlet grows linearly (in reality its water pressure would
+rise towards overburden and open a path; $N(h)$ falls but without flux has no effect).
 \item The normal (divide at centre) sector stalls; the adapted FSSA work is paused.
 \item The strip set-up code (jagged sides, straightened partitioning) has not yet run on tethys.
 \end{itemize}
