@@ -36,6 +36,7 @@ range. The speed/vx/vy/vz buttons are off (their data was a large share of the p
     python plots/plot_state_3d.py A.npz --diff B.npz                      # colours: A minus B (same mesh)
     python plots/plot_state_3d.py STATE.npz --full                         # the whole sheet, divide to front
     python plots/plot_state_3d.py OUT_seg*.npz --x 560 1116 --true-aspect     # x and y on one scale (a strip: true shape)
+    python plots/plot_state_3d.py OUT_seg*.npz --z-scale 0.2                   # the vertical stretch 5x smaller
     python plots/plot_state_3d.py STATES... --no-switch                    # no vx/vy/vz buttons (a smaller page)
 Speed colours max out at 100 m/yr (--vmax V; --vmax-gl: the surface speed on the grounding line; --vmax-all: the largest).
 Structured footprints and the unstructured triangle ones (configs/*_tri.toml; Delaunay, needs scipy).
@@ -1056,7 +1057,7 @@ def main():
     import plotly.graph_objects as go
     global SHEET, HW_MAX, HW_LOG, MASK_PANEL, MELT_MAX, SHEET_VEL, SHEET_LINES, HW_ISO, SHEET_STREAM_KM
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
-    global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD, SECTOR, SECTOR_A, TRUE_ASPECT
+    global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD, SECTOR, SECTOR_A, TRUE_ASPECT, Z_EXAGGERATION
     args = sys.argv[1:]
     if "--vmax-all" in args:
         VMAX_GL, VMAX = False, None
@@ -1077,6 +1078,10 @@ def main():
     if "--no-show" in args:                       # only write the page (e.g. to view it from another machine)
         SHOW = False
         args.remove("--no-show")
+    if "--z-scale" in args:                       # --z-scale F: the vertical stretch times F (e.g. 0.2: 5x flatter)
+        k = args.index("--z-scale")
+        Z_EXAGGERATION = float(args[k + 1])
+        del args[k:k + 2]
     if "--true-aspect" in args:                   # x and y on one scale (a strip: its real width against the window)
         TRUE_ASPECT = True
         args.remove("--true-aspect")
