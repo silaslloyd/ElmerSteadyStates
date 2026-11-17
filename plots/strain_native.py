@@ -2,7 +2,7 @@
 """The maps of plots/base_strain.py for ONE frame, at full resolution: on the model's own base nodes (no regridding),
 drawn as one flat triangulated surface in true aspect (x and y on one scale, as plot_state_3d.py --true-aspect), with
 one dropdown over every map of the base and of the surface ("base: e_xx", ..., "surface: e_xx", ...). The grounding
-line in black. What the maps are, and the approximations they test: see plots/base_strain.py.
+line in black, the cold/temperate transition on the grounded bed in magenta (when the frames hold ColdTempMask). What the maps are, and the approximations they test: see plots/base_strain.py.
 
     python3 plots/strain_native.py FRAMES.npz [--t YEARS | --frame K] [--x XMIN XMAX] [--shear-factor F]
                                    [--keep-shelf] [--out FILE.html]
@@ -142,12 +142,31 @@ def main():
             if sel.sum() > 1:
                 gxs += list(seg[sel, 0]) + [None]
                 gys += list(seg[sel, 1]) + [None]
-        plt.close("all")
         if gxs:
             traces.append(go.Scatter3d(x=gxs, y=gys, z=[0.0 if v is not None else None for v in gxs], mode="lines",
                                        line=dict(color="black", width=4), hoverinfo="skip", name="grounding line"))
+        # the cold/temperate transition on the grounded bed (ColdTempMask 0 between -1 cold and +1 temperate)
+        try:
+            ct = np.nan_to_num(d["base_ct"][k].astype(float), nan=-1.0)
+        except KeyError:
+            ct = None
+            print("no ColdTempMask in the frames: no cold/temperate line")
+        if ct is not None:
+            Tg = mtri.Triangulation(x / 1e3, y / 1e3, tri.simplices, mask=~(gm[tri.simplices] > -0.5).all(1))
+            cs2 = plt.tricontour(Tg, ct, levels=[0.0])
+            cxs, cys = [], []
+            for seg in cs2.allsegs[0]:
+                sel = (seg[:, 0] >= x0) & (seg[:, 0] <= x1)
+                if sel.sum() > 1:
+                    cxs += list(seg[sel, 0]) + [None]
+                    cys += list(seg[sel, 1]) + [None]
+            if cxs:
+                traces.append(go.Scatter3d(x=cxs, y=cys, z=[0.0 if v is not None else None for v in cxs],
+                                           mode="lines", line=dict(color="magenta", width=3), hoverinfo="skip",
+                                           name="cold/temperate transition"))
+        plt.close("all")
     except Exception as e:
-        print(f"no grounding line drawn ({e})")
+        print(f"no grounding line / transition drawn ({e})")
     buttons = []
     for lab, f, kind in maps:
         buttons.append(dict(label=lab, method="restyle", args=[restyle(lab, f, kind), [0]]))
@@ -166,7 +185,8 @@ def main():
         template="plotly_white", margin=dict(t=90, l=10, r=10, b=10), showlegend=False,
         annotations=[dict(x=1, y=1.08, xref="paper", yref="paper", xanchor="right", yanchor="bottom",
                           showarrow=False, font=dict(size=11),
-                          text="SIA: du/dz, dv/dz only | SSA: e_xx, e_yy, e_xy | Blatter-Pattyn: all but dw/dx, dw/dy")])
+                          text="black: grounding line, magenta: cold/temperate transition | SIA: du/dz, dv/dz only | "
+                               "SSA: e_xx, e_yy, e_xy | Blatter-Pattyn: all but dw/dx, dw/dy")])
     out = out or os.path.splitext(path)[0] + f"_strain_native_t{t:.0f}.html"
     fig.write_html(out, include_plotlyjs="cdn")
     print(f"-> {out} ({os.path.getsize(out) / 1e6:.0f} MB)")
