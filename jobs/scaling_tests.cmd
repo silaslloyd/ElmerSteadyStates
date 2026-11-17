@@ -106,6 +106,7 @@ partition() {   # $1 case dir (with footprint.msh), $2 config: add footprint/par
     if [ "$RANKS" = 1 ]; then          # serial: the unpartitioned mesh files next to the partitionings
         [ -f $1/footprint/mesh.header ] && return 0
         local per1=""; grep -q "^periodic_sides *= *true" $2 && per1="-periodic 0 1 0"
+        grep -q '^geometry *= *"slab"' $2 && per1="-periodic 1 1 0"
         rm -rf $1/fp_serial
         ( cd $1 && ElmerGrid 14 2 footprint.msh -autoclean -out fp_serial $per1 ) > ${L}_partition.log 2>&1 \
             && cp $1/fp_serial/mesh.* $1/footprint/ && rm -rf $1/fp_serial && return 0
@@ -121,6 +122,7 @@ c = L('$2')['case']; P('$1', 'footprint', $RANKS, float(c['sector_angle']), floa
     fi
     local per="" part="-metiskway $RANKS"
     grep -q "^periodic_sides *= *true" $2 && per="-periodic 0 1 0"
+    grep -q '^geometry *= *"slab"' $2 && per="-periodic 1 1 0"      # the slab: periodic in x as well
     # box partitions RANKS/PY x PY for periodic sides, or with BOXES=1 (else METIS); PART=metisper or the config's
     # partitioner = "metisper": Metis on the element graph with periodic partners kept together (ElmerGrid with
     # elmer/patches/03-elmergrid-metisper.patch: bash jobs/build_elmer.cmd elmergrid), periodic or not

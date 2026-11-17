@@ -52,6 +52,13 @@ class ElmerModel(Model):
         self.case_dir = cfg["paths"]["case_dir"]
         # marine flowline ([case] geometry = "marine"): ice shelf, sea pressure, frozen grounded mask
         self.marine = cfg.get("case", {}).get("geometry", "land") == "marine"
+        # [case] geometry = "slab": a parallel-sided slab, periodic in x and y (ess/case.py slab_geometry, slab_geo),
+        # run on the marine template with the whole bed grounded: the front (x = L) the periodic image of the inflow
+        # (x = 0) as side 2 of side 1, no sea pressure, no accumulation, gravity tilted by [case] slab_slope_deg in
+        # the x-z plane (the bed flat in the model frame), sea level far below the bed (nothing floats). See _slab.
+        self.slab = cfg.get("case", {}).get("geometry", "land") == "slab"
+        if self.slab:
+            self.marine = True
         self.template = cfg["_path"](e.get("template", "elmer/steady_template_marine.sif" if self.marine
                                            else "elmer/steady_template.sif"))
         self.buoyancy_lib = cfg["_path"](e.get("buoyancy_lib", "elmer/Buoyancy"))
@@ -74,6 +81,12 @@ class ElmerModel(Model):
         # [elmer] sea_level_param = true: sea level is the Lua parameter ess_sl (m, default 0; e.g. --lua ess_sl=50)
         # in the constants (hydrostatic loads of the contact) and every material (sea pressure), not a fixed 0
         self.sea_level_param = bool(e.get("sea_level_param", False)) or os.environ.get("ESS_SEA_LEVEL_PARAM") == "1"
+        if self.slab:              # the sea far below the flat bed (Lua ess_sl, set below): nothing floats
+            self.sea_level_param = True
+        # [elmer] vertical_refine = k (integer, default 1): k times the template's extruded layers, every layer split
+        # in k (Extruded Mesh Levels 50 k + 1, the bedrock/filler and filler/ice BC layers 27 k + 1 and 28 k + 1, so
+        # the old levels stay where they were); states of different k do not carry over node for node
+        self.vertical_refine = int(e.get("vertical_refine", 1))
         # sea_level_schedule ([(t, sl), ..], ess run --sea-level): sea level a piecewise-linear function of time in
         # the run (Lua ess_sl_t(Time + time_offset): Sea Level = Variable Time in the constants and materials), read
         # each time step by the sea pressure (Buoyancy SeaPressure) and the SSA shelf's flotation (FSSSAShelf)
@@ -247,6 +260,10 @@ class ElmerModel(Model):
                                   "ess_Hs": "0.0", **self.lua_overrides}
         if self.marine:
             self.lua_overrides = {"ess_marine": "1.0", **self.lua_overrides}
+        if self.slab:
+            self.slab_alpha = math.radians(float(c.get("slab_slope_deg", 0.1)))
+            self.slab_length = float(c["slab_length_km"]) * 1e3
+            self.lua_overrides = {"ess_slab_alpha": repr(self.slab_alpha), "ess_sl": "-1.0e5", **self.lua_overrides}
         # [case] sector_angle (degrees): the footprint an annular sector about the vertical axis through the origin
         # (ess/case.py sector_geo), the sides rotational periodic, every x (distance from the divide) in the Lua
         # expressions the radius; [case] accumulation_factor: aDIM times this (sector: 2, see configs/coarse_sector.toml)
@@ -790,6 +807,10 @@ End
                     raise ValueError("periodic_sides: expected the two FreeSurfaceSolver instances (Zb, Zs) in the template")
                 lib = os.path.join(os.path.dirname(self.periodic_lib), "ESSFreeSurface")
                 text = text.replace(fs, f'"{lib}" "FreeSurfaceSolver"   ! periodic-aware limiter')
+        if self.slab:
+            text = self._slab(text)
+        if self.vertical_refine != 1:
+            text = self._vertical_refine(text, self.vertical_refine)
         if self.step_check:
             text = self._step_check(text)
         if self.remesh_auto:
@@ -1059,6 +1080,72 @@ End
             text = self._insert_in(text, 'Simulation Type = "transient"',
                                   "  ESS Rotational Periodic = Logical True   ! [case] sector_angle")
         return text
+
+    def _slab_periodic_names(self):
+        ice = ["Velocity 1", "Velocity 2", "Velocity 3", "Pressure", "Temperature", "Zs", "Zb"]
+        if self.thermal == "elmerstreams":
+            ice.append("Water Sheet Thickness")
+        return ice, ["Temperature"]
+
+    def _slab(self, text):
+        """[case] geometry = "slab" (after _periodic_sides): the front (x = L) the periodic image of the inflow (x = 0)
+        for the bedrock, filler and ice, as side 2 of side 1; no inflow velocity, no sea pressure at the front; no
+        accumulation; gravity tilted by alpha = [case] slab_slope_deg in the x-z plane, g (sin a, 0, -cos a) on the
+        ice (the flow down x; the bed z = slab_bed and the surface parallel planes of the model frame). The
+        constants' vertical gravity is only used by the sea pressure and the hydrostatic loads of the contact, both
+        zero with the sea far below the bed (ess_sl)."""
+        if self.accum_schedule:
+            raise ValueError("[case] geometry = slab: no accumulation (ess run --accumulation)")
+        if self.fs_ssa_x is not None or self.shelf_cut_x is not None:
+            raise ValueError("[case] geometry = slab: no shelf (fs_ssa / shelf_cut)")
+        if self.thermal == "elmerstreams":
+            raise ValueError("[case] geometry = slab: thermal = elmerstreams (the water sheet's potential is not "
+                             "periodic in the tilted frame); use nowater, loads or frozen")
+        a = "  Flow BodyForce 1 = Real 0\n  Flow BodyForce 2 = Real 0\n  Flow BodyForce 3 = Real #-gravity\n"
+        if text.count(a) != 1:
+            raise ValueError("slab: the ice body force of the template changed")
+        text = text.replace(a, "  ! [case] geometry = slab: gravity tilted by ess_slab_alpha (the slope) in the x-z plane\n"
+                               "  Flow BodyForce 1 = Real #gravity*math.sin(ess_slab_alpha)\n"
+                               "  Flow BodyForce 2 = Real 0\n"
+                               "  Flow BodyForce 3 = Real #-gravity*math.cos(ess_slab_alpha)\n")
+        n = len(re.findall(r"^\s*(Zs|Output|FSSA) Accumulation = Real #aDIM[ \t]*$", text, re.M))
+        if n != 3:
+            raise ValueError(f"slab: expected 3 accumulation lines (Zs, Output, FSSA) in the template, found {n}")
+        text = re.sub(r"^(\s*(?:Zs|Output|FSSA) Accumulation = )Real #aDIM[ \t]*$",
+                      r"\1Real 0.0   ! [case] geometry = slab: no accumulation", text, flags=re.M)
+        move = f"  Periodic BC Translate(3) = Real {self.slab_length!r} 0.0 0.0\n"
+        ice, rock = self._slab_periodic_names()
+        per = lambda master, names: (f"  Periodic BC = {master}\n" + move
+                                     + "".join(f"  Periodic BC {nm} = Logical True\n" for nm in names))
+        for name, master, names in (("front bedrock", 5, rock), ("front filler", 9, rock), ("front ice", 13, ice)):
+            k = text.index(f'Name = "{name}"')
+            j = text.index("\nEnd", k)
+            text = text[:j + 1] + per(master, names) + text[j + 1:]
+        drops = {"inflow ice": ["  Velocity 1 = 0.0\n", "  Velocity 2 = 0.0\n"],
+                 "front ice": ["  ! fixed calving front at x = L: sea pressure below sea level, stress free above (ElmerStreams)\n",
+                               "  Velocity 2 = 0.0\n", "  Flow Force BC = Logical True\n",
+                               '  External Pressure = Variable Coordinate 3\n    Real Procedure "'
+                               + self.buoyancy_lib + '" "SeaPressure"\n',
+                               "  Compute Sea Pressure = Logical True\n"]}
+        for name, lines in drops.items():
+            k = text.index(f'Name = "{name}"')
+            j = text.index("\nEnd", k)
+            block = text[k:j]
+            for ln in lines:
+                if ln not in block:
+                    raise ValueError(f"slab: no {ln.strip()!r} in the {name} boundary condition of the template")
+                block = block.replace(ln, "", 1)
+            text = text[:k] + block + "\n  ! [case] geometry = slab: periodic in x (no inflow / calving front)" + text[j:]
+        return text
+
+    @staticmethod
+    def _vertical_refine(text, k):
+        """[elmer] vertical_refine = k: every extruded layer split in k (see __init__)"""
+        a, b = "  Extruded Mesh Levels = Integer 51", "  Extruded BC Layers(2) = Integer 28 29"
+        if text.count(a) != 1 or text.count(b) != 1:
+            raise ValueError("vertical_refine: the extrusion lines of the template changed (51 levels, BC layers 28 29)")
+        return (text.replace(a, f"  Extruded Mesh Levels = Integer {50 * k + 1}   ! [elmer] vertical_refine = {k}")
+                    .replace(b, f"  Extruded BC Layers(2) = Integer {27 * k + 1} {28 * k + 1}"))
 
     def _fs_iterative(self, text):
         """the free-surface solvers (Zb, Zs) with BiCGStab + ILU1 instead of the direct solver"""

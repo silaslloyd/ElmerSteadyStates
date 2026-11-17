@@ -1,0 +1,139 @@
+# "Slab": a parallel-sided slab of ice on a flat bed, periodic in x and y ([case] geometry = "slab": ess/case.py
+# slab_geometry / slab_geo, ess/elmer.py _slab). A square 100 km x 100 km footprint, 1000 m thick, sloping 0.1 deg
+# down x; the slope is in gravity, g (sin a, 0, -cos a), so the bed and the surface are the planes z = 0 and z = H of
+# the model frame and both directions are simply periodic (the front x = L the image of the inflow x = 0, side 2
+# y = W of side 1 y = 0). No accumulation; everything grounded (the sea level ess_sl far below the bed). The deep
+# bedrock (10 zscale = 10.7 km, geothermal flux at its base) and the filler layer as in the other set-ups.
+# Thermomechanical: heat with strain heating and frictional heating (flux C(T) |u_b|^2), subtemperate sliding, the
+# cold/temperate mask moved every step (thermal = nowater: no water sheet; the sheet's potential is not periodic in
+# the tilted frame). Linear viscous ice (the parameters' 1e14 Pa s), so the uniform flow is analytic:
+#   u(z) = u_b + rho g sin(a) (2 H z - z^2) / (2 eta),   u_b = rho g H sin(a) / C(T_b),
+# driving stress 15.8 kPa, deformation 2.5 m/yr at the surface, temperate sliding 53 m/yr (C = fcoeff), cold
+# (C x ess_slide_maxfactor) none. Conduction start: bed 270.5 K (2.3 K/km, 4.9 mW/m^2 geothermal), cold.
+# 500 m triangles (~46 000 footprint nodes), the extruded layers doubled ([elmer] vertical_refine = 2: 101 levels,
+# 44 in the ice): ~4.7 M nodes. Job: jobs/slab.cmd.
+#
+[paths]
+work_dir = "work/slab_100k"
+case_dir = "{work}/case"
+
+[case]
+geometry = "slab"
+parameters = "case/parameters_fine2x.lua"
+slab_length_km = 100.0                  # along the flow (x, down the slope)
+width = 100000.0                        # m across (y): square
+slab_res = 500.0                        # m, the footprint's triangle size (uniform)
+slab_thickness = 1000.0                 # m
+slab_slope_deg = 0.1                    # the surface and bed slope, in gravity
+slab_bed = 0.0                          # m, the bed in the model frame
+periodic_sides = true                   # y periodic (x periodic by geometry = slab)
+partitioner = "metisper"                # METIS with periodic partners together (ElmerGrid -metisper)
+slide_ybump = 0.0
+gmsh = "gmsh"
+elmergrid = "ElmerGrid"
+
+[model]
+type = "elmer"
+
+[elmer]
+template = "elmer/steady_template_marine.sif"
+buoyancy_lib = "elmer/Buoyancy"
+mesh_db = "footprint"
+ess_lib = "elmer/SteadyStateIO"
+ess_utils = "elmer/ess_utils.lua"
+n_procs = 0                             # 0: $SLURM_NTASKS. `ess setup` partitions the mesh for this many.
+mpirun = "mpirun -np {n}"
+solver = "ElmerSolver"
+timeout = 21600
+keep_runs = true
+cache = false
+vertical_refine = 2                     # every extruded layer split in two: 101 levels
+periodic_gl = "fix"                     # the periodic-aware contact (nothing ungrounds; the mask stays periodic)
+gl_mode = "contact"
+thermal = "nowater"                     # the cold/temperate mask moved every step (ColdTempMaskSolver), no sheet
+sliding = "subtemperate"
+strain_heat = true
+friction_heat = "flux"
+linear_heat = "iterative"
+mumps_workspace = 200
+linear_stokes = "block"                 # ess init only (the runs set their own, jobs/slab.cmd: iterative)
+stokes_block_file = "elmer/stokes_cheap.sif.in"
+stokes_element = "Bubbles"
+stokes_preconditioner = "ILU0"
+stokes_iterative_tol = 1.0e-8
+stokes_abort_not_converged = false
+linear_free_surface = "iterative"
+vtu = false
+diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "ColdTempMask", "GroundedMask", "Temperature Loads"]
+
+[state]
+variables = ["Temperature", "Zs", "Zb"]
+scales = { Temperature = 5.0, Zs = 50.0, Zb = 50.0 }
+frozen = ["ColdTempMask", "GroundedMask", "bedrock"]
+
+[lua]
+minh = 50.0
+ess_slide_maxfactor = 1.0e6
+
+[masks]
+auto = true
+max_rounds = 6
+
+[extract]
+restart_before_ics = true
+
+[parameter]
+name = "Tsurf"
+value = 268.15
+scale = 1.0
+
+[map]
+dt = 10.0
+n_steps = 100
+coupled_iters = 1
+rock_heat_capacity = 1.0
+
+[stability_map]
+dt = 10.0
+n_steps = 100
+rock_heat_capacity = 1.0
+
+[fd]
+eps = 1e-6
+scheme = "central"
+
+[newton]
+tol = 1e-5
+maxit = 15
+eta_max = 0.1
+eta_min = 1e-5
+gmres_restart = 60
+gmres_maxiter = 150
+max_step = 2.0
+linesearch = 6
+
+[continuation]
+name = "flux"
+ds = 0.5
+ds_min = 1e-3
+ds_max = 2.0
+dp0 = 0.01
+p_min = 255.0
+p_max = 273.0
+max_points = 150
+max_folds = 4
+tol = 1e-5
+predictor = "parameter"
+maxit = 8
+target_its = 3
+eta = 1e-3
+gmres_restart = 60
+gmres_maxiter = 150
+max_step = 2.0
+stability_every = 0
+stability_m = 10
+
+[stability]
+m = 50
+nev = 10
+tol = 1e-2
