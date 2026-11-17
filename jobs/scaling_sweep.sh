@@ -19,6 +19,8 @@
 #                               time it builds the mesh and carries FROM= (a state of the 50 km mesh) over
 #          l72 l144 l288 l576   strong, land, configs/test_wall_land_50km_tri.toml (~0.7x the marine domain: the
 #                               marine's nodes per rank at 0.75x the ranks)
+#          n<ranks>             the 100 km strip with the front at 850 km, configs/coarse_rect_850.toml (from the cold
+#                               flowline state work/coarse_rect_ext/bed30.npz the first time)
 #          b<ranks>             the parallel-sided slab, configs/slab_100k.toml (100 x 100 km, periodic in x and y, no
 #                               accumulation, no shelf); the first time it builds the mesh and its own initial state
 # HERE=1: inside an allocation that holds the nodes (e.g. `salloc --nodes=8 --ntasks=1024 --exclusive --time=72:00:00`
@@ -57,6 +59,7 @@ for p in $POINTS; do
         x*) cfg=configs/coarse_sector_inv2_cut_ext.toml; extra="$MAR,FROM=${FROM:-work/marine_flowline/run_cold_p268.15.npz}";;   # inv2_cut with the front 200 km further in (more shelf)
         v*) cfg=configs/coarse_sector_inv2_cut.toml; extra="$MAR,FROM=${FROM:-work/coarse/start.npz}";;   # inverted x 2 (19 copies), cut sides, cold uniform start
         z*) cfg=configs/coarse_sector_inv38_cut_ext.toml; extra="$MAR,FROM=${FROM:-work/marine_flowline/run_cold_p268.15.npz}";;   # single width, 200 km more shelf, from the cold flowline state
+        n*) cfg=configs/coarse_rect_850.toml; extra="$MAR,FROM=${FROM:-work/coarse_rect_ext/bed30.npz}";;   # q with the front at 850 km (~110 km of shelf from the cold flowline state)
         q*) cfg=configs/coarse_rect_ext.toml; extra="$MAR,FROM=${FROM:-work/marine_flowline/run_cold_p268.15.npz}";;   # the 100 km wide periodic strip with z's flowline (a sector of infinite radius)
         e*) cfg=configs/coarse_sector_inv38_cut_ext1k.toml; extra="$MAR,FROM=${FROM:-work/marine_flowline/run_cold_p268.15.npz}";;   # z at 1 km everywhere (sides jagged at 1 km)
         y*) cfg=configs/coarse_sector_inv38_cut_cold.toml; extra="$MAR,FROM=${FROM:-work/marine_flowline/run_cold_p268.15.npz}";;   # inv38_cut (single width) set up afresh from the cold flowline state
