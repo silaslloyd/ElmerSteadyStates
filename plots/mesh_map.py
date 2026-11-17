@@ -6,8 +6,8 @@ an optional zoom. Reads an Elmer 2D mesh directory (case/<mesh_db>: mesh.nodes, 
     python3 plots/mesh_map.py MESHDIR OUT.png [--zoom X0 X1 Y0 Y1 (km)] [--state S.npz]
                               [--compare OTHER_MESHDIR [--compare-state S2.npz]]
 
-    python3 plots/mesh_map.py --all WORKDIR [CASEDIR] [--redo]   (the pictures of every m### not drawn yet, to
-                                                                 WORKDIR/meshes; --redo: all of them again)
+    python3 plots/mesh_map.py --all WORKDIR [CASEDIR] [--redo] [--only JOB1,JOB2]   (the pictures of every m### not
+                drawn yet, to WORKDIR/meshes; --redo: the drawn ones again too; --only: those runs' meshes only)
 
 The _full.png pictures show x >= X0_FULL (600 km; the whole mesh if it ends before that), true aspect, the figure
 sized to the strip; triangle edges only where they are at least ~6 pixels long (else the colour alone).
@@ -165,13 +165,15 @@ def make_pngs(meshdir, state, outdir, name, prev_mesh=None, prev_state=None):
     return out
 
 
-def make_all(work, case, redo=False):
+def make_all(work, case, redo=False, only=None):
     """the pictures of every remeshed mesh (case/[<label>_]m###, its state <work>/<name>_start.npz) that has none yet in
-    <work>/meshes (redo: all of them)"""
+    <work>/meshes (redo: those again too); only: the meshes whose names start with one of these (e.g. job numbers)"""
     import glob
     made = []
     for st in sorted(glob.glob(os.path.join(work, "*m[0-9][0-9][0-9]_start.npz"))):
         name = os.path.basename(st)[:-len("_start.npz")]
+        if only and not name.startswith(tuple(only)):
+            continue
         if (os.path.exists(os.path.join(work, "meshes", f"{name}_full.png")) and not redo) \
                 or not os.path.isdir(os.path.join(case, name)):
             continue
@@ -181,9 +183,15 @@ def make_all(work, case, redo=False):
 
 def main():
     if len(sys.argv) >= 2 and sys.argv[1] == "--all":       # mesh_map.py --all WORK [CASE]: every new mesh's pictures
-        rest = [v for v in sys.argv[2:] if v != "--redo"]
+        args = sys.argv[2:]
+        only = None
+        if "--only" in args:                  # --only 31851,31862: those runs' meshes only
+            k = args.index("--only")
+            only = args[k + 1].split(",")
+            del args[k:k + 2]
+        rest = [v for v in args if v != "--redo"]
         w = rest[0]
-        make_all(w, rest[1] if len(rest) > 1 else os.path.join(w, "case"), redo="--redo" in sys.argv)
+        make_all(w, rest[1] if len(rest) > 1 else os.path.join(w, "case"), redo="--redo" in args, only=only)
         return
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("mesh")
