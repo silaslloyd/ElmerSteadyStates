@@ -28,6 +28,8 @@ What the approximations keep:
 The maps (the dropdown): each component; the derivatives dw/dx, dw/dy alone; "membrane share" = |membrane| /
 (|membrane| + |shear|) (0: SIA-like, 1: SSA-like; |membrane| = sqrt(e_xx^2 + e_yy^2 + e_xx e_yy + e_xy^2), |shear| =
 sqrt(e_xz^2 + e_yz^2)); "dw/dx vs du/dz" = |grad w| / |du/dz, dv/dz| (large: Blatter-Pattyn's approximation fails);
+"dw/dx vs membrane" = |grad w| / |membrane| (the same test where the ice slides as a plug and the membrane terms carry
+the stress);
 and the dominant term at each point. The grounding line in black. "base" / "surface" switches between the horizontal
 derivatives of the base velocity and of the surface velocity (the vertical shear estimate is the same column mean on
 both; at the free surface the true shear is near zero).
@@ -106,6 +108,8 @@ def frame_fields(d, k, x, y, tri, sf, interp_top, grounded_only=True, side="base
         mshare = memb / (memb + shear)
         sh = np.hypot(dudz, dvdz)
         wratio = np.where(sh > 0, np.hypot(dwdx, dwdy) / sh, np.nan)     # no vertical shear (plug flow): undefined
+        # the same against the membrane terms (what Blatter-Pattyn keeps in the plug-flow, SSA-like parts)
+        mratio = np.where(memb > 0, np.hypot(dwdx, dwdy) / memb, np.nan)
     # Blatter-Pattyn's second approximation, the hydrostatic vertical stress: what it drops is the "bridging" term,
     # sigma_zz(base) + rho g H = d/dx int tau_xz dz + d/dy int tau_yz dz. With the shallow-ice shear stress (tau_xz =
     # -rho g (s - z) ds/dx) the integrals are -rho g H^2/2 grad s, so relative to the overburden rho g H:
@@ -121,7 +125,8 @@ def frame_fields(d, k, x, y, tri, sf, interp_top, grounded_only=True, side="base
     dom[dom < 0] = np.nan
     if grounded_only:
         off = ~use
-        for a in (exx, eyy, exy, exz, eyz, dudz, dvdz, dwdx, dwdy, dudy, dvdx, memb, shear, mshare, wratio, dom, nh):
+        for a in (exx, eyy, exy, exz, eyz, dudz, dvdz, dwdx, dwdy, dudy, dvdx, memb, shear, mshare, wratio, mratio, dom,
+                  nh):
             a[off] = np.nan
     return [("e_xx = du/dx", exx, "signed"), ("e_yy = dv/dy", eyy, "signed"),
             ("e_zz = dw/dz = -(e_xx + e_yy)", -(exx + eyy), "signed"), ("e_xy = (du/dy + dv/dx)/2", exy, "signed"),
@@ -133,6 +138,8 @@ def frame_fields(d, k, x, y, tri, sf, interp_top, grounded_only=True, side="base
             ("membrane share |memb| / (|memb| + |shear|)", mshare, "share"),
             ("log10 |dw/dx, dw/dy| / |du/dz, dv/dz| (Blatter-Pattyn drops the numerator)",
              np.log10(np.maximum(wratio, 1e-6)), "ratio"),
+            ("log10 |dw/dx, dw/dy| / |membrane| (Blatter-Pattyn drops the numerator)",
+             np.log10(np.maximum(mratio, 1e-6)), "ratio"),
             ("log10 non-hydrostatic estimate |div(H^2 grad s)| / 2H (Blatter-Pattyn's hydrostatic assumption)",
              np.log10(np.maximum(nh, 1e-8)), "nh"),
             ("dominant term", dom, "cat")]
