@@ -6,7 +6,11 @@ an optional zoom. Reads an Elmer 2D mesh directory (case/<mesh_db>: mesh.nodes, 
     python3 plots/mesh_map.py MESHDIR OUT.png [--zoom X0 X1 Y0 Y1 (km)] [--state S.npz]
                               [--compare OTHER_MESHDIR [--compare-state S2.npz]]
 
-    python3 plots/mesh_map.py --all WORKDIR [CASEDIR]   (the pictures of every m### not drawn yet, to WORKDIR/meshes)
+    python3 plots/mesh_map.py --all WORKDIR [CASEDIR] [--redo]   (the pictures of every m### not drawn yet, to
+                                                                 WORKDIR/meshes; --redo: all of them again)
+
+The _full.png pictures show x >= X0_FULL (600 km; the whole mesh if it ends before that), true aspect, the figure
+sized to the strip; triangle edges only where they are at least ~6 pixels long (else the colour alone).
 
 --compare: a second panel with another mesh (e.g. the original footprint) on the same axes.
 --state: a state on that mesh (e.g. <work>/m001_start.npz; for the original footprint the state remeshed from):
@@ -39,13 +43,50 @@ def curves(ax, x, y, tri, state):
     import matplotlib.tri as mtri
     T = mtri.Triangulation(x, y, tri, mask=~grounded)
     ax.tricontour(T, ct, levels=[0.0], colors="white", linewidths=0.9, linestyles="solid")
-    from matplotlib.lines import Line2D
-    ax.legend([Line2D([], [], color="red", lw=1.6), Line2D([], [], color="white", lw=0.9)],
-              ["grounding line", "cold/temperate transition (grounded)"], loc="upper right", framealpha=0.7,
-              facecolor="0.5")
 
 
-def panel(ax, meshdir, zoom, norm, state=None):
+X0_FULL = 600.0          # km: the _full pictures from here to the front
+
+
+def extent(meshdir):
+    _, x, y, _ = read_footprint(meshdir)
+    return x.min() / 1e3, x.max() / 1e3, y.min() / 1e3, y.max() / 1e3
+
+
+def full_zoom(meshdir):
+    """x >= X0_FULL to the end, the whole width (the whole mesh if it ends before X0_FULL)"""
+    x0, x1, y0, y1 = extent(meshdir)
+    return [X0_FULL if x1 > X0_FULL + 10 else x0, x1, y0, y1]
+
+
+def figure(nrows, zoom, width=16.0):
+    """a figure of nrows panels of the zoom box at true aspect, sized to them (no empty space), a horizontal colour
+    bar below; returns fig, axs (nrows x 1), the colour bar's axes and pixels per km at dpi 130"""
+    import matplotlib.pyplot as plt
+    wkm, hkm = zoom[1] - zoom[0], zoom[3] - zoom[2]
+    ph = max(width * hkm / wkm, 1.0)          # inches: a panel's plot area (true aspect)
+    top, below = 0.45, 0.75                   # inches: the title above a panel, the x label below it
+    cbh = 1.2                                 # inches: the colour bar and its label at the bottom
+    left = 0.9
+    W, H = width + left + 0.3, nrows * (top + ph + below) + cbh
+    fig = plt.figure(figsize=(W, H))
+    axs = np.array([[fig.add_axes([left / W, (cbh + (nrows - 1 - i) * (top + ph + below) + below) / H,
+                                   width / W, ph / H])] for i in range(nrows)])
+    cax = fig.add_axes([(left + 0.25 * width) / W, 0.6 / H, 0.5 * width / W, 0.2 / H])
+    return fig, axs, cax, width * 130.0 / wkm
+
+
+def colorbar(fig, tc, cax):
+    from matplotlib.ticker import FixedLocator, FuncFormatter
+    cb = fig.colorbar(tc, cax=cax, orientation="horizontal")
+    cb.set_label("element size (m, mean edge)")
+    cb.ax.xaxis.set_major_locator(FixedLocator([250, 500, 1000, 2000, 5000]))
+    cb.ax.xaxis.set_minor_locator(FixedLocator([]))
+    cb.ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    return cb
+
+
+def panel(ax, meshdir, zoom, norm, state=None, px_per_km=None):
     from matplotlib.collections import LineCollection
     _, x, y, tri = read_footprint(meshdir)
     x, y = x / 1e3, y / 1e3
@@ -55,16 +96,23 @@ def panel(ax, meshdir, zoom, norm, state=None):
     hs = np.mean([np.hypot(x[tri[:, a]] - x[tri[:, b]], y[tri[:, a]] - y[tri[:, b]]) for a, b in
                   ((0, 1), (1, 2), (2, 0))], 0) * 1e3
     tc = ax.tripcolor(x, y, tri, facecolors=hs, cmap="viridis_r", norm=norm, edgecolors="none")
-    if zoom:
-        m = ((x[e[:, 0]] > zoom[0]) & (x[e[:, 0]] < zoom[1]) & (y[e[:, 0]] > zoom[2]) & (y[e[:, 0]] < zoom[3]))
-        ee = e[m]
-        ax.set_xlim(zoom[0], zoom[1])
-        ax.set_ylim(zoom[2], zoom[3])
+    if zoom:              # clamped to the mesh (no empty margins)
+        zoom = [max(zoom[0], x.min()), min(zoom[1], x.max()), max(zoom[2], y.min()), min(zoom[3], y.max())]
     else:
-        ee = e
+        zoom = [x.min(), x.max(), y.min(), y.max()]
+    m = ((x[e[:, 0]] > zoom[0]) & (x[e[:, 0]] < zoom[1]) & (y[e[:, 0]] > zoom[2]) & (y[e[:, 0]] < zoom[3]))
+    ee = e[m]
+    ax.set_xlim(zoom[0], zoom[1])
+    ax.set_ylim(zoom[2], zoom[3])
+    # edges only where they are at least ~6 pixels long at the figure's width (else they blacken the panel)
+    if px_per_km:
+        Le = np.hypot(x[ee[:, 0]] - x[ee[:, 1]], y[ee[:, 0]] - y[ee[:, 1]])
+        ee = ee[Le * px_per_km >= 6.0]
     lw = 0.15 if len(ee) > 2e5 else 0.3
-    ax.add_collection(LineCollection(np.stack([np.c_[x[ee[:, 0]], y[ee[:, 0]]], np.c_[x[ee[:, 1]], y[ee[:, 1]]]], 1),
-                                     colors="k", linewidths=lw, alpha=0.6))
+    if len(ee):
+        ax.add_collection(LineCollection(np.stack([np.c_[x[ee[:, 0]], y[ee[:, 0]]],
+                                                   np.c_[x[ee[:, 1]], y[ee[:, 1]]]], 1),
+                                         colors="k", linewidths=lw, alpha=0.6))
     if state:
         curves(ax, x, y, tri, state)
     ax.set_aspect("equal")
@@ -83,13 +131,14 @@ def make_pngs(meshdir, state, outdir, name, prev_mesh=None, prev_state=None):
     import matplotlib.pyplot as plt
     from matplotlib.colors import LogNorm
     os.makedirs(outdir, exist_ok=True)
-    norm = LogNorm(400, 6000)
+    norm = LogNorm(200, 6000)
     out = []
     meshes = [(meshdir, state)] + ([(prev_mesh, prev_state)] if prev_mesh else [])
-    fig, axs = plt.subplots(len(meshes), 1, figsize=(16, 6 * len(meshes)), squeeze=False)
+    z = full_zoom(meshdir)
+    fig, axs, cax, ppk = figure(len(meshes), z)
     for ax, (m, st) in zip(axs[:, 0], meshes):
-        tc = panel(ax, m, None, norm, st)
-    fig.colorbar(tc, ax=axs[:, 0].tolist(), label="element size (m, mean edge)", shrink=0.8)
+        tc = panel(ax, m, z, norm, st, ppk)
+    colorbar(fig, tc, cax)
     p = os.path.join(outdir, f"{name}_full.png")
     fig.savefig(p, dpi=130, bbox_inches="tight")
     plt.close(fig)
@@ -104,9 +153,11 @@ def make_pngs(meshdir, state, outdir, name, prev_mesh=None, prev_state=None):
     if mix.any():
         gx, gy = x[e[mix].ravel()] / 1e3, y[e[mix].ravel()] / 1e3
         z = [gx.min() - 40, gx.max() + 40, gy.min() - 40, gy.max() + 40]
-        fig, ax = plt.subplots(figsize=(12, 10))
-        tc = panel(ax, meshdir, z, norm, state)
-        fig.colorbar(tc, ax=ax, label="element size (m, mean edge)", shrink=0.8)
+        x0, x1, y0, y1 = extent(meshdir)
+        z = [max(z[0], x0), min(z[1], x1), max(z[2], y0), min(z[3], y1)]
+        fig, axs, cax, ppk = figure(1, z, width=12.0)
+        tc = panel(axs[0, 0], meshdir, z, norm, state, ppk)
+        colorbar(fig, tc, cax)
         p = os.path.join(outdir, f"{name}_gl.png")
         fig.savefig(p, dpi=130, bbox_inches="tight")
         plt.close(fig)
@@ -114,14 +165,15 @@ def make_pngs(meshdir, state, outdir, name, prev_mesh=None, prev_state=None):
     return out
 
 
-def make_all(work, case):
+def make_all(work, case, redo=False):
     """the pictures of every remeshed mesh (case/[<label>_]m###, its state <work>/<name>_start.npz) that has none yet in
-    <work>/meshes"""
+    <work>/meshes (redo: all of them)"""
     import glob
     made = []
     for st in sorted(glob.glob(os.path.join(work, "*m[0-9][0-9][0-9]_start.npz"))):
         name = os.path.basename(st)[:-len("_start.npz")]
-        if os.path.exists(os.path.join(work, "meshes", f"{name}_full.png")) or not os.path.isdir(os.path.join(case, name)):
+        if (os.path.exists(os.path.join(work, "meshes", f"{name}_full.png")) and not redo) \
+                or not os.path.isdir(os.path.join(case, name)):
             continue
         made += make_pngs(os.path.join(case, name), st, os.path.join(work, "meshes"), name)
     print("made: " + (" ".join(made) if made else "nothing new"))
@@ -129,8 +181,9 @@ def make_all(work, case):
 
 def main():
     if len(sys.argv) >= 2 and sys.argv[1] == "--all":       # mesh_map.py --all WORK [CASE]: every new mesh's pictures
-        w = sys.argv[2]
-        make_all(w, sys.argv[3] if len(sys.argv) > 3 else os.path.join(w, "case"))
+        rest = [v for v in sys.argv[2:] if v != "--redo"]
+        w = rest[0]
+        make_all(w, rest[1] if len(rest) > 1 else os.path.join(w, "case"), redo="--redo" in sys.argv)
         return
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("mesh")
@@ -144,14 +197,16 @@ def main():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.colors import LogNorm
-    norm = LogNorm(400, 6000)
+    norm = LogNorm(200, 6000)
     meshes = [a.mesh] + ([a.compare] if a.compare else [])
-    fig, axs = plt.subplots(len(meshes), 1, figsize=(16, 6 * len(meshes)) if not a.zoom else (12, 10 * len(meshes)),
-                            squeeze=False)
+    x0, x1, y0, y1 = extent(a.mesh)
+    z = a.zoom or [x0, x1, y0, y1]
+    z = [max(z[0], x0), min(z[1], x1), max(z[2], y0), min(z[3], y1)]
+    fig, axs, cax, ppk = figure(len(meshes), z, width=16.0 if not a.zoom else 12.0)
     states = [a.state] + ([a.compare_state] if a.compare else [])
     for ax, m, st in zip(axs[:, 0], meshes, states):
-        tc = panel(ax, m, a.zoom, norm, st)
-    fig.colorbar(tc, ax=axs[:, 0].tolist(), label="element size (m, mean edge)", shrink=0.8)
+        tc = panel(ax, m, z, norm, st, ppk * 150 / 130)
+    colorbar(fig, tc, cax)
     fig.savefig(a.out, dpi=150, bbox_inches="tight")
     print(f"wrote {a.out}")
 
