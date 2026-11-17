@@ -12,6 +12,7 @@ slider through the states.
     python plots/plot_state_3d.py work/test_periodic_gl/fix --tile 1        # one copy (default 2: side by side, so
                                                                             # anything not periodic shows at the seam)
     python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --no-temp # the velocity panel only
+    python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --temp-only # the temperature panel only
     python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --tmin 255  # temperature colour range from 255 K
     python plots/plot_state_3d.py STATE.npz --fs-ssa 10 [--walls]          # the full-Stokes | SSA boundary (magenta)
     python plots/plot_state_3d.py STATE.npz --mesh --mesh-dir CASE/footprint   # the mesh's elements on the ice base,
@@ -110,6 +111,7 @@ MASK_PANEL = False       # --mask-panel: the third --sheet panel the cold/temper
 MELT_MAX = None          # --melt-max M: the melt colours -M .. M m/yr (default: 99.5th percentile of |melt|, all frames)
 HW_H0 = 0.01             # the signed log scale: sign(h) log10(1 + |h| / HW_H0), from -1e3 to 1e3 m
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
+TEMP_ONLY = False        # --temp-only: one panel, the temperature (surface and base) instead of the velocity
 MESH_TOGGLE = False      # the "mesh off / mesh on" buttons for the base mesh (white): only with --mesh (or
                          # --mesh-toggle); by default no mesh at all (smaller pages)
 SWITCH = False           # the speed/vx/vy/vz buttons (their values for every state go into the page: big); --switch
@@ -1057,6 +1059,7 @@ def _rdp(P, eps):
 def main():
     import plotly.graph_objects as go
     global SHEET, HW_MAX, HW_LOG, MASK_PANEL, MELT_MAX, SHEET_VEL, SHEET_LINES, HW_ISO, SHEET_STREAM_KM
+    global TEMP_ONLY
     global X_WINDOW, TILE, TEMP, T_RANGE, SHOW_MESH, SHOW_BED, FS_SSA, WALLS, VMAX, VMAX_GL, MESH_DIR, SHOW_PARTS, SWITCH
     global MESH_TOGGLE, STREAM, STREAM_KM, PLAY_MS, COMPARE, CMP_FIELD, SECTOR, SECTOR_A, TRUE_ASPECT, Z_EXAGGERATION
     args = sys.argv[1:]
@@ -1112,6 +1115,9 @@ def main():
     if "--mesh-toggle" in args:
         MESH_TOGGLE = True
         args.remove("--mesh-toggle")
+    if "--temp-only" in args:                     # the temperature in place of the velocity, one panel
+        TEMP_ONLY = True
+        args.remove("--temp-only")
     if "--no-temp" in args:
         TEMP = False
         args.remove("--no-temp")
@@ -1331,6 +1337,12 @@ def main():
         print("no Water Sheet Thickness in the frames (a THERMAL=elmerstreams run, packed by plots/vtu_frames.py): "
               "no sheet panel")
     temp = TEMP and not sheet and not COMPARE and all(d is not None and "T" in d for _, tp, b, _ in data for d in (tp, b))
+    tonly = TEMP_ONLY and not sheet and not COMPARE and all(d is not None and "T" in d
+                                                             for _, tp, b, _ in data for d in (tp, b))
+    if TEMP_ONLY and not tonly:
+        print("--temp-only: no Temperature in the frames: the velocity instead")
+    if tonly:
+        temp = False
     two = temp or sheet                           # two panels side by side (velocity | temperature or water sheet)
     # the third panel: the melt rate (default), or the cold/temperate mask (--mask-panel, or no melt in the frames)
     p3 = ("melt" if not MASK_PANEL and all("melt" in b for _, _, b, _ in data if b is not None) else
@@ -1358,7 +1370,7 @@ def main():
         print("no Temperature in the states (slimmed before it was kept? re-run plots/slim_states.py): velocity only")
     # --sheet: the first panel the temperature (surface and base), not the velocity (--sheet-velocity to keep it)
     sheetT = sheet and not SHEET_VEL and all(d is not None and "T" in d for _, tp, b, _ in data for d in (tp, b))
-    if temp or sheetT or (COMPARE and CMP_FIELD == "T"):
+    if temp or sheetT or tonly or (COMPARE and CMP_FIELD == "T"):
         Tv = np.concatenate([d["T"] for _, tp, b, _ in data for d in (tp, b) if d is not None and "T" in d] +
                             [d["T"] for _, tp, _, _ in data for d in tp.get("_cmp", ()) if d is not None and "T" in d])
         tmin = T_RANGE[0] if T_RANGE[0] is not None else float(np.nanmin(Tv))
@@ -1366,7 +1378,7 @@ def main():
         print(f"temperature colours {tmin:.2f} .. {tmax:.2f} K: all temperatures (--tmin / --tmax to narrow)")
     # the panels: (field, colour range, colour scale, colour bar title, colour bar x, scene)
     panels = [("speed", 0.0, smax, SPEED_CS, "speed (m/yr)", 0.30 if three else 0.47 if two else 1.0, "scene")]
-    if sheetT:
+    if sheetT or tonly:
         panels[0] = ("T", tmin, tmax, "RdBu_r", "temperature (K)", panels[0][5], "scene")
     if DIFF:                                      # differences: vz first, symmetric red/blue
         v = np.abs(np.concatenate([d["vz"] for _, tp, b, _ in data for d in (tp, b) if d is not None]))
