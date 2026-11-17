@@ -617,7 +617,8 @@ if [ -n "$WARMUP" ] || [ -n "$WARMUP_STATE" ]; then
         printf '%s\n' "  Linear System Timing = Logical True" "  Solver Timing = Logical True" "! ESS scaling R0 ${SLURM_JOB_ID:-local}" >> $V/R0.sif.in
         n0=$(python3 -c "import re; print(sum(int(i.partition('*')[2] or 1) for i in re.split(r'[,:;\s]+', '$WARMUP') if i))")
         # one chunk: the ramp once (CHUNKS / --save-every / --ybump-ramp are for the long run after it)
-        o0=$(echo "$opts" | sed "s/--steps [0-9]*/--steps $n0/; s/--chunks [0-9]*/--chunks 1/; s/--save-every [0-9]*//; s/--ybump-ramp [^ ]*//")
+        # (and its own steps: no --until, which would set the steps to reach model time UNTIL)
+        o0=$(echo "$opts" | sed "s/--steps [0-9]*/--steps $n0/; s/--chunks [0-9]*/--chunks 1/; s/--save-every [0-9]*//; s/--ybump-ramp [^ ]*//; s/--until [^ ]*//")
         echo "$(date +%T) start R0: the ramp-up $WARMUP yr ($n0 steps), GCR + ILU${WARMUP_ILU:-4} (log ${L}_R0.log)"
         ESS_DT_RAMP=$WARMUP python3 -u -m ess run $GL_CONFIG --state $RSTART $o0 --rotate-guess --add-diag Pressure \
             --out $R0S --stokes-block-file $PWD/$V/R0.sif.in > ${L}_R0.log 2>&1 || { echo "R0 failed: ${L}_R0.log"; exit 1; }
