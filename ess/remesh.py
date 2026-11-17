@@ -8,6 +8,9 @@ the cold/temperate transition on the grounded bed (--fine, default 250 m at the 
 at the transition; bands --gl-band-km 25, --ct-band-km 10, optionally directional: --directional), growing by --grade
 away from them; the background [case] res_points scaled to a triangle budget (--max-triangles); the grounded bed away
 from both curves at least --coarse (2 km), beyond --far-km (200) at least --far-h (5 km); a random factor exp(+-jitter).
+The size field is periodic: the distances to the curves count their images across the periodic seam (Periodic.wrap),
+and the grading crosses it (the periodic node pairs as edges of length 0), so a curve near one side refines the other
+side as well and the two sides of every pair get the same size.
 (--mode thresholds: the older strain-rate thresholds, size_field.) Sectors and strips alike (class Periodic: a strip is
 the sector of infinite radius).
 
@@ -170,11 +173,15 @@ def base_values(rec, nb):
     return _level_values(rec, nb, int(lv[0]))[0]
 
 
-def grade(h, x, y, tri, g):
-    """h_i <= h_j + g |x_i - x_j| along the mesh edges (repeated until nothing changes)"""
+def grade(h, x, y, tri, g, pairs=None):
+    """h_i <= h_j + g |x_i - x_j| along the mesh edges (repeated until nothing changes); pairs (k x 2: a side-1 node and
+    its periodic image on side 2) are edges of length 0, so the grading crosses the periodic seam"""
     e = np.r_[tri[:, [0, 1]], tri[:, [1, 2]], tri[:, [2, 0]]]
     e = np.unique(np.sort(e, 1), axis=0)
     L = np.hypot(x[e[:, 0]] - x[e[:, 1]], y[e[:, 0]] - y[e[:, 1]])
+    if pairs is not None and len(pairs):
+        e = np.r_[e, pairs]
+        L = np.r_[L, np.zeros(len(pairs))]
     h = h.copy()
     for it in range(10000):
         h0 = h.copy()
@@ -215,11 +222,15 @@ def size_field(src: SavedState, x, y, tri, h_res, opt):
     gl[e[mix].ravel()] = True
     gl |= np.abs(np.nan_to_num(gm, nan=-1)) < 0.5
     from scipy.spatial import cKDTree
-    dgl = cKDTree(np.c_[x[gl], y[gl]]).query(np.c_[x, y])[0] if gl.any() else np.full(nb, np.inf)
+    per = opt.get("periodic")
+    P = np.c_[x[gl], y[gl]]
+    if per is not None:
+        P = per.wrap(P)[0]
+    dgl = cKDTree(P).query(np.c_[x, y])[0] if gl.any() else np.full(nb, np.inf)
     margin = np.abs(ens) > opt["margin_shear"]
     fine = (dgl < opt["gl_band"]) | (margin & (sp > 1.0))
     h[fine] = np.minimum(h[fine], opt["fine"])
-    h = grade(h, x, y, tri, opt["grade"])
+    h = grade(h, x, y, tri, opt["grade"], per.seam_pairs(x, y) if per is not None else None)
     _, area = node_areas(x, y, tri)
     est = lambda hh: float(np.sum(area / (0.433 * hh ** 2)))
     pc = lambda a: ", ".join(f"{q:g}%: {np.percentile(a, q):.3g}" for q in (50, 90, 99)) if len(a) else "-"
@@ -282,7 +293,12 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
     # the cold/temperate transition: edges between a cold and a temperate node, both grounded
     tr = grounded[e[:, 0]] & grounded[e[:, 1]] & (tempe[e[:, 0]] != tempe[e[:, 1]])
     ctp = np.c_[0.5 * (x[e[tr, 0]] + x[e[tr, 1]]), 0.5 * (y[e[tr, 0]] + y[e[tr, 1]])]
-    dist = lambda P: cKDTree(P).query(np.c_[x, y])[0] if len(P) else np.full(nb, np.inf)
+    # periodic: the curves' images across the seam count too (a curve near side 1 refines side 2 as well), and the
+    # grading crosses the seam (the periodic node pairs as edges of length 0)
+    per = opt.get("periodic")
+    wrap = (lambda P: per.wrap(P)) if per is not None else (lambda P: (P, np.arange(len(P))))
+    pairs = per.seam_pairs(x, y) if per is not None else None
+    dist = lambda P: cKDTree(wrap(P)[0]).query(np.c_[x, y])[0] if len(P) else np.full(nb, np.inf)
     dgl, dct = dist(glp), dist(ctp)
     # directional bands (opt["prev_state"]: the state this mesh was made from, the curves at the last remesh): how far
     # each piece of each curve moved since, and to which side; the band ahead of a moving piece reaches look x that
@@ -313,12 +329,14 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
             # each current piece (edge midpoint): how far the old curve is along the piece's normal (the curve's local
             # direction from the pieces within 3 km; the nearest old point's offset projected on the normal, so a
             # stream's sides that grew with its head count as still), on the old positive side or not
-            d0, i0 = cKDTree(P0).query(Pnow)
-            off = P0[i0] - Pnow
-            tn = cKDTree(Pnow)
+            P0w = wrap(P0)[0]                                  # the old curve with its periodic images
+            d0, i0 = cKDTree(P0w).query(Pnow)
+            off = P0w[i0] - Pnow
+            Pw, iw = wrap(Pnow)                                # the current pieces with their images
+            tn = cKDTree(Pw)
             nrm = np.zeros_like(Pnow)
             for q, nb_ in enumerate(tn.query_ball_point(Pnow, r=3e3)):
-                Q = Pnow[nb_] - Pnow[nb_].mean(0)
+                Q = Pw[nb_] - Pw[nb_].mean(0)
                 if len(nb_) < 3:
                     nrm[q] = off[q] / max(np.hypot(*off[q]), 1e-9)
                     continue
@@ -330,7 +348,7 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
             disp = np.maximum(dn - hn, 0.0) * side0                # signed: > 0 moved into the positive side
             new = d0 > jump                                        # no old curve near: a new piece, default band
             ahead_w = np.where(new, bdef, np.minimum(bmin + look * np.abs(disp), jump))
-            j = cKDTree(Pnow).query(np.c_[x, y])[1]
+            j = iw[cKDTree(Pw).query(np.c_[x, y])[1]]          # each node's nearest piece, across the seam too
             node_pos = np.where(pos_now, 1.0, -1.0)
             is_ahead = (np.sign(disp[j]) == node_pos) & (disp[j] != 0)
             bnd = np.where(new[j], bdef, np.where(is_ahead, ahead_w[j], bmin))
@@ -362,7 +380,7 @@ def size_field_budget(src: SavedState, x, y, tri, h_res, opt):
         far2 = grounded & (np.minimum(dgl, dct) > opt.get("far", np.inf))
         hbg[far2] = np.maximum(hbg[far2], min(opt.get("far_h", hc), hmax))
         h_ = np.minimum(np.minimum(hgl, hct), hbg)
-        return grade(h_, x, y, tri, g) if graded else h_
+        return grade(h_, x, y, tri, g, pairs) if graded else h_
     bct = opt["ct_band"]
     target = opt.get("max_triangles")
     # the budget search on the ungraded size (grading is the slow part), then once more with the target scaled by
@@ -446,6 +464,28 @@ class Periodic:
             return x, y + self.W
         ca, sa = np.cos(self.A), np.sin(self.A)
         return ca * x - sa * y, sa * x + ca * y
+
+    def inverse(self, x, y):
+        """side 2 -> side 1"""
+        if self.strip:
+            return x, y - self.W
+        ca, sa = np.cos(self.A), np.sin(self.A)
+        return ca * x + sa * y, -sa * x + ca * y
+
+    def wrap(self, P):
+        """points P (n x 2) with their images one period either way: (3n x 2, the index of each into P)"""
+        P = np.asarray(P, float).reshape(-1, 2)
+        a = np.c_[self.image(P[:, 0], P[:, 1])]
+        b = np.c_[self.inverse(P[:, 0], P[:, 1])]
+        return np.r_[P, a, b], np.tile(np.arange(len(P)), 3)
+
+    def seam_pairs(self, x, y, tol=0.5):
+        """the periodic node pairs of a footprint (k x 2: a node and the node at its image, within tol m)"""
+        from scipy.spatial import cKDTree
+        ix, iy = self.image(np.asarray(x, float), np.asarray(y, float))
+        d, j = cKDTree(np.c_[x, y]).query(np.c_[ix, iy])
+        i = np.nonzero(d < tol)[0]
+        return np.c_[i, j[i]]
 
     def along(self, x, y):
         """the coordinate along the flow the bed may depend on alone: a sector's radius, a strip's x"""
@@ -693,6 +733,9 @@ def remesh(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, opt: di
     # the base size (res_points along the distance from the divide)
     pts = np.array([[float(a) * 1e3, float(b)] for a, b in c["res_points"]])
     h_res = np.interp(fr.from_divide(sx, sy), pts[:, 0], pts[:, 1])
+    opt = dict(opt, periodic=fr)          # the size field periodic across the seam (wrapped distances, grading)
+    pairs = fr.seam_pairs(sx, sy)
+    log.info(f"remesh: {len(pairs)} periodic node pairs on the old footprint (the size field made periodic across them)")
     if opt.get("mode", "curves") == "curves":
         if opt.get("prev") and opt.get("prev_state") is None:
             opt = dict(opt, prev_state=load_state(opt["prev"]))
@@ -726,7 +769,7 @@ def remesh(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, opt: di
         rng = np.random.default_rng(int(opt.get("seed", 0)) + len(R2))
         _, area_ = node_areas(sx, sy, stri)
         n0 = np.sum(area_ / h ** 2)
-        hj = grade(h * np.exp(rng.uniform(-jit, jit, len(h))), sx, sy, stri, opt["grade"])
+        hj = grade(h * np.exp(rng.uniform(-jit, jit, len(h))), sx, sy, stri, opt["grade"], pairs)
         # grading takes the smaller neighbour, so the jitter refines on balance: scaled back to the same count
         h = hj * np.sqrt(np.sum(area_ / hj ** 2) / n0)
     write_pos(os.path.join(case, f"{name}_size.pos"), sx, sy, stri, h)
