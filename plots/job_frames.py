@@ -112,7 +112,9 @@ def main():
         if keep or has_start:
             out = f"{outbase}_seg{len(made) + 1:03d}.npz.part.npz"   # renamed when all are done (a download
                                                                       # meanwhile still finds the old set)
-            extra = ["--tmax", repr(tmax - 1e-6)] if tmax is not None else []
+            # up to and including the next job's start: that job continues from this output (its own first frame
+            # is a step later), so the output at the restart time is this job's
+            extra = ["--tmax", repr(tmax + 1e-6)] if tmax is not None else []
             r = subprocess.run([sys.executable, os.path.join(here, "vtu_frames.py"), d, out, "--t0", repr(ts),
                                 "--keep", ",".join(map(str, keep))] + extra + rest)
             if r.returncode == 0:
