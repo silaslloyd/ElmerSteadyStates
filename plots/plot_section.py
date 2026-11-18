@@ -2,11 +2,12 @@
 """A flowline state's temperature as a filled-contour section (plotly): x along the flow, z elevation, the ice
 temperature on a regular z grid column by column (no smoothing across columns), the upper surface Zs, the ice base Zb
 and the bed drawn in. The temperature is clipped to the surface temperature (the state's parameter, Tsurf; --tsurf K to set it) ..
-melting (273.15 K); how many nodes were outside is printed. The
+melting (273.15 K); how many nodes were outside is printed. --no-clip: the temperature as it is, the colours over
+its whole range (e.g. to check a limiter). The
 flowline mesh is one element wide: the nodes at the smallest y are used.
 
     python3 plots/plot_section.py STATE.npz [--x XMIN XMAX (km)] [--tmin K] [--tmax K] [--tsurf K] [--umax M/YR] [--nz 150] [--nx 800]
-                                  [--contour] [--rock]
+                                  [--contour] [--no-clip] [--rock]
                                   [--out FILE.html]
 
 Buttons switch between the temperature and the velocities u (along the flow; colours up to the fastest grounded
@@ -76,7 +77,8 @@ def main():
     args, nz = opt(args, "--nz", conv=int, default=150)
     args, nx = opt(args, "--nx", conv=int, default=800)
     contour = "--contour" in args               # filled contours (slow in the browser) instead of a heatmap
-    args = [a for a in args if a != "--contour"]
+    noclip = "--no-clip" in args                # the temperature as it is, the colours over its whole range
+    args = [a for a in args if a not in ("--contour", "--no-clip")]
     args, tsurf = opt(args, "--tsurf")
     args, umax = opt(args, "--umax")
     args, out = opt(args, "--out", conv=str)
@@ -129,11 +131,12 @@ def main():
     # set it); how many nodes were outside is reported
     ts = tsurf if tsurf is not None else float(np.load(path)["p"])
     above, below = int(np.sum(T > 273.15 + 1e-6)), int(np.sum(T < ts - 1e-6))
-    T = np.clip(T, ts, 273.15)
+    if not noclip:
+        T = np.clip(T, ts, 273.15)
     xg, zg, G = binned(xt, zt, T, nz, nx)
-    lo = tmin if tmin is not None else ts
-    hi = tmax if tmax is not None else 273.15
-    print(f"{path}: {len(xg)} columns, T clipped to {ts:.2f} .. 273.15 K ({above} plotted nodes were above melting, "
+    lo = tmin if tmin is not None else (float(np.nanmin(G)) if noclip else ts)
+    hi = tmax if tmax is not None else (float(np.nanmax(G)) if noclip else 273.15)
+    print(f"{path}: {len(xg)} columns, " + ("T NOT clipped (--no-clip)" if noclip else f"T clipped to {ts:.2f} .. 273.15 K") + f" ({above} plotted nodes were above melting, "
           f"{below} below the surface temperature); colours {lo:.2f} .. {hi:.2f}")
     traces = [field_trace(go, contour, xg, zg, G, lo, hi, "RdBu_r", "T (K)",
                           "x %{x:.1f} km<br>z %{y:.0f} m<br>T %{z:.2f} K<extra></extra>", "T")]
