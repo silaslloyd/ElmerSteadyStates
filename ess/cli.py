@@ -106,23 +106,76 @@ def _masks_auto(cfg, model):
     return on, int(m.get("max_rounds", 6))
 
 
+def _contact_mask(cfg, model, saved, x, p):
+    """the grounded mask the CONTACT criterion gives at state x (the transient runs' grounding line: a node stays
+    grounded while the bed pushes on it, floats when the sea pressure exceeds the basal normal stress, grounds when
+    its base reaches the bed): a short mechanics-only run with the contact grounding line ([masks] gl_steps steps of
+    gl_dt yr, default 2 x 1 yr) from x, its GroundedMask. Returns (x_after, mask record, report)."""
+    from .masks import _on
+    from .model import MapSpec
+    m = cfg.get("masks", {})
+    spec = MapSpec(dt=float(m.get("gl_dt", 1.0)), n_steps=int(m.get("gl_steps", 2)))
+    keep = (model.gl_mode, model.stokes_only)
+    model.gl_mode, model.stokes_only = "contact", True
+    try:
+        xo, diag = model.run(x, p, spec, tag="contact_mask", want_diag=True)
+    finally:
+        model.gl_mode, model.stokes_only = keep
+    kg = find_name(saved.frozen, "GroundedMask")
+    g, old = saved.frozen[kg]
+    new = np.round(_on(*diag[find_name(diag, "GroundedMask")], g, fill=-1.0))
+    cx = diag.get(next((k for k in diag if k.lower() == "coordinate 1"), ""), None)
+    rep = {"to_grounded": int(((old < -0.5) & (new > -0.5)).sum()), "to_floating": int(((old > -0.5) & (new < -0.5)).sum())}
+    if cx is not None:
+        X = _on(*cx, g)
+        for nm, v in (("x_gl", old), ("x_gl_new", new)):
+            if (v > -0.5).any():
+                rep[nm] = float(X[v > -0.5].max())
+    return xo, (g, new), rep
+
+
 def _remask_loop(cfg, model, saved, prob, y, p, solve, label):
     """y converged at p: while the masks do not fit, move them (saved.frozen is the model's frozen dict,
-    changed in place) and re-solve with solve(y, p) -> result with .y, .converged. Returns (y, result)."""
+    changed in place) and re-solve with solve(y, p) -> result with .y, .converged. Returns (y, result).
+    [masks] gl = "flotation" (default: the hydrostatic test, ess/masks.py) or "contact" (_contact_mask: the transient
+    runs' criterion; the flotation test disagrees with it by about a column at a full-Stokes grounding line and
+    ratchets the grounding line upstream, 2026-11-18); [masks] ct = false: the cold/temperate mask never moved."""
     from .masks import describe, n_changes, update_masks
     on, rounds = _masks_auto(cfg, model)
     r = None
     if not on:
         return y, r
+    mopt = cfg.get("masks", {})
+    gl_crit = str(mopt.get("gl", "flotation"))
+    move_ct = bool(mopt.get("ct", True))
+    if gl_crit not in ("flotation", "contact"):
+        raise SystemExit(f"[masks] gl must be flotation or contact, not {gl_crit!r}")
     for k in range(rounds):
         x = prob.unscale(y)
+        kct = find_name(saved.frozen, "ColdTempMask")
+        ct_before = saved.frozen[kct]
         xn, frozen, rep = update_masks(saved.layout, x, saved.frozen, prob.last_diag, marine=_marine(model),
-                                       rho_ratio=getattr(model, "rho_ratio", None))
+                                       rho_ratio=getattr(model, "rho_ratio", None),
+                                       grounding=(gl_crit == "flotation"))
+        if not move_ct:                     # the cold/temperate mask as it was
+            frozen[find_name(frozen, "ColdTempMask")] = ct_before
+            rep["to_temperate"] = rep["to_cold"] = 0
+        if gl_crit == "contact" and _marine(model):
+            frozen = dict(frozen)
+            saved_ = type("S", (), {"frozen": frozen})()
+            xc, gmrec, crep = _contact_mask(cfg, model, saved_, xn, p)
+            for k_ in ("x_gl", "x_gl_new", "to_grounded", "to_floating"):
+                rep.pop(k_, None)
+            rep.update(crep)
+            if crep["to_grounded"] or crep["to_floating"]:
+                frozen[find_name(frozen, "GroundedMask")] = gmrec
+                xn = xc                     # the geometry the contact run ended with (its base on / off the bed)
         if n_changes(rep) == 0:
-            if k:
-                log.info(f"{label}: masks consistent after {k} remask round(s)")
+            log.info(f"{label}: masks consistent" + (f" after {k} remask round(s)" if k else "")
+                     + (f" (grounding line by contact: {describe(rep)})" if gl_crit == "contact" else ""))
             return y, r
-        log.info(f"{label}: remask round {k + 1}: {describe(rep)}")
+        log.info(f"{label}: remask round {k + 1} ({'contact' if gl_crit == 'contact' else 'flotation'} grounding line"
+                 f"{'' if move_ct else ', cold/temperate mask fixed'}): {describe(rep)}")
         saved.frozen.clear()
         saved.frozen.update(frozen)
         r = solve(prob.scale(xn), p)

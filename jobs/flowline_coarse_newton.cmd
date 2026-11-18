@@ -10,8 +10,9 @@
 #      (default work/flowline_rect_ext/thermo_heat_lim50.npz) carried onto it (ess transfer)        -> start0.npz
 #   2. the shelf break, as jobs/flowline_steady.cmd (the bed of the fine flowline)                  -> start1.npz
 #   3. the whole bed temperate (ColdTempMask +1 everywhere; the grounded mask as transferred)       -> start.npz
-#   4. Newton (temperature, Zs, Zb; the masks fixed: [masks] auto = false; no heat limiter; the sea spring at the
-#      map's dt)                                                                                    -> steady_temperate.npz
+#   4. Newton (temperature, Zs, Zb; no heat limiter; the sea spring at the map's dt), then rounds of the contact
+#      grounding line ([masks] gl = "contact": a short contact run from the converged state; if its grounded mask
+#      differs, Newton again with it), the bed kept temperate ([masks] ct = false)              -> steady_temperate.npz
 #   sbatch jobs/flowline_coarse_newton.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
@@ -54,6 +55,6 @@ kg = find_name(s.frozen, 'GroundedMask'); gm = s.frozen[kg][1]
 print(f'GroundedMask: {int((gm > -0.5).sum())} of {len(gm)} base nodes grounded')
 save_state('$W/start.npz', s.layout, s.x, s.p, s.frozen, s.diag, **s.meta)"
 fi
-echo "$(date +%T) 4. Newton, the masks fixed (bed temperate)"
+echo "$(date +%T) 4. Newton (bed temperate), the grounding line by contact between solves"
 python3 -u -m ess newton $CFG --state $W/start.npz --out $W/steady_temperate.npz
 echo "$(date +%T) done"

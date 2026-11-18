@@ -3,8 +3,9 @@
 # graded to 1 km by 950 km, to 250 m by 1015 km,
 # 250 m from 1015 to 1065 km (the grounding line, 1039.25 km in the temperate steady state, +-25 km), 1 km on the shelf.
 # The same physics, bed (the extended Marine_Term bed with the shelf break of jobs/shelf_break.py, applied after the
-# transfer as in jobs/flowline_steady.cmd) and map. The masks are NOT moved between Newton solves ([masks] auto = false):
-# the steady state for the masks as given. Pipeline: jobs/flowline_coarse_newton.cmd.
+# transfer as in jobs/flowline_steady.cmd) and map. Between Newton solves the cold/temperate mask is never moved
+# ([masks] ct = false) and the grounding line only by the contact criterion ([masks] gl = "contact": a short contact run
+# from the converged state, as the transient runs decide grounding), until contact agrees with the frozen mask. Pipeline: jobs/flowline_coarse_newton.cmd.
 #
 [paths]
 work_dir = "work/flowline_rect_coarse"
@@ -55,7 +56,10 @@ minh = 50.0
 ess_slide_maxfactor = 1.0e6
 
 [masks]
-auto = false                            # masks as given (fixed): no remask between Newton solves
+auto = true
+gl = "contact"                          # the grounding line moved between Newton solves by the contact criterion (a short
+                                        # contact run from the converged state), not the hydrostatic flotation test
+ct = false                              # the cold/temperate mask never moved (the bed fixed as given)
 max_rounds = 6
 
 [extract]
