@@ -3,7 +3,8 @@
 steady state and the bed sweep's points (work/<case>/sweep_*/points/state_*.npz). The melt rate as the sweep computes
 it (ess/spectrum.py melt_rate, ElmerStreams getmeltrate): m = -Temperature Loads / (boundary weight x rho_i x L), m/yr
 of ice, positive melting, negative refreezing; on the temperate bed only (cold nodes: no line). The nodes across the
-flowline (one element wide) are averaged per x. The grounding line of each state as a dotted line of its colour.
+flowline (one element wide) are averaged per x. The grounding line of each state as a dotted line of its colour; a marker (on y = 0) where the melt
+integrated upstream from the grounding line, Q(x) = int_x^x_gl m dx', first returns to zero (all zeros printed).
 
     python3 plots/plot_melt.py STATE.npz [STATE2.npz ...] [--x XMIN XMAX (km)] [--ymax M/YR] [--shelf]
                                [--params case/parameters_fine2x.lua] [--out FILE.html]
@@ -30,6 +31,28 @@ def opt(args, name, n=1, conv=float, default=None):
     k = args.index(name)
     v = [conv(a) for a in args[k + 1:k + 1 + n]]
     return args[:k] + args[k + 1 + n:], (v[0] if n == 1 else v)
+
+
+def zero_flux(ux, mm, xgl):
+    """Q(x) = integral of the melt from x to the grounding line (trapezoids on the columns, the grounded temperate
+    bed only: from the grounding line upstream to the first column without a value, the patch head). Returns the x
+    (km) where Q crosses zero, from the grounding line upstream (linear between columns); [] if none."""
+    if xgl is None:
+        return []
+    i = int(np.searchsorted(ux, xgl + 1e-6)) - 1          # the grounding-line column
+    xs, Q, q = [ux[i]], [0.0], 0.0
+    for j in range(i - 1, -1, -1):
+        if not (np.isfinite(mm[j]) and np.isfinite(mm[j + 1])):
+            break
+        q += 0.5 * (mm[j] + mm[j + 1]) * (ux[j + 1] - ux[j]) * 1e3
+        xs.append(ux[j])
+        Q.append(q)
+    out = []
+    for k in range(1, len(Q) - 1):
+        a, b = Q[k], Q[k + 1]
+        if a == 0.0 or a * b < 0:
+            out.append(float(xs[k]) + (xs[k + 1] - xs[k]) * (a / (a - b) if a != b else 0.0))
+    return out
 
 
 def main():
@@ -72,19 +95,27 @@ def main():
         print(f"{lab}: grounded temperate bed {int(gm.sum())} nodes, melt {np.nanmin(m[gm]):.4g} .. {np.nanmax(m[gm]):.4g} "
               f"m/yr, total {np.nansum(mm[ux <= (xgl or np.inf)][:-1] * np.diff(ux[ux <= (xgl or np.inf)]) * 1e3):.4g} "
               f"m^2/yr (grounded, per unit width); grounding line {xgl} km")
-        rows.append((d, lab, ux, mm, xgl, path))
+        x0s = zero_flux(ux, mm, xgl)
+        print(f"   integrated from the grounding line upstream, zero at x = "
+              + (", ".join(f"{v:.2f}" for v in x0s) + " km" if x0s else "nowhere on the patch"))
+        rows.append((d, lab, ux, mm, xgl, path, x0s))
     if not rows:
         raise SystemExit("no state with a melt rate")
     rows.sort(key=lambda r: (r[0] is not None, -(r[0] or 0)))      # the plain states first, then d from long to short
     cols = sample_colorscale("Plasma", [0.05 + 0.85 * k / max(len(rows) - 1, 1) for k in range(len(rows))])
     fig = go.Figure()
-    for (d, lab, ux, mm, xgl, _), c in zip(rows, cols):
+    for (d, lab, ux, mm, xgl, _, x0s), c in zip(rows, cols):
         sel = np.ones(len(ux), bool) if not xwin else (ux >= xwin[0]) & (ux <= xwin[1])
         fig.add_trace(go.Scatter(x=ux[sel], y=mm[sel], mode="lines", name=lab, legendgroup=lab, line=dict(color=c, width=1.6),
                                  connectgaps=False, hovertemplate=f"{lab}<br>x %{{x:.2f}} km<br>melt %{{y:.4g}} m/yr<extra></extra>"))
         if xgl is not None:
             fig.add_trace(go.Scatter(x=[xgl, xgl], y=[0, 1], yaxis="y2", mode="lines", legendgroup=lab, showlegend=False,
                                      line=dict(color=c, width=1, dash="dot"), hoverinfo="skip"))
+        if x0s:                                  # the first zero of the melt integrated upstream from the grounding line
+            fig.add_trace(go.Scatter(x=[x0s[0]], y=[0.0], mode="markers", legendgroup=lab, showlegend=False,
+                                     marker=dict(color=c, size=9, line=dict(color="black", width=1)),
+                                     hovertemplate=f"{lab}<br>integrated melt from the grounding line = 0<br>"
+                                                   f"x {x0s[0]:.2f} km<extra></extra>"))
     fig.add_hline(y=0, line=dict(color="grey", width=0.8))
     fig.update_layout(title="basal melt rate on the temperate bed (m/yr of ice; negative: refreezing); dotted: grounding lines",
                       template="plotly_white", xaxis=dict(title="x (km)", range=xwin),
