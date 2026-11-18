@@ -7,7 +7,7 @@
 # The marine bed sweep on the coarse flowline (configs/flowline_rect_coarse.toml; ess sweep, ess/spectrum.py
 # run_sweep_marine): steady states with a temperate patch of length d from the grounding line upstream (cold
 # upstream of it), d from D_START (default: the whole grounded bed, fully temperate) to D_END (default 0, all cold)
-# in steps of STEP_FRAC x d (default 0.1) between STEP_MIN and STEP_MAX km (default 1 and 20), each from the previous
+# in steps of STEP_FRAC x d (default 0.2) between STEP_MIN and STEP_MAX km (default 1 and 50), each from the previous
 # state; Newton with the masks frozen, the grounding line moved by contact between solves. Nothing is rejected (the
 # counts of cold nodes above melting and temperate nodes refreezing are recorded). From START (default the fully
 # temperate steady state of jobs/flowline_coarse_newton.cmd). Output: work/flowline_rect_coarse/sweep_p268.15_down/
@@ -28,7 +28,7 @@ unset ESS_SLIDING ESS_HEAT_LIMITER ESS_SEA_SPRING_DT ESS_STRAIN_HEAT_POSITIVE ES
 CFG=configs/flowline_rect_coarse.toml
 START=${START:-work/flowline_rect_coarse/steady_temperate.npz}
 [ -f $START ] || { echo "no start state $START (jobs/flowline_coarse_newton.cmd first)"; exit 1; }
-echo "$(date +%T) sweep from $START: d ${D_START:-whole grounded bed} -> ${D_END:-0} km, steps ${STEP_FRAC:-0.1} x d in ${STEP_MIN:-1} .. ${STEP_MAX:-20} km"
+echo "$(date +%T) sweep from $START: d ${D_START:-whole grounded bed} -> ${D_END:-0} km, steps ${STEP_FRAC:-0.2} x d in ${STEP_MIN:-1} .. ${STEP_MAX:-50} km"
 python3 -u -m ess sweep $CFG --state $START ${D_START:+--d-start-km $D_START} --d-end-km ${D_END:-0} \
-    --step-frac ${STEP_FRAC:-0.1} --step-min-km ${STEP_MIN:-1} --step-max-km ${STEP_MAX:-20} ${OUT:+--out $OUT}
+    --step-frac ${STEP_FRAC:-0.2} --step-min-km ${STEP_MIN:-1} --step-max-km ${STEP_MAX:-50} ${OUT:+--out $OUT}
 echo "$(date +%T) done"

@@ -85,7 +85,7 @@ rock_heat_capacity = 1.0
 
 [fd]
 eps = 1e-6
-scheme = "central"
+scheme = "forward"                     # one map run per GMRES iteration (central: two); the steady states are the same
 
 [newton]
 tol = 1e-5
