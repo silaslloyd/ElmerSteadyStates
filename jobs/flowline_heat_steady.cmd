@@ -15,7 +15,8 @@
 #   -> work/flowline_rect_ext/bound_temperate_newton0.npz
 # Output: work/flowline_rect_ext/thermo_heat.npz (and every chunk in thermo_heat_chunks/points/).
 # Variants (env, passed through by sbatch): ESS_STRAIN_HEAT_POSITIVE=1 (the strain heating only where positive: the
-# nodal projection overshoots below zero at the grounding line); ESS_NO_CONVECTION=1 (no advection, a comparison).
+# nodal projection overshoots below zero at the grounding line); ESS_NO_CONVECTION=1 (no advection, a comparison);
+# ESS_HEAT_LIMITER=1 (the ice capped at melting, T <= T0: the excess heat goes to melt).
 #   sbatch jobs/flowline_heat_steady.cmd
 #   ESS_STRAIN_HEAT_POSITIVE=1 OUT=work/flowline_rect_ext/thermo_heat_pos.npz sbatch jobs/flowline_heat_steady.cmd
 set -e
@@ -40,6 +41,7 @@ OUT=${OUT:-$W/thermo_heat.npz}
 echo "$(date +%T) steady heat (subtemperate sliding, friction + strain heating) on the geometry of $STATE -> $OUT"
 [ "$ESS_STRAIN_HEAT_POSITIVE" = 1 ] && echo "  strain heating: positive part only"
 [ "$ESS_NO_CONVECTION" = 1 ] && echo "  NO advection in the ice (comparison)"
+[ "$ESS_HEAT_LIMITER" = 1 ] && echo "  heat limiter: T <= T0 in the ice"
 python3 -c "
 import sys, numpy as np; sys.path.insert(0, '.')
 from ess.statefile import load_state, find_name

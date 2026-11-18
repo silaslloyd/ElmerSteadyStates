@@ -150,6 +150,13 @@ class ElmerModel(Model):
         # there. Off by default (runs and caches unchanged).
         self.strain_heat_positive = (os.environ.get("ESS_STRAIN_HEAT_POSITIVE") or
                                      str(e.get("strain_heat_positive", ""))).lower() in ("1", "true")
+        # [elmer] heat_limiter (env ESS_HEAT_LIMITER=1): the ice temperature capped at melting, T <= T0, by Elmer's
+        # soft limiter in the heat solve (the excess heat then shows in the heat loads: what would melt), with the
+        # limiter's active set iterated within each step (up to heat_limiter_iterations, default 50). Off by
+        # default: the cap is not smooth, the Newton map must be (steady states with ice above melting are then
+        # rejected by the mask checks instead). For steady heat solves on a fixed geometry.
+        self.heat_limiter = (os.environ.get("ESS_HEAT_LIMITER") or str(e.get("heat_limiter", ""))).lower() in ("1", "true")
+        self.heat_limiter_iters = int(e.get("heat_limiter_iterations", 50))
         # [elmer] convection = false (env ESS_NO_CONVECTION=1): the ice's heat equation without advection (Convection =
         # "None"), e.g. to see what advection does to a steady temperature. Default: advection on ("Computed")
         self.no_convection = (os.environ.get("ESS_NO_CONVECTION") == "1" or e.get("convection", True) is False)
@@ -818,6 +825,8 @@ End
                     raise ValueError("periodic_sides: expected the two FreeSurfaceSolver instances (Zb, Zs) in the template")
                 lib = os.path.join(os.path.dirname(self.periodic_lib), "ESSFreeSurface")
                 text = text.replace(fs, f'"{lib}" "FreeSurfaceSolver"   ! periodic-aware limiter')
+        if self.heat_limiter:
+            text = self._heat_limiter(text)
         if self.no_convection:                  # the ice's heat equation without advection (a comparison)
             k = text.index('Name = "ice equations"')
             j = text.index("\nEnd", k)
@@ -1098,6 +1107,31 @@ End
             text = self._insert_in(text, 'Simulation Type = "transient"',
                                   "  ESS Rotational Periodic = Logical True   ! [case] sector_angle")
         return text
+
+    def _heat_limiter(self, text):
+        """[elmer] heat_limiter: T <= T0 in the ice (Elmer's soft limiter), its active set iterated within each step"""
+        k = text.index('Equation = String "Homologous Temperature Equation"')
+        i = text.rindex("\nSolver ", 0, k)
+        j = text.index("\nEnd", k)
+        sec = text[i:j]
+        a = "  ! no limiter: the map must be smooth for Newton\n  Apply Limiter = Logical False"
+        b = "  Nonlinear System Max Iterations = 1\n  Nonlinear System Min Iterations = 1"
+        if a not in sec or b not in sec:
+            raise ValueError("heat_limiter: the heat solver's limiter / nonlinear lines of the template changed")
+        sec = sec.replace(a, "  ! [elmer] heat_limiter: T <= T0 in the ice (the material's Temperature Upper Limit)\n"
+                             "  Apply Limiter = Logical True\n  Save Limiter = Logical True\n"
+                             "  Limiter Load Tolerance = Real 1.0e-6\n  Limiter Value Tolerance = Real 1.0e-6")
+        sec = sec.replace(b, f"  Nonlinear System Max Iterations = {self.heat_limiter_iters}   ! the limiter's active set\n"
+                             "  Nonlinear System Min Iterations = 2")
+        sec = sec.replace("  Nonlinear System Convergence Tolerance = 1.0e-10",
+                          "  Nonlinear System Convergence Tolerance = 1.0e-8")
+        text = text[:i] + sec + text[j:]
+        m = text.index('Name = "ice material"')
+        e_ = text.index("\nEnd", m)
+        if "  Tm = Real #T0" not in text[m:e_]:
+            raise ValueError("heat_limiter: no Tm line in the ice material of the template")
+        return text[:m] + text[m:e_].replace("  Tm = Real #T0", "  Tm = Real #T0\n  Temperature Upper Limit = Real #T0"
+                                                             "   ! [elmer] heat_limiter", 1) + text[e_:]
 
     def _slab_periodic_names(self):
         ice = ["Velocity 1", "Velocity 2", "Velocity 3", "Pressure", "Temperature", "Zs", "Zb"]
