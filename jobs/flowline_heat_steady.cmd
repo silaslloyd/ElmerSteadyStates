@@ -6,10 +6,10 @@
 #
 # The steady temperature on a fixed flowline geometry (configs/flowline_rect_ext.toml), thermomechanically coupled
 # through the bed: subtemperate sliding (the config's), frictional heating (flux C(T) |u_b|^2) and strain heating,
-# Stokes and heat solved on the geometry of STATE (no free surface: ess run --heat-only), the grounded mask AND the
-# cold/temperate mask fixed as they are in STATE (--no-remask; cold bed nodes may then exceed T0). Each chunk: 2 steps
-# of 1e6 yr (the steady temperature for that velocity); chunks until the rms change is below TOL (default 1e-4 scaled:
-# 0.5 mK), the velocity following the basal temperature through the subtemperate sliding, or CHUNKS (default 20).
+# Stokes and heat solved on the geometry of STATE (no free surface: ess run --heat-only), the grounded mask fixed as in
+# STATE and the cold/temperate mask fixed TEMPERATE on the whole bed (ess run --bed temperate: ColdTempMask +1, the
+# bed at T0, Dirichlet; --no-remask). Each chunk: 2 steps of 1e6 yr (the steady temperature for that velocity); chunks
+# until the rms change is below TOL (default 1e-4 scaled: 0.5 mK) or CHUNKS (default 20).
 # STATE (default): the converged mechanics-only temperate Newton state at the contact grounding line, from the run
 # cache (jobs/state_from_cache.py --at AT, default the last evaluation of job 31865's first solve, 2026-11-18 00:14:16)
 #   -> work/flowline_rect_ext/bound_temperate_newton0.npz
@@ -41,7 +41,7 @@ from ess.statefile import load_state, find_name
 s = load_state('$STATE')
 for n in ('GroundedMask', 'ColdTempMask'):
     v = s.frozen[find_name(s.frozen, n)][1]
-    print(f'  {n} (fixed): {int((v > 0.5).sum())} of {len(v)} nodes +1, {int((np.abs(v) < 0.5).sum())} 0, {int((v < -0.5).sum())} -1')"
-python3 -u -m ess run $CFG --state $STATE --heat-only --gl frozen --no-remask --chunks ${CHUNKS:-20} --steps 2 \
+    print(f'  {n} (in the state; ColdTempMask then set +1 everywhere): {int((v > 0.5).sum())} of {len(v)} nodes +1, {int((np.abs(v) < 0.5).sum())} 0, {int((v < -0.5).sum())} -1')"
+python3 -u -m ess run $CFG --state $STATE --heat-only --gl frozen --bed temperate --no-remask --chunks ${CHUNKS:-20} --steps 2 \
     --dt 1e6 --until-tol ${TOL:-1e-4} --save-every 1 --out $OUT
 echo "$(date +%T) done"
