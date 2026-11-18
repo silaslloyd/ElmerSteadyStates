@@ -11,7 +11,7 @@
 # (the steady temperature for that velocity and mask); chunks until the rms change is below TOL (default 1e-4 scaled:
 # 0.5 mK) or CHUNKS (default 20).
 # STATE (default): the converged mechanics-only temperate Newton state at the contact grounding line, from the run
-# cache (jobs/state_from_cache.py --at AT, default the last evaluation of job 31865's first solve, 2026-11-18 00:14)
+# cache (jobs/state_from_cache.py --at AT, default the last evaluation of job 31865's first solve, 2026-11-18 00:14:16)
 #   -> work/flowline_rect_ext/bound_temperate_newton0.npz
 # Output: work/flowline_rect_ext/thermo_heat.npz (and every chunk in thermo_heat_chunks/points/).
 #   sbatch jobs/flowline_heat_steady.cmd
@@ -31,7 +31,7 @@ CFG=configs/flowline_rect_ext.toml
 W=work/flowline_rect_ext
 if [ -z "$STATE" ]; then
     STATE=$W/bound_temperate_newton0.npz
-    [ -f $STATE ] || python3 jobs/state_from_cache.py $W $W/bound_temperate_now.npz $STATE --at "${AT:-2026-11-18 00:14}"
+    [ -f $STATE ] || python3 jobs/state_from_cache.py $W $W/bound_temperate_now.npz $STATE --at "${AT:-2026-11-18 00:14:16}"
 fi
 OUT=${OUT:-$W/thermo_heat.npz}
 echo "$(date +%T) steady heat (subtemperate sliding, friction + strain heating) on the geometry of $STATE -> $OUT"

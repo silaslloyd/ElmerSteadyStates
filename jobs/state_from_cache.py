@@ -47,9 +47,13 @@ def main():
                     if not f.endswith(".tmp.npz") and os.path.getmtime(f) > t_since), key=os.path.getmtime)
     pick = None
     if at is not None:
-        t_at = time.mktime(time.strptime(at, "%Y-%m-%d %H:%M"))
+        sec = at.count(":") == 2                     # with seconds: that instant; without: the middle of the minute
+        t_at = time.mktime(time.strptime(at, "%Y-%m-%d %H:%M:%S" if sec else "%Y-%m-%d %H:%M")) + (0 if sec else 30)
         cand = sorted((f for f in glob.glob(os.path.join(work, "cache", "*.npz")) if not f.endswith(".tmp.npz")),
-                      key=lambda f: abs(os.path.getmtime(f) - t_at - 30))
+                      key=lambda f: abs(os.path.getmtime(f) - t_at))
+        print("cache files nearest: " + ", ".join(
+            f"{os.path.basename(c)[:10]} {time.strftime('%H:%M:%S', time.localtime(os.path.getmtime(c)))}"
+            for c in cand[:3]))
         f = cand[0]
         with np.load(f) as z:
             if len(z["x"]) != s.layout.size:
@@ -85,7 +89,7 @@ def main():
     g0, v0 = frozen[kg]
     frozen[kg] = (g0, np.array([G.get(g, v) for g, v in zip(g0.tolist(), v0)]))
     save_state(out, s.layout, x, s.p, frozen, diag, source=os.path.basename(f))
-    print(f"{which}: {os.path.basename(f)} ({time.strftime('%Y-%m-%d %H:%M', time.localtime(os.path.getmtime(f)))}) "
+    print(f"{which}: {os.path.basename(f)} ({time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(f)))}) "
           f"-> {out}")
 
 
