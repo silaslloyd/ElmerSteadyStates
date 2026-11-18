@@ -5,8 +5,11 @@ and the bed drawn in. The temperature is clipped to the surface temperature (the
 melting (273.15 K); how many nodes were outside is printed. The
 flowline mesh is one element wide: the nodes at the smallest y are used.
 
-    python3 plots/plot_section.py STATE.npz [--x XMIN XMAX (km)] [--tmin K] [--tmax K] [--tsurf K] [--nz 300] [--rock]
+    python3 plots/plot_section.py STATE.npz [--x XMIN XMAX (km)] [--tmin K] [--tmax K] [--tsurf K] [--umax M/YR] [--nz 300] [--rock]
                                   [--out FILE.html]
+
+Buttons switch between the temperature and the velocities u (along the flow; colours up to the fastest grounded
+ice, --umax to set them) and w (vertical, symmetric about 0), from the state's diagnostics Velocity 1 / Velocity 3.
 
 --rock: the bedrock's temperature too (down to the bottom of the 10 zscale rock), not only the ice.
 """
@@ -37,6 +40,7 @@ def main():
     args, tmax = opt(args, "--tmax")
     args, nz = opt(args, "--nz", conv=int, default=300)
     args, tsurf = opt(args, "--tsurf")
+    args, umax = opt(args, "--umax")
     args, out = opt(args, "--out", conv=str)
     rock = "--rock" in args
     args = [a for a in args if a != "--rock"]
@@ -99,6 +103,45 @@ def main():
                          colorbar=dict(title="T (K)"), connectgaps=False,
                          hovertemplate="x %{x:.1f} km<br>z %{y:.0f} m<br>T %{z:.2f} K<extra></extra>",
                          name="T")]
+    # the velocities (the state's diagnostics Velocity 1 / Velocity 3, on the ice nodes), as two more fields
+    fields_v = []
+    for c, lab, cs in ((1, "u (along-flow velocity, m/yr)", "Viridis"), (3, "w (vertical velocity, m/yr)", "RdBu_r")):
+        try:
+            gv, vv = diag[find_name(diag, f"velocity {c}")]
+        except KeyError:
+            print(f"no Velocity {c} in the state: no {lab.split()[0]} view")
+            continue
+        sv = on_side(gv, coords)
+        xv, zv = xz(gv[sv])
+        val = vv[sv]
+        if pzb is not None:
+            m = zv >= np.interp(xv, *pzb) - 0.5
+            xv, zv, val = xv[m], zv[m], val[m]
+        if xwin:
+            m = (xv >= xwin[0]) & (xv <= xwin[1])
+            xv, zv, val = xv[m], zv[m], val[m]
+        xg_, zg_, G_ = column_grid(xv, zv, val, nz)
+        if c == 1:          # up to the fastest grounded ice (the shelf, much faster, saturates; --umax to set it)
+            xgl = None
+            if pzb is not None and pbed is not None:
+                fl = pzb[1] - np.interp(pzb[0], *pbed) > 1.0          # the base above the bed: floating
+                xgl = float(pzb[0][np.argmax(fl)]) if fl.any() else None
+            gsel = (xg_ <= xgl) if xgl is not None else np.ones(len(xg_), bool)
+            hi_ = umax if umax is not None else float(np.nanmax(G_[:, gsel]))
+            lo_, mid = 0.0, None
+        else:
+            hi_ = float(np.nanpercentile(np.abs(G_), 99)) or 1e-6
+            lo_, mid = -hi_, 0.0
+        print(f"{lab}: {np.nanmin(G_):.4g} .. {np.nanmax(G_):.4g}; colours {lo_:.4g} .. {hi_:.4g}")
+        fields_v.append(go.Contour(x=xg_, y=zg_, z=G_, colorscale=cs, zmin=lo_, zmax=hi_,
+                                   contours=dict(start=lo_, end=hi_, size=(hi_ - lo_) / 30, coloring="fill",
+                                                 showlines=False),
+                                   colorbar=dict(title=lab.split()[0] + " (m/yr)"), connectgaps=False, visible=False,
+                                   hovertemplate="x %{x:.1f} km<br>z %{y:.0f} m<br>" + lab.split()[0]
+                                   + " %{z:.4g} m/yr<extra></extra>", name=lab))
+    nfield = 1 + len(fields_v)
+    traces += fields_v
+    nline = 0
     for p_, nm, col, dash in ((pzs, "Zs (surface)", "black", None), (pzb, "Zb (ice base)", "#8e44ad", None),
                               (pbed, "bed", "#7f6000", "dot")):
         if p_ is None:
@@ -109,9 +152,17 @@ def main():
             x_, z_ = x_[m], z_[m]
         traces.append(go.Scatter(x=x_, y=z_, mode="lines", name=nm, line=dict(color=col, width=1.6, dash=dash),
                                  hovertemplate=f"x %{{x:.1f}} km<br>{nm} %{{y:.0f}} m<extra></extra>"))
+        nline += 1
     fig = go.Figure(traces)
+    names = ["temperature"] + [t.name.split(" (")[0] for t in fields_v]
+    buttons = [dict(label=nm, method="update",
+                    args=[{"visible": [j == i for j in range(nfield)] + [True] * nline},
+                          {"title.text": f"{os.path.basename(path)}: {nm}, {title}"}])
+               for i, nm in enumerate(names)]
     fig.update_layout(title=f"{os.path.basename(path)}: temperature, {title}", template="plotly_white",
                       xaxis=dict(title="x (km)"), yaxis=dict(title="z (m)"),
+                      updatemenus=[dict(type="buttons", direction="right", buttons=buttons, x=0.0, y=1.06,
+                                        xanchor="left", yanchor="bottom", showactive=True, active=0)],
                       legend=dict(x=0.01, y=0.01, xanchor="left", yanchor="bottom", bgcolor="rgba(255,255,255,0.7)"))
     out = out or os.path.splitext(path)[0] + "_section.html"
     fig.write_html(out, include_plotlyjs="cdn")
