@@ -516,7 +516,9 @@ def hydrology_cs(x_prof, melt_prof, phi0_prof, hp):
     """The steady CS sheet on a patch, x_prof increasing from the patch head to the grounding line (last point).
     q(x) = int_head^x m; then h from h = hr at the grounding line upstream:
         q = -K(N(h)) (Phi0' - N'(h) h')   =>   dh/dx = (Phi0' + q / K(N(h))) / N'(h)
-    Returns (h (NaN where not reached), q, ok, status: ok | dry | flood)."""
+    Integrated in ln h (h stays positive; stiff as h -> 0), bin by bin (Phi0' is constant on each bin, q linear: the
+    right-hand side is smooth inside a bin, its jumps fall on the bin ends), implicit (Radau).
+    Returns (h (NaN where not reached), q, ok, status: ok | dry | flood | fail)."""
     from scipy.integrate import solve_ivp
     xs = np.asarray(x_prof, float)
     ms = np.nan_to_num(np.asarray(melt_prof, float))
@@ -528,56 +530,67 @@ def hydrology_cs(x_prof, melt_prof, phi0_prof, hp):
     if n < 2:
         return h, q, True, "ok"
     dphi = np.diff(ph) / np.diff(xs)
-    hdry = 1e-6
+    hdry = hp.get("h_dry", 1e-5)                     # "zero": K(N(h)) is ~1e-3 of its value at hr there
+    ldry, lmax = np.log(hdry), np.log(hp["h_max"])
+    verbose = hp.get("verbose")
 
-    def rhs(x, y):
-        hh = min(max(y[0], hdry), 10 * hp["h_max"])
-        j = min(max(np.searchsorted(xs, x) - 1, 0), n - 2)
-        qq = np.interp(x, xs, q)
-        K = cs_K(cs_N(hh, hp), hp)
-        dN = cs_dNdh(hh, hp)
-        if K <= 0 or dN == 0:
-            return [0.0]
-        return [(dphi[j] + qq / K) / dN]
+    def make_rhs(j):                                 # bin j: from xs[j] to xs[j + 1]
+        x0, x1, q0, q1, dp = xs[j], xs[j + 1], q[j], q[j + 1], dphi[j]
+
+        def rhs(x, y):
+            hh = float(np.exp(min(y[0], lmax + 1.0)))
+            qq = q0 + (q1 - q0) * (x - x0) / (x1 - x0)
+            K = cs_K(cs_N(hh, hp), hp)
+            dN = cs_dNdh(hh, hp)
+            if K <= 0 or dN == 0:
+                return [1e3]                         # empty sheet: h falls (going upstream) -> the dry event
+            return [(dp + qq / K) / dN / hh]         # d ln h / dx
+        return rhs
 
     def dry(x, y):
-        return y[0] - hdry
-    dry.terminal, dry.direction = True, -1
+        return y[0] - ldry
+    dry.terminal, dry.direction = True, 0
 
     def flood(x, y):
-        return y[0] - hp["h_max"]
-    flood.terminal, flood.direction = True, 1
+        return y[0] - lmax
+    flood.terminal, flood.direction = True, 0
+    y = np.log(hp["hr"])
+    status, where = "ok", xs[0]
     import warnings
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            sol = solve_ivp(rhs, (xs[-1], xs[0]), [hp["hr"]], t_eval=xs[::-1], events=(dry, flood), method="LSODA",
-                            rtol=1e-8, atol=1e-9, min_step=1e-3)
-    except ValueError as e:
-        if hp.get("verbose"):
-            print(f"    hydrology_cs: solve_ivp raised ValueError ({e}): reported dry at the start")
-        return h, q, False, "dry"
-    got = sol.y[0] if sol.y.size else np.zeros(0)
-    hv = np.full(n, np.nan)
-    hv[::-1][:len(got)] = got
-    dried, flooded = len(sol.t_events[0]) > 0, len(sol.t_events[1]) > 0
-    if sol.status == -1 and not (dried or flooded):
-        xl = sol.t[-1] if len(sol.t) else xs[-1]
-        hl = got[-1] if len(got) else hp["hr"]
-        dried = bool(rhs(xl, [hl])[0] > 0)
-        flooded = not dried
-    if hp.get("verbose"):
-        how = ("dry event" if len(sol.t_events[0]) else "flood event" if len(sol.t_events[1]) else
-               f"solver stopped (status {sol.status}: {sol.message})" if sol.status != 0 else "reached the head")
-        xe = (sol.t_events[0][0] if len(sol.t_events[0]) else sol.t[-1] if len(sol.t) else xs[-1])
-        print(f"    hydrology_cs: {how} at x = {xe / 1e3:.3f} km (h {sol.y[0][-1] if sol.y.size else hp['hr']:.3g} m); "
-              f"{len(got)} of {n} points")
+    for j in range(n - 2, -1, -1):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                sol = solve_ivp(make_rhs(j), (xs[j + 1], xs[j]), [y], method="Radau", events=(dry, flood),
+                                rtol=1e-8, atol=1e-10)
+        except Exception as e:                       # noqa: BLE001
+            status, where = "fail", xs[j + 1]
+            if verbose:
+                print(f"    hydrology_cs: solver error in the bin {xs[j] / 1e3:.3f}..{xs[j + 1] / 1e3:.3f} km: {e}")
+            break
+        if len(sol.t_events[0]):
+            status, where = "dry", float(sol.t_events[0][0])
+            break
+        if len(sol.t_events[1]):
+            status, where = "flood", float(sol.t_events[1][0])
+            break
+        if sol.status != 0:
+            status, where = "fail", float(sol.t[-1])
+            if verbose:
+                print(f"    hydrology_cs: solver stopped in the bin {xs[j] / 1e3:.3f}..{xs[j + 1] / 1e3:.3f} km: "
+                      f"{sol.message}")
+            break
+        y = float(sol.y[0][-1])
+        h[j] = np.exp(y)
+    if verbose:
+        npt = int(np.isfinite(h).sum())
+        print(f"    hydrology_cs: {status} at x = {where / 1e3:.3f} km; h {np.nanmin(h):.3g} .. {np.nanmax(h):.3g} m on "
+              f"{npt} of {n} points")
         K0 = cs_K(cs_N(hp["hr"], hp), hp)
-        for j in range(n - 1, max(n - 5, 0), -1):          # the first bins upstream of the grounding line
+        for j in range(n - 1, max(n - 4, 0), -1):          # the first bins upstream of the grounding line
             print(f"      bin {xs[j - 1] / 1e3:.3f}..{xs[j] / 1e3:.3f} km: Phi0' {dphi[j - 1]:.3e} MPa/m, "
                   f"q {q[j]:.4g} m^2/yr, q/K(hr) {q[j] / K0:.3e} MPa/m, melt {ms[j]:.3e} m/yr")
-    ok = not dried and (not np.isfinite(hv).any() or np.nanmin(hv) >= 0)
-    return hv, q, bool(ok), ("dry" if dried else "flood" if flooded else "ok")
+    return h, q, status == "ok", status
 
 
 def _bed(frozen, diag):
