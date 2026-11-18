@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """A flowline state's temperature as a filled-contour section (plotly): x along the flow, z elevation, the ice
 temperature on a regular z grid column by column (no smoothing across columns), the upper surface Zs, the ice base Zb
-and the bed drawn in. The flowline mesh is one element wide: the nodes at the smallest y are used.
+and the bed drawn in. The temperature is clipped at melting (273.15 K; how many nodes were above it is printed). The
+flowline mesh is one element wide: the nodes at the smallest y are used.
 
     python3 plots/plot_section.py STATE.npz [--x XMIN XMAX (km)] [--tmin K] [--tmax K] [--nz 300] [--rock]
                                   [--out FILE.html]
@@ -80,10 +81,13 @@ def main():
     if xwin:
         m = (xt >= xwin[0]) & (xt <= xwin[1])
         xt, zt, T = xt[m], zt[m], T[m]
+    above = int(np.sum(T > 273.15 + 1e-6))
+    T = np.minimum(T, 273.15)                    # clipped at melting (the colours); nodes above it are reported
     xg, zg, G = column_grid(xt, zt, T, nz)
     lo = tmin if tmin is not None else float(np.nanmin(G))
-    hi = tmax if tmax is not None else float(np.nanmax(G))
-    print(f"{path}: {len(xg)} columns, T {np.nanmin(G):.2f} .. {np.nanmax(G):.2f} K (colours {lo:.2f} .. {hi:.2f})")
+    hi = tmax if tmax is not None else 273.15
+    print(f"{path}: {len(xg)} columns, T {np.nanmin(G):.2f} .. {np.nanmax(G):.2f} K after clipping at 273.15 "
+          f"({above} plotted nodes were above it); colours {lo:.2f} .. {hi:.2f}")
     traces = [go.Contour(x=xg, y=zg, z=G, colorscale="RdBu_r", zmin=lo, zmax=hi,
                          contours=dict(start=lo, end=hi, size=(hi - lo) / 30, coloring="fill",
                                        showlines=False),
