@@ -10,7 +10,8 @@ flowline mesh is one element wide: the nodes at the smallest y are used.
                                   [--contour] [--no-clip] [--rock]
                                   [--out FILE.html]
 
-Buttons switch between the temperature and the velocities u (along the flow; colours up to the fastest grounded
+Above the plot: u max (the speed's upper colour limit, typed in), u min (the lower limit on the log scale) and a "log u"
+toggle (log10 |u|, floored at 1e-3 m/yr). Buttons switch between the temperature and the velocities u (along the flow; colours up to the fastest grounded
 ice, --umax to set them) and w (vertical, symmetric about 0), from the state's diagnostics Velocity 1 / Velocity 3.
 
 A heatmap of at most --nx columns (averaged along x) x --nz levels (the page stays fast); --contour: filled contours
@@ -162,6 +163,7 @@ def build(go, path, a):
             gsel = (xg_ <= xgl) if xgl is not None else np.ones(len(xg_), bool)
             hi_ = a["umax"] if a["umax"] is not None else float(np.nanmax(G_[:, gsel]))
             lo_ = 0.0
+            ugrid = (xg_, zg_, G_)
         else:
             hi_ = float(np.nanpercentile(np.abs(G_), 99)) or 1e-6
             lo_ = -hi_
@@ -171,6 +173,17 @@ def build(go, path, a):
                                lab, visible=False))
         names.append(lab.split(" (")[0])
         ranges.append((lo_, hi_))
+    ulog_lo = None
+    if "u" in names:            # log10 |u| (the page's "log u" toggle), floored at 1e-3 m/yr; after the fields
+        xg_, zg_, G_ = ugrid
+        with np.errstate(invalid="ignore", divide="ignore"):
+            L_ = np.log10(np.maximum(np.abs(G_), 1e-3)).astype(np.float32)
+        L_[~np.isfinite(G_)] = np.nan
+        pos = np.abs(G_[np.isfinite(G_) & (np.abs(G_) > 1e-3)])
+        ulog_lo = float(np.log10(np.percentile(pos, 1))) if pos.size else -3.0
+        ftr.append(field_trace(go, contour, xg_, zg_, L_, ulog_lo, 0.0, "Viridis", "u (m/yr)",
+                               "x %{x:.1f} km<br>z %{y:.0f} m<br>log10 u %{z:.3f}<extra></extra>",
+                               "log10 u (along-flow velocity, m/yr)", visible=False))
     lines = []
     for p_, nm, col, dash in ((pzs, "Zs (surface)", "black", None), (pzb, "Zb (ice base)", "#8e44ad", None),
                               (pbed, "bed", "#7f6000", "dot")):
@@ -192,7 +205,7 @@ def build(go, path, a):
                                 hovertemplate=f"patch head x {xh:.2f} km<extra></extra>"))
     lab = (f"d = {d / 1e3:.1f} km (temperate from {(xgl_m - d) / 1e3:.1f} km)" if d is not None and xgl_m is not None
            else os.path.basename(path))
-    return ftr, lines, names, ranges, f"{lab}, {title}"
+    return ftr, lines, names, ranges, f"{lab}, {title}", ulog_lo
 
 
 def main():
@@ -240,8 +253,17 @@ def main():
             if a["contour"]:
                 b[0][j].update(contours=dict(start=lo, end=hi, size=(hi - lo) / 30))
         print(f"{names[j]}: colours {lo:.4g} .. {hi:.4g} (all states)")
+    uj = names.index("u") if "u" in names else -1
+    umax0 = max(b[3][uj][1] for b in built) if uj >= 0 else 1.0
+    umin0 = 10 ** min(b[5] for b in built) if uj >= 0 else 1e-3
+    if uj >= 0:                 # the log u traces: the same upper limit, ticks at the powers of ten
+        lo_l, hi_l = np.log10(umin0), np.log10(umax0)
+        tv = list(range(int(np.floor(lo_l)), int(np.ceil(hi_l)) + 1))
+        for b in built:
+            b[0][nf].update(zmin=lo_l, zmax=hi_l, colorbar=dict(title="u (m/yr)", tickvals=tv,
+                                                                ticktext=[f"{10.0 ** v:g}" for v in tv]))
     traces, per = [], []
-    for k, (ftr, lines, _, _, _) in enumerate(built):
+    for k, (ftr, lines, _, _, _, _) in enumerate(built):
         for j, t in enumerate(ftr):
             t.update(visible=(k == 0 and j == 0))
         for t in lines:
@@ -273,17 +295,40 @@ def main():
     # the buttons (field) and the slider (state) together: a small script keeps both choices and sets the visibility
     js = """
 var gd = document.getElementById('{plot_id}');
-var NF = %d, PER = %s, TITLES = %s, cur = {s: 0, f: 0};
+var NF = %d, NFT = %d, UJ = %d, PER = %s, TITLES = %s, cur = {s: 0, f: 0};
+var LOG = false;
 function show() {
-  var v = [];
+  var v = [], t = (cur.f === UJ && LOG) ? NF : cur.f;      // u with "log u" on: the log trace
   for (var s = 0; s < PER.length; s++)
-    for (var j = 0; j < PER[s]; j++) v.push(s === cur.s && (j >= NF || j === cur.f));
+    for (var j = 0; j < PER[s]; j++) v.push(s === cur.s && (j >= NFT || j === t));
   Plotly.restyle(gd, {visible: v});
-  Plotly.relayout(gd, {'title.text': TITLES[cur.s][cur.f]});
+  Plotly.relayout(gd, {'title.text': TITLES[cur.s][cur.f] + ((cur.f === UJ && LOG) ? ' (log scale)' : '')});
 }
 gd.on('plotly_buttonclicked', function (e) { cur.f = e.active; show(); });
 gd.on('plotly_sliderchange', function (e) { cur.s = parseInt(e.step.value); show(); });
-""" % (nf, json.dumps(per), json.dumps(titles))
+if (UJ >= 0) {              // the speed's colour limits and the log toggle, above the plot
+  var lin = [], lg = [], o = 0;
+  for (var s = 0; s < PER.length; s++) { lin.push(o + UJ); lg.push(o + NF); o += PER[s]; }
+  var box = document.createElement('div');
+  box.style.cssText = 'font: 13px sans-serif; margin: 6px 0 0 80px;';
+  box.innerHTML = 'u max (m/yr) <input id="ess_umax" type="number" step="any" style="width: 7em" value="%s"> ' +
+    '&nbsp; u min, log scale (m/yr) <input id="ess_umin" type="number" step="any" style="width: 7em" value="%s"> ' +
+    '&nbsp; <label><input id="ess_ulog" type="checkbox"> log u</label>';
+  gd.parentNode.insertBefore(box, gd);
+  var apply = function () {
+    var hi = parseFloat(document.getElementById('ess_umax').value), lo = parseFloat(document.getElementById('ess_umin').value);
+    LOG = document.getElementById('ess_ulog').checked;
+    if (hi > 0) {
+      Plotly.restyle(gd, {zmax: hi}, lin);
+      var l0 = Math.log10(lo > 0 && lo < hi ? lo : hi / 1e4), l1 = Math.log10(hi), tv = [], tt = [];
+      for (var k = Math.floor(l0); k <= Math.ceil(l1); k++) { tv.push(k); tt.push(String(Math.pow(10, k))); }
+      Plotly.restyle(gd, {zmin: l0, zmax: l1, 'colorbar.tickvals': [tv], 'colorbar.ticktext': [tt]}, lg);
+    }
+    if (cur.f === UJ) show();
+  };
+  ['ess_umax', 'ess_umin', 'ess_ulog'].forEach(function (id) { document.getElementById(id).addEventListener('change', apply); });
+}
+""" % (nf, nf + (1 if uj >= 0 else 0), uj, json.dumps(per), json.dumps(titles), f"{umax0:.4g}", f"{umin0:.3g}")
     out = out or (os.path.splitext(paths[0])[0] + ("_section.html" if len(paths) == 1 else "_sections.html"))
     fig.write_html(out, include_plotlyjs="cdn", post_script=js)
     print(f"-> {out} ({len(paths)} state(s), {os.path.getsize(out) / 1e6:.1f} MB)")
