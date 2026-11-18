@@ -14,7 +14,10 @@
 # cache (jobs/state_from_cache.py --at AT, default the last evaluation of job 31865's first solve, 2026-11-18 00:14:16)
 #   -> work/flowline_rect_ext/bound_temperate_newton0.npz
 # Output: work/flowline_rect_ext/thermo_heat.npz (and every chunk in thermo_heat_chunks/points/).
+# Variants (env, passed through by sbatch): ESS_STRAIN_HEAT_POSITIVE=1 (the strain heating only where positive: the
+# nodal projection overshoots below zero at the grounding line); ESS_NO_CONVECTION=1 (no advection, a comparison).
 #   sbatch jobs/flowline_heat_steady.cmd
+#   ESS_STRAIN_HEAT_POSITIVE=1 OUT=work/flowline_rect_ext/thermo_heat_pos.npz sbatch jobs/flowline_heat_steady.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
@@ -35,6 +38,8 @@ if [ -z "$STATE" ]; then
 fi
 OUT=${OUT:-$W/thermo_heat.npz}
 echo "$(date +%T) steady heat (subtemperate sliding, friction + strain heating) on the geometry of $STATE -> $OUT"
+[ "$ESS_STRAIN_HEAT_POSITIVE" = 1 ] && echo "  strain heating: positive part only"
+[ "$ESS_NO_CONVECTION" = 1 ] && echo "  NO advection in the ice (comparison)"
 python3 -c "
 import sys, numpy as np; sys.path.insert(0, '.')
 from ess.statefile import load_state, find_name

@@ -144,6 +144,15 @@ class ElmerModel(Model):
         self.strain_heat = bool(e.get("strain_heat", False))
         if os.environ.get("ESS_STRAIN_HEAT") is not None:     # env (tests): 0 / 1 overrides [elmer] strain_heat
             self.strain_heat = os.environ["ESS_STRAIN_HEAT"] not in ("0", "", "false", "False")
+        # [elmer] strain_heat_positive (env ESS_STRAIN_HEAT_POSITIVE=1): the strain heating as a heat source only where it
+        # is positive. DeformationalHeatSolver projects 2 eta e:e onto the nodes with the consistent mass matrix, which
+        # overshoots below zero next to sharp gradients (the grounding line): negative "strain heating" cools the ice
+        # there. Off by default (runs and caches unchanged).
+        self.strain_heat_positive = (os.environ.get("ESS_STRAIN_HEAT_POSITIVE") or
+                                     str(e.get("strain_heat_positive", ""))).lower() in ("1", "true")
+        # [elmer] convection = false (env ESS_NO_CONVECTION=1): the ice's heat equation without advection (Convection =
+        # "None"), e.g. to see what advection does to a steady temperature. Default: advection on ("Computed")
+        self.no_convection = (os.environ.get("ESS_NO_CONVECTION") == "1" or e.get("convection", True) is False)
         # heat-only runs (`ess temperate-sweep --heat-only`): the free surface is not solved, so the geometry
         # stays as in the input state; Stokes still runs (same velocity every step on a frozen geometry
         # when nothing in the flow depends on temperature)
@@ -760,7 +769,9 @@ End
             # strain heating (ElmerStreams: on): DeformationalHeatSolver + volumetric heat source
             "__STRAIN_EXEC__": '"Always"' if self.strain_heat and not self.stokes_only else '"Never"',
             "__HEAT_EXEC__": '\n  Exec Solver = "Never"   ! --stokes-only' if self.stokes_only else "",
-            "__HEAT_SOURCE__": ('  Heat Source = Variable Strain Heating\n    Real Lua "tx[0]/rhoi"'
+            "__HEAT_SOURCE__": (('  Heat Source = Variable Strain Heating\n    Real Lua "math.max(tx[0], 0)/rhoi"'
+                                 '   ! [elmer] strain_heat_positive' if self.strain_heat_positive else
+                                 '  Heat Source = Variable Strain Heating\n    Real Lua "tx[0]/rhoi"')
                                 if self.strain_heat else "  ! no Heat Source: strain heating off ([elmer] strain_heat)"),
             "__HTC__": f"{self.surface_transfer:g}",
             "__SURFACE_T__": ('  External Temperature = Variable height\n'
@@ -807,6 +818,13 @@ End
                     raise ValueError("periodic_sides: expected the two FreeSurfaceSolver instances (Zb, Zs) in the template")
                 lib = os.path.join(os.path.dirname(self.periodic_lib), "ESSFreeSurface")
                 text = text.replace(fs, f'"{lib}" "FreeSurfaceSolver"   ! periodic-aware limiter')
+        if self.no_convection:                  # the ice's heat equation without advection (a comparison)
+            k = text.index('Name = "ice equations"')
+            j = text.index("\nEnd", k)
+            blk = text[k:j]
+            if '  Convection = "Computed"' not in blk:
+                raise ValueError("convection = false: no Convection line in the ice equation of the template")
+            text = text[:k] + blk.replace('  Convection = "Computed"', '  Convection = "None"   ! [elmer] convection = false', 1) + text[j:]
         if self.slab:
             text = self._slab(text)
         if self.vertical_refine != 1:
