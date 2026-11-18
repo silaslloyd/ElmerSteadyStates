@@ -31,6 +31,10 @@ export LD_LIBRARY_PATH=$ELMER_PREFIX/lib:$ELMER_PREFIX/lib/elmersolver:$ELMER_PR
 export LIBRARY_PATH=$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}
 export ESS_MPIRUN="mpirun -np {n} --bind-to none"
 unset ESS_SLIDING                              # the config's subtemperate sliding
+# the sea-pressure spring (rho_w g dt at the floating base) at the map's dt, not the 1e6 yr of these steps: with the
+# step's dt it is 20000x stiffer, pins the floating base and stalls the ice next to the grounding line (u ~ 0 in a
+# wedge after it, 2026-11-18), so the velocity would not be the steady state's
+export ESS_SEA_SPRING_DT=${ESS_SEA_SPRING_DT:-50}
 CFG=configs/flowline_rect_ext.toml
 W=work/flowline_rect_ext
 if [ -z "$STATE" ]; then
@@ -42,6 +46,7 @@ echo "$(date +%T) steady heat (subtemperate sliding, friction + strain heating) 
 [ "$ESS_STRAIN_HEAT_POSITIVE" = 1 ] && echo "  strain heating: positive part only"
 [ "$ESS_NO_CONVECTION" = 1 ] && echo "  NO advection in the ice (comparison)"
 [ "$ESS_HEAT_LIMITER" = 1 ] && echo "  heat limiter: T <= T0 in the ice"
+echo "  sea spring time step $ESS_SEA_SPRING_DT yr"
 python3 -c "
 import sys, numpy as np; sys.path.insert(0, '.')
 from ess.statefile import load_state, find_name
