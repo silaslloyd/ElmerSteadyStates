@@ -1260,6 +1260,32 @@ def cmd_temperate_sweep(args):
     log.info(f"temperate-sweep: {sum(str(r_['converged']) == '1' for r_ in rows)} of {len(rows)} converged; {csvf}")
 
 
+def cmd_sweep(args):
+    """marine: steady states with a temperate patch of length d from the grounding line upstream, d swept in graded
+    steps (ess/spectrum.py run_sweep_marine), the grounding line by contact between Newton solves"""
+    cfg, model, saved = _setup(args)
+    if not _marine(model):
+        raise SystemExit("ess sweep: marine configs only (the patch is measured from the grounding line)")
+    from dataclasses import replace as _replace
+    from .spectrum import gl_position, run_sweep_marine
+    _patch_diagnostics(model)
+    prob = _problem(cfg, model)
+    p = saved.p if args.p is None else args.p
+    nopt = newton_options(cfg)
+    if args.maxit:
+        nopt = _replace(nopt, maxit=args.maxit)
+    xg = gl_position(saved.frozen, saved.diag)
+    d0 = args.d_start_km * 1e3 if args.d_start_km is not None else xg       # default: the whole grounded bed
+    d1 = args.d_end_km * 1e3
+    out = args.out or os.path.join(cfg["_work"], f"sweep_p{p:g}_{'down' if d1 < d0 else 'up'}")
+    log.info(f"sweep: from {args.state}, into {out}")
+    rows = run_sweep_marine(cfg, prob, model, saved, prob.scale(saved.x), p, nopt, out, d_start=d0, d_end=d1,
+                            frac=args.step_frac, smin=args.step_min_km * 1e3, smax=args.step_max_km * 1e3,
+                            gl_rounds=args.gl_rounds)
+    n = sum(1 for r_ in rows if str(r_.get("converged")) == "1")
+    log.info(f"sweep: {n} converged states of {len(rows)} in {out}/sweep.csv")
+
+
 def cmd_spectrum_down(args):
     """From a (fully) temperate steady state (e.g. a temperate-sweep point at 273.15 K): temperate patches of
     n, n - k_step, ... columns from the terminus, the cold bed spreading from the divide; full Newton for each
@@ -1703,6 +1729,21 @@ def main(argv=None):
     s.add_argument("--heat-dt", type=float, default=1e6, help="--heat-only: step length (yr), default 1e6")
     s.add_argument("--heat-steps", type=int, default=2, help="--heat-only: steps, default 2")
     s.set_defaults(fn=cmd_temperate_sweep)
+
+    s = sub.add_parser("sweep")
+    common(s)
+    s.add_argument("--d-start-km", type=float,
+                   help="the first temperate patch length (km from the grounding line upstream; default: the whole "
+                        "grounded bed, fully temperate)")
+    s.add_argument("--d-end-km", type=float, default=0.0, help="the last patch length (km; default 0: all cold)")
+    s.add_argument("--step-frac", type=float, default=0.1, help="each step this fraction of the current length")
+    s.add_argument("--step-min-km", type=float, default=1.0, help="the smallest step (km)")
+    s.add_argument("--step-max-km", type=float, default=20.0, help="the largest step (km)")
+    s.add_argument("--gl-rounds", type=int, default=6,
+                   help="Newton solves per length with the grounding line moved by contact in between")
+    s.add_argument("--maxit", type=int, help="Newton iterations per solve (overrides [newton] maxit)")
+    s.add_argument("--out", help="output folder (default <work>/sweep_p<P>_down or _up)")
+    s.set_defaults(fn=cmd_sweep)
 
     s = sub.add_parser("spectrum-down")
     common(s)

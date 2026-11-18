@@ -715,3 +715,129 @@ def run_spectrum_marine(prob, model, saved, y0, p, newton_opt, outdir, *, d_step
         n_bad = n_bad + 1 if (not r.converged or not hydro_ok) and d > 0 else 0
         d += d_step
     return rows
+
+
+# ---------------------------------------------------------------- the marine sweep (ess sweep)
+SCOLS = ["d_km", "x_gl_km", "x_head_km", "gl_rounds", "converged", "newton_its", "rms_F", "n_cold_above_Tm",
+         "Tb_cold_max", "n_temp_refreezing", "step_km", "note"]
+
+
+def sweep_lengths(d_start, d_end, frac, smin, smax):
+    """patch lengths from d_start towards d_end (either direction): each step frac x the current length, clipped to
+    [smin, smax] (m), the last one exactly d_end"""
+    out, d = [float(d_start)], float(d_start)
+    sgn = -1.0 if d_end < d_start else 1.0
+    while (d_end - d) * sgn > 1e-6:
+        st = min(max(frac * d, smin), smax)
+        d = round((d + sgn * st) / 100.0) * 100.0          # whole 100 m (the state files are named by it)
+        if (d_end - d) * sgn < 0.5 * smin:
+            d = float(d_end)
+        out.append(d)
+    return out
+
+
+def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_start, d_end, frac=0.1, smin=1e3,
+                     smax=20e3, gl_rounds=6, tol_T=0.0):
+    """Steady states with a temperate patch of length d (m) from the grounding line upstream (cold upstream of it,
+    every floating node temperate; patch_mask), for d from d_start to d_end in graded steps (sweep_lengths), each
+    from the previous one's state. For each d: Newton with both masks frozen; then the grounding line by CONTACT
+    (cli._contact_mask, a short contact run from the converged state: the transient runs' criterion); if contact moves
+    it, the patch is set again from the new grounding line and Newton solves again (up to gl_rounds). Nothing is
+    judged: the counts of cold bed nodes above melting and of temperate nodes refreezing are only recorded. A Newton
+    failure halves the step back from the last converged length (down to smin, then the sweep stops).
+    Output: outdir/sweep.csv (one row per d) and outdir/points/state_XXXXX.npz (XXXXX = d in 100 m). Resumes after
+    the last converged row."""
+    from .cli import _contact_mask
+    from .newton import newton_krylov
+    from .statefile import load_state
+    os.makedirs(os.path.join(outdir, "points"), exist_ok=True)
+    csvf = os.path.join(outdir, "sweep.csv")
+    rows = []
+    if os.path.exists(csvf):
+        with open(csvf) as f:
+            rows = list(csv.DictReader(f))
+    layout, frozen = saved.layout, saved.frozen
+    kct, kgm = find_name(frozen, "ColdTempMask"), find_name(frozen, "GroundedMask")
+    y, diag = y0, saved.diag
+    plan = sweep_lengths(d_start, d_end, frac, smin, smax)
+    done = [r_ for r_ in rows if str(r_.get("converged")) == "1"]
+    if done:
+        d_last = float(done[-1]["d_km"]) * 1e3
+        s = load_state(os.path.join(outdir, "points", f"state_{int(round(d_last / 100)):05d}.npz"))
+        y, diag = prob.scale(s.x), s.diag
+        frozen[kgm] = s.frozen[find_name(s.frozen, "GroundedMask")]
+        plan = [d_ for d_ in sweep_lengths(d_last, d_end, frac, smin, smax)[1:]]
+        log.info(f"sweep: resuming after d = {d_last / 1e3:g} km ({len(plan)} lengths left)")
+    xg0 = gl_position(frozen, diag)
+    log.info(f"sweep: p = {p:g}, grounding line {xg0 / 1e3:.2f} km; patch lengths {plan[0] / 1e3:g} .. "
+             f"{plan[-1] / 1e3:g} km, {len(plan)} states (steps {frac:g} x d in {smin / 1e3:g} .. {smax / 1e3:g} km); "
+             f"grounding line by contact between Newton solves (up to {gl_rounds} rounds)")
+    d_prev = float(done[-1]["d_km"]) * 1e3 if done else None
+    y_prev, diag_prev, gm_prev = y, diag, frozen[kgm]
+    i = 0
+    while i < len(plan):
+        d = plan[i]
+        r, x, rounds, note = None, None, 0, ""
+        for rounds in range(1, gl_rounds + 1):
+            g_ct, ct, xg = patch_mask(frozen, diag, d)
+            frozen[kct] = (g_ct, ct)
+            r = newton_krylov(prob, y, p, newton_opt, label=f"sweep d={d / 1e3:g} km (GL round {rounds})")
+            x = prob.unscale(r.y)
+            diag = prob.last_diag
+            if not r.converged:
+                break
+            y = r.y
+            xc, gmrec, crep = _contact_mask(cfg, model, type("S", (), {"frozen": frozen})(), x, p)
+            moved = crep["to_grounded"] + crep["to_floating"]
+            if moved == 0:
+                break
+            frozen[kgm] = gmrec
+            y = prob.scale(xc)
+            log.info(f"sweep: d = {d / 1e3:g} km: contact moves the grounding line {crep.get('x_gl', np.nan) / 1e3:.2f}"
+                     f" -> {crep.get('x_gl_new', np.nan) / 1e3:.2f} km ({crep['to_grounded']} grounded, "
+                     f"{crep['to_floating']} floated); the patch set again from it, solving again")
+        else:
+            note = f"grounding line still moving after {gl_rounds} rounds"
+        g_ct, ct, xg = patch_mask(frozen, diag, d)
+        step = abs(d - d_prev) if d_prev is not None else 0.0
+        row = dict(d_km=d / 1e3, x_gl_km=xg / 1e3, x_head_km=(xg - d) / 1e3, gl_rounds=rounds,
+                   converged=int(r.converged), newton_its=r.iterations,
+                   rms_F=r.history[-1] if r.history else np.nan, step_km=step / 1e3)
+        if r.converged:
+            Tb = basal_temperature(layout, x, g_ct)
+            _, xpos, grounded = _bed(frozen, diag)
+            cold, temp = grounded & (ct < 0), grounded & (ct > 0)
+            L = _get(diag, "Temperature Loads")
+            refr = (temp & (_on(*L, g_ct, fill=-1.0) > 0)) if L is not None else np.zeros(len(g_ct), bool)
+            row.update(n_cold_above_Tm=int((cold & (Tb > T0 + tol_T)).sum()),
+                       Tb_cold_max=float(np.nanmax(Tb[cold])) if cold.any() else np.nan,
+                       n_temp_refreezing=int(refr.sum()))
+            save_state(os.path.join(outdir, "points", f"state_{int(round(d / 100)):05d}.npz"), layout, x, p,
+                       dict(frozen), diag, sweep_d=d, x_gl=xg)
+        else:
+            note = "Newton did not converge"
+        row["note"] = note
+        rows.append({c: row.get(c, "") for c in SCOLS})
+        with open(csvf + ".tmp", "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=SCOLS)
+            w.writeheader()
+            w.writerows(rows)
+        os.replace(csvf + ".tmp", csvf)
+        log.info(f"sweep: d = {d / 1e3:g} km: {'converged' if r.converged else 'FAILED'} ({r.iterations} its, "
+                 f"{rounds} GL round(s)); GL {xg / 1e3:.2f} km, head {(xg - d) / 1e3:.2f} km"
+                 + (f"; {row.get('n_cold_above_Tm')} cold nodes above melting, {row.get('n_temp_refreezing')} "
+                    f"temperate refreezing" if r.converged else "") + (f"; {note}" if note else ""))
+        if r.converged:
+            d_prev, y_prev, diag_prev, gm_prev = d, y, diag, frozen[kgm]
+            i += 1
+            continue
+        # a failure: back to the last converged state, half the step
+        if d_prev is None or abs(d - d_prev) <= smin * 1.01:
+            log.warning(f"sweep: Newton failed at d = {d / 1e3:g} km with the smallest step: stopping")
+            break
+        y, diag = y_prev, diag_prev
+        frozen[kgm] = gm_prev
+        half = round((d_prev + 0.5 * (d - d_prev)) / 100.0) * 100.0
+        plan = plan[:i] + [half] + sweep_lengths(half, plan[-1], frac, smin, smax)[1:]
+        log.info(f"sweep: retrying with half the step: d = {half / 1e3:g} km")
+    return rows
