@@ -56,9 +56,23 @@ def main():
             for c in cand[:3]))
         f = cand[0]
         with np.load(f) as z:
-            if len(z["x"]) != s.layout.size:
-                raise SystemExit(f"{f}: not on REF's layout")
-            pick = (f, z["x"].copy(), {k[3:]: (z["g::" + k[3:]], z[k]) for k in z.files if k.startswith("v::")})
+            xc = z["x"].copy()
+            dg = {k[3:]: (z["g::" + k[3:]], z[k]) for k in z.files if k.startswith("v::")}
+        if len(xc) != s.layout.size:
+            # a mechanics-only run (ess newton/run --stokes-only): its state is REF's without Temperature (moved to the
+            # frozen fields): the geometry from the cache, the temperature REF's
+            mech = [b for b in s.layout.blocks if b.name.lower() != "temperature"]
+            if len(xc) != sum(len(b.gids) for b in mech):
+                raise SystemExit(f"{f}: neither REF's layout ({s.layout.size}) nor its geometry blocks "
+                                 f"({sum(len(b.gids) for b in mech)}): {len(xc)} values")
+            parts, i = {}, 0
+            for b in mech:
+                parts[b.name] = xc[i:i + len(b.gids)]
+                i += len(b.gids)
+            full = s.layout.split(s.x)
+            xc = np.concatenate([parts.get(b.name, full[b.name]) for b in s.layout.blocks])
+            print(f"{os.path.basename(f)}: a mechanics-only state (Zs, Zb); the temperature from REF")
+        pick = (f, xc, dg)
         which = "at " + at
         files = []
     for f in reversed(files):
