@@ -5,11 +5,15 @@ and the bed drawn in. The temperature is clipped to the surface temperature (the
 melting (273.15 K); how many nodes were outside is printed. The
 flowline mesh is one element wide: the nodes at the smallest y are used.
 
-    python3 plots/plot_section.py STATE.npz [--x XMIN XMAX (km)] [--tmin K] [--tmax K] [--tsurf K] [--umax M/YR] [--nz 300] [--rock]
+    python3 plots/plot_section.py STATE.npz [--x XMIN XMAX (km)] [--tmin K] [--tmax K] [--tsurf K] [--umax M/YR] [--nz 150] [--nx 800]
+                                  [--contour] [--rock]
                                   [--out FILE.html]
 
 Buttons switch between the temperature and the velocities u (along the flow; colours up to the fastest grounded
 ice, --umax to set them) and w (vertical, symmetric about 0), from the state's diagnostics Velocity 1 / Velocity 3.
+
+A heatmap of at most --nx columns (averaged along x) x --nz levels (the page stays fast); --contour: filled contours
+instead (smoother, much slower in the browser).
 
 --rock: the bedrock's temperature too (down to the bottom of the 10 zscale rock), not only the ice.
 """
@@ -25,6 +29,37 @@ from plot_state import column_grid, load, on_side  # noqa: E402
 from ess.statefile import find_name  # noqa: E402
 
 
+def binned(x, z, v, nz, nx):
+    """column_grid, then the columns averaged into at most nx bins along x (the page stays light)"""
+    xg, zg, G = column_grid(x, z, v, nz)
+    if len(xg) <= nx:
+        return xg, zg, G.astype(np.float32)
+    edges = np.linspace(xg[0], xg[-1], nx + 1)
+    k = np.clip(np.searchsorted(edges, xg, side="right") - 1, 0, nx - 1)
+    Gb = np.full((len(zg), nx), np.nan, np.float32)
+    xb = np.full(nx, np.nan)
+    with np.errstate(invalid="ignore"):
+        for b in range(nx):
+            m = k == b
+            if m.any():
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", category=RuntimeWarning)
+                    Gb[:, b] = np.nanmean(G[:, m], axis=1)
+                xb[b] = xg[m].mean()
+    ok = np.isfinite(xb)
+    return xb[ok], zg, Gb[:, ok]
+
+
+def field_trace(go, contour, x, z, G, lo, hi, cs, cbt, hov, name, visible=True):
+    if contour:
+        return go.Contour(x=x, y=z, z=G, colorscale=cs, zmin=lo, zmax=hi, visible=visible,
+                          contours=dict(start=lo, end=hi, size=(hi - lo) / 30, coloring="fill", showlines=False),
+                          colorbar=dict(title=cbt), connectgaps=False, hovertemplate=hov, name=name)
+    return go.Heatmap(x=x, y=z, z=G, colorscale=cs, zmin=lo, zmax=hi, visible=visible, zsmooth=False,
+                      colorbar=dict(title=cbt), hoverongaps=False, hovertemplate=hov, name=name)
+
+
 def opt(args, name, n=1, conv=float, default=None):
     if name not in args:
         return args, default
@@ -38,7 +73,10 @@ def main():
     args, xwin = opt(args, "--x", n=2)
     args, tmin = opt(args, "--tmin")
     args, tmax = opt(args, "--tmax")
-    args, nz = opt(args, "--nz", conv=int, default=300)
+    args, nz = opt(args, "--nz", conv=int, default=150)
+    args, nx = opt(args, "--nx", conv=int, default=800)
+    contour = "--contour" in args               # filled contours (slow in the browser) instead of a heatmap
+    args = [a for a in args if a != "--contour"]
     args, tsurf = opt(args, "--tsurf")
     args, umax = opt(args, "--umax")
     args, out = opt(args, "--out", conv=str)
@@ -92,17 +130,13 @@ def main():
     ts = tsurf if tsurf is not None else float(np.load(path)["p"])
     above, below = int(np.sum(T > 273.15 + 1e-6)), int(np.sum(T < ts - 1e-6))
     T = np.clip(T, ts, 273.15)
-    xg, zg, G = column_grid(xt, zt, T, nz)
+    xg, zg, G = binned(xt, zt, T, nz, nx)
     lo = tmin if tmin is not None else ts
     hi = tmax if tmax is not None else 273.15
     print(f"{path}: {len(xg)} columns, T clipped to {ts:.2f} .. 273.15 K ({above} plotted nodes were above melting, "
           f"{below} below the surface temperature); colours {lo:.2f} .. {hi:.2f}")
-    traces = [go.Contour(x=xg, y=zg, z=G, colorscale="RdBu_r", zmin=lo, zmax=hi,
-                         contours=dict(start=lo, end=hi, size=(hi - lo) / 30, coloring="fill",
-                                       showlines=False),
-                         colorbar=dict(title="T (K)"), connectgaps=False,
-                         hovertemplate="x %{x:.1f} km<br>z %{y:.0f} m<br>T %{z:.2f} K<extra></extra>",
-                         name="T")]
+    traces = [field_trace(go, contour, xg, zg, G, lo, hi, "RdBu_r", "T (K)",
+                          "x %{x:.1f} km<br>z %{y:.0f} m<br>T %{z:.2f} K<extra></extra>", "T")]
     # the velocities (the state's diagnostics Velocity 1 / Velocity 3, on the ice nodes), as two more fields
     fields_v = []
     for c, lab, cs in ((1, "u (along-flow velocity, m/yr)", "Viridis"), (3, "w (vertical velocity, m/yr)", "RdBu_r")):
@@ -120,7 +154,7 @@ def main():
         if xwin:
             m = (xv >= xwin[0]) & (xv <= xwin[1])
             xv, zv, val = xv[m], zv[m], val[m]
-        xg_, zg_, G_ = column_grid(xv, zv, val, nz)
+        xg_, zg_, G_ = binned(xv, zv, val, nz, nx)
         if c == 1:          # up to the fastest grounded ice (the shelf, much faster, saturates; --umax to set it)
             xgl = None
             if pzb is not None and pbed is not None:
@@ -133,12 +167,9 @@ def main():
             hi_ = float(np.nanpercentile(np.abs(G_), 99)) or 1e-6
             lo_, mid = -hi_, 0.0
         print(f"{lab}: {np.nanmin(G_):.4g} .. {np.nanmax(G_):.4g}; colours {lo_:.4g} .. {hi_:.4g}")
-        fields_v.append(go.Contour(x=xg_, y=zg_, z=G_, colorscale=cs, zmin=lo_, zmax=hi_,
-                                   contours=dict(start=lo_, end=hi_, size=(hi_ - lo_) / 30, coloring="fill",
-                                                 showlines=False),
-                                   colorbar=dict(title=lab.split()[0] + " (m/yr)"), connectgaps=False, visible=False,
-                                   hovertemplate="x %{x:.1f} km<br>z %{y:.0f} m<br>" + lab.split()[0]
-                                   + " %{z:.4g} m/yr<extra></extra>", name=lab))
+        fields_v.append(field_trace(go, contour, xg_, zg_, G_, lo_, hi_, cs, lab.split()[0] + " (m/yr)",
+                                    "x %{x:.1f} km<br>z %{y:.0f} m<br>" + lab.split()[0] + " %{z:.4g} m/yr<extra></extra>",
+                                    lab, visible=False))
     nfield = 1 + len(fields_v)
     traces += fields_v
     nline = 0
