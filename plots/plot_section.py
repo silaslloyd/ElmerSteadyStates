@@ -249,7 +249,13 @@ def main():
         traces += ftr + lines
         per.append(len(ftr) + len(lines))
     fig = go.Figure(traces)
-    titles = [[f"{nm}: {b[4]}" for nm in names] for b in built]
+    # the axes fixed over all the states (no rescaling when the slider moves)
+    xs = np.concatenate([np.asarray(t.x, float) for t in traces if t.x is not None])
+    ys = np.concatenate([np.asarray(t.y, float) for t in traces if t.y is not None])
+    xs, ys = xs[np.isfinite(xs)], ys[np.isfinite(ys)]
+    pad = 0.03 * (ys.max() - ys.min())
+    xr, yr = [float(xs.min()), float(xs.max())], [float(ys.min() - pad), float(ys.max() + pad)]
+    titles =[[f"{nm}: {b[4]}" for nm in names] for b in built]
     buttons = [dict(label=nm, method="skip", args=[None]) for nm in names]
     sliders = []
     if len(built) > 1:
@@ -257,7 +263,8 @@ def main():
                         steps=[dict(label=(f"{meta[p_] / 1e3:.1f} km" if meta[p_] is not None else os.path.basename(p_)),
                                     method="skip", args=[None], value=str(k)) for k, p_ in enumerate(paths)])]
     fig.update_layout(title=titles[0][0], template="plotly_white",
-                      xaxis=dict(title="x (km)"), yaxis=dict(title="z (m)"),
+                      xaxis=dict(title="x (km)", range=xr, autorange=False),
+                      yaxis=dict(title="z (m)", range=yr, autorange=False),
                       updatemenus=[dict(type="buttons", direction="right", buttons=buttons, x=0.0, y=1.06,
                                         xanchor="left", yanchor="bottom", showactive=True, active=0)],
                       sliders=sliders,
