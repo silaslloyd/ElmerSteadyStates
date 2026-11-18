@@ -726,7 +726,7 @@ def cmd_run(args):
         if remask:
             xn, frozen, rep = update_masks(saved.layout, prob.unscale(y), saved.frozen, prob.last_diag,
                                            marine=_marine(model), rho_ratio=getattr(model, "rho_ratio", None),
-                                           grounding=not contact,
+                                           grounding=not contact and not getattr(args, "keep_gl", False),
                                            periodic_width=(model.width if getattr(model, "periodic_sides", False)
                                                            else None))
             if n_changes(rep):
@@ -1520,6 +1520,9 @@ def main(argv=None):
     s.add_argument("--remask", dest="remask", action="store_true", default=None,
                    help="move the frozen masks after every chunk (default: [masks] auto, on for marine)")
     s.add_argument("--no-remask", dest="remask", action="store_false")
+    s.add_argument("--keep-gl", action="store_true",
+                   help="the remask between chunks moves the cold/temperate mask only, never the grounded mask (e.g. "
+                        "a heat solve on a fixed geometry whose grounding line came from the contact)")
     s.add_argument("--gl", choices=["contact", "frozen"], default="contact",
                    help="marine: grounding line by ElmerStreams contact every step (default, spin-ups), or the "
                         "frozen mask moved between chunks (as Newton)")

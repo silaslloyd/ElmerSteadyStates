@@ -6,6 +6,10 @@ line moved it). Which bound a cache file is: as plots/bounds_progress.py (median
 --cold-speed, 1 m/yr: cold).
 
     python3 jobs/state_from_cache.py WORKDIR REF.npz OUT.npz --which temperate|cold [--since "2026-11-16 20:20"]
+    python3 jobs/state_from_cache.py WORKDIR REF.npz OUT.npz --at "2026-11-18 00:14"
+
+--at: instead, the cache file written closest to that minute (any run, e.g. a Newton solve's last evaluation: its
+output is the converged state to within the final rms(F)).
 """
 import glob
 import os
@@ -30,9 +34,10 @@ def arg(args, name, default):
 def main():
     args = sys.argv[1:]
     which = arg(args, "--which", None)
+    at = arg(args, "--at", None)
     since = arg(args, "--since", "2026-11-16 20:20")
     cold_speed = float(arg(args, "--cold-speed", "1.0"))
-    if len(args) != 3 or which not in ("temperate", "cold"):
+    if len(args) != 3 or (at is None and which not in ("temperate", "cold")):
         raise SystemExit(__doc__)
     work, ref, out = args
     t_since = time.mktime(time.strptime(since, "%Y-%m-%d %H:%M"))
@@ -41,6 +46,17 @@ def main():
     files = sorted((f for f in glob.glob(os.path.join(work, "cache", "*.npz"))
                     if not f.endswith(".tmp.npz") and os.path.getmtime(f) > t_since), key=os.path.getmtime)
     pick = None
+    if at is not None:
+        t_at = time.mktime(time.strptime(at, "%Y-%m-%d %H:%M"))
+        cand = sorted((f for f in glob.glob(os.path.join(work, "cache", "*.npz")) if not f.endswith(".tmp.npz")),
+                      key=lambda f: abs(os.path.getmtime(f) - t_at - 30))
+        f = cand[0]
+        with np.load(f) as z:
+            if len(z["x"]) != s.layout.size:
+                raise SystemExit(f"{f}: not on REF's layout")
+            pick = (f, z["x"].copy(), {k[3:]: (z["g::" + k[3:]], z[k]) for k in z.files if k.startswith("v::")})
+        which = "at " + at
+        files = []
     for f in reversed(files):
         with np.load(f) as z:
             if len(z["x"]) != s.layout.size:
