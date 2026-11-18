@@ -553,7 +553,9 @@ def hydrology_cs(x_prof, melt_prof, phi0_prof, hp):
             warnings.simplefilter("ignore", UserWarning)
             sol = solve_ivp(rhs, (xs[-1], xs[0]), [hp["hr"]], t_eval=xs[::-1], events=(dry, flood), method="LSODA",
                             rtol=1e-8, atol=1e-9, min_step=1e-3)
-    except ValueError:
+    except ValueError as e:
+        if hp.get("verbose"):
+            print(f"    hydrology_cs: solve_ivp raised ValueError ({e}): reported dry at the start")
         return h, q, False, "dry"
     got = sol.y[0] if sol.y.size else np.zeros(0)
     hv = np.full(n, np.nan)
@@ -564,6 +566,16 @@ def hydrology_cs(x_prof, melt_prof, phi0_prof, hp):
         hl = got[-1] if len(got) else hp["hr"]
         dried = bool(rhs(xl, [hl])[0] > 0)
         flooded = not dried
+    if hp.get("verbose"):
+        how = ("dry event" if len(sol.t_events[0]) else "flood event" if len(sol.t_events[1]) else
+               f"solver stopped (status {sol.status}: {sol.message})" if sol.status != 0 else "reached the head")
+        xe = (sol.t_events[0][0] if len(sol.t_events[0]) else sol.t[-1] if len(sol.t) else xs[-1])
+        print(f"    hydrology_cs: {how} at x = {xe / 1e3:.3f} km (h {sol.y[0][-1] if sol.y.size else hp['hr']:.3g} m); "
+              f"{len(got)} of {n} points")
+        K0 = cs_K(cs_N(hp["hr"], hp), hp)
+        for j in range(n - 1, max(n - 5, 0), -1):          # the first bins upstream of the grounding line
+            print(f"      bin {xs[j - 1] / 1e3:.3f}..{xs[j] / 1e3:.3f} km: Phi0' {dphi[j - 1]:.3e} MPa/m, "
+                  f"q {q[j]:.4g} m^2/yr, q/K(hr) {q[j] / K0:.3e} MPa/m, melt {ms[j]:.3e} m/yr")
     ok = not dried and (not np.isfinite(hv).any() or np.nanmin(hv) >= 0)
     return hv, q, bool(ok), ("dry" if dried else "flood" if flooded else "ok")
 

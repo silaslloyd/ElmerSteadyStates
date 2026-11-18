@@ -13,7 +13,7 @@ Status: ok; dry (h reaches 0 before the head: the patch cannot carry its water u
 
     python3 plots/sweep_hydrology.py STATE.npz [STATE2.npz ...] [--config configs/flowline_rect_coarse.toml]
                                      [--D0 1e7] [--N0 1] [--hr 0.1] [--eps 0.001] [--k0 1.3333] [--h-max 1000]
-                                     [--dx 250] [--x XMIN XMAX] [--out FILE.html]
+                                     [--dx 250] [--x XMIN XMAX] [--verbose] [--out FILE.html]
 
 Parameters: Marine_Term's (elmer/ess_hydro.lua), the config's [hydrology] overriding, the options overriding both.
 Default page: the first state's name + _hydro.html. Panels: melt rate, flux q, sheet thickness h (log), N.
@@ -48,12 +48,17 @@ def main():
         if v is not None:
             over[k] = v
     args, dx = opt(args, "--dx", default=250.0)
+    verbose = "--verbose" in args                 # how each integration ended, and the first bins' terms
+    args = [a for a in args if a != "--verbose"]
     args, xwin = opt(args, "--x", n=2)
     args, out = opt(args, "--out", conv=str)
     if not args:
         raise SystemExit(__doc__)
     try:
-        import tomllib
+        try:
+            import tomllib
+        except ImportError:                      # python < 3.11
+            import tomli as tomllib
         with open(cfgf, "rb") as f:
             cfg = tomllib.load(f)
     except Exception as e:                       # noqa: BLE001
@@ -78,8 +83,10 @@ def main():
             continue
         xg = float(xpos[grounded].max())
         d = xg - float(xpos[grounded & temp].min())          # the patch: from its head to the grounding line
-        ok, st, row, hyd = patch_hydrology_cs(s.diag, s.layout, s.x, s.frozen, xg, d, hp, rhoi=P["rhoi"], Lw=P["Lw"],
-                                              rhow=P["rhow"], gravity=P["gravity"], dx_bin=dx)
+        if verbose:
+            print(f"{path}:")
+        ok, st, row, hyd = patch_hydrology_cs(s.diag, s.layout, s.x, s.frozen, xg, d, {**hp, "verbose": verbose},
+                                              rhoi=P["rhoi"], Lw=P["Lw"], rhow=P["rhow"], gravity=P["gravity"], dx_bin=dx)
         if st == "no-diag":
             print(f"{path}: {row['note']}: skipped")
             continue
