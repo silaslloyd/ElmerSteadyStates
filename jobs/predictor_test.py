@@ -32,6 +32,7 @@ def main():
     ap.add_argument("--d-new-km", type=float, required=True)
     ap.add_argument("--core-km", type=float, default=10.0)
     ap.add_argument("--taper-km", type=float)
+    ap.add_argument("--sigma-km", type=float, default=15.0, help="background width (0: whole profiles moved)")
     ap.add_argument("--newton", action="store_true")
     ap.add_argument("--maxit", type=int)
     ap.add_argument("--out-dir")
@@ -56,7 +57,7 @@ def main():
     xg = gl_position(saved.frozen, saved.diag)
     h_old = xg - d_old
     delta = d_old - d_new
-    out = a.out_dir or os.path.join(cfg["_work"], f"predictor_test_d{a.d_new_km:g}")
+    out = a.out_dir or os.path.join(cfg["_work"], f"predictor_test_d{a.d_new_km:g}_s{a.sigma_km:g}")
     os.makedirs(out, exist_ok=True)
     log.info(f"predictor test: {a.state} (d {d_old / 1e3:g} km, head {h_old / 1e3:.2f} km, grounding line "
              f"{xg / 1e3:.2f} km) -> d {d_new / 1e3:g} km (head {(xg - d_new) / 1e3:.2f} km)")
@@ -64,7 +65,8 @@ def main():
     g_ct, ct, _ = patch_mask(saved.frozen, saved.diag, d_new)
     saved.frozen[kct] = (g_ct, ct)
     x_pred, info = shift_margin(saved, h_old, delta, core=a.core_km * 1e3,
-                                taper=a.taper_km * 1e3 if a.taper_km else None, x_gl=xg)
+                                taper=a.taper_km * 1e3 if a.taper_km else None, x_gl=xg,
+                                sigma=a.sigma_km * 1e3)
     save_state(os.path.join(out, "predicted.npz"), saved.layout, x_pred, p, dict(saved.frozen), saved.diag,
                sweep_d=d_new, x_gl=xg, predictor=f"shift {delta / 1e3:g} km")
     res = {}

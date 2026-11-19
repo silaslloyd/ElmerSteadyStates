@@ -11,6 +11,9 @@ monotone when taper > delta (upstream, the source is stretched by delta over the
   - Temperature: layer by layer (the extruded mesh's node levels, counted from the bottom of each column: the ice in
     the normalised height zeta, the bedrock on its depth), interpolated in x;
   - Zs: the ice thickness moved, H = Zs - Zb (Zs_new(X) = Zb(X) + H(psi(X))), so the surface follows the bed;
+  - background (sigma > 0, default 15 km): only the local ANOMALY of each profile (minus its Gaussian smoothing over
+    sigma) is moved, the large-scale profile stays where it is (moving it too, the upstream taper shifts the whole ice
+    sheet's slope: e.g. +65 m at 215 km, 25 km shift); sigma = 0: the whole profile moved;
   - Zb (and every other block): unchanged (the shifted region is grounded: Zb is the bed there).
 """
 from __future__ import annotations
@@ -45,7 +48,25 @@ def _profile(x, v):
     return ux, np.bincount(inv, v) / np.bincount(inv)
 
 
-def shift_margin(s: SavedState, h_old, delta, core=10e3, taper=None, x_gl=None):
+def _background(px, pv, sigma):
+    """the profile (px, pv) smoothed with a Gaussian of width sigma (m) on a uniform grid; 0 if sigma <= 0"""
+    if sigma <= 0:
+        return np.zeros_like(pv)
+    from scipy.ndimage import gaussian_filter1d
+    dx = max(float(np.min(np.diff(px))) if len(px) > 1 else 1.0, 50.0)
+    xu = np.arange(px[0], px[-1] + dx, dx)
+    vu = gaussian_filter1d(np.interp(xu, px, pv), sigma / dx, mode="nearest")
+    return np.interp(px, xu, vu)
+
+
+def _moved(px, pv, X, psi, sigma):
+    """the profile at the nodes X with its anomaly (pv - background) taken from psi(X)"""
+    bg = _background(px, pv, sigma)
+    an = pv - bg
+    return np.interp(X, px, bg) + np.interp(psi(X), px, an)
+
+
+def shift_margin(s: SavedState, h_old, delta, core=10e3, taper=None, x_gl=None, sigma=15e3):
     """The state vector of s with the margin structure moved delta (m) downstream (see the module). Returns
     (x_new, info)."""
     taper = float(taper) if taper is not None else max(2.0 * delta, 20e3)
@@ -81,7 +102,7 @@ def shift_margin(s: SavedState, h_old, delta, core=10e3, taper=None, x_gl=None):
     for k in range(counts[0]):
         m = level == k
         px, pv = _profile(X[m], T[m])
-        Tn[m] = np.interp(psi(X[m]), px, pv)
+        Tn[m] = _moved(px, pv, X[m], psi, sigma)
     out[bT.name] = Tn
     info["T_change_max"] = float(np.max(np.abs(Tn - T)))
     # Zs: the thickness above Zb moved
@@ -91,12 +112,13 @@ def shift_margin(s: SavedState, h_old, delta, core=10e3, taper=None, x_gl=None):
     pb = _profile(xb, parts[bB.name])
     zb_at_s = np.interp(xs, *pb)
     ph = _profile(xs, parts[bS.name] - zb_at_s)
-    Zs_n = zb_at_s + np.interp(psi(xs), *ph)
+    Zs_n = zb_at_s + _moved(ph[0], ph[1], xs, psi, sigma)
     info["Zs_change_max"] = float(np.max(np.abs(Zs_n - parts[bS.name])))
     out[bS.name] = Zs_n
     x_new = np.concatenate([out[b.name] for b in lay.blocks])
-    info.update(core_km=(h_old - core + delta) / 1e3, core_end_km=(h_old + delta + core) / 1e3, taper_km=taper / 1e3)
+    info.update(sigma_km=sigma / 1e3, core_km=(h_old - core + delta) / 1e3, core_end_km=(h_old + delta + core) / 1e3, taper_km=taper / 1e3)
     log.info(f"predictor: margin structure moved {delta / 1e3:g} km downstream (head {h_old / 1e3:.2f} -> "
              f"{(h_old + delta) / 1e3:.2f} km): full shift over {info['core_km']:.1f} .. {info['core_end_km']:.1f} km, "
-             f"tapers {taper / 1e3:g} km; max change T {info['T_change_max']:.3g} K, Zs {info['Zs_change_max']:.3g} m")
+             f"tapers {taper / 1e3:g} km, " + (f"anomaly about a {sigma / 1e3:g} km background moved" if sigma > 0 else
+             "whole profiles moved") + f"; max change T {info['T_change_max']:.3g} K, Zs {info['Zs_change_max']:.3g} m")
     return x_new, info

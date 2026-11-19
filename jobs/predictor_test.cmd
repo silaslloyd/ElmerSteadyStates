@@ -8,7 +8,8 @@
 # STATE (default d = 794.2 km of work/flowline_rect_coarse/sweep_refined/seg_m0245) to D_NEW km (default 769.2),
 # F at the plain and at the shifted start (margin structure moved downstream with the head), then Newton from the
 # shifted start (NEWTON=0: only the two residuals). On the segment's mesh (CFG, default its config). Output:
-# work/flowline_rect_coarse/predictor_test_d<D_NEW>/.
+# work/flowline_rect_coarse/predictor_test_d<D_NEW>_s<SIGMA>/. SIGMA (km, default 15): only the anomaly about a
+# Gaussian background of this width moved (0: whole profiles).
 #   sbatch jobs/predictor_test.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
@@ -26,6 +27,6 @@ CFG=${CFG:-work/flowline_rect_coarse/refined/m0245.toml}
 STATE=${STATE:-work/flowline_rect_coarse/sweep_refined/seg_m0245/points/state_07942.npz}
 D_NEW=${D_NEW:-769.2}
 echo "$(date +%T) predictor test: $STATE -> d $D_NEW km on $CFG"
-python3 -u jobs/predictor_test.py $CFG $STATE --d-new-km $D_NEW ${CORE:+--core-km $CORE} ${TAPER:+--taper-km $TAPER} \
+python3 -u jobs/predictor_test.py $CFG $STATE --d-new-km $D_NEW ${CORE:+--core-km $CORE} ${TAPER:+--taper-km $TAPER} ${SIGMA:+--sigma-km $SIGMA} \
     $([ "${NEWTON:-1}" = 1 ] && echo --newton)
 echo "$(date +%T) done"
