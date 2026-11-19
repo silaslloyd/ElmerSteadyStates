@@ -69,6 +69,7 @@ def main():
         rf = float(rb[above[0]]) if len(above) else np.nan
         rows.append(dict(t=t, x=x, y=y, H=H, rb=rb, Hr=Hr, rf=rf, name=os.path.basename(p)))
         print(f"{os.path.basename(p)}: t {t:,.0f} yr, H {H.min():.1f} .. {H.max():.1f} m, front at r = {rf / 1e3:.1f} km")
+    rows.sort(key=lambda r_: r_["t"])               # by model time (the static and the spreading phases' files)
     xg = np.linspace(0, L, 150)
     yg = np.linspace(0, W, 150)
     XG, YG = np.meshgrid(xg, yg)
@@ -109,7 +110,7 @@ def main():
                       sliders=[dict(active=nmap - 1, currentvalue=dict(prefix="map at t (yr) = "), steps=steps,
                                     x=0.0, len=0.48, pad=dict(t=40))],
                       legend=dict(x=1.02, y=1.0))
-    out = out or os.path.join(os.path.dirname(sorted(args)[-1]), "spread.html")
+    out = out or os.path.join(os.path.dirname(os.path.abspath(sorted(args)[-1])), "spread.html")
     fig.write_html(out, include_plotlyjs="cdn")
     print(f"-> {out}")
 
