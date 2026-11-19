@@ -82,7 +82,10 @@ def read_footprint(meshdir):
 def default_opt(c):
     """the remeshing settings from [case] (spread_remesh_* keys, defaults below)"""
     res = float(c.get("spread_res", 5000.0))
-    return dict(fine=float(c.get("spread_remesh_fine", 2000.0)),
+    Ls, Ws = float(c["spread_length_km"]) * 1e3, float(c["width"])
+    return dict(src_x=float(c.get("source_x_km", Ls / 2e3)) * 1e3, src_y=float(c.get("source_y_km", Ws / 2e3)) * 1e3,
+                src_r=float(c.get("source_radius_km", 100.0)) * 1e3,
+                fine=float(c.get("spread_remesh_fine", 2000.0)),
                 band=float(c.get("spread_remesh_band_km", 10.0)) * 1e3,
                 grade=float(c.get("spread_remesh_grade", 0.2)),
                 coarse_in=float(c.get("spread_remesh_coarse_in", 2 * res)),
@@ -166,7 +169,15 @@ def size_field(x, y, tri, H, opt):
     """(h at the old footprint nodes, margin points, report)"""
     from scipy.spatial import cKDTree
     P = margin_points(x, y, tri, H, opt["Hc"], step=opt["fine"] / 2)
+    nm = len(P)
     inside = H > opt["Hc"]
+    if "src_r" in opt:
+        # the source (vent) circle always resolved: its rim as margin points too, its disc as "inside" (before the
+        # current has a margin of its own, and while the margin is still near the vent)
+        n = max(16, int(np.ceil(2 * np.pi * opt["src_r"] / (opt["fine"] / 2))))
+        a = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        P = np.vstack([P, np.c_[opt["src_x"] + opt["src_r"] * np.cos(a), opt["src_y"] + opt["src_r"] * np.sin(a)]])
+        inside = inside | (np.hypot(x - opt["src_x"], y - opt["src_y"]) < opt["src_r"])
     far = np.where(inside, opt["coarse_in"], opt["coarse_out"])
     if len(P):
         d = cKDTree(P).query(np.c_[x, y])[0]
@@ -176,7 +187,7 @@ def size_field(x, y, tri, H, opt):
     h = grade(h, x, y, tri, opt["grade"])
     n_est = np.sum(_areas(x, y, tri) / (0.433 * h ** 2))
     rep = (f"size: {opt['fine']:g} m within {opt['band'] / 1e3:g} km of the margin (H = {opt['Hc']:g} m; "
-           f"{len(P)} points), grading {opt['grade']:g}, {opt['coarse_in']:g} m inside the current, "
+           f"{nm} points; plus the source rim r = {opt.get('src_r', 0) / 1e3:g} km), grading {opt['grade']:g}, {opt['coarse_in']:g} m inside the current, "
            f"{opt['coarse_out']:g} m outside; ~{n_est:.0f} triangles")
     return h, P, rep
 
