@@ -1,6 +1,7 @@
 # ElmerSteadyStates TEST CASE (branch test/lava-spreading), THE SMALL-VENT VERSION (work/spread_vent_small): a vent of
 # radius 2 km (full within 1 km) instead of 50 km, the same volume flux (~20 m^3/s: the rate x 884 per unit area), a
-# 200 km box, the remesher's fine size 400 m (vent rim and margin, band 3 km); T0 lava as the vent run. Run with DT
+# 200 km box, the remesher's fine size 100 m at the margin (band 1 km), 400 m over
+# the vent (band 3 km); T0 lava as the vent run. Run with DT
 # ~0.02 yr (the thick dome now sits on ~400 m elements). Otherwise as the vent version of configs/spread_ice.toml: a viscous gravity current fed by a central source, the
 # ice-sheet form of lava spreading. Same physical parameters and scales as the ice-sheet runs (case/parameters.lua).
 #
@@ -40,8 +41,10 @@ arrhenius_Q = 60000.0                   # J/mol (Paterson's ice value below -10 
 arrhenius_Tmax = 373.15                 # K: the viscosity softens with T up to here (T0 + 100 K; default T0), so
                                         # strain heating can soften the hot core (the thermoviscous feedback)
 arrhenius_Tref = 273.15                 # K: the viscosity is `viscosity` at T0 (the temperate source material)
-spread_remesh_fine = 400.0              # m: the vent rim and the margin
-spread_remesh_band_km = 3.0             # km of fine size either side of them
+spread_remesh_fine = 100.0              # m: the margin (thin there: the free-surface time step barely cares)
+spread_remesh_band_km = 1.0             # km of it either side of the margin
+spread_remesh_vent_fine = 400.0         # m: the vent and the dome over it (thick: 100 m here would cut the time step ~16x)
+spread_remesh_vent_band_km = 3.0        # km of it beyond the vent's rim
 gmsh = "gmsh"
 elmergrid = "ElmerGrid"
 

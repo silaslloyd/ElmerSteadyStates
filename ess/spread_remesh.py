@@ -87,6 +87,10 @@ def default_opt(c):
                 src_r=float(c.get("source_radius_km", 100.0)) * 1e3,
                 fine=float(c.get("spread_remesh_fine", 2000.0)),
                 band=float(c.get("spread_remesh_band_km", 10.0)) * 1e3,
+                # the vent: its own size (default the margin's) and band; the dome is thickest over it, where the
+                # free surface's time-step limit ~ (element size)^2 / thickness^3 bites first
+                vent_fine=float(c.get("spread_remesh_vent_fine", c.get("spread_remesh_fine", 2000.0))),
+                vent_band=float(c.get("spread_remesh_vent_band_km", c.get("spread_remesh_band_km", 10.0))) * 1e3,
                 grade=float(c.get("spread_remesh_grade", 0.2)),
                 coarse_in=float(c.get("spread_remesh_coarse_in", 2 * res)),
                 coarse_out=float(c.get("spread_remesh_coarse_out", 4 * res)),   # the untouched background layer: coarse
@@ -172,22 +176,23 @@ def size_field(x, y, tri, H, opt):
     nm = len(P)
     inside = H > opt["Hc"]
     if "src_r" in opt:
-        # the source (vent) circle always resolved: its rim as margin points too, its disc as "inside" (before the
-        # current has a margin of its own, and while the margin is still near the vent)
-        n = max(16, int(np.ceil(2 * np.pi * opt["src_r"] / (opt["fine"] / 2))))
-        a = np.linspace(0, 2 * np.pi, n, endpoint=False)
-        P = np.vstack([P, np.c_[opt["src_x"] + opt["src_r"] * np.cos(a), opt["src_y"] + opt["src_r"] * np.sin(a)]])
         inside = inside | (np.hypot(x - opt["src_x"], y - opt["src_y"]) < opt["src_r"])
     far = np.where(inside, opt["coarse_in"], opt["coarse_out"])
+    h = far.astype(float)
     if len(P):
         d = cKDTree(P).query(np.c_[x, y])[0]
-        h = np.minimum(opt["fine"] + opt["grade"] * np.maximum(d - opt["band"], 0.0), far)
-    else:
-        h = far.astype(float)
+        h = np.minimum(opt["fine"] + opt["grade"] * np.maximum(d - opt["band"], 0.0), h)
+    if "src_r" in opt:
+        # the source (vent) always resolved, at its own size: vent_fine within vent_band of its rim and over its disc
+        # (before the current has a margin of its own, and however close the margin is)
+        dv = np.maximum(np.hypot(x - opt["src_x"], y - opt["src_y"]) - opt["src_r"], 0.0)
+        vf = opt.get("vent_fine", opt["fine"])
+        h = np.minimum(vf + opt["grade"] * np.maximum(dv - opt.get("vent_band", opt["band"]), 0.0), h)
     h = grade(h, x, y, tri, opt["grade"])
     n_est = np.sum(_areas(x, y, tri) / (0.433 * h ** 2))
     rep = (f"size: {opt['fine']:g} m within {opt['band'] / 1e3:g} km of the margin (H = {opt['Hc']:g} m; "
-           f"{nm} points; plus the source rim r = {opt.get('src_r', 0) / 1e3:g} km), grading {opt['grade']:g}, {opt['coarse_in']:g} m inside the current, "
+           f"{nm} points); the vent (r = {opt.get('src_r', 0) / 1e3:g} km) {opt.get('vent_fine', opt['fine']):g} m within "
+           f"{opt.get('vent_band', opt['band']) / 1e3:g} km of its rim; grading {opt['grade']:g}, {opt['coarse_in']:g} m inside the current, "
            f"{opt['coarse_out']:g} m outside; ~{n_est:.0f} triangles")
     return h, P, rep
 
