@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""The spreading test (configs/spread_ice.toml): a vertical cross-section through the source centre (y = the source's
-y, along x; --axis y for the section along y), temperature and viscosity, one plotly page with a slider over the
-states (in model-time order) and buttons for the field:
-  * temperature T (K);
+"""The spreading test (configs/spread_*.toml): a vertical cross-section through the source centre (y = the source's
+y, along x; --axis y for the section along y), three panels stacked, one plotly page with a slider over the states (in
+model-time order):
   * log10 of the viscosity (Pa s), eta = viscosity * exp(Q/R (1/T - 1/Tref)) as the model has it (SpreadViscosity in
-    elmer/ess_utils.lua: T capped to 150 .. T0), Q and Tref from the config, `viscosity` from parameters.lua.
+    elmer/ess_utils.lua: T capped to 150 .. Tmax), Q, Tref and Tmax ([case] arrhenius_Tmax, default T0) from the config,
+    `viscosity` from parameters.lua;
+  * the speed |u| (m/yr, log10), from the state's diagnostics Velocity 1..3;
+  * the temperature T (K).
 Each extruded level of the mesh is interpolated onto the section line (linear on the footprint's triangles), then every
 column onto a regular z grid (--nz levels): the colours are the model's values, nothing smoothed across levels.
 
-    python3 plots/spread_section.py STATE.npz [STATE2.npz ...] [--config configs/spread_ice.toml] [--axis x|y]
-                                    [--nx 300] [--nz 120] [--out FILE.html]
+The panels are drawn at a fixed vertical exaggeration --vex (z against the section's horizontal distance; default: a
+tenth of the old single-panel page's stretch, from the data's z range, printed); --x XMIN XMAX (km) to show only part of the line (the panels then get taller
+at the same exaggeration).
+
+    python3 plots/spread_section.py STATE.npz [STATE2.npz ...] [--config configs/spread_vent.toml] [--axis x|y]
+                                    [--vex V] [--x XMIN XMAX] [--nx 400] [--nz 120] [--width 1200] [--out FILE.html]
 """
 import os
 import sys
@@ -22,17 +28,18 @@ from ess.case import eval_lua_parameters  # noqa: E402
 from ess.statefile import find_name, load_state  # noqa: E402
 
 
-def arg(args, name, default, conv=str):
+def arg(args, name, default, conv=str, n=1):
     if name in args:
         k = args.index(name)
-        v = conv(args[k + 1])
-        del args[k:k + 2]
-        return v
+        v = [conv(a) for a in args[k + 1:k + 1 + n]]
+        del args[k:k + 1 + n]
+        return v[0] if n == 1 else v
     return default
 
 
-def section(s, axis, c0, nx, L):
-    """(s along the line (m), z grid, T grid) of the state s on the line {y = c0} (axis x) or {x = c0} (axis y)"""
+def section(s, axis, c0, sline):
+    """(Z, T, speed) on the extruded levels (nl x len(sline)) of the state s along the line {y = c0} (axis x) or
+    {x = c0} (axis y); speed NaN when the state has no velocity"""
     from scipy.spatial import Delaunay
     from scipy.interpolate import LinearNDInterpolator
     allc = {**s.diag, **s.frozen}
@@ -40,38 +47,64 @@ def section(s, axis, c0, nx, L):
     blk = {b.name.lower(): b for b in s.layout.blocks}
     bT = blk["temperature"]
     g = bT.gids
-    look = lambda c: np.interp(g, c[0], c[1]) if np.all(np.diff(c[0]) > 0) else np.array(
-        [dict(zip(c[0].tolist(), c[1]))[k] for k in g.tolist()])
+
+    def look(c):
+        if np.all(np.diff(c[0]) > 0):
+            i = np.clip(np.searchsorted(c[0], g), 0, len(c[0]) - 1)
+            v = c[1][i].astype(float)
+            v[c[0][i] != g] = np.nan
+            return v
+        d = dict(zip(c[0].tolist(), c[1]))
+        return np.array([d.get(k, np.nan) for k in g.tolist()], float)
+
     X, Y, Z = look(cx), look(cy), look(cz)
     T = s.x[s.layout.slices()[bT.name]]
+    try:
+        U = np.sqrt(sum(look(allc[find_name(allc, f"velocity {k}")]) ** 2 for k in (1, 2, 3)))
+    except KeyError:
+        U = np.full(len(g), np.nan)
     col = np.unique(np.c_[np.round(X, 1), np.round(Y, 1)], axis=0, return_inverse=True)[1].ravel()
     ncol = col.max() + 1
     nl = len(g) // ncol
     o = np.lexsort((Z, col))
     level = np.empty(len(g), int)
     level[o] = np.tile(np.arange(nl), ncol)
-    sline = np.linspace(0, L, nx)
+    nx = len(sline)
     pts = np.c_[sline, np.full(nx, c0)] if axis == "x" else np.c_[np.full(nx, c0), sline]
     m0 = level == 0
     xy = np.empty((ncol, 2))
     xy[col[m0]] = np.c_[X[m0], Y[m0]]                 # each column's footprint position
     tri = Delaunay(xy)
-    Zl, Tl = np.empty((nl, nx)), np.empty((nl, nx))
+    out = [np.empty((nl, nx)) for _ in range(3)]
     for k in range(nl):
         m = level == k
-        zz, tt = np.empty(ncol), np.empty(ncol)
-        zz[col[m]], tt[col[m]] = Z[m], T[m]
-        Zl[k] = LinearNDInterpolator(tri, zz)(pts)
-        Tl[k] = LinearNDInterpolator(tri, tt)(pts)
-    return sline, Zl, Tl
+        for f, v in zip(out, (Z, T, U)):
+            vv = np.empty(ncol)
+            vv[col[m]] = v[m]
+            f[k] = LinearNDInterpolator(tri, vv)(pts)
+    return out
+
+
+def on_grid(zg, Zl, F):
+    """the level field F (nl x nx) on the regular z grid zg (columns: linear between the levels; NaN outside the ice)"""
+    G = np.full((len(zg), Zl.shape[1]), np.nan)
+    for j in range(Zl.shape[1]):
+        zc, fc = Zl[:, j], F[:, j]
+        if np.all(np.isfinite(zc)) and np.all(np.diff(zc) > 0) and np.all(np.isfinite(fc)):
+            m = (zg >= zc[0]) & (zg <= zc[-1])
+            G[m, j] = np.interp(zg[m], zc, fc)
+    return G
 
 
 def main():
     args = sys.argv[1:]
-    cfgf = arg(args, "--config", os.path.join(ROOT, "configs", "spread_ice.toml"))
+    cfgf = arg(args, "--config", os.path.join(ROOT, "configs", "spread_vent.toml"))
     axis = arg(args, "--axis", "x")
-    nx = arg(args, "--nx", 300, int)
+    nx = arg(args, "--nx", 400, int)
     nz = arg(args, "--nz", 120, int)
+    vex = arg(args, "--vex", None, float)
+    width = arg(args, "--width", 1200, int)
+    xwin = arg(args, "--x", None, float, n=2)
     out = arg(args, "--out", None)
     if not args:
         raise SystemExit(__doc__)
@@ -88,67 +121,78 @@ def main():
     Q = float(c.get("arrhenius_Q", 60e3))
     Tref = float(c["arrhenius_Tref"]) if c.get("arrhenius_Tref") is not None else Tsurf
     T0 = float(P["T0"])
+    Tmax = float(c["arrhenius_Tmax"]) if c.get("arrhenius_Tmax") is not None else T0
     eta_pas = float(P["viscosity"]) * 1e6 * 365.25 * 86400        # MPa a -> Pa s
-    eta = lambda T: np.log10(eta_pas * np.exp(Q / 8.314 * (1 / np.clip(T, 150.0, T0) - 1 / Tref)))
+    eta = lambda T: np.log10(eta_pas * np.exp(Q / 8.314 * (1 / np.clip(T, 150.0, Tmax) - 1 / Tref)))
+    Lline = L if axis == "x" else W
+    a, b = (xwin[0] * 1e3, xwin[1] * 1e3) if xwin else (0.0, Lline)
+    sline = np.linspace(a, b, nx)
     import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
     rows = []
     for p in args:
         s = load_state(p)
         t = float(s.meta.get("time", np.nan))
-        sl, Zl, Tl = section(s, axis, yc if axis == "x" else xc, nx, L if axis == "x" else W)
-        rows.append((t, sl, Zl, Tl, os.path.basename(p)))
-        print(f"{os.path.basename(p)}: t {t:,.0f} yr, T on the section {np.nanmin(Tl):.2f} .. {np.nanmax(Tl):.2f} K, "
-              f"surface {np.nanmin(Zl[-1]):.0f} .. {np.nanmax(Zl[-1]):.0f} m")
+        Zl, Tl, Ul = section(s, axis, yc if axis == "x" else xc, sline)
+        rows.append((t, Zl, Tl, Ul))
+        print(f"{os.path.basename(p)}: t {t:,.0f} yr, T {np.nanmin(Tl):.2f} .. {np.nanmax(Tl):.2f} K, speed max "
+              f"{np.nanmax(Ul) if np.isfinite(Ul).any() else np.nan:.3g} m/yr, surface {np.nanmin(Zl[-1]):.0f} .. "
+              f"{np.nanmax(Zl[-1]):.0f} m")
     rows.sort(key=lambda r: r[0])
-    zmax = max(np.nanmax(r[2][-1]) for r in rows)
-    zmin = min(np.nanmin(r[2][0]) for r in rows)
+    zmax = max(np.nanmax(r[1][-1]) for r in rows) * 1.05
+    zmin = min(np.nanmin(r[1][0]) for r in rows)
     zg = np.linspace(zmin, zmax, nz)
-    lo_e, hi_e = eta(T0), eta(Tsurf)
-    traces = []
-    for t, sl, Zl, Tl, nm in rows:
-        G = np.full((nz, len(sl)), np.nan)
-        for j in range(len(sl)):
-            zc, tc = Zl[:, j], Tl[:, j]
-            if np.all(np.isfinite(zc)) and np.all(np.diff(zc) > 0):
-                m = (zg >= zc[0]) & (zg <= zc[-1])
-                G[m, j] = np.interp(zg[m], zc, tc)
-        traces.append(go.Heatmap(x=sl / 1e3, y=zg, z=G.astype(np.float32), colorscale="RdBu_r", zmin=Tsurf, zmax=T0,
-                                 colorbar=dict(title="T (K)"), visible=False, name=f"T {t:,.0f}",
-                                 hovertemplate="%{x:.0f} km, z %{y:.0f} m<br>T %{z:.2f} K<extra></extra>"))
-        traces.append(go.Heatmap(x=sl / 1e3, y=zg, z=eta(G).astype(np.float32), colorscale="Viridis_r", zmin=lo_e,
-                                 zmax=hi_e, colorbar=dict(title="log10 eta (Pa s)"), visible=False,
-                                 name=f"eta {t:,.0f}",
-                                 hovertemplate="%{x:.0f} km, z %{y:.0f} m<br>log10 eta %{z:.2f}<extra></extra>"))
-        traces.append(go.Scatter(x=sl / 1e3, y=Zl[-1], mode="lines", line=dict(color="black", width=1.2),
-                                 visible=False, name="surface", hoverinfo="skip", showlegend=False))
+    allU = np.concatenate([r[3][np.isfinite(r[3]) & (r[3] > 0)] for r in rows] + [np.array([1e-3])])
+    u_hi = float(np.log10(np.percentile(allU, 99.5)))
+    u_lo = u_hi - 4.0
+    plot_w = width - 200
+    if vex is None:
+        # a tenth of the old single-panel page's stretch: the whole line over ~plot_w px, the z range over ~470 px
+        v_old = (Lline / plot_w) / ((zmax - zmin) / 470.0)
+        vex = float(f"{v_old / 10:.2g}")
+    # the panel height at exaggeration vex: the plot area ~ (width - margins) px for (b - a) of horizontal distance
+    panel = max(40, int(round(plot_w * (zmax - zmin) * vex / (b - a))))
+    gap = 70
+    height = 3 * panel + 2 * gap + 230
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=gap / (height - 230),
+                        subplot_titles=("log10 viscosity (Pa s)", "log10 speed (m/yr)", "temperature (K)"))
+    cbar = lambda r, title: dict(title=title, len=panel / (height - 230), y=1 - ((r - 1) * (panel + gap) + panel / 2) / (height - 230),
+                                 yanchor="middle", thickness=14)
+    xs = sline / 1e3
     n = len(rows)
-    for j in (3 * (n - 1), 3 * (n - 1) + 2):
-        traces[j].visible = True
-    fig = go.Figure(traces)
-    import json
-    titles = [f"section along {axis} through the source, t = {r[0]:,.0f} yr" for r in rows]
-    steps = [dict(label=f"{r[0]:,.0f}", method="skip", args=[None], value=str(i)) for i, r in enumerate(rows)]
-    buttons = [dict(label=nm_, method="skip", args=[None]) for nm_ in ("temperature", "log10 viscosity")]
-    fig.update_layout(template="plotly_white", height=650, title=titles[-1],
-                      xaxis=dict(title=f"{axis} (km)"), yaxis=dict(title="z (m)", range=[zmin, zmax * 1.05]),
-                      sliders=[dict(active=n - 1, currentvalue=dict(prefix="t (yr) = "), steps=steps, pad=dict(t=40))],
-                      updatemenus=[dict(type="buttons", direction="right", buttons=buttons, x=0, y=1.08,
-                                        xanchor="left", yanchor="bottom", showactive=True, active=0)])
-    js = """
-var gd = document.getElementById('{plot_id}');
-var N = %d, TITLES = %s, cur = {s: N - 1, f: 0};
-function show() {
-  var v = [];
-  for (var s = 0; s < N; s++) { v.push(s === cur.s && cur.f === 0); v.push(s === cur.s && cur.f === 1); v.push(s === cur.s); }
-  Plotly.restyle(gd, {visible: v});
-  Plotly.relayout(gd, {'title.text': TITLES[cur.s]});
-}
-gd.on('plotly_buttonclicked', function (e) { cur.f = e.active; show(); });
-gd.on('plotly_sliderchange', function (e) { cur.s = parseInt(e.step.value); show(); });
-""" % (n, json.dumps(titles))
+    for i, (t, Zl, Tl, Ul) in enumerate(rows):
+        vis = i == n - 1
+        G = on_grid(zg, Zl, Tl)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            Gu = np.log10(on_grid(zg, Zl, Ul))
+        for r, z_, cs, lo, hi, title, hv in (
+                (1, eta(G), "Viridis_r", eta(Tmax), eta(Tsurf), "log10 eta", "log10 eta %{z:.2f}"),
+                (2, Gu, "Inferno", u_lo, u_hi, "log10 |u|", "log10 |u| %{z:.2f}"),
+                (3, G, "RdBu_r", Tsurf, Tmax, "T (K)", "T %{z:.2f} K")):
+            fig.add_trace(go.Heatmap(x=xs, y=zg, z=np.where(np.isfinite(G), z_, np.nan).astype(np.float32),
+                                     colorscale=cs, zmin=lo, zmax=hi, colorbar=cbar(r, title), visible=vis,
+                                     hovertemplate=f"%{{x:.1f}} km, z %{{y:.0f}} m<br>{hv}<extra></extra>"),
+                          row=r, col=1)
+            fig.add_trace(go.Scatter(x=xs, y=Zl[-1], mode="lines", line=dict(color="black", width=1), visible=vis,
+                                     hoverinfo="skip", showlegend=False), row=r, col=1)
+    per = 6
+    steps = [dict(label=f"{r[0]:,.0f}", method="update",
+                  args=[{"visible": [j // per == i for j in range(per * n)]},
+                        {"title.text": f"section along {axis} through the source, t = {r[0]:,.0f} yr "
+                                       f"(vertical exaggeration {vex:g})"}])
+             for i, r in enumerate(rows)]
+    for r in (1, 2, 3):
+        fig.update_yaxes(title_text="z (m)", range=[zmin, zmax], scaleanchor=f"x{'' if r == 1 else r}",
+                         scaleratio=vex / 1e3, constrain="domain", row=r, col=1)
+        fig.update_xaxes(range=[a / 1e3, b / 1e3], constrain="domain", row=r, col=1)
+    fig.update_xaxes(title_text=f"{axis} (km)", row=3, col=1)
+    fig.update_layout(template="plotly_white", width=width, height=height, margin=dict(l=80, r=120, t=80, b=150),
+                      title=f"section along {axis} through the source, t = {rows[-1][0]:,.0f} yr "
+                            f"(vertical exaggeration {vex:g})",
+                      sliders=[dict(active=n - 1, currentvalue=dict(prefix="t (yr) = "), steps=steps, pad=dict(t=50))])
     out = out or os.path.join(os.path.dirname(os.path.abspath(args[0])), f"spread_section_{axis}.html")
-    fig.write_html(out, include_plotlyjs="cdn", post_script=js)
-    print(f"-> {out}")
+    fig.write_html(out, include_plotlyjs="cdn")
+    print(f"-> {out} (panels {panel} px at vertical exaggeration {vex:g})")
 
 
 if __name__ == "__main__":
