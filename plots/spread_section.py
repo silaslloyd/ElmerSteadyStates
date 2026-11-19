@@ -12,11 +12,12 @@ column onto a regular z grid (--nz levels): the colours are the model's values, 
 
 The panels are drawn at a fixed vertical exaggeration --vex (z against the section's horizontal distance; default: a
 tenth of the old single-panel page's stretch, from the data's z range, printed); --x XMIN XMAX (km) to show only part of the line (the panels then get taller
-at the same exaggeration). Default window: where the surface stands > 10 m above the background layer in any state,
+at the same exaggeration); --panel PX: the window instead centred on the vent and just wide enough for panels PX
+tall (--vex default 1 then: true aspect, cropped). Default window: where the surface stands > 10 m above the background layer in any state,
 padded. Colour ranges: the data's (all states), not the model's possible range.
 
     python3 plots/spread_section.py STATE.npz [STATE2.npz ...] [--config configs/spread_vent.toml] [--axis x|y]
-                                    [--vex V] [--x XMIN XMAX] [--nx 400] [--nz 120] [--width 1200] [--out FILE.html]
+                                    [--vex V] [--x XMIN XMAX | --panel PX] [--nx 400] [--nz 120] [--width 1200] [--out FILE.html]
 """
 import os
 import sys
@@ -123,6 +124,7 @@ def main():
     vex = arg(args, "--vex", None, float)
     width = arg(args, "--width", 1200, int)
     xwin = arg(args, "--x", None, float, n=2)
+    panel_px = arg(args, "--panel", None, int)     # with it: the window cropped (about the vent) to panels this tall
     out = arg(args, "--out", None)
     if not args:
         raise SystemExit(__doc__)
@@ -146,6 +148,22 @@ def main():
     c0 = yc if axis == "x" else xc
     if xwin:
         a, b = xwin[0] * 1e3, xwin[1] * 1e3
+    elif panel_px:
+        # the window about the vent wide enough that the z range fills panel_px at exaggeration vex (default 1: true
+        # aspect): width = (plot width px) x (z range) x vex / panel_px
+        if vex is None:
+            vex = 1.0
+        zt, zb = -np.inf, np.inf
+        for p in args:
+            s_ = load_state(p)
+            blk = {b_.name.lower(): b_ for b_ in s_.layout.blocks}
+            zt = max(zt, float(np.nanmax(s_.layout.split(s_.x)[blk["zs"].name])))
+            bv = s_.frozen[find_name(s_.frozen, "bedrock")][1]
+            zb = min(zb, float(np.nanmin(bv)))
+        wdt = (width - 200) * (1.05 * zt - zb) * vex / panel_px
+        ctr = xc if axis == "x" else yc
+        a, b = max(0.0, ctr - wdt / 2), min(Lline, ctr + wdt / 2)
+        print(f"section window {a / 1e3:.2f} .. {b / 1e3:.2f} km: panels ~{panel_px} px at exaggeration {vex:g}")
     else:                                   # the flow's extent over all states, padded
         ext = [e for e in (dome_extent(load_state(p), axis, c0) for p in args) if e]
         if ext:
