@@ -11,6 +11,8 @@
 # spread_remesh_fine (2000 m), _band_km (10), _grade (0.2), _coarse_in (2 x spread_res), _coarse_out (spread_res),
 # _trigger (1.5). States in <work>/adapt/points/, meshes <work>/case/a001, a002, ...
 #   CFG=configs/spread_vent.toml START=work/spread_vent/run_chunks/points/state_0003.npz sbatch jobs/spread_adapt.cmd
+# A config without a case yet (e.g. configs/spread_vent_crust.toml): ess setup first; no static.npz of its own: the vent
+# run's work/spread_vent/static.npz.
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
@@ -24,7 +26,12 @@ export LIBRARY_PATH=$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/lib${LIBRARY_PAT
 export ESS_MPIRUN="mpirun -np {n} --bind-to none"
 CFG=${CFG:-configs/spread_vent.toml}
 W=${W:-work/$(basename $CFG .toml)}
+mkdir -p $W
+if [ ! -d $W/case/footprint ]; then python3 -u -m ess setup $CFG; fi   # a new config's case (its own sif: e.g. the crust's transfer)
 START=${START:-$W/static.npz}
+if [ ! -f $START ] && [ -f work/spread_vent/static.npz ]; then
+    START=work/spread_vent/static.npz          # no static phase of its own: the vent run's (the same cold layer and mesh)
+fi
 echo "$(date +%T) adaptive spreading run: $CFG from $START"
 python3 -u jobs/spread_adapt.py $CFG --state $START ${T0:+--t0 $T0} --chunks ${CHUNKS:-50} --steps ${STEPS:-200} \
     --dt ${DT:-5} --out $W/adapt $([ "${REMESH_FIRST:-1}" = 1 ] && echo --remesh-first)
