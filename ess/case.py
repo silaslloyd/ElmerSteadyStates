@@ -222,9 +222,9 @@ def slab_geometry(P, c, n=2001):
 def spread_geometry(P, c, n=2001):
     """[case] geometry = "spread" (a viscous gravity current fed by a central source, the ice-sheet form of lava
     spreading): a uniform layer [case] spread_thickness (m) on a flat bed at [case] spread_bed (m), all grounded and
-    COLD (ColdTempMask -1 everywhere, the ice at the surface temperature Tsurf throughout, the bedrock below rising
-    from it with the geothermal gradient). The source, the walls, the no-slip bed and the Arrhenius viscosity are in
-    the template (ess/elmer.py _spread)."""
+    COLD (ColdTempMask -1 everywhere, the ice at the surface temperature Tsurf throughout). Ice only: the template
+    elmer/spread_template.sif has no bedrock or filler; the source, the walls, the no-slip bed and the Arrhenius
+    viscosity are in it."""
     Ls = float(c["spread_length_km"]) * 1e3
     x = np.linspace(0, Ls, n)
     H0 = float(c.get("spread_thickness", 100.0))

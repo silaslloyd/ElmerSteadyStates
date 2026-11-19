@@ -1216,6 +1216,8 @@ End
             raise ValueError("[case] geometry = spread: the land template, no accumulation schedule")
         if self.x_end < 1.0:
             raise ValueError("[case] geometry = spread: no fixed margin (x_end)")
+        if "SpreadSource" in text:                      # elmer/spread_template.sif (ice only): already the spread case
+            return text
         acc = re.compile(r'^(\s*(?:Zs|Output|FSSA) Accumulation = )Variable Coordinate 1, height\n(\s*)Real Lua '
                          r'"AccumulationSmooth\(tx\[0\], tx\[1\] - 10\*zscale, aDIM, L\)"', re.M)
         text, n = acc.subn(r'\1Variable Coordinate 1, Coordinate 2   ! [case] geometry = spread: the central source\n'

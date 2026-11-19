@@ -1,17 +1,17 @@
 # ElmerSteadyStates TEST CASE (branch test/lava-spreading): a viscous gravity current fed by a central source, the
 # ice-sheet form of lava spreading. Same physical parameters and scales as the ice-sheet runs (case/parameters.lua).
 #
-#   * a square box spread_length_km x width, unstructured triangles of spread_res m, the land template's three layers
-#     (bedrock 10 zscale, filler, ice), extruded;
+#   * a square box spread_length_km x width, unstructured triangles of spread_res m, ICE ONLY (elmer/spread_template.sif:
+#     no bedrock, no filler), extruded in 21 levels from the bed to the surface;
 #   * start: a uniform cold layer spread_thickness m on a flat bed (all grounded, ColdTempMask -1 everywhere, the ice
-#     at Tsurf throughout, the bedrock with the geothermal gradient below);
+#     at Tsurf throughout);
 #   * accumulation only in a circle in the middle: source_rate m/yr within source_radius_km (tanh edge
 #     source_edge_km), nothing elsewhere (no ablation: the current spreads for ever, no steady state);
 #   * free-slip walls on all four sides, NO SLIP on the bed;
 #   * viscosity Newtonian, Arrhenius in T: viscosity (parameters.lua) x exp(Q/R (1/T - 1/Tref)), Q = arrhenius_Q
 #     J/mol, Tref = arrhenius_Tref (default Tsurf: the initial layer has exactly `viscosity`);
-#   * heat: Tsurf at the surface (Robin), geothermal flux into the deep bedrock, the bed's cold mask fixed (no melting
-#     treatment: a test of the cold spreading).
+#   * heat: Tsurf at the surface (Robin), the geothermal flux gthf into the ice at the bed, insulating walls, no
+#     melting treatment (a test of the cold spreading).
 # Transient only (`ess run`), see jobs/spread_run.cmd.
 
 [paths]
@@ -38,7 +38,7 @@ elmergrid = "ElmerGrid"
 type = "elmer"
 
 [elmer]
-template = "elmer/steady_template.sif"
+template = "elmer/spread_template.sif"  # ICE ONLY (no bedrock, no filler): the geothermal flux at the ice base
 mesh_db = "footprint"
 ess_lib = "elmer/SteadyStateIO"
 ess_utils = "elmer/ess_utils.lua"
@@ -69,7 +69,7 @@ scale = 1.0
 dt = 50.0
 n_steps = 20
 coupled_iters = 1
-rock_heat_capacity = 1.0                # the physical bedrock (a transient)
+rock_heat_capacity = 1.0                # (no bedrock in this case)
 
 [stability_map]
 dt = 50.0

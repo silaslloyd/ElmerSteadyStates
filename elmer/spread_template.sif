@@ -1,0 +1,421 @@
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!! ElmerSteadyStates TEST CASE ([case] geometry = "spread", branch test/lava-spreading):
+!! a cold viscous gravity current fed by a central source, the ice-sheet form of lava spreading.
+!!
+!! ICE ONLY (no bedrock, no filler): the footprint extruded from the bed (Bottom Surface = the frozen
+!! "bedrock" field, flat) to the free surface Zs. Derived from steady_template.sif:
+!!   * the accumulation only in the source circle: SpreadSource(x, y) (ess_utils.lua), nothing elsewhere;
+!!   * the viscosity Newtonian, Arrhenius in T: SpreadViscosity(T);
+!!   * the four sides free-slip walls (no normal velocity), the bed no slip;
+!!   * the basal heat flux the geothermal flux gthf (no rock, no friction on a no-slip bed); the surface
+!!     the same Robin condition (External Temperature Tsurf); walls insulating;
+!!   * the masks, Zb and bedrock frozen (read from the state, never recomputed): all grounded, all cold.
+!! The double-underscore placeholders are filled in by the Python driver (ess/elmer.py).
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+$namerun = "__RUNNAME__"
+$directsolver = "MUMPS"
+$fssaflag = "full"
+
+!---LUA BEGIN
+! assert(loadfile('__ESS_UTILS__'))()
+!---LUA END
+
+!---LUA BEGIN
+! assert(loadfile('__PARAMS__'))()
+!---LUA END
+
+!---LUA BEGIN
+! assert(loadfile('__CASE_DIR__/ics/ics.lua'))()
+!---LUA END
+
+Header
+  Mesh DB "__MESH_DIR__" "__MESH_NAME__"
+End
+
+Constants
+  Gravity Norm = Real #gravity
+  Water Density = Real #rhow
+  Ice Density = Real #rhoi
+  Gravity(4) = 0 0 -1 #gravity
+  Stefan Boltzmann = Real 6.78E-08
+  Reference Temperature = Real 273.15
+  Reference Pressure = Real #p0
+  Sea Level = Real -1.0e5
+End
+
+Simulation
+  Coordinate System  = "Cartesian 3D"
+  Simulation Type = "transient"
+
+  Steady State Max Iterations = __COUPLED_ITERS__
+  Steady State Min Iterations = 1
+
+  Timestepping Method = "bdf"
+  BDF Order = 1
+
+  Timestep Intervals = __NSTEPS__
+  Timestep Sizes = __DT__
+  Output Intervals = __NSTEPS__
+
+  ! ice only: the footprint extruded from the bed to the surface, layers finer towards the bed
+  Extruded Mesh Levels = Integer 21
+  Extruded Mesh Density = Variable Coordinate 3
+     Real
+     0.0 0.4
+     1.0 1.0
+   End
+
+  Initialize Dirichlet Conditions = Logical False
+
+__RESTART_BLOCK__
+__POST_BLOCK__
+  max output level = __OUTPUT_LEVEL__
+End
+
+!---------------- BODIES ---------------------------
+
+Body 1
+  Name = "ice"
+  Equation = 1
+  Body Force = 1
+  Material = 1
+  Initial Condition = 1
+End
+
+Body 2
+  Name = "bed"
+  Equation = 2
+  Material = 1
+  Initial Condition = 1
+End
+
+Body 3
+  Name = "top free surface"
+  Equation = 3
+  Material = 1
+  Body Force = 2
+  Initial Condition = 1
+End
+
+!---------------- EQUATIONS ------------------------
+
+Equation 1
+  Name = "ice equations"
+  Active Solvers(11) = 1 2 3 4 5 6 7 8 9 10 12
+  Convection = "Computed"
+  Flow Solution Name = String "Flow Solution"
+End
+
+Equation 2
+  Name = "bed equations"
+  Active Solvers(1) = 7
+  Convection = "Computed"
+  Flow Solution Name = String "Flow Solution"
+End
+
+Equation 3
+  Name = "freesurface equations"
+  Active Solvers(2) = 7 11
+  Convection = "Computed"
+  Flow Solution Name = String "Flow Solution"
+End
+
+!---------------- INITIAL CONDITIONS ---------------
+! Only for the first state (`ess init`); afterwards Temperature, Zs and the frozen fields come from the state file.
+
+Initial Condition 1
+  Velocity 2 = 0.0
+  Temperature = Real #Tsurf
+  Zs = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/zs.xy"
+    End
+  Bedrock = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/bed.xy"
+    End
+  Zb = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/bed.xy"
+    End
+  GroundedMask = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/gm.xy"
+    End
+  ColdTempMask = Variable Coordinate 1
+    Real
+      Include "__CASE_DIR__/ics/ctmask.xy"
+    End
+End
+
+!---------------- BODY FORCES ----------------------
+
+Body Force 1
+  Name = "bodyforce ice"
+  Flow BodyForce 1 = Real 0
+  Flow BodyForce 2 = Real 0
+  Flow BodyForce 3 = Real #-gravity
+__HEAT_SOURCE__
+End
+
+Body Force 2
+  Name = "bodyforce freesurface"
+  ! the central source (m/yr of ice), nothing elsewhere
+  Zs Accumulation = Variable Coordinate 1, Coordinate 2
+    Real Lua "SpreadSource(tx[0], tx[1])"
+  Output Accumulation = Variable Coordinate 1, Coordinate 2
+    Real Lua "SpreadSource(tx[0], tx[1])"
+End
+
+!---------------- MATERIALS ------------------------
+
+Material 1
+  Name = "ice material"
+  Density = Real #rhoi
+  ! Newtonian, Arrhenius in T (viscosity at ess_arr_Tref)
+  Viscosity = Variable Temperature
+    Real Lua "SpreadViscosity(tx[0])"
+
+  Relative Temperature = Variable Temperature
+    Real Lua "tx[0] - 273.15"
+
+  Heat Capacity = Real #heatcapacity
+  Heat Conductivity = Real #heatconductivity
+  Latent Heat Capacity = Real #Lw
+
+  Cauchy = Logical True
+  Temperature Field Variable = Temperature
+
+  Tm = Real #T0
+
+  Min Zs = Variable "bedrock"
+    Real Lua "__MIN_ZS_EXPR__"
+  Max Zs = Real 10000
+End
+
+!---------------- SOLVERS --------------------------
+
+Solver 1
+  Exec Solver = "Before All"
+  Equation = "StateRead"
+  Procedure = "__ESS_LIB__" "StateIO"
+  State Mode = String "read"
+  State File = File "__STATE_IN__"
+  Strict = Logical True
+End
+
+Solver 2
+  Equation = "MapCoordinateInit"
+  Procedure = "StructuredMeshMapper" "StructuredMeshMapper"
+  Minimum Height = Real 1.0
+  Exec Solver = "before all"
+  Active Coordinate = Integer 3
+  Variable = -nooutput DummyR
+  Mesh Velocity Variable = String "dSdt"
+  Mesh Update Variable = String "dS"
+  Mesh Velocity First Zero = Logical True
+  Exported Variable 1 = -dofs 1 "dS"
+  Exported Variable 2 = -dofs 1 "dSdt"
+  Adjust Surface = Logical True
+End
+
+Solver 3
+  Exec Solver = "Before All"
+  Equation = "StateWriteInitial"
+  Procedure = "__ESS_LIB__" "StateIO"
+  State Mode = String "write"
+  State File = File "__STATE_OUT0__"
+  Write Coordinates = Logical True
+__WRITE_VARS0__
+End
+
+Solver 4
+  Equation = "MapCoordinate"
+  Procedure = "StructuredMeshMapper" "StructuredMeshMapper"
+  Minimum Height = Real 1.0
+  Exec Solver = "Before Timestep"
+  Active Coordinate = Integer 3
+  Variable = -nooutput DummyR
+  Mesh Velocity Variable = String "dSdt"
+  Mesh Update Variable = String "dS"
+  Mesh Velocity First Zero = Logical True
+  Exported Variable 1 = -dofs 1 "dS"
+  Exported Variable 2 = -dofs 1 "dSdt"
+  Adjust Surface = Logical True
+End
+
+Solver 5
+  Exec Solver = "before Timestep"
+  Equation = "HeightDepth"
+  Procedure = "StructuredProjectToPlane" "StructuredProjectToPlane"
+  Active Coordinate = Integer 3
+  Operator 1 = depth
+  Operator 2 = height
+  Dot Product Tolerance = 1.0e-3
+End
+
+Solver 6
+  Exec Solver = "Before Timestep"
+  Equation = "Normal vector"
+  Variable = "Normal Vector"
+  Variable DOFs = 3
+  Optimize Bandwidth = Logical False
+  Procedure = "ElmerIceSolvers" "ComputeNormalSolver"
+  ComputeAll = Logical False
+End
+
+! Owner of the frozen fields (never executed; values come from StateRead).
+Solver 7
+  Exec Solver = "Never"
+  Equation = "FrozenFields"
+  Procedure = "__ESS_LIB__" "ESSNoOp"
+  Variable = -nooutput essfrozendummy
+  Exported Variable 1 = -dofs 1 "GroundedMask"
+  Exported Variable 2 = -dofs 1 "ColdTempMask"
+  Exported Variable 3 = -dofs 1 "Zb"
+  Exported Variable 4 = -dofs 1 "bedrock"
+End
+
+Solver 8
+  Equation = "Stokes-Vec"
+  Procedure = "IncompressibleNSVec" "IncompressibleNSSolver"
+  Div-Curl Discretization = Logical False
+  Stokes flow  = Logical true
+  Optimize Bandwidth = Logical True
+  Flow Model = Stokes
+  Stabilization Method = String __STOKES_STAB__
+
+  ! the viscosity depends on T (taken from the start of the step): linear in the velocity
+  Nonlinear System Min Iterations = 1
+  Nonlinear System Max Iterations = 1
+  Nonlinear System Convergence Tolerance  = 1.0e-8
+
+__LS_STOKES__
+
+  Steady State Convergence Tolerance = Real 1.0e-8
+  Number of Integration Points = Integer 44
+  Calculate Loads = Logical True
+  Exported Variable 1 = -dofs 4 Flow Solution Loads
+End
+
+Solver 9
+  Exec Solver = __STRAIN_EXEC__
+  Equation = DeformationalHeat
+  Variable = Strain Heating
+  Variable DOFs = 1
+  Procedure = "ElmerIceSolvers" "DeformationalHeatSolver"
+__LS_STRAIN__
+  Nonlinear System Max Iterations = 1
+End
+
+Solver 10
+  Equation = String "Homologous Temperature Equation"
+  Procedure =  File "HeatSolveVec" "HeatSolver"__HEAT_EXEC__
+  Variable = String "Temperature"
+  Number of Integration Points = Integer 64
+  Optimize Bandwidth = Logical True
+
+__LS_HEAT__
+
+  Nonlinear System Convergence Tolerance = 1.0e-10
+  Nonlinear System Max Iterations = 1
+  Nonlinear System Min Iterations = 1
+  Steady State Convergence Tolerance = 1.0E-8
+
+  Stabilize = Logical True
+  Apply Limiter = Logical False
+  Exported Variable 1 = -dofs 1 "Rel Temperature"
+  Update Exported Variables = Logical True
+End
+
+Solver 11
+  Equation = "Free Surface Top"
+  Exec Solver = __FS_EXEC__
+  Procedure =  "FreeSurfaceSolver" "FreeSurfaceSolver"
+  Variable = "Zs"
+  Variable DOFS =  1
+  Exported Variable 1 = -dofs 1 "Zs Residual"
+  Exported Variable 2 = "Output Accumulation"
+  Exported Variable 2 DOFs = 1
+  Exported Variable 3 = -dofs 1 "height"
+
+  Linear System Solver = Direct
+  Linear System Direct Method = $directsolver
+  Linear System Abort Not Converged = True
+  Linear System Convergence Tolerance = 1.0e-12
+
+  Nonlinear System Max Iterations = 100
+  Nonlinear System Convergence Tolerance  = 1.0e-10
+  Nonlinear System Relaxation Factor = 1.00
+  Steady State Convergence Tolerance = 1.0e-8
+
+  Stabilization Method = Stabilized
+  Apply Dirichlet = Logical True
+End
+
+Solver 12
+  Exec Solver = "After All"
+  Equation = "StateWrite"
+  Procedure = "__ESS_LIB__" "StateIO"
+  State Mode = String "write"
+  State File = File "__STATE_OUT__"
+  Write Coordinates = Logical True
+__WRITE_VARS__
+End
+
+!---------------- BOUNDARY CONDITIONS --------------
+! the footprint's sides (gmsh physical curves 22..25), extruded into walls; then the bed and the surface
+
+Boundary Condition 1
+  Name = "wall x0"
+  Target Boundaries(1) = 1
+  Velocity 1 = 0.0            ! free-slip wall
+End
+
+Boundary Condition 2
+  Name = "wall xL"
+  Target Boundaries(1) = 2
+  Velocity 1 = 0.0
+End
+
+Boundary Condition 3
+  Name = "wall y0"
+  Target Boundaries(1) = 3
+  Velocity 2 = 0.0
+End
+
+Boundary Condition 4
+  Name = "wall yW"
+  Target Boundaries(1) = 4
+  Velocity 2 = 0.0
+End
+
+Boundary Condition 5
+  Name = "bed"
+  Body ID = 2
+  Bottom Surface = Equals "bedrock"
+  ! no slip
+  Velocity 1 = 0.0
+  Velocity 2 = 0.0
+  Velocity 3 = 0.0
+  ! the geothermal flux into the ice (no rock below)
+  Heat Flux BC = Logical True
+  Heat Flux = Real #gthf
+End
+
+Boundary Condition 6
+  Name = "free surface"
+  Body ID = 3
+  Top Surface = Equals "Zs"
+
+  Heat Flux BC = Logical True
+  Heat transfer coefficient = Real __HTC__
+  External Temperature = Real #Tsurf
+  ComputeNormal = Logical True
+
+  FSSA Theta = Real 1.0
+  FSSA Flag = String $fssaflag
+  FSSA Accumulation = Variable Coordinate 1, Coordinate 2
+    Real Lua "SpreadSource(tx[0], tx[1])"
+End
