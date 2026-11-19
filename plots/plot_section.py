@@ -82,6 +82,12 @@ def state_meta(path):
         return g("meta::sweep_d"), g("meta::x_gl")
 
 
+def iter_tag(path):
+    """the label suffix of a Newton iterate (jobs/newton_iterates.py): ', Newton it k'; '' for other states"""
+    with np.load(path) as z:
+        return f", Newton it {int(z['meta::newton_it'])}" if "meta::newton_it" in z.files else ""
+
+
 def build(go, path, a):
     """one state's traces: the fields (temperature, u, w: heatmaps) and the lines (Zs, Zb, bed, the patch head);
     returns (fields, lines, field names, field ranges)"""
@@ -203,8 +209,8 @@ def build(go, path, a):
         lines.append(go.Scatter(x=[xh, xh], y=[zb_h - 300, zs_h + 300], mode="lines", name="cold | temperate bed",
                                 line=dict(color="#2ca02c", width=2, dash="dash"),
                                 hovertemplate=f"patch head x {xh:.2f} km<extra></extra>"))
-    lab = (f"d = {d / 1e3:.1f} km (temperate from {(xgl_m - d) / 1e3:.1f} km)" if d is not None and xgl_m is not None
-           else os.path.basename(path))
+    lab = (f"d = {d / 1e3:.1f} km (temperate from {(xgl_m - d) / 1e3:.1f} km){iter_tag(path)}"
+           if d is not None and xgl_m is not None else os.path.basename(path))
     return ftr, lines, names, ranges, f"{lab}, {title}", ulog_lo
 
 
@@ -283,7 +289,7 @@ def main():
     sliders = []
     if len(built) > 1:
         sliders = [dict(active=0, currentvalue=dict(prefix="state: ", font=dict(size=13)), pad=dict(t=50),
-                        steps=[dict(label=(f"{meta[p_] / 1e3:.1f} km" if meta[p_] is not None else os.path.basename(p_)),
+                        steps=[dict(label=(f"{meta[p_] / 1e3:.1f} km{iter_tag(p_).replace(', Newton it ', ' it ')}" if meta[p_] is not None else os.path.basename(p_)),
                                     method="skip", args=[None], value=str(k)) for k, p_ in enumerate(paths)])]
     fig.update_layout(title=titles[0][0], template="plotly_white",
                       xaxis=dict(title="x (km)", range=xr, autorange=False),

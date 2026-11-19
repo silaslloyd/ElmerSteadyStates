@@ -107,7 +107,9 @@ def main():
             warnings.simplefilter("ignore", RuntimeWarning)
             hc, qc, mc = col(hv), col(qv), col(mv)
         Nc = np.array([cs_N(h, hp) if np.isfinite(h) else np.nan for h in hc])
-        lab0 = (f"d = {float(s.meta['sweep_d']) / 1e3:.1f} km" if "sweep_d" in s.meta else os.path.basename(path))
+        lab0 = (f"d = {float(s.meta['sweep_d']) / 1e3:.1f} km"
+                + (f", it {int(s.meta['newton_it'])}" if "newton_it" in s.meta else "")
+                if "sweep_d" in s.meta else os.path.basename(path))
         lab = f"{lab0} ({st})"
         hmin_x = float(ux[np.isfinite(hc)].min()) if np.isfinite(hc).any() else xg / 1e3
         print(f"{lab0}: patch {(xg - d) / 1e3:.2f} .. {xg / 1e3:.2f} km, status {st}: h at the head {row['h_head']:.4g} m, "

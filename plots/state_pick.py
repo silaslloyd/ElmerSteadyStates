@@ -7,16 +7,17 @@ import numpy as np
 
 def prefer_fine(paths):
     """paths with each sweep length d (meta::sweep_d, to 1 m) once: the state with the most values; other states
-    (no sweep_d) kept as given. The order of first appearance is kept."""
+    (no sweep_d) kept as given; Newton iterates (meta::newton_it, jobs/newton_iterates.py) count as their own states. The order of first appearance is kept."""
     best, order, out = {}, [], []
     for p in dict.fromkeys(paths):
         with np.load(p) as z:
             d = float(z["meta::sweep_d"]) if "meta::sweep_d" in z.files else None
+            it = int(z["meta::newton_it"]) if "meta::newton_it" in z.files else -1   # Newton iterates: each kept
             n = int(z["x"].size)
         if d is None:
             out.append(p)
             continue
-        k = round(d)
+        k = (round(d), it)
         if k not in best:
             order.append(k)
             best[k] = (n, p)

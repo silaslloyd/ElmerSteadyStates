@@ -92,7 +92,8 @@ def main():
             if sel.any():
                 mm[i] = np.nanmean(m[sel])
         xgl = float(xpos[grounded].max()) / 1e3 if grounded.any() else None
-        lab = f"d = {d / 1e3:.1f} km" if d is not None else os.path.basename(path)
+        lab = (f"d = {d / 1e3:.1f} km" + (f", it {int(s.meta['newton_it'])}" if "newton_it" in s.meta else "")
+               if d is not None else os.path.basename(path))
         gm = grounded & temp
         print(f"{lab}: grounded temperate bed {int(gm.sum())} nodes, melt {np.nanmin(m[gm]):.4g} .. {np.nanmax(m[gm]):.4g} "
               f"m/yr, total {np.nansum(mm[ux <= (xgl or np.inf)][:-1] * np.diff(ux[ux <= (xgl or np.inf)]) * 1e3):.4g} "
