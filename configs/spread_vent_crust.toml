@@ -30,8 +30,6 @@ spread_thickness = 100.0                # initial uniform layer (m)
 spread_bed = 0.0                        # flat bed elevation (m)
 source_rate = 0.1                       # m/yr of ice in the source circle
 source_radius_km = 50.0
-margin_dh = 10.0                        # m: the current's margin (the mask's 0) where H = spread_thickness + margin_dh
-margin_width = 5.0                      # m: the mask's tanh width in thickness
 source_edge_km = 10.0                   # km: the source full within radius - edge, a cosine taper to zero AT the radius
                                         # (wholly inside the temperate surface circle r < radius); two elements
 arrhenius_Q = 60000.0                   # J/mol (Paterson's ice value below -10 C)
@@ -70,7 +68,7 @@ stokes_abort_not_converged = false
 linear_heat = "iterative"
 linear_free_surface = "direct"                # MUMPS: the 2D surface system (BiCGStab + ILU1 diverged once the current flowed)
 surface_transfer = 1.0                  # a crust: the surface Robin coefficient 10x the other vent runs (k/h ~ 66 m)
-diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "Output Accumulation", "GroundedMask"]
+diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "Output Accumulation"]
 
 [state]
 variables = ["Temperature", "Zs"]

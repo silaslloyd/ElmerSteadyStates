@@ -150,9 +150,6 @@ Body Force 1
   Flow BodyForce 1 = Real 0
   Flow BodyForce 2 = Real 0
   Flow BodyForce 3 = Real #-gravity
-  ! the margin mask (Solver 5 exports it): the thickness H = depth + height
-  GroundedMask = Variable depth, height
-    Real Lua "SpreadMarginMask(tx[0] + tx[1])"
 __HEAT_SOURCE__
 End
 
@@ -250,11 +247,6 @@ Solver 5
   Operator 1 = depth
   Operator 2 = height
   Dot Product Tolerance = 1.0e-3
-  ! the current's margin mask (for the mesher, in place of the marine runs' grounded mask): from the thickness
-  ! depth + height, the value of the Body Force keyword GroundedMask (SpreadMarginMask: +1 in the current, -1 on the
-  ! background layer, 0 at its edge, H = ess_mask_H), every time step
-  Exported Variable 1 = -dofs 1 "GroundedMask"
-  Update Exported Variables = Logical True
 End
 
 Solver 6
