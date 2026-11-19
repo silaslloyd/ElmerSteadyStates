@@ -12,7 +12,8 @@ column onto a regular z grid (--nz levels): the colours are the model's values, 
 
 The panels are drawn at a fixed vertical exaggeration --vex (z against the section's horizontal distance; default: a
 tenth of the old single-panel page's stretch, from the data's z range, printed); --x XMIN XMAX (km) to show only part of the line (the panels then get taller
-at the same exaggeration).
+at the same exaggeration). Default window: where the surface stands > 10 m above the background layer in any state,
+padded. Colour ranges: the data's (all states), not the model's possible range.
 
     python3 plots/spread_section.py STATE.npz [STATE2.npz ...] [--config configs/spread_vent.toml] [--axis x|y]
                                     [--vex V] [--x XMIN XMAX] [--nx 400] [--nz 120] [--width 1200] [--out FILE.html]
@@ -85,6 +86,23 @@ def section(s, axis, c0, sline):
     return out
 
 
+def dome_extent(s, axis, c0, dh=10.0, band=5e3):
+    """(lo, hi) along the line of where the surface stands more than dh above the background layer's (its median),
+    from the Zs nodes within band of the line; None if nowhere"""
+    allc = {**s.diag, **s.frozen}
+    blk = {b.name.lower(): b for b in s.layout.blocks}
+    g = blk["zs"].gids
+    zs = s.layout.split(s.x)[blk["zs"].name]
+    pos = []
+    for k in (1, 2):
+        c = allc[find_name(allc, f"coordinate {k}")]
+        d = dict(zip(c[0].tolist(), c[1]))
+        pos.append(np.array([d.get(i, np.nan) for i in g.tolist()], float))
+    along, across = (pos[0], pos[1]) if axis == "x" else (pos[1], pos[0])
+    m = (np.abs(across - c0) < band) & (zs > np.median(zs) + dh)
+    return (float(along[m].min()), float(along[m].max())) if m.any() else None
+
+
 def on_grid(zg, Zl, F):
     """the level field F (nl x nx) on the regular z grid zg (columns: linear between the levels; NaN outside the ice)"""
     G = np.full((len(zg), Zl.shape[1]), np.nan)
@@ -125,7 +143,18 @@ def main():
     eta_pas = float(P["viscosity"]) * 1e6 * 365.25 * 86400        # MPa a -> Pa s
     eta = lambda T: np.log10(eta_pas * np.exp(Q / 8.314 * (1 / np.clip(T, 150.0, Tmax) - 1 / Tref)))
     Lline = L if axis == "x" else W
-    a, b = (xwin[0] * 1e3, xwin[1] * 1e3) if xwin else (0.0, Lline)
+    c0 = yc if axis == "x" else xc
+    if xwin:
+        a, b = xwin[0] * 1e3, xwin[1] * 1e3
+    else:                                   # the flow's extent over all states, padded
+        ext = [e for e in (dome_extent(load_state(p), axis, c0) for p in args) if e]
+        if ext:
+            lo, hi = min(e[0] for e in ext), max(e[1] for e in ext)
+            pad = max(0.25 * (hi - lo), 20e3)
+            a, b = max(0.0, lo - pad), min(Lline, hi + pad)
+        else:
+            a, b = 0.0, Lline
+        print(f"section window {a / 1e3:.0f} .. {b / 1e3:.0f} km (--x to set)")
     sline = np.linspace(a, b, nx)
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
@@ -133,7 +162,7 @@ def main():
     for p in args:
         s = load_state(p)
         t = float(s.meta.get("time", np.nan))
-        Zl, Tl, Ul = section(s, axis, yc if axis == "x" else xc, sline)
+        Zl, Tl, Ul = section(s, axis, c0, sline)
         rows.append((t, Zl, Tl, Ul))
         print(f"{os.path.basename(p)}: t {t:,.0f} yr, T {np.nanmin(Tl):.2f} .. {np.nanmax(Tl):.2f} K, speed max "
               f"{np.nanmax(Ul) if np.isfinite(Ul).any() else np.nan:.3g} m/yr, surface {np.nanmin(Zl[-1]):.0f} .. "
@@ -145,6 +174,11 @@ def main():
     allU = np.concatenate([r[3][np.isfinite(r[3]) & (r[3] > 0)] for r in rows] + [np.array([1e-3])])
     u_hi = float(np.log10(np.percentile(allU, 99.5)))
     u_lo = u_hi - 4.0
+    # the colour ranges from the data (all states; 0.5 .. 99.5 percentiles), not the model's whole possible range
+    allT = np.concatenate([r[2][np.isfinite(r[2])].ravel() for r in rows])
+    t_lo, t_hi = (float(v) for v in np.percentile(allT, [0.5, 99.5]))
+    if t_hi - t_lo < 1.0:
+        t_lo, t_hi = t_lo - 0.5, t_hi + 0.5
     plot_w = width - 200
     if vex is None:
         # a tenth of the old single-panel page's stretch: the whole line over ~plot_w px, the z range over ~470 px
@@ -156,8 +190,9 @@ def main():
     height = 3 * panel + 2 * gap + 230
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=gap / (height - 230),
                         subplot_titles=("log10 viscosity (Pa s)", "log10 speed (m/yr)", "temperature (K)"))
-    cbar = lambda r, title: dict(title=title, len=panel / (height - 230), y=1 - ((r - 1) * (panel + gap) + panel / 2) / (height - 230),
-                                 yanchor="middle", thickness=14)
+    cbar = lambda r, title: dict(title=dict(text=title, side="right"), lenmode="pixels", len=max(panel, 60),
+                                 y=1 - ((r - 1) * (panel + gap) + panel / 2) / (height - 230), yanchor="middle",
+                                 thickness=14, nticks=4)
     xs = sline / 1e3
     n = len(rows)
     for i, (t, Zl, Tl, Ul) in enumerate(rows):
@@ -166,9 +201,9 @@ def main():
         with np.errstate(divide="ignore", invalid="ignore"):
             Gu = np.log10(on_grid(zg, Zl, Ul))
         for r, z_, cs, lo, hi, title, hv in (
-                (1, eta(G), "Viridis_r", eta(Tmax), eta(Tsurf), "log10 eta", "log10 eta %{z:.2f}"),
+                (1, eta(G), "Viridis_r", eta(t_hi), eta(t_lo), "log10 eta", "log10 eta %{z:.2f}"),
                 (2, Gu, "Inferno", u_lo, u_hi, "log10 |u|", "log10 |u| %{z:.2f}"),
-                (3, G, "RdBu_r", Tsurf, Tmax, "T (K)", "T %{z:.2f} K")):
+                (3, G, "RdBu_r", t_lo, t_hi, "T (K)", "T %{z:.2f} K")):
             fig.add_trace(go.Heatmap(x=xs, y=zg, z=np.where(np.isfinite(G), z_, np.nan).astype(np.float32),
                                      colorscale=cs, zmin=lo, zmax=hi, colorbar=cbar(r, title), visible=vis,
                                      hovertemplate=f"%{{x:.1f}} km, z %{{y:.0f}} m<br>{hv}<extra></extra>"),
