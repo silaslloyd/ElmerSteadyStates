@@ -188,10 +188,11 @@ function SpreadTinit(x, y)
   return Tsurf
 end
 
--- the viscosity Arrhenius in T (Newtonian): viscosity at ess_arr_Tref, activation energy ess_arr_Q (J/mol)
+-- the viscosity Arrhenius in T (Newtonian): viscosity at ess_arr_Tref, activation energy ess_arr_Q (J/mol); the
+-- temperature capped at ess_arr_Tmax ([case] arrhenius_Tmax, default T0: no softening above it)
 function SpreadViscosity(T)
   local Tc = T
-  if Tc > T0 then Tc = T0 end
+  if Tc > ess_arr_Tmax then Tc = ess_arr_Tmax end
   if Tc < 150.0 then Tc = 150.0 end
   return viscosity * math.exp(ess_arr_Q / 8.314 * (1.0 / Tc - 1.0 / ess_arr_Tref))
 end

@@ -34,6 +34,8 @@ source_edge_km = 10.0                   # km: the source full within radius - ed
                                         # (wholly inside the temperate surface circle r < radius); two elements
 arrhenius_Q = 60000.0                   # J/mol (Paterson's ice value below -10 C)
 # bed_temperature = 223.15              # K, the bed held at this temperature (default Tsurf)
+arrhenius_Tmax = 373.15                 # K: the viscosity softens with T up to here (T0 + 100 K; default T0), so
+                                        # strain heating can soften the hot core (the thermoviscous feedback)
 arrhenius_Tref = 273.15                 # K: the viscosity is `viscosity` at T0 (the temperate source material)
 gmsh = "gmsh"
 elmergrid = "ElmerGrid"
@@ -54,7 +56,8 @@ keep_runs = false
 cache = false                           # a transient test: no reuse of runs
 vtu = false
 friction_heat = "flux"                  # zero on a no-slip bed
-strain_heat = false
+strain_heat = true                      # viscous dissipation 2 eta e:e in the heat equation (the feedback with the
+                                        # Arrhenius viscosity, nothing caps T in the heat solve)
 # iterative, as the ice-stream runs (ElmerStreams): P1 + bubbles, GCR(250) + ILU8 to 1e-8, no abort when not converged;
 # heat BiCGStabL + ILU; the free surface direct (small 2D system)
 stokes_element = "Bubbles"
