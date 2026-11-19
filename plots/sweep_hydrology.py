@@ -72,7 +72,9 @@ def main():
     from plotly.colors import sample_colorscale
     from plotly.subplots import make_subplots
     res = []
-    for path in dict.fromkeys(args):
+    sys.path.insert(0, HERE)
+    from state_pick import prefer_fine
+    for path in prefer_fine(args):          # one state per sweep length d: the finest mesh's
         s = load_state(path)
         g, xpos, grounded = _bed(s.frozen, s.diag)
         ct = s.frozen[find_name(s.frozen, "ColdTempMask")]

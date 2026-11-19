@@ -70,7 +70,9 @@ def main():
     from plotly.colors import sample_colorscale
     P = eval_lua_parameters(params)
     rows = []
-    for path in dict.fromkeys(args):
+    sys.path.insert(0, HERE)
+    from state_pick import prefer_fine
+    for path in prefer_fine(args):          # one state per sweep length d: the finest mesh's
         s = load_state(path)
         d = float(s.meta["sweep_d"]) if "sweep_d" in s.meta else None
         g, xpos, grounded = _bed(s.frozen, s.diag)

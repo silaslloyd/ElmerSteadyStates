@@ -227,7 +227,8 @@ def main():
         raise SystemExit(__doc__)
     import plotly.graph_objects as go
     # the states: the given order, sweep points by d from the longest patch (the most temperate) down
-    paths = list(dict.fromkeys(args))
+    from state_pick import prefer_fine
+    paths = prefer_fine(args)               # one state per sweep length d: the finest mesh's
     meta = {p_: state_meta(p_)[0] for p_ in paths}
     plain = [p_ for p_ in paths if meta[p_] is None]
     swept = sorted((p_ for p_ in paths if meta[p_] is not None), key=lambda p_: -meta[p_])
