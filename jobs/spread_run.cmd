@@ -4,13 +4,15 @@
 #SBATCH --ntasks=64
 #SBATCH --time=2-00:00:00
 #
-# TEST CASE (branch test/lava-spreading): the cold viscous gravity current of configs/spread_ice.toml (a uniform cold
-# layer on a flat bed, a central source, free-slip walls, a no-slip bed, Arrhenius viscosity), time-stepped.
+# TEST CASE (branch test/lava-spreading): the viscous gravity current of configs/spread_ice.toml (a uniform 100 m cold
+# layer on a flat bed, a central temperate source, zero-velocity walls, a no-slip bed, Arrhenius viscosity).
 #   1. ess setup (mesh, partitioned for --ntasks) and ess init, if not done yet;
-#   2. ess run: CHUNKS (default 50) chunks of STEPS (default 20) x DT (default 50) yr, masks frozen (all grounded,
-#      all cold), the state after every chunk in work/spread_ice/run_chunks/points/ (state_NNNN.npz).
-# START=file.npz: go on from a saved state (e.g. the last chunk), with T0=its model time for the time stamps.
-#   sbatch jobs/spread_run.cmd
+#   2. STATIC phase, the source OFF (--lua ess_src_a=0): STATIC_CHUNKS (default 10) chunks of STEPS (20) x DT (50) yr,
+#      to check the cold layer stays put (the log's "rms change" per chunk should stay tiny); states in
+#      work/spread_ice/static_chunks/points/, the end in work/spread_ice/static.npz (skipped when that exists);
+#   3. the source ON from the end of the static phase: CHUNKS (default 50) chunks, model time carried on; states in
+#      work/spread_ice/run_chunks/points/ (time stamps from the start of the static phase).
+# START=file.npz with T0=its model time: phase 3 from that state instead (e.g. to go on after a time-out).
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
@@ -27,8 +29,17 @@ W=work/spread_ice
 mkdir -p $W
 if [ ! -d $W/case/footprint ]; then python3 -u -m ess setup $CFG; fi
 if [ ! -f $W/state0.npz ]; then python3 -u -m ess init $CFG --out $W/state0.npz; fi
-START=${START:-$W/state0.npz}
-echo "$(date +%T) spreading run from $START: ${CHUNKS:-50} chunks of ${STEPS:-20} x ${DT:-50} yr"
-python3 -u -m ess run $CFG --state $START --chunks ${CHUNKS:-50} --steps ${STEPS:-20} --dt ${DT:-50} \
+DTS=${DT:-50}; NS=${STEPS:-20}
+if [ -z "$START" ]; then
+    if [ ! -f $W/static.npz ]; then
+        echo "$(date +%T) static phase, the source off: ${STATIC_CHUNKS:-10} chunks of $NS x $DTS yr"
+        python3 -u -m ess run $CFG --state $W/state0.npz --chunks ${STATIC_CHUNKS:-10} --steps $NS --dt $DTS \
+            --lua ess_src_a=0.0 --gl frozen --no-remask --save-every 1 --out $W/static.npz
+    fi
+    START=$W/static.npz
+    T0=$(python3 -c "import numpy as np; z = np.load('$START'); print(float(z['meta::time']) if 'meta::time' in z.files else 0.0)")
+fi
+echo "$(date +%T) source on from $START (t = ${T0:-0} yr): ${CHUNKS:-50} chunks of $NS x $DTS yr"
+python3 -u -m ess run $CFG --state $START --chunks ${CHUNKS:-50} --steps $NS --dt $DTS \
     --gl frozen --no-remask --save-every 1 --time-offset ${T0:-0} --out $W/run.npz
 echo "$(date +%T) done"

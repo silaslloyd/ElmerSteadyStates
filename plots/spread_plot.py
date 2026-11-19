@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The spreading test (configs/spread_ice.toml, branch test/lava-spreading): the ice thickness of the chunk states of
-`ess run` (work/spread_ice/run_chunks/points/state_*.npz) as one plotly page:
+`ess run` (work/spread_ice/static_chunks/points/ and run_chunks/points/state_*.npz) as one plotly page:
   * a map of the thickness above the initial layer, H - H0, with a slider over the states;
   * the radial profiles H(r) about the source centre (azimuthal means), one line per state;
   * the front radius (where H - H0 first falls below --dh m, default 10, going outwards) against time, log-log, with

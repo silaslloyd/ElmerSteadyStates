@@ -770,7 +770,7 @@ def cmd_run(args):
             return _dt_change(args, model, out, t + t_off, dc)
         if args.save_every and (c + 1) % args.save_every == 0:
             save_state(os.path.join(sdir, f"state_{c + 1 + args.chunk_offset:04d}.npz"), saved.layout, prob.unscale(y), p,
-                       dict(saved.frozen), prob.last_diag, time=t)
+                       dict(saved.frozen), prob.last_diag, time=t + t_off)
         t_end = t
         if args.until_tol and dy < args.until_tol:
             log.info(f"run: rms change {dy:.3e} < {args.until_tol:g} over one chunk ({prob.spec.horizon:g} yr): "
