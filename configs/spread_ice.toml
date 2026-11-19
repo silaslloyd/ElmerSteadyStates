@@ -11,7 +11,7 @@
 #     J/mol, Tref = arrhenius_Tref = T0: the temperate source material has exactly `viscosity` (1e14 Pa s, the ice
 #     sheets' value), the cold layer at Tsurf is exp(Q/R (1/Tsurf - 1/T0)) times stiffer (~370x at 223 K);
 #   * heat: the surface T0 (temperate) inside the source circle, the Robin condition with Tsurf elsewhere; the
-#     geothermal flux gthf into the ice at the bed; insulating walls.
+#     bed temperature fixed (bed_temperature, default Tsurf: -50 C); insulating walls.
 # Transient only (`ess run`), see jobs/spread_run.cmd.
 
 [paths]
@@ -30,6 +30,7 @@ source_rate = 0.1                       # m/yr of ice in the source circle
 source_radius_km = 100.0
 source_edge_km = 5.0
 arrhenius_Q = 60000.0                   # J/mol (Paterson's ice value below -10 C)
+# bed_temperature = 223.15              # K, the bed held at this temperature (default Tsurf)
 arrhenius_Tref = 273.15                 # K: the viscosity is `viscosity` at T0 (the temperate source material)
 gmsh = "gmsh"
 elmergrid = "ElmerGrid"

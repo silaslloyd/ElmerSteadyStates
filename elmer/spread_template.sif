@@ -7,7 +7,7 @@
 !!   * the accumulation only in the source circle: SpreadSource(x, y) (ess_utils.lua), nothing elsewhere;
 !!   * the viscosity Newtonian, Arrhenius in T: SpreadViscosity(T);
 !!   * the four sides walls with zero velocity, the bed no slip;
-!!   * the basal heat flux the geothermal flux gthf (no rock, no friction on a no-slip bed); the surface
+!!   * the bed temperature fixed, T = ess_bed_T ([case] bed_temperature, default Tsurf); the surface
 !!     T = T0 (temperate) inside the source circle, where the new material arrives, the Robin condition
 !!     with External Temperature Tsurf (very cold) elsewhere; walls insulating;
 !!   * no masks (nothing floats, no cold/temperate switching); the bed flat and fixed: the frozen field
@@ -396,9 +396,8 @@ Boundary Condition 5
   Velocity 1 = 0.0
   Velocity 2 = 0.0
   Velocity 3 = 0.0
-  ! the geothermal flux into the ice (no rock below)
-  Heat Flux BC = Logical True
-  Heat Flux = Real #gthf
+  ! the bed temperature fixed ([case] bed_temperature, default Tsurf)
+  Temperature = Real #ess_bed_T
 End
 
 Boundary Condition 6

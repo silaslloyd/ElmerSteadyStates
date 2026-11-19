@@ -290,6 +290,8 @@ class ElmerModel(Model):
                                   "ess_src_a": repr(float(c.get("source_rate", 0.1))),
                                   "ess_arr_Q": repr(float(c.get("arrhenius_Q", 60e3))),
                                   "ess_arr_Tref": repr(float(Tref)) if Tref is not None else "Tsurf",
+                                  "ess_bed_T": (repr(float(c["bed_temperature"])) if c.get("bed_temperature") is not None
+                                                else "Tsurf"),
                                   **self.lua_overrides}
         if self.slab:
             self.slab_alpha = math.radians(float(c.get("slab_slope_deg", 0.1)))
