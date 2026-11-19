@@ -28,10 +28,44 @@ import subprocess
 
 import numpy as np
 
-from .remesh import _edges, grade, interpolate_state, read_footprint, write_pos
+from .remesh import _edges, grade, interpolate_state, write_pos
+from .remesh import read_footprint as _read_serial
 from .statefile import SavedState, find_name
 
 log = logging.getLogger("ess")
+
+
+def read_footprint(meshdir):
+    """(ids, x, y, tri) of an Elmer 2D footprint: its serial files (mesh.nodes, mesh.elements), or, when ElmerGrid kept
+    only the partitioned ones (partitioning.N/part.*.nodes, part.*.elements: global node ids), their union"""
+    if os.path.exists(os.path.join(meshdir, "mesh.nodes")):
+        return _read_serial(meshdir)
+    import glob
+    parts = sorted(glob.glob(os.path.join(meshdir, "partitioning.*")))
+    if not parts:
+        raise FileNotFoundError(f"{meshdir}: neither mesh.nodes nor a partitioning.* directory")
+    pd = parts[0]
+    nid, nx, ny = [], [], []
+    for f in glob.glob(os.path.join(pd, "part.*.nodes")):
+        a = np.loadtxt(f, ndmin=2)
+        nid.append(a[:, 0].astype(np.int64)); nx.append(a[:, 2]); ny.append(a[:, 3])
+    nid, nx, ny = np.concatenate(nid), np.concatenate(nx), np.concatenate(ny)
+    ids, k = np.unique(nid, return_index=True)
+    if not np.array_equal(ids, np.arange(1, len(ids) + 1)):
+        raise SystemExit(f"{pd}: node ids are not 1..n")
+    x, y = nx[k], ny[k]
+    el = {}
+    for f in glob.glob(os.path.join(pd, "part.*.elements")):
+        for line in open(f):
+            w = line.split()
+            if len(w) >= 6 and w[2] == "303":
+                el[int(w[0])] = (int(w[3]), int(w[4]), int(w[5]))
+    if not el:
+        raise SystemExit(f"{pd}: no triangles (303) in part.*.elements")
+    tri = np.array([el[k_] for k_ in sorted(el)], np.int64) - 1
+    log.info(f"spread remesh: footprint {os.path.basename(meshdir)} read from {os.path.basename(pd)} "
+             f"({len(ids)} nodes, {len(tri)} triangles)")
+    return ids, x, y, tri
 
 
 def default_opt(c):
