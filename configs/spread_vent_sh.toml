@@ -1,0 +1,100 @@
+# ElmerSteadyStates TEST CASE (branch test/lava-spreading), THE VENT VERSION WITH STRAIN HEATING (work/spread_vent_sh) of configs/spread_ice.toml: a viscous gravity current fed by a central source, the
+# ice-sheet form of lava spreading. Same physical parameters and scales as the ice-sheet runs (case/parameters.lua).
+#
+#   * a square box spread_length_km x width, unstructured triangles of spread_res m, ICE ONLY (elmer/spread_template.sif:
+#     no bedrock, no filler), extruded in 21 levels from the bed to the surface;
+#   * start: a uniform layer spread_thickness m on a flat bed, the ice at Tsurf (very cold) throughout; no masks;
+#   * accumulation only in a circle in the middle: source_rate m/yr within source_radius_km - source_edge_km, a cosine
+#     taper to zero at source_radius_km, nothing elsewhere (no ablation: the current spreads for ever);
+#   * the four walls zero velocity, NO SLIP on the bed;
+#   * viscosity Newtonian, Arrhenius in T: viscosity (parameters.lua) x exp(Q/R (1/T - 1/Tref)), Q = arrhenius_Q
+#     J/mol, Tref = arrhenius_Tref = T0: the temperate source material has exactly `viscosity` (1e14 Pa s, the ice
+#     sheets' value), the cold layer at Tsurf is exp(Q/R (1/Tsurf - 1/T0)) times stiffer (~9000x at 203 K);
+#   * heat: the surface T0 (temperate) inside the source circle, the Robin condition with Tsurf elsewhere; the
+#     bed temperature fixed (bed_temperature, default Tsurf: -70 C); insulating walls.
+# Transient only (`ess run`), see jobs/spread_run.cmd.
+
+[paths]
+work_dir = "work/spread_vent_sh"
+case_dir = "{work}/case"
+
+[case]
+geometry = "spread"
+source = "vent"                         # the material comes in through the bed (a vent), the column above it
+                                        # temperate at the start, no accumulation, the surface cold everywhere
+parameters = "case/parameters.lua"
+spread_length_km = 600.0                # box side along x (km)
+width = 600000.0                        # box side along y (m)
+spread_res = 5000.0                     # triangle size (m)
+spread_thickness = 100.0                # initial uniform layer (m)
+spread_bed = 0.0                        # flat bed elevation (m)
+source_rate = 0.1                       # m/yr of ice in the source circle
+source_radius_km = 50.0
+source_edge_km = 10.0                   # km: the source full within radius - edge, a cosine taper to zero AT the radius
+                                        # (wholly inside the temperate surface circle r < radius); two elements
+arrhenius_Q = 60000.0                   # J/mol (Paterson's ice value below -10 C)
+# bed_temperature = 223.15              # K, the bed held at this temperature (default Tsurf)
+arrhenius_Tmax = 373.15                 # K: the viscosity softens with T up to here (T0 + 100 K; default T0), so
+                                        # strain heating can soften the hot core (the thermoviscous feedback)
+arrhenius_Tref = 273.15                 # K: the viscosity is `viscosity` at T0 (the temperate source material)
+gmsh = "gmsh"
+elmergrid = "ElmerGrid"
+
+[model]
+type = "elmer"
+
+[elmer]
+template = "elmer/spread_template.sif"  # ICE ONLY (no bedrock, no filler): the geothermal flux at the ice base
+mesh_db = "footprint"
+ess_lib = "elmer/SteadyStateIO"
+ess_utils = "elmer/ess_utils.lua"
+n_procs = 0                             # 0: $SLURM_NTASKS
+mpirun = "mpirun -np {n}"
+solver = "ElmerSolver"
+timeout = 21600
+keep_runs = false
+cache = false                           # a transient test: no reuse of runs
+vtu = false
+friction_heat = "flux"                  # zero on a no-slip bed
+strain_heat = true                      # viscous dissipation 2 eta e:e in the heat equation (the feedback with the
+                                        # Arrhenius viscosity, nothing caps T in the heat solve)
+# iterative, as the ice-stream runs (ElmerStreams): P1 + bubbles, GCR(250) + ILU8 to 1e-8, no abort when not converged;
+# heat BiCGStabL + ILU; the free surface direct (small 2D system)
+stokes_element = "Bubbles"
+linear_stokes = "iterative"
+stokes_preconditioner = "ILU8"
+stokes_iterative_tol = 1.0e-8
+stokes_abort_not_converged = false
+linear_heat = "iterative"
+linear_free_surface = "direct"                # MUMPS: the 2D surface system (BiCGStab + ILU1 diverged once the current flowed)
+surface_transfer = 0.1                  # the surface Robin coefficient ("Heat transfer coefficient"; default 1)
+diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "Output Accumulation"]
+
+[state]
+variables = ["Temperature", "Zs"]
+scales = { Temperature = 5.0, Zs = 50.0 }
+frozen = ["bedrock"]                     # the flat bed (fixed); no masks
+
+[parameter]
+name = "Tsurf"
+value = 203.15                          # Tsurf (K): very cold (-70 C)
+scale = 1.0
+
+[map]
+dt = 50.0
+n_steps = 20
+coupled_iters = 1
+rock_heat_capacity = 1.0                # (no bedrock in this case)
+
+[stability_map]
+dt = 50.0
+n_steps = 20
+rock_heat_capacity = 1.0
+
+[fd]
+eps = 1e-6
+scheme = "forward"
+
+[newton]
+tol = 1e-5
+maxit = 15
