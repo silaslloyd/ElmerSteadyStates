@@ -6,7 +6,7 @@ melting (273.15 K); how many nodes were outside is printed. --no-clip: the tempe
 its whole range (e.g. to check a limiter). The
 flowline mesh is one element wide: the nodes at the smallest y are used.
 
-    python3 plots/plot_section.py STATE.npz [STATE2.npz ...] [--x XMIN XMAX (km)] [--tmin K] [--tmax K] [--tsurf K] [--umax M/YR] [--nz 150] [--nx 800]
+    python3 plots/plot_section.py STATE.npz [STATE2.npz ...] [--x XMIN XMAX (km)] [--tmin K] [--tmax K] [--tsurf K] [--umax M/YR] [--nz 150] [--nx 2000]
                                   [--contour] [--no-clip] [--rock]
                                   [--out FILE.html]
 
@@ -14,7 +14,7 @@ Above the plot: u max (the speed's upper colour limit, typed in), u min (the low
 toggle (log10 |u|, floored at 1e-3 m/yr). Buttons switch between the temperature and the velocities u (along the flow; colours up to the fastest grounded
 ice, --umax to set them) and w (vertical, symmetric about 0), from the state's diagnostics Velocity 1 / Velocity 3.
 
-A heatmap of at most --nx columns (averaged along x) x --nz levels (the page stays fast); --contour: filled contours
+A heatmap of the mesh's own columns (averaged along x only when there are more than --nx, default 2000) x --nz levels (the page stays fast); --contour: filled contours
 instead (smoother, much slower in the browser).
 
 --rock: the bedrock's temperature too (down to the bottom of the 10 zscale rock), not only the ice.
@@ -214,7 +214,7 @@ def main():
     args, tmin = opt(args, "--tmin")
     args, tmax = opt(args, "--tmax")
     args, nz = opt(args, "--nz", conv=int, default=None)
-    args, nx = opt(args, "--nx", conv=int, default=800)
+    args, nx = opt(args, "--nx", conv=int, default=2000)
     contour = "--contour" in args               # filled contours (slow in the browser) instead of a heatmap
     noclip = "--no-clip" in args                # the temperature as it is, the colours over its whole range
     args = [a for a in args if a not in ("--contour", "--no-clip")]
