@@ -175,7 +175,8 @@ Material 1
     Real Lua "tx[0] - 273.15"
 
   Heat Capacity = Real #heatcapacity
-  Heat Conductivity = Real #heatconductivity
+  ! x [case] conductivity_factor (ess_k_factor, default 1): the lava's conductivity only
+  Heat Conductivity = Real #heatconductivity*ess_k_factor
   Latent Heat Capacity = Real #Lw
 
   Cauchy = Logical True
