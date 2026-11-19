@@ -54,14 +54,14 @@ vtu = false
 friction_heat = "flux"                  # zero on a no-slip bed
 strain_heat = false
 # iterative, as the ice-stream runs (ElmerStreams): P1 + bubbles, GCR(250) + ILU8 to 1e-8, no abort when not converged;
-# heat BiCGStabL + ILU, the free surface BiCGStab + ILU1
+# heat BiCGStabL + ILU; the free surface direct (small 2D system)
 stokes_element = "Bubbles"
 linear_stokes = "iterative"
 stokes_preconditioner = "ILU8"
 stokes_iterative_tol = 1.0e-8
 stokes_abort_not_converged = false
 linear_heat = "iterative"
-linear_free_surface = "iterative"
+linear_free_surface = "direct"                # MUMPS: the 2D surface system (BiCGStab + ILU1 diverged once the current flowed)
 surface_transfer = 0.1                  # the surface Robin coefficient ("Heat transfer coefficient"; default 1)
 diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "Output Accumulation"]
 
