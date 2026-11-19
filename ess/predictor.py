@@ -59,16 +59,21 @@ def _background(px, pv, sigma):
     return np.interp(px, xu, vu)
 
 
-def _moved(px, pv, X, psi, sigma):
-    """the profile at the nodes X with its anomaly (pv - background) taken from psi(X)"""
+def _moved(px, pv, X, psi, sigma, pv_prev=None, ratio=0.0):
+    """the profile at the nodes X with its anomaly (pv - background) taken from psi(X); with pv_prev (the previous
+    point's profile on the same px): the background extrapolated, bg + ratio (bg - bg_prev) (the hybrid predictor)"""
     bg = _background(px, pv, sigma)
     an = pv - bg
-    return np.interp(X, px, bg) + np.interp(psi(X), px, an)
+    bgn = bg if pv_prev is None else bg + ratio * (bg - _background(px, pv_prev, sigma))
+    return np.interp(X, px, bgn) + np.interp(psi(X), px, an)
 
 
-def shift_margin(s: SavedState, h_old, delta, core=10e3, taper=None, x_gl=None, sigma=15e3):
+def shift_margin(s: SavedState, h_old, delta, core=10e3, taper=None, x_gl=None, sigma=15e3, x_prev=None, ratio=0.0):
     """The state vector of s with the margin structure moved delta (m) downstream (see the module). Returns
-    (x_new, info)."""
+    (x_new, info). HYBRID with x_prev (the previous converged point's state vector on the same layout) and ratio
+    ((d_next - d) / (d - d_prev)): the smooth background (sigma) extrapolated by secant, the anomaly about it moved."""
+    if x_prev is not None and sigma <= 0:
+        raise ValueError("the hybrid predictor needs a background (sigma > 0)")
     taper = float(taper) if taper is not None else max(2.0 * delta, 20e3)
     if taper <= delta:
         raise ValueError(f"taper {taper / 1e3:g} km must exceed the shift {delta / 1e3:g} km (psi monotone)")
@@ -80,6 +85,7 @@ def shift_margin(s: SavedState, h_old, delta, core=10e3, taper=None, x_gl=None, 
     cx, cy, cz = (allc[find_name(allc, f"coordinate {c}")] for c in (1, 2, 3))
     lay = s.layout
     parts = lay.split(s.x)
+    prev = lay.split(np.asarray(x_prev, float)) if x_prev is not None else None
     out = {k: v.copy() for k, v in parts.items()}
     blk = {b.name.lower(): b for b in lay.blocks}
     psi = lambda X: X - delta * shift_weight(X, h_old, delta, core, taper)
@@ -102,7 +108,8 @@ def shift_margin(s: SavedState, h_old, delta, core=10e3, taper=None, x_gl=None, 
     for k in range(counts[0]):
         m = level == k
         px, pv = _profile(X[m], T[m])
-        Tn[m] = _moved(px, pv, X[m], psi, sigma)
+        pvp = _profile(X[m], prev[bT.name][m])[1] if prev is not None else None
+        Tn[m] = _moved(px, pv, X[m], psi, sigma, pvp, ratio)
     out[bT.name] = Tn
     info["T_change_max"] = float(np.max(np.abs(Tn - T)))
     # Zs: the thickness above Zb moved
@@ -112,7 +119,11 @@ def shift_margin(s: SavedState, h_old, delta, core=10e3, taper=None, x_gl=None, 
     pb = _profile(xb, parts[bB.name])
     zb_at_s = np.interp(xs, *pb)
     ph = _profile(xs, parts[bS.name] - zb_at_s)
-    Zs_n = zb_at_s + _moved(ph[0], ph[1], xs, psi, sigma)
+    php = None
+    if prev is not None:
+        zbp_at_s = np.interp(xs, *_profile(xb, prev[bB.name]))
+        php = _profile(xs, prev[bS.name] - zbp_at_s)[1]
+    Zs_n = zb_at_s + _moved(ph[0], ph[1], xs, psi, sigma, php, ratio)
     info["Zs_change_max"] = float(np.max(np.abs(Zs_n - parts[bS.name])))
     out[bS.name] = Zs_n
     x_new = np.concatenate([out[b.name] for b in lay.blocks])
@@ -120,7 +131,8 @@ def shift_margin(s: SavedState, h_old, delta, core=10e3, taper=None, x_gl=None, 
     log.info(f"predictor: margin structure moved {delta / 1e3:g} km downstream (head {h_old / 1e3:.2f} -> "
              f"{(h_old + delta) / 1e3:.2f} km): full shift over {info['core_km']:.1f} .. {info['core_end_km']:.1f} km, "
              f"tapers {taper / 1e3:g} km, " + (f"anomaly about a {sigma / 1e3:g} km background moved" if sigma > 0 else
-             "whole profiles moved") + f"; max change T {info['T_change_max']:.3g} K, Zs {info['Zs_change_max']:.3g} m")
+             "whole profiles moved") + (f", background extrapolated (secant, ratio {ratio:g})" if prev is not None
+                                        else "") + f"; max change T {info['T_change_max']:.3g} K, Zs {info['Zs_change_max']:.3g} m")
     return x_new, info
 
 

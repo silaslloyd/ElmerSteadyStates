@@ -31,7 +31,7 @@ def main():
     ap.add_argument("config")
     ap.add_argument("state")
     ap.add_argument("--d-new-km", type=float, required=True)
-    ap.add_argument("--mode", choices=["shift", "secant"], default="shift")
+    ap.add_argument("--mode", choices=["shift", "secant", "hybrid"], default="shift")
     ap.add_argument("--prev", help="secant: the earlier converged point")
     ap.add_argument("--core-km", type=float, default=10.0)
     ap.add_argument("--taper-km", type=float)
@@ -61,7 +61,7 @@ def main():
     xg = gl_position(saved.frozen, saved.diag)
     h_old = xg - d_old
     delta = d_old - d_new
-    tag = f"_s{a.sigma_km:g}" if a.mode == "shift" else "_secant"
+    tag = f"_s{a.sigma_km:g}" if a.mode == "shift" else f"_{a.mode}"
     out = a.out_dir or os.path.join(cfg["_work"], f"predictor_test_d{a.d_new_km:g}{tag}")
     os.makedirs(out, exist_ok=True)
     log.info(f"predictor test: {a.state} (d {d_old / 1e3:g} km, head {h_old / 1e3:.2f} km, grounding line "
@@ -69,14 +69,19 @@ def main():
     kct = find_name(saved.frozen, "ColdTempMask")
     g_ct, ct, _ = patch_mask(saved.frozen, saved.diag, d_new)
     saved.frozen[kct] = (g_ct, ct)
-    if a.mode == "secant":
+    if a.mode in ("secant", "hybrid"):
         if not a.prev:
-            raise SystemExit("--mode secant needs --prev PREV.npz")
+            raise SystemExit(f"--mode {a.mode} needs --prev PREV.npz")
         ps = load_state(a.prev)
         d_pp = float(ps.meta["sweep_d"])
         x_pp = on_layout(ps, saved)
-        x_pred = prob.unscale(secant(prob.scale(x_pp), d_pp, prob.scale(saved.x), d_old, d_new))
-        log.info(f"predictor test: secant from d = {d_pp / 1e3:g} and {d_old / 1e3:g} km to {d_new / 1e3:g} km")
+        if a.mode == "secant":
+            x_pred = prob.unscale(secant(prob.scale(x_pp), d_pp, prob.scale(saved.x), d_old, d_new))
+        else:
+            x_pred, info = shift_margin(saved, h_old, delta, core=a.core_km * 1e3,
+                                        taper=a.taper_km * 1e3 if a.taper_km else None, x_gl=xg,
+                                        sigma=a.sigma_km * 1e3, x_prev=x_pp, ratio=(d_new - d_old) / (d_old - d_pp))
+        log.info(f"predictor test: {a.mode} from d = {d_pp / 1e3:g} and {d_old / 1e3:g} km to {d_new / 1e3:g} km")
     else:
         x_pred, info = shift_margin(saved, h_old, delta, core=a.core_km * 1e3,
                                     taper=a.taper_km * 1e3 if a.taper_km else None, x_gl=xg,
@@ -84,14 +89,14 @@ def main():
     save_state(os.path.join(out, "predicted.npz"), saved.layout, x_pred, p, dict(saved.frozen), saved.diag,
                sweep_d=d_new, x_gl=xg, predictor=a.mode)
     res = {}
-    for name, x in (("plain", saved.x), ("shifted" if a.mode == "shift" else "secant", x_pred)):
+    pk = {"shift": "shifted"}.get(a.mode, a.mode)
+    for name, x in (("plain", saved.x), (pk, x_pred)):
         t0 = time.time()
         y = prob.scale(x)
         F = prob.F(y, p, tag=f"predictor_{name}", want_diag=True)
         res[name] = (y, F, prob.last_diag)
         log.info(f"predictor test: {name:7s} start: rms(F) = {rms(F):.3e} ({time.time() - t0:.0f} s); residual "
                  f"{describe_step(prob, F)}")
-    pk = "shifted" if a.mode == "shift" else "secant"
     r0, r1 = rms(res["plain"][1]), rms(res[pk][1])
     log.info(f"predictor test: rms(F) plain {r0:.3e}, {pk} {r1:.3e}: x {r0 / r1:.2f} smaller with the {a.mode} start")
     if a.newton:
