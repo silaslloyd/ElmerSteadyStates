@@ -5,7 +5,7 @@ model-time order):
   * log10 of the viscosity (Pa s), eta = viscosity * exp(Q/R (1/T - 1/Tref)) as the model has it (SpreadViscosity in
     elmer/ess_utils.lua: T capped to 150 .. Tmax), Q, Tref and Tmax ([case] arrhenius_Tmax, default T0) from the config,
     `viscosity` from parameters.lua;
-  * the speed |u| (m/yr, log10), from the state's diagnostics Velocity 1..3;
+  * the horizontal speed sqrt(u^2 + v^2) (m/yr, log10), from the state's diagnostics Velocity 1, 2;
   * the temperature T (K).
 Each extruded level of the mesh is interpolated onto the section line (linear on the footprint's triangles), then every
 column onto a regular z grid (--nz levels): the colours are the model's values, nothing smoothed across levels.
@@ -61,7 +61,7 @@ def section(s, axis, c0, sline):
     X, Y, Z = look(cx), look(cy), look(cz)
     T = s.x[s.layout.slices()[bT.name]]
     try:
-        U = np.sqrt(sum(look(allc[find_name(allc, f"velocity {k}")]) ** 2 for k in (1, 2, 3)))
+        U = np.sqrt(sum(look(allc[find_name(allc, f"velocity {k}")]) ** 2 for k in (1, 2)))   # horizontal
     except KeyError:
         U = np.full(len(g), np.nan)
     col = np.unique(np.c_[np.round(X, 1), np.round(Y, 1)], axis=0, return_inverse=True)[1].ravel()
@@ -164,7 +164,7 @@ def main():
         t = float(s.meta.get("time", np.nan))
         Zl, Tl, Ul = section(s, axis, c0, sline)
         rows.append((t, Zl, Tl, Ul))
-        print(f"{os.path.basename(p)}: t {t:,.0f} yr, T {np.nanmin(Tl):.2f} .. {np.nanmax(Tl):.2f} K, speed max "
+        print(f"{os.path.basename(p)}: t {t:,.0f} yr, T {np.nanmin(Tl):.2f} .. {np.nanmax(Tl):.2f} K, horizontal speed max "
               f"{np.nanmax(Ul) if np.isfinite(Ul).any() else np.nan:.3g} m/yr, surface {np.nanmin(Zl[-1]):.0f} .. "
               f"{np.nanmax(Zl[-1]):.0f} m")
     rows.sort(key=lambda r: r[0])
@@ -189,7 +189,7 @@ def main():
     gap = 70
     height = 3 * panel + 2 * gap + 230
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=gap / (height - 230),
-                        subplot_titles=("log10 viscosity (Pa s)", "log10 speed (m/yr)", "temperature (K)"))
+                        subplot_titles=("log10 viscosity (Pa s)", "log10 horizontal speed (m/yr)", "temperature (K)"))
     cbar = lambda r, title: dict(title=dict(text=title, side="right"), lenmode="pixels", len=max(panel, 60),
                                  y=1 - ((r - 1) * (panel + gap) + panel / 2) / (height - 230), yanchor="middle",
                                  thickness=14, nticks=4)
@@ -202,7 +202,7 @@ def main():
             Gu = np.log10(on_grid(zg, Zl, Ul))
         for r, z_, cs, lo, hi, title, hv in (
                 (1, eta(G), "Viridis_r", eta(t_hi), eta(t_lo), "log10 eta", "log10 eta %{z:.2f}"),
-                (2, Gu, "Inferno", u_lo, u_hi, "log10 |u|", "log10 |u| %{z:.2f}"),
+                (2, Gu, "Inferno", u_lo, u_hi, "log10 |u_h|", "log10 |u_h| %{z:.2f}"),
                 (3, G, "RdBu_r", t_lo, t_hi, "T (K)", "T %{z:.2f} K")):
             fig.add_trace(go.Heatmap(x=xs, y=zg, z=np.where(np.isfinite(G), z_, np.nan).astype(np.float32),
                                      colorscale=cs, zmin=lo, zmax=hi, colorbar=cbar(r, title), visible=vis,
