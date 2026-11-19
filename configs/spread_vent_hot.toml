@@ -1,5 +1,5 @@
 # ElmerSteadyStates TEST CASE (branch test/lava-spreading), THE VENT VERSION WITH HOT LAVA (vent_temperature 323.15 K:
-# the core ~60x runnier, eta ~2e12 Pa s; Peclet x ~60; run with DT ~0.1 yr; work/spread_vent_hot) of configs/spread_ice.toml: a viscous gravity current fed by a central source, the
+# the core ~60x runnier, eta ~2e12 Pa s; the supply 60x (6 m/yr); Peclet x ~60; run with DT ~0.1 yr; work/spread_vent_hot) of configs/spread_ice.toml: a viscous gravity current fed by a central source, the
 # ice-sheet form of lava spreading. Same physical parameters and scales as the ice-sheet runs (case/parameters.lua).
 #
 #   * a square box spread_length_km x width, unstructured triangles of spread_res m, ICE ONLY (elmer/spread_template.sif:
@@ -29,7 +29,8 @@ width = 600000.0                        # box side along y (m)
 spread_res = 5000.0                     # triangle size (m)
 spread_thickness = 100.0                # initial uniform layer (m)
 spread_bed = 0.0                        # flat bed elevation (m)
-source_rate = 0.1                       # m/yr of ice in the source circle
+source_rate = 6.0                       # m/yr through the vent: 60x the 273 K vent run, with the core ~60x runnier
+                                        # (the same flow 60x faster, the conduction unchanged: Peclet x 60)
 vent_temperature = 323.15               # K: the incoming material (and the initial plug), T0 + 50 K; <= arrhenius_Tmax
 source_radius_km = 50.0
 source_edge_km = 10.0                   # km: the source full within radius - edge, a cosine taper to zero AT the radius
