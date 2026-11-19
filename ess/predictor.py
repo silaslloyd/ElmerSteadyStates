@@ -122,3 +122,24 @@ def shift_margin(s: SavedState, h_old, delta, core=10e3, taper=None, x_gl=None, 
              f"tapers {taper / 1e3:g} km, " + (f"anomaly about a {sigma / 1e3:g} km background moved" if sigma > 0 else
              "whole profiles moved") + f"; max change T {info['T_change_max']:.3g} K, Zs {info['Zs_change_max']:.3g} m")
     return x_new, info
+
+
+# ---------------------------------------------------------------- secant predictor
+def secant(y1, d1, y2, d2, d_next):
+    """the linear extrapolation in the patch length from two converged states (y1 at d1, y2 at d2, the same layout) to
+    d_next: y2 + (y2 - y1) (d_next - d2) / (d2 - d1)"""
+    if abs(d2 - d1) < 1.0:
+        raise ValueError("secant: the two lengths coincide")
+    return y2 + (y2 - y1) * ((d_next - d2) / (d2 - d1))
+
+
+def on_layout(src: SavedState, dst: SavedState):
+    """src's state vector on dst's layout: src.x when the layouts are the same, else carried over (ess/transfer.py:
+    temperature column by column, Zs and Zb in x; dst's own frozen fields, i.e. its bed, kept)"""
+    if len(src.x) == len(dst.x) and all(a.name == b.name and np.array_equal(a.gids, b.gids)
+                                        for a, b in zip(src.layout.blocks, dst.layout.blocks)):
+        return np.asarray(src.x, float)
+    from .transfer import transfer
+    x, _ = transfer(src, dst)
+    log.info("predictor: the earlier state carried over onto this mesh (ess transfer)")
+    return x

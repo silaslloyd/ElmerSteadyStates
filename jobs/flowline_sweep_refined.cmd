@@ -12,7 +12,7 @@
 # STEP_MIN .. STEP_MAX km (default 1 .. 25), down to D_END km (default 0).
 # Output: work/flowline_rect_coarse/sweep_refined/seg_mXXXX/ (sweep.csv, points/; XXXX the segment's first head in km),
 # the segment configs work/flowline_rect_coarse/refined/mXXXX.toml, meshes work/flowline_rect_coarse/mXXXX/.
-# Resubmitting resumes.
+# PREDICTOR=secant: each Newton from the linear extrapolation of the last two converged points. Resubmitting resumes.
 #   sbatch jobs/flowline_sweep_refined.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
@@ -30,5 +30,5 @@ FROM_SWEEP=${FROM_SWEEP:-work/flowline_rect_coarse/sweep_p268.15_down}
 echo "$(date +%T) refined sweep from the last converged point of $FROM_SWEEP: segments of ${SPAN:-50} km, band ${FINE:-250} m"
 python3 -u jobs/sweep_refined.py configs/flowline_rect_coarse.toml --from-sweep $FROM_SWEEP --d-end-km ${D_END:-0} \
     --span-km ${SPAN:-50} --pad-km ${PAD:-10} --fine ${FINE:-250} --step-frac ${STEP_FRAC:-0.2} \
-    --step-min-km ${STEP_MIN:-1} --step-max-km ${STEP_MAX:-25}
+    --step-min-km ${STEP_MIN:-1} --step-max-km ${STEP_MAX:-25} --predictor ${PREDICTOR:-none}
 echo "$(date +%T) done"

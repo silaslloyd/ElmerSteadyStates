@@ -762,7 +762,7 @@ def sweep_lengths(d_start, d_end, frac, smin, smax):
 
 
 def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_start, d_end, frac=0.1, smin=1e3,
-                     smax=20e3, gl_rounds=6, tol_T=0.0):
+                     smax=20e3, gl_rounds=6, tol_T=0.0, predictor="none", seed=None):
     """Steady states with a temperate patch of length d (m) from the grounding line upstream (cold upstream of it,
     every floating node temperate; patch_mask), for d from d_start to d_end in graded steps (sweep_lengths), each
     from the previous one's state. For each d: Newton with both masks frozen; then the grounding line by CONTACT
@@ -771,7 +771,10 @@ def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_st
     judged: the counts of cold bed nodes above melting and of temperate nodes refreezing are only recorded. A Newton
     failure halves the step back from the last converged length (down to smin, then the sweep stops).
     Output: outdir/sweep.csv (one row per d) and outdir/points/state_XXXXX.npz (XXXXX = d in 100 m). Resumes after
-    the last converged row."""
+    the last converged row.
+    predictor = "secant": each Newton starts from the linear extrapolation in d of the last two converged states
+    (ess/predictor.py secant) instead of the last one; seed: an earlier converged point (d, x) on this layout to
+    extrapolate from before two points of this sweep exist (e.g. the previous segment's, carried over)."""
     from .cli import _contact_mask
     from .newton import newton_krylov
     from .statefile import load_state
@@ -799,10 +802,27 @@ def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_st
              f"grounding line by contact between Newton solves (up to {gl_rounds} rounds)")
     d_prev = float(done[-1]["d_km"]) * 1e3 if done else None
     y_prev, diag_prev, gm_prev = y, diag, frozen[kgm]
+    hist = []                                    # converged (d, y) on this layout, for the secant predictor
+    if predictor == "secant":
+        if seed is not None:
+            hist.append((float(seed[0]), prob.scale(seed[1])))
+        for r_ in done[-2:]:
+            d_ = float(r_["d_km"]) * 1e3
+            s_ = load_state(os.path.join(outdir, "points", f"state_{int(round(d_ / 100)):05d}.npz"))
+            if len(s_.x) == len(saved.x):
+                hist.append((d_, prob.scale(s_.x)))
+        hist = hist[-2:]
+        log.info(f"sweep: secant predictor; {len(hist)} earlier point(s) to extrapolate from"
+                 + (f" (d = {', '.join(f'{h[0] / 1e3:g}' for h in hist)} km)" if hist else ""))
     i = 0
     while i < len(plan):
         d = plan[i]
         r, x, rounds, note = None, None, 0, ""
+        if predictor == "secant" and len(hist) == 2 and d_prev is not None and abs(hist[-1][0] - d_prev) < 1.0:
+            from .predictor import secant
+            y = secant(hist[0][1], hist[0][0], hist[1][1], hist[1][0], d)
+            log.info(f"sweep: d = {d / 1e3:g} km: start extrapolated from d = {hist[0][0] / 1e3:g} and "
+                     f"{hist[1][0] / 1e3:g} km (secant)")
         for rounds in range(1, gl_rounds + 1):
             g_ct, ct, xg = patch_mask(frozen, diag, d)
             frozen[kct] = (g_ct, ct)
@@ -854,6 +874,7 @@ def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_st
                     f"temperate refreezing" if r.converged else "") + (f"; {note}" if note else ""))
         if r.converged:
             d_prev, y_prev, diag_prev, gm_prev = d, y, diag, frozen[kgm]
+            hist = (hist + [(d, y)])[-2:]
             i += 1
             continue
         # a failure: back to the last converged state, half the step

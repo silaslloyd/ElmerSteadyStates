@@ -1279,9 +1279,17 @@ def cmd_sweep(args):
     d1 = args.d_end_km * 1e3
     out = args.out or os.path.join(cfg["_work"], f"sweep_p{p:g}_{'down' if d1 < d0 else 'up'}")
     log.info(f"sweep: from {args.state}, into {out}")
+    seed = None
+    if args.prev_state:                          # an earlier point to extrapolate from (any mesh: carried over)
+        from .predictor import on_layout
+        ps = load_state(args.prev_state)
+        if "sweep_d" not in ps.meta:
+            raise SystemExit(f"--prev-state {args.prev_state}: not a sweep point (no meta sweep_d)")
+        seed = (float(ps.meta["sweep_d"]), on_layout(ps, saved))
+        log.info(f"sweep: earlier point d = {seed[0] / 1e3:g} km from {args.prev_state}")
     rows = run_sweep_marine(cfg, prob, model, saved, prob.scale(saved.x), p, nopt, out, d_start=d0, d_end=d1,
                             frac=args.step_frac, smin=args.step_min_km * 1e3, smax=args.step_max_km * 1e3,
-                            gl_rounds=args.gl_rounds)
+                            gl_rounds=args.gl_rounds, predictor=args.predictor, seed=seed)
     n = sum(1 for r_ in rows if str(r_.get("converged")) == "1")
     log.info(f"sweep: {n} converged states of {len(rows)} in {out}/sweep.csv")
 
@@ -1743,6 +1751,10 @@ def main(argv=None):
                    help="Newton solves per length with the grounding line moved by contact in between")
     s.add_argument("--maxit", type=int, help="Newton iterations per solve (overrides [newton] maxit)")
     s.add_argument("--out", help="output folder (default <work>/sweep_p<P>_down or _up)")
+    s.add_argument("--predictor", choices=["none", "secant"], default="none",
+                   help="secant: each Newton from the linear extrapolation of the last two converged states")
+    s.add_argument("--prev-state", help="secant: an earlier converged sweep point (any mesh) to extrapolate from "
+                                        "before two points of this sweep exist")
     s.set_defaults(fn=cmd_sweep)
 
     s = sub.add_parser("spectrum-down")

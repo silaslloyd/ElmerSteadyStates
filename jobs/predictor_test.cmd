@@ -10,6 +10,7 @@
 # shifted start (NEWTON=0: only the two residuals). On the segment's mesh (CFG, default its config). Output:
 # work/flowline_rect_coarse/predictor_test_d<D_NEW>_s<SIGMA>/. SIGMA (km, default 15): only the anomaly about a
 # Gaussian background of this width moved (0: whole profiles).
+# MODE=secant PREV=earlier.npz: the secant start (linear extrapolation in d of PREV and STATE) instead.
 #   sbatch jobs/predictor_test.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
@@ -26,7 +27,8 @@ unset ESS_SLIDING ESS_HEAT_LIMITER ESS_SEA_SPRING_DT ESS_STRAIN_HEAT_POSITIVE ES
 CFG=${CFG:-work/flowline_rect_coarse/refined/m0245.toml}
 STATE=${STATE:-work/flowline_rect_coarse/sweep_refined/seg_m0245/points/state_07942.npz}
 D_NEW=${D_NEW:-769.2}
+MODE=${MODE:-shift}
 echo "$(date +%T) predictor test: $STATE -> d $D_NEW km on $CFG"
-python3 -u jobs/predictor_test.py $CFG $STATE --d-new-km $D_NEW ${CORE:+--core-km $CORE} ${TAPER:+--taper-km $TAPER} ${SIGMA:+--sigma-km $SIGMA} \
+python3 -u jobs/predictor_test.py $CFG $STATE --d-new-km $D_NEW --mode $MODE ${PREV:+--prev $PREV} ${CORE:+--core-km $CORE} ${TAPER:+--taper-km $TAPER} ${SIGMA:+--sigma-km $SIGMA} \
     $([ "${NEWTON:-1}" = 1 ] && echo --newton)
 echo "$(date +%T) done"
