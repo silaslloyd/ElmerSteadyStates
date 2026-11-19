@@ -297,6 +297,8 @@ class ElmerModel(Model):
                                                    else "T0"),
                                   # the lava's thermal conductivity x conductivity_factor (Peclet number up)
                                   "ess_k_factor": repr(float(c.get("conductivity_factor", 1.0))),
+                                  # all the vent's inflow (and plug) at its temperature, only the speed tapered
+                                  "ess_vent_hot": "1.0" if c.get("vent_hot_inflow", False) else "0.0",
                                   # the vent's incoming material (and the initial plug above it), default T0
                                   "ess_vent_T": (repr(float(c["vent_temperature"])) if c.get("vent_temperature") is not None
                                                  else "T0"),

@@ -179,14 +179,28 @@ end
 -- the bed temperature: ess_bed_T, in the vent rising with the profile to ess_vent_T (the incoming material's
 -- temperature, [case] vent_temperature, default T0)
 function SpreadBedT(x, y)
-  if ess_vent > 0 then return ess_bed_T + ((ess_vent_T or T0) - ess_bed_T) * SpreadProfile(x, y) end
+  if ess_vent > 0 then
+    -- ess_vent_hot ([case] vent_hot_inflow): all the inflow at the vent temperature (only the speed tapers), not a
+    -- rim of colder material where the taper brings it in slower
+    if (ess_vent_hot or 0) > 0 then
+      if SpreadProfile(x, y) > 0 then return (ess_vent_T or T0) end
+      return ess_bed_T
+    end
+    return ess_bed_T + ((ess_vent_T or T0) - ess_bed_T) * SpreadProfile(x, y)
+  end
   return ess_bed_T
 end
 
 -- the initial temperature: Tsurf; vent: the column above the vent at ess_vent_T with the profile (a warm plug the
 -- vent opens into)
 function SpreadTinit(x, y)
-  if ess_vent > 0 then return Tsurf + ((ess_vent_T or T0) - Tsurf) * SpreadProfile(x, y) end
+  if ess_vent > 0 then
+    if (ess_vent_hot or 0) > 0 then                  -- the plug at the vent temperature over the whole vent
+      if SpreadProfile(x, y) > 0 then return (ess_vent_T or T0) end
+      return Tsurf
+    end
+    return Tsurf + ((ess_vent_T or T0) - Tsurf) * SpreadProfile(x, y)
+  end
   return Tsurf
 end
 
