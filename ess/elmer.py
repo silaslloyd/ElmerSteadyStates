@@ -297,6 +297,9 @@ class ElmerModel(Model):
                                                    else "T0"),
                                   # the lava's thermal conductivity x conductivity_factor (Peclet number up)
                                   "ess_k_factor": repr(float(c.get("conductivity_factor", 1.0))),
+                                  # the vent's incoming material (and the initial plug above it), default T0
+                                  "ess_vent_T": (repr(float(c["vent_temperature"])) if c.get("vent_temperature") is not None
+                                                 else "T0"),
                                   **self.lua_overrides}
         if self.slab:
             self.slab_alpha = math.radians(float(c.get("slab_slope_deg", 0.1)))
