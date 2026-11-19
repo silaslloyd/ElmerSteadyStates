@@ -1,0 +1,194 @@
+"""
+Remeshing the spreading test ([case] geometry = "spread", branch test/lava-spreading) to follow the current's margin.
+
+The margin is taken from the state directly: the ice thickness H = Zs - bed at every footprint node, its contour at
+H = spread_thickness + margin_dh (the current: thicker than the background layer by margin_dh). The new footprint (the
+same rectangle, walls on all four sides, physical groups as ess/case.py slab_geo) gets the element size
+
+    h = fine                                   within band of the margin,
+        fine + grade (d - band)                farther out (d: the distance to the margin), up to
+        coarse_in                              inside the current (H above the margin's value: the dome; coarse here
+                                               also relaxes the free surface's time-step limit, which scales as
+                                               (element size)^2 x thickness^3)
+        coarse_out                             on the background layer outside,
+
+graded (|grad h| <= grade) and written as a gmsh background view (as ess/remesh.py). Then ElmerGrid, partitioned for
+n_procs (-metiskway), and the state carried over level by level (ess/remesh.py interpolate_state: linear in the old
+triangles; the flat bed exact).
+
+needs_remesh: the margin's points against the CURRENT mesh's local size (the mean edge length at the nearest node):
+remesh when any margin point sits where the mesh is coarser than trigger x fine (the margin is leaving its band).
+"""
+from __future__ import annotations
+
+import logging
+import os
+import shutil
+import subprocess
+
+import numpy as np
+
+from .remesh import _edges, grade, interpolate_state, read_footprint, write_pos
+from .statefile import SavedState, find_name
+
+log = logging.getLogger("ess")
+
+
+def default_opt(c):
+    """the remeshing settings from [case] (spread_remesh_* keys, defaults below)"""
+    res = float(c.get("spread_res", 5000.0))
+    return dict(fine=float(c.get("spread_remesh_fine", 2000.0)),
+                band=float(c.get("spread_remesh_band_km", 10.0)) * 1e3,
+                grade=float(c.get("spread_remesh_grade", 0.2)),
+                coarse_in=float(c.get("spread_remesh_coarse_in", 2 * res)),
+                coarse_out=float(c.get("spread_remesh_coarse_out", res)),
+                trigger=float(c.get("spread_remesh_trigger", 1.5)),
+                Hc=float(c.get("spread_thickness", 100.0)) + float(c.get("margin_dh", 10.0)))
+
+
+def thickness(src: SavedState, nb):
+    """H = Zs - bed at the nb footprint nodes (node ids: level * nb + footprint id)"""
+    blk = {b.name.lower(): b for b in src.layout.blocks}
+    g = blk["zs"].gids
+    zs = src.layout.split(src.x)[blk["zs"].name]
+    H = np.full(nb, np.nan)
+    gb, vb = src.frozen[find_name(src.frozen, "bedrock")]
+    bed = np.full(nb, np.nan)
+    lv = (gb - 1) // nb
+    m = lv == lv.min()
+    bed[(gb[m] - 1) % nb] = vb[m]
+    H[(g - 1) % nb] = zs - bed[(g - 1) % nb]
+    return H
+
+
+def margin_points(x, y, tri, H, Hc, step=None):
+    """points along the contour H = Hc on the footprint (densified to about step m), (n x 2); empty if none"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.tri as mtri
+    if not (np.nanmax(H) > Hc > np.nanmin(H)):
+        return np.zeros((0, 2))
+    cs = plt.tricontour(mtri.Triangulation(x, y, tri), H, levels=[Hc])
+    segs = [s for s in cs.allsegs[0] if len(s) > 1]
+    plt.close("all")
+    if not segs:
+        return np.zeros((0, 2))
+    out = []
+    for s in segs:
+        for a, b in zip(s[:-1], s[1:]):
+            n = max(1, int(np.ceil(np.hypot(*(b - a)) / (step or 200.0))))
+            t = np.linspace(0, 1, n, endpoint=False)[:, None]
+            out.append(a + t * (b - a))
+        out.append(s[-1:])
+    return np.vstack(out)
+
+
+def local_size(x, y, tri):
+    """the mean length of each node's edges"""
+    e = _edges(tri)
+    L = np.hypot(x[e[:, 0]] - x[e[:, 1]], y[e[:, 0]] - y[e[:, 1]])
+    s, c = np.zeros(len(x)), np.zeros(len(x))
+    for k in (0, 1):
+        np.add.at(s, e[:, k], L)
+        np.add.at(c, e[:, k], 1)
+    return s / np.maximum(c, 1)
+
+
+def needs_remesh(cfg, src: SavedState, mesh: str, opt=None):
+    """(True/False, note): the margin where the current mesh is coarser than trigger x fine"""
+    c = cfg["case"]
+    opt = opt or default_opt(c)
+    ids, x, y, tri = read_footprint(os.path.join(cfg["paths"]["case_dir"], mesh))
+    H = thickness(src, len(ids))
+    P = margin_points(x, y, tri, H, opt["Hc"], step=opt["fine"] / 2)
+    if not len(P):
+        return False, "no margin (H nowhere above the margin's value)"
+    from scipy.spatial import cKDTree
+    h = local_size(x, y, tri)
+    _, k = cKDTree(np.c_[x, y]).query(P)
+    hm = h[k]
+    bad = hm > opt["trigger"] * opt["fine"]
+    r = np.hypot(P[:, 0] - x.mean(), P[:, 1] - y.mean())
+    note = (f"margin {len(P)} points, r {r.min() / 1e3:.1f} .. {r.max() / 1e3:.1f} km from the box centre; local mesh "
+            f"size there {np.median(hm):.0f} m median, {hm.max():.0f} m max (remesh above "
+            f"{opt['trigger'] * opt['fine']:.0f} m: {int(bad.sum())} points)")
+    return bool(bad.any()), note
+
+
+def size_field(x, y, tri, H, opt):
+    """(h at the old footprint nodes, margin points, report)"""
+    from scipy.spatial import cKDTree
+    P = margin_points(x, y, tri, H, opt["Hc"], step=opt["fine"] / 2)
+    inside = H > opt["Hc"]
+    far = np.where(inside, opt["coarse_in"], opt["coarse_out"])
+    if len(P):
+        d = cKDTree(P).query(np.c_[x, y])[0]
+        h = np.minimum(opt["fine"] + opt["grade"] * np.maximum(d - opt["band"], 0.0), far)
+    else:
+        h = far.astype(float)
+    h = grade(h, x, y, tri, opt["grade"])
+    n_est = np.sum(_areas(x, y, tri) / (0.433 * h ** 2))
+    rep = (f"size: {opt['fine']:g} m within {opt['band'] / 1e3:g} km of the margin (H = {opt['Hc']:g} m; "
+           f"{len(P)} points), grading {opt['grade']:g}, {opt['coarse_in']:g} m inside the current, "
+           f"{opt['coarse_out']:g} m outside; ~{n_est:.0f} triangles")
+    return h, P, rep
+
+
+def _areas(x, y, tri):
+    a = np.zeros(len(x))
+    A = 0.5 * np.abs((x[tri[:, 1]] - x[tri[:, 0]]) * (y[tri[:, 2]] - y[tri[:, 0]])
+                     - (x[tri[:, 2]] - x[tri[:, 0]]) * (y[tri[:, 1]] - y[tri[:, 0]]))
+    for k in range(3):
+        np.add.at(a, tri[:, k], A / 3)
+    return a
+
+
+def box_geo(L, W, pos_name):
+    """gmsh .geo of the box 0 <= x <= L, 0 <= y <= W, the size from the background view; physical groups as
+    ess/case.py slab_geo (inflow x = 0 22, front x = L 23, side1 y = 0 24, side2 y = W 25)"""
+    return "\n".join([
+        "// generated by ess/spread_remesh.py: the spreading test's box, the size from the state's margin",
+        "Mesh.Algorithm = 5;", "Mesh.MeshSizeFromPoints = 0;", "Mesh.MeshSizeExtendFromBoundary = 0;",
+        "Mesh.MeshSizeFromCurvature = 0;", f'Merge "{pos_name}";',
+        "Field[1] = PostView;", "Field[1].ViewIndex = 0;", "Background Field = 1;",
+        "Point(1) = {0, 0, 0, 1000};", f"Point(2) = {{{L!r}, 0, 0, 1000}};",
+        f"Point(3) = {{{L!r}, {W!r}, 0, 1000}};", f"Point(4) = {{0, {W!r}, 0, 1000}};",
+        "Line(1) = {1, 2};", "Line(2) = {2, 3};", "Line(3) = {4, 3};", "Line(4) = {1, 4};",
+        "Curve Loop(1) = {1, 2, -3, -4};", "Plane Surface(100) = {1};",
+        "Physical Surface(21) = {100};", "Physical Curve(22) = {4};", "Physical Curve(23) = {2};",
+        "Physical Curve(24) = {1};", "Physical Curve(25) = {3};"]) + "\n"
+
+
+def remesh_spread(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, opt=None, run=None):
+    """the new footprint `name` in the case dir (geo, size view, msh, Elmer mesh partitioned for n_procs) and src on
+    it: (layout, x, frozen, diag, report lines)"""
+    c = cfg["case"]
+    opt = opt or default_opt(c)
+    case = cfg["paths"]["case_dir"]
+    L, W = float(c["spread_length_km"]) * 1e3, float(c["width"])
+    ids, sx, sy, stri = read_footprint(os.path.join(case, src_mesh))
+    nbs = len(ids)
+    H = thickness(src, nbs)
+    h, P, rep0 = size_field(sx, sy, stri, H, opt)
+    rep = [rep0]
+    write_pos(os.path.join(case, f"{name}_size.pos"), sx, sy, stri, h)
+    with open(os.path.join(case, f"{name}.geo"), "w") as f:
+        f.write(box_geo(L, W, f"{name}_size.pos"))
+    gmsh, eg = c.get("gmsh", "gmsh"), c.get("elmergrid", "ElmerGrid")
+    run = run or (lambda cmd: subprocess.run(cmd, cwd=case, check=True, stdout=subprocess.DEVNULL))
+    run([gmsh, f"{name}.geo", "-1", "-2", "-format", "msh2", "-o", f"{name}.msh"])
+    out = os.path.join(case, name)
+    if os.path.isdir(out):
+        shutil.rmtree(out)
+    cmd = [eg, "14", "2", f"{name}.msh", "-autoclean", "-out", name]
+    if n_procs > 1:
+        cmd += ["-metiskway", str(n_procs)]
+    run(cmd)
+    _, dx, dy, dtri = read_footprint(out)
+    rep.append(f"new mesh {name}: {len(dx)} nodes, {len(dtri)} triangles (old {src_mesh}: {nbs} nodes, "
+               f"{len(stri)} triangles)")
+    layout, x, frozen, diag = interpolate_state(src, nbs, sx, sy, stri, dx, dy, along=lambda x_, y_: np.asarray(x_))
+    for r in rep:
+        log.info("spread remesh: " + r)
+    return layout, x, frozen, diag, rep
