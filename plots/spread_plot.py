@@ -3,12 +3,12 @@
 `ess run` (work/spread_ice/static_chunks/points/ and run_chunks/points/state_*.npz) as one plotly page:
   * the surface Zs in 3D on the model's footprint nodes, coloured by the surface horizontal speed sqrt(u^2 + v^2)
     (log10, from the Stokes solution), with a slider over the states; the window: the current's extent (H - H0 >
-    --dh) over all states, padded by half; --zaspect (default 0.35) the box's height / width;
+    --dh) over all states, padded by half; --vex the vertical exaggeration (default 1: true aspect);
   * the radial profiles H(r) about the source centre (azimuthal means), one line per state;
   * the front radius (where H - H0 first falls below --dh m, default 10, going outwards) against time, log-log, with
     the t^(1/2) slope of a constant-flux axisymmetric viscous gravity current (Huppert 1982) for comparison.
 
-    python3 plots/spread_plot.py STATE.npz [STATE2.npz ...] [--config configs/spread_ice.toml] [--dh 10] [--zaspect 0.35] [--out FILE.html]
+    python3 plots/spread_plot.py STATE.npz [STATE2.npz ...] [--config configs/spread_ice.toml] [--dh 10] [--vex 1] [--out FILE.html]
 """
 import os
 import sys
@@ -33,7 +33,7 @@ def main():
     args = sys.argv[1:]
     cfgf = arg(args, "--config", os.path.join(ROOT, "configs", "spread_ice.toml"))
     dh = arg(args, "--dh", 10.0, float)
-    zaspect = arg(args, "--zaspect", 0.35, float)   # the 3D box's height / width (the vertical exaggeration follows)
+    vex3 = arg(args, "--vex", 1.0, float)           # the surface's vertical exaggeration (default 1: true aspect)
     out = arg(args, "--out", None)
     if not args:
         raise SystemExit(__doc__)
@@ -131,7 +131,8 @@ def main():
         tl = np.array([tt[ok].min(), tt[ok].max()])
         fig.add_trace(go.Scatter(x=tl, y=r1 * (tl / t1) ** 0.5, mode="lines", name="t^1/2", showlegend=False,
                                  line=dict(dash="dot", color="grey")), row=2, col=2)
-    vex = zaspect * (2 * half) / max(zhi - zlo, 1.0)
+    vex = vex3
+    zaspect = vex * max(zhi * 1.02 - zlo, 1.0) / (2 * half)
     fig.update_scenes(xaxis=dict(title="x (km)", range=[(xc - half) / 1e3, (xc + half) / 1e3]),
                       yaxis=dict(title="y (km)", range=[(yc - half) / 1e3, (yc + half) / 1e3]),
                       zaxis=dict(title="z (m)", range=[zlo, zhi * 1.02]),
