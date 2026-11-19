@@ -9,9 +9,9 @@
 #   * the four walls zero velocity, NO SLIP on the bed;
 #   * viscosity Newtonian, Arrhenius in T: viscosity (parameters.lua) x exp(Q/R (1/T - 1/Tref)), Q = arrhenius_Q
 #     J/mol, Tref = arrhenius_Tref = T0: the temperate source material has exactly `viscosity` (1e14 Pa s, the ice
-#     sheets' value), the cold layer at Tsurf is exp(Q/R (1/Tsurf - 1/T0)) times stiffer (~370x at 223 K);
+#     sheets' value), the cold layer at Tsurf is exp(Q/R (1/Tsurf - 1/T0)) times stiffer (~3000x at 203 K);
 #   * heat: the surface T0 (temperate) inside the source circle, the Robin condition with Tsurf elsewhere; the
-#     bed temperature fixed (bed_temperature, default Tsurf: -50 C); insulating walls.
+#     bed temperature fixed (bed_temperature, default Tsurf: -70 C); insulating walls.
 # Transient only (`ess run`), see jobs/spread_run.cmd.
 
 [paths]
@@ -70,7 +70,7 @@ frozen = ["bedrock"]                     # the flat bed (fixed); no masks
 
 [parameter]
 name = "Tsurf"
-value = 223.15                          # Tsurf (K): very cold
+value = 203.15                          # Tsurf (K): very cold (-70 C)
 scale = 1.0
 
 [map]
