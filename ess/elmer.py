@@ -293,6 +293,9 @@ class ElmerModel(Model):
                                   "ess_bed_T": (repr(float(c["bed_temperature"])) if c.get("bed_temperature") is not None
                                                 else "Tsurf"),
                                   "ess_vent": "1.0" if str(c.get("source", "surface")) == "vent" else "0.0",
+                                  "ess_mask_H": repr(float(c.get("spread_thickness", 100.0))
+                                                     + float(c.get("margin_dh", 10.0))),
+                                  "ess_mask_w": repr(float(c.get("margin_width", 5.0))),
                                   "ess_arr_Tmax": (repr(float(c["arrhenius_Tmax"])) if c.get("arrhenius_Tmax") is not None
                                                    else "T0"),
                                   **self.lua_overrides}

@@ -188,6 +188,13 @@ function SpreadTinit(x, y)
   return Tsurf
 end
 
+-- the current's margin mask from the ice thickness H: tanh((H - ess_mask_H) / ess_mask_w): +1 in the current (H
+-- above the background layer by more than a few ess_mask_w), -1 on the background, 0 exactly at H = ess_mask_H (the
+-- edge, [case] spread_thickness + margin_dh); in place of the marine runs' grounded mask, for the mesher
+function SpreadMarginMask(H)
+  return math.tanh((H - ess_mask_H) / ess_mask_w)
+end
+
 -- the viscosity Arrhenius in T (Newtonian): viscosity at ess_arr_Tref, activation energy ess_arr_Q (J/mol); the
 -- temperature capped at ess_arr_Tmax ([case] arrhenius_Tmax, default T0: no softening above it)
 function SpreadViscosity(T)
