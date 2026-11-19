@@ -43,7 +43,7 @@ def main():
     from ess.cli import _problem, _setup
     from ess.config import build_model
     from ess.model import MapSpec, rms
-    from ess.spread_remesh import default_opt, needs_remesh, remesh_spread
+    from ess.spread_remesh import default_opt, mesh_partitions, needs_remesh, remesh_spread
     from ess.statefile import load_state, save_state
 
     cfg, model, saved = _setup(SimpleNamespace(config=a.config, state=a.state, verbose=False))
@@ -69,6 +69,10 @@ def main():
     def build(s, m):
         mdl = build_model(cfg, s)
         mdl.mesh_db = m
+        npart = mesh_partitions(os.path.join(case, m))
+        if npart and npart != mdl.n_procs:              # a remeshed footprint partitioned for fewer ranks
+            log(f"mesh {m}: {npart} partitions, running on {npart} ranks (of {mdl.n_procs})")
+            mdl.n_procs = npart
         for kv in a.lua:
             k_, _, v_ = kv.partition("=")
             mdl.lua_overrides[k_.strip()] = v_.strip()

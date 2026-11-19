@@ -48,9 +48,18 @@ def read_footprint(meshdir):
         raise FileNotFoundError(f"{meshdir}: neither mesh.nodes nor a partitioning.* directory")
     pd = parts[0]
     nid, nx, ny = [], [], []
+    empty = []
     for f in glob.glob(os.path.join(pd, "part.*.nodes")):
+        if os.path.getsize(f) == 0:
+            empty.append(os.path.basename(f))
+            continue
         a = np.loadtxt(f, ndmin=2)
+        if a.shape[1] < 4:
+            raise SystemExit(f"{f}: {a.shape[1]} columns (expected id, partition, x, y, z)")
         nid.append(a[:, 0].astype(np.int64)); nx.append(a[:, 2]); ny.append(a[:, 3])
+    if empty:
+        log.warning(f"spread remesh: {len(empty)} of the partitions of {os.path.basename(meshdir)} have no nodes "
+                    f"(e.g. {empty[0]}): too few footprint nodes for the number of ranks")
     nid, nx, ny = np.concatenate(nid), np.concatenate(nx), np.concatenate(ny)
     ids, k = np.unique(nid, return_index=True)
     if not np.array_equal(ids, np.arange(1, len(ids) + 1)):
@@ -79,6 +88,7 @@ def default_opt(c):
                 coarse_in=float(c.get("spread_remesh_coarse_in", 2 * res)),
                 coarse_out=float(c.get("spread_remesh_coarse_out", 4 * res)),   # the untouched background layer: coarse
                 trigger=float(c.get("spread_remesh_trigger", 1.5)),
+                min_nodes_per_rank=int(c.get("spread_remesh_min_nodes_per_rank", 40)),
                 Hc=float(c.get("spread_thickness", 100.0)) + float(c.get("margin_dh", 10.0)))
 
 
@@ -196,6 +206,29 @@ def box_geo(L, W, pos_name):
         "Physical Curve(24) = {1};", "Physical Curve(25) = {3};"]) + "\n"
 
 
+def msh_node_count(path):
+    """the number of nodes of a gmsh file (msh2: the line after $Nodes; msh4: its second number)"""
+    with open(path) as f:
+        for line in f:
+            if line.startswith("$Nodes"):
+                w = next(f).split()
+                return int(w[0]) if len(w) == 1 else int(w[1])
+    raise ValueError(f"{path}: no $Nodes section")
+
+
+def empty_partitions(meshdir):
+    """the part.*.nodes files of meshdir's partitioning that are empty"""
+    import glob
+    return [f for f in glob.glob(os.path.join(meshdir, "partitioning.*", "part.*.nodes")) if os.path.getsize(f) == 0]
+
+
+def mesh_partitions(meshdir):
+    """N of meshdir's partitioning.N (None if there is none or several)"""
+    import glob
+    ps = [d for d in glob.glob(os.path.join(meshdir, "partitioning.*")) if d.rsplit(".", 1)[-1].isdigit()]
+    return int(ps[0].rsplit(".", 1)[-1]) if len(ps) == 1 else None
+
+
 def remesh_spread(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, opt=None, run=None):
     """the new footprint `name` in the case dir (geo, size view, msh, Elmer mesh partitioned for n_procs) and src on
     it: (layout, x, frozen, diag, report lines)"""
@@ -217,13 +250,24 @@ def remesh_spread(cfg, src: SavedState, name: str, src_mesh: str, n_procs: int, 
     out = os.path.join(case, name)
     if os.path.isdir(out):
         shutil.rmtree(out)
-    cmd = [eg, "14", "2", f"{name}.msh", "-autoclean", "-out", name]
-    if n_procs > 1:
-        cmd += ["-metiskway", str(n_procs)]
-    run(cmd)
+    # the number of partitions: at most n_procs, at least min_nodes_per_rank footprint nodes each (a coarse mesh on
+    # 512 ranks leaves partitions empty), halved further while any partition comes out empty
+    nn = msh_node_count(os.path.join(case, f"{name}.msh"))
+    np_ = max(1, min(n_procs, nn // max(opt.get("min_nodes_per_rank", 40), 1)))
+    while True:
+        if os.path.isdir(out):
+            shutil.rmtree(out)
+        cmd = [eg, "14", "2", f"{name}.msh", "-autoclean", "-out", name]
+        if np_ > 1:
+            cmd += ["-metiskway", str(np_)]
+        run(cmd)
+        if np_ <= 1 or not empty_partitions(out):
+            break
+        log.warning(f"spread remesh: {name} on {np_} partitions leaves some empty: {np_ // 2}")
+        np_ //= 2
     _, dx, dy, dtri = read_footprint(out)
-    rep.append(f"new mesh {name}: {len(dx)} nodes, {len(dtri)} triangles (old {src_mesh}: {nbs} nodes, "
-               f"{len(stri)} triangles)")
+    rep.append(f"new mesh {name}: {len(dx)} nodes, {len(dtri)} triangles, {np_} partitions (old {src_mesh}: {nbs} "
+               f"nodes, {len(stri)} triangles)")
     layout, x, frozen, diag = interpolate_state(src, nbs, sx, sy, stri, dx, dy, along=lambda x_, y_: np.asarray(x_))
     for r in rep:
         log.info("spread remesh: " + r)
