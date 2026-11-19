@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --output=./slurms/spread_run_%j.out
 #SBATCH --job-name=spread
-#SBATCH --ntasks=64
+#SBATCH --ntasks=256
 #SBATCH --time=2-00:00:00
 #
 # TEST CASE (branch test/lava-spreading): the viscous gravity current of configs/spread_ice.toml (a uniform 100 m cold
