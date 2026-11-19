@@ -175,17 +175,18 @@ function SpreadVentW(x, y)
   return 0.0
 end
 
+-- (ess_vent_T or T0: a run whose driver predates ess_vent_T)
 -- the bed temperature: ess_bed_T, in the vent rising with the profile to ess_vent_T (the incoming material's
 -- temperature, [case] vent_temperature, default T0)
 function SpreadBedT(x, y)
-  if ess_vent > 0 then return ess_bed_T + (ess_vent_T - ess_bed_T) * SpreadProfile(x, y) end
+  if ess_vent > 0 then return ess_bed_T + ((ess_vent_T or T0) - ess_bed_T) * SpreadProfile(x, y) end
   return ess_bed_T
 end
 
 -- the initial temperature: Tsurf; vent: the column above the vent at ess_vent_T with the profile (a warm plug the
 -- vent opens into)
 function SpreadTinit(x, y)
-  if ess_vent > 0 then return Tsurf + (ess_vent_T - Tsurf) * SpreadProfile(x, y) end
+  if ess_vent > 0 then return Tsurf + ((ess_vent_T or T0) - Tsurf) * SpreadProfile(x, y) end
   return Tsurf
 end
 
