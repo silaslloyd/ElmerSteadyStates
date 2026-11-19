@@ -6,10 +6,12 @@
 !! "bedrock" field, flat) to the free surface Zs. Derived from steady_template.sif:
 !!   * the accumulation only in the source circle: SpreadSource(x, y) (ess_utils.lua), nothing elsewhere;
 !!   * the viscosity Newtonian, Arrhenius in T: SpreadViscosity(T);
-!!   * the four sides free-slip walls (no normal velocity), the bed no slip;
+!!   * the four sides walls with zero velocity, the bed no slip;
 !!   * the basal heat flux the geothermal flux gthf (no rock, no friction on a no-slip bed); the surface
-!!     the same Robin condition (External Temperature Tsurf); walls insulating;
-!!   * the masks, Zb and bedrock frozen (read from the state, never recomputed): all grounded, all cold.
+!!     T = T0 (temperate) inside the source circle, where the new material arrives, the Robin condition
+!!     with External Temperature Tsurf (very cold) elsewhere; walls insulating;
+!!   * no masks (nothing floats, no cold/temperate switching); the bed flat and fixed: the frozen field
+!!     "bedrock" only (the mesh's Bottom Surface and the Min Zs backstop).
 !! The double-underscore placeholders are filled in by the Python driver (ess/elmer.py).
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -58,12 +60,13 @@ Simulation
   Timestep Sizes = __DT__
   Output Intervals = __NSTEPS__
 
-  ! ice only: the footprint extruded from the bed to the surface, layers finer towards the bed
+  ! ice only: the footprint extruded from the bed to the surface, the layers finer towards the SURFACE (the
+  ! density is the relative layer thickness: 1 at the bed, 0.25 at the surface)
   Extruded Mesh Levels = Integer 21
   Extruded Mesh Density = Variable Coordinate 3
      Real
-     0.0 0.4
-     1.0 1.0
+     0.0 1.0
+     1.0 0.25
    End
 
   Initialize Dirichlet Conditions = Logical False
@@ -134,18 +137,6 @@ Initial Condition 1
   Bedrock = Variable Coordinate 1
     Real
       Include "__CASE_DIR__/ics/bed.xy"
-    End
-  Zb = Variable Coordinate 1
-    Real
-      Include "__CASE_DIR__/ics/bed.xy"
-    End
-  GroundedMask = Variable Coordinate 1
-    Real
-      Include "__CASE_DIR__/ics/gm.xy"
-    End
-  ColdTempMask = Variable Coordinate 1
-    Real
-      Include "__CASE_DIR__/ics/ctmask.xy"
     End
 End
 
@@ -265,16 +256,13 @@ Solver 6
   ComputeAll = Logical False
 End
 
-! Owner of the frozen fields (never executed; values come from StateRead).
+! Owner of the frozen bed (never executed; the values come from StateRead).
 Solver 7
   Exec Solver = "Never"
   Equation = "FrozenFields"
   Procedure = "__ESS_LIB__" "ESSNoOp"
   Variable = -nooutput essfrozendummy
-  Exported Variable 1 = -dofs 1 "GroundedMask"
-  Exported Variable 2 = -dofs 1 "ColdTempMask"
-  Exported Variable 3 = -dofs 1 "Zb"
-  Exported Variable 4 = -dofs 1 "bedrock"
+  Exported Variable 1 = -dofs 1 "bedrock"
 End
 
 Solver 8
@@ -367,28 +355,37 @@ End
 !---------------- BOUNDARY CONDITIONS --------------
 ! the footprint's sides (gmsh physical curves 22..25), extruded into walls; then the bed and the surface
 
+! the walls: zero velocity
 Boundary Condition 1
   Name = "wall x0"
   Target Boundaries(1) = 1
-  Velocity 1 = 0.0            ! free-slip wall
+  Velocity 1 = 0.0
+  Velocity 2 = 0.0
+  Velocity 3 = 0.0
 End
 
 Boundary Condition 2
   Name = "wall xL"
   Target Boundaries(1) = 2
   Velocity 1 = 0.0
+  Velocity 2 = 0.0
+  Velocity 3 = 0.0
 End
 
 Boundary Condition 3
   Name = "wall y0"
   Target Boundaries(1) = 3
+  Velocity 1 = 0.0
   Velocity 2 = 0.0
+  Velocity 3 = 0.0
 End
 
 Boundary Condition 4
   Name = "wall yW"
   Target Boundaries(1) = 4
+  Velocity 1 = 0.0
   Velocity 2 = 0.0
+  Velocity 3 = 0.0
 End
 
 Boundary Condition 5
@@ -409,6 +406,10 @@ Boundary Condition 6
   Body ID = 3
   Top Surface = Equals "Zs"
 
+  ! the source circle temperate (the new material arrives at T0), the Robin condition with Tsurf elsewhere
+  Temperature = Real #T0
+  Temperature Condition = Variable Coordinate 1, Coordinate 2
+    Real Lua "SpreadInSource(tx[0], tx[1])"
   Heat Flux BC = Logical True
   Heat transfer coefficient = Real __HTC__
   External Temperature = Real #Tsurf

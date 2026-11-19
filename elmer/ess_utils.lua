@@ -150,6 +150,12 @@ function SpreadSource(x, y)
   return ess_src_a * 0.5 * (1.0 - math.tanh((r - ess_src_r) / ess_src_w))
 end
 
+-- inside the source circle (r < ess_src_r): +1 (the surface held at T0 there), else -1
+function SpreadInSource(x, y)
+  if math.sqrt((x - ess_src_x)^2 + (y - ess_src_y)^2) < ess_src_r then return 1.0 end
+  return -1.0
+end
+
 -- the viscosity Arrhenius in T (Newtonian): viscosity at ess_arr_Tref, activation energy ess_arr_Q (J/mol)
 function SpreadViscosity(T)
   local Tc = T
