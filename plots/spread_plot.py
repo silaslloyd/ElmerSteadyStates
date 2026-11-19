@@ -74,16 +74,32 @@ def main():
     yg = np.linspace(0, W, 150)
     XG, YG = np.meshgrid(xg, yg)
     hmax = max(float(np.nanmax(r_["H"])) for r_ in rows) - H0
-    fig = make_subplots(rows=2, cols=2, specs=[[{"rowspan": 2}, {}], [None, {}]], column_widths=[0.5, 0.5],
+    fig = make_subplots(rows=2, cols=2, specs=[[{"rowspan": 2, "type": "scene"}, {}], [None, {}]],
+                        column_widths=[0.5, 0.5],
                         subplot_titles=("H - H0 (m)", "azimuthal mean thickness H(r)",
                                         f"front radius (H - H0 < {dh:g} m) against time"))
+    # the map on the model's own mesh: the surface nodes triangulated (Delaunay: gmsh's triangles, up to the odd
+    # swapped diagonal), coloured by H - H0 at the nodes, the element edges drawn over it
+    from scipy.spatial import Delaunay
     for i, r_ in enumerate(rows):
-        G = griddata((r_["x"], r_["y"]), r_["H"] - H0, (XG, YG), method="linear")
-        fig.add_trace(go.Heatmap(x=xg / 1e3, y=yg / 1e3, z=G, colorscale="Viridis", zmin=0, zmax=hmax,
-                                 visible=(i == len(rows) - 1), colorbar=dict(title="m", x=0.46),
-                                 hovertemplate="x %{x:.0f} y %{y:.0f} km<br>H - H0 %{z:.1f} m<extra></extra>"),
+        tri = Delaunay(np.c_[r_["x"], r_["y"]]).simplices
+        vis = i == len(rows) - 1
+        fig.add_trace(go.Mesh3d(x=r_["x"] / 1e3, y=r_["y"] / 1e3, z=np.zeros(len(r_["x"]), np.float32),
+                                i=tri[:, 0], j=tri[:, 1], k=tri[:, 2],
+                                intensity=(r_["H"] - H0).astype(np.float32), intensitymode="vertex",
+                                colorscale="Viridis", cmin=0, cmax=hmax, flatshading=True,
+                                lighting=dict(ambient=1, diffuse=0, specular=0), visible=vis,
+                                colorbar=dict(title="H - H0 (m)", x=0.46),
+                                hovertemplate="x %{x:.1f} y %{y:.1f} km<br>H - H0 %{intensity:.1f} m<extra></extra>"),
                       row=1, col=1)
-    nmap = len(rows)
+        e = np.unique(np.sort(np.r_[tri[:, [0, 1]], tri[:, [1, 2]], tri[:, [2, 0]]], axis=1), axis=0)
+        ex = np.c_[r_["x"][e[:, 0]], r_["x"][e[:, 1]], np.full(len(e), np.nan)].ravel() / 1e3
+        ey = np.c_[r_["y"][e[:, 0]], r_["y"][e[:, 1]], np.full(len(e), np.nan)].ravel() / 1e3
+        fig.add_trace(go.Scatter3d(x=ex.astype(np.float32), y=ey.astype(np.float32),
+                                   z=np.where(np.isnan(ex), np.nan, 1e-3).astype(np.float32), mode="lines",
+                                   line=dict(color="rgba(255,255,255,0.35)", width=1), hoverinfo="skip",
+                                   showlegend=False, visible=vis, name="mesh"), row=1, col=1)
+    nmap = 2 * len(rows)
     for i, r_ in enumerate(rows):
         fig.add_trace(go.Scatter(x=r_["rb"] / 1e3, y=r_["Hr"], mode="lines", name=f"{r_['t']:,.0f} yr",
                                  line=dict(color=f"rgba(30,60,160,{0.2 + 0.8 * (i + 1) / len(rows):.2f})", width=1.4)),
@@ -98,16 +114,18 @@ def main():
         tl = np.array([tt[ok].min(), tt[ok].max()])
         fig.add_trace(go.Scatter(x=tl, y=r1 * (tl / t1) ** 0.5, mode="lines", name="t^1/2", showlegend=False,
                                  line=dict(dash="dot", color="grey")), row=2, col=2)
-    fig.update_xaxes(title_text="x (km)", row=1, col=1, scaleanchor="y", constrain="domain")
-    fig.update_yaxes(title_text="y (km)", row=1, col=1)
+    fig.update_scenes(aspectmode="data", xaxis=dict(title="x (km)"), yaxis=dict(title="y (km)"),
+                      zaxis=dict(visible=False, range=[-1, 1]),
+                      camera=dict(projection=dict(type="orthographic"), eye=dict(x=0, y=0, z=2), up=dict(x=0, y=1, z=0)),
+                      row=1, col=1)
     fig.update_xaxes(title_text="r (km)", row=1, col=2)
     fig.update_yaxes(title_text="H (m)", row=1, col=2)
     fig.update_xaxes(title_text="t (yr)", type="log", row=2, col=2)
     fig.update_yaxes(title_text="front radius (km)", type="log", row=2, col=2)
     steps = [dict(label=f"{r_['t']:,.0f}", method="restyle",
-                  args=[{"visible": [j == i for j in range(nmap)]}, list(range(nmap))]) for i, r_ in enumerate(rows)]
+                  args=[{"visible": [j // 2 == i for j in range(nmap)]}, list(range(nmap))]) for i, r_ in enumerate(rows)]
     fig.update_layout(template="plotly_white", height=850, title="spreading test: cold viscous gravity current",
-                      sliders=[dict(active=nmap - 1, currentvalue=dict(prefix="map at t (yr) = "), steps=steps,
+                      sliders=[dict(active=len(rows) - 1, currentvalue=dict(prefix="map at t (yr) = "), steps=steps,
                                     x=0.0, len=0.48, pad=dict(t=40))],
                       legend=dict(x=1.02, y=1.0))
     out = out or os.path.join(os.path.dirname(os.path.abspath(sorted(args)[-1])), "spread.html")
