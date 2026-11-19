@@ -10,7 +10,9 @@ same rectangle, walls on all four sides, physical groups as ess/case.py slab_geo
         coarse_in                              inside the current (H above the margin's value: the dome; coarse here
                                                also relaxes the free surface's time-step limit, which scales as
                                                (element size)^2 x thickness^3)
-        coarse_out                             on the background layer outside,
+        coarse_out                             on the background layer outside (default 4 x spread_res: nothing
+                                               happens there until the margin arrives, and the band's grading
+                                               refines ahead of it),
 
 graded (|grad h| <= grade) and written as a gmsh background view (as ess/remesh.py). Then ElmerGrid, partitioned for
 n_procs (-metiskway), and the state carried over level by level (ess/remesh.py interpolate_state: linear in the old
@@ -75,7 +77,7 @@ def default_opt(c):
                 band=float(c.get("spread_remesh_band_km", 10.0)) * 1e3,
                 grade=float(c.get("spread_remesh_grade", 0.2)),
                 coarse_in=float(c.get("spread_remesh_coarse_in", 2 * res)),
-                coarse_out=float(c.get("spread_remesh_coarse_out", res)),
+                coarse_out=float(c.get("spread_remesh_coarse_out", 4 * res)),   # the untouched background layer: coarse
                 trigger=float(c.get("spread_remesh_trigger", 1.5)),
                 Hc=float(c.get("spread_thickness", 100.0)) + float(c.get("margin_dh", 10.0)))
 

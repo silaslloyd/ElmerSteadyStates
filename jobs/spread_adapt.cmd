@@ -8,7 +8,7 @@
 # (jobs/spread_adapt.py, ess/spread_remesh.py). CFG (default configs/spread_vent.toml), from START (default the work
 # dir's static.npz) at T0 (default its time), CHUNKS (50) of STEPS (200) x DT (5) yr; a new mesh fitted to the start
 # first (REMESH_FIRST=0: not), then whenever the margin leaves its fine band. The remeshing settings: [case]
-# spread_remesh_fine (2000 m), _band_km (10), _grade (0.2), _coarse_in (2 x spread_res), _coarse_out (spread_res),
+# spread_remesh_fine (2000 m), _band_km (10), _grade (0.2), _coarse_in (2 x spread_res), _coarse_out (4 x spread_res),
 # _trigger (1.5). States in <work>/adapt/points/, meshes <work>/case/a001, a002, ...
 #   CFG=configs/spread_vent.toml START=work/spread_vent/run_chunks/points/state_0003.npz sbatch jobs/spread_adapt.cmd
 # A config without a case yet (e.g. configs/spread_vent_crust.toml): ess setup first; no static.npz of its own: the vent
