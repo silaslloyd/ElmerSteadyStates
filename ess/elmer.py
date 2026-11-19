@@ -292,6 +292,7 @@ class ElmerModel(Model):
                                   "ess_arr_Tref": repr(float(Tref)) if Tref is not None else "Tsurf",
                                   "ess_bed_T": (repr(float(c["bed_temperature"])) if c.get("bed_temperature") is not None
                                                 else "Tsurf"),
+                                  "ess_vent": "1.0" if str(c.get("source", "surface")) == "vent" else "0.0",
                                   **self.lua_overrides}
         if self.slab:
             self.slab_alpha = math.radians(float(c.get("slab_slope_deg", 0.1)))

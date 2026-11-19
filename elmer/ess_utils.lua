@@ -146,18 +146,46 @@ end
 -- [case] geometry = "spread" (ess/elmer.py _spread): the central source (m/yr of ice): ess_src_a within
 -- ess_src_r - ess_src_w of (ess_src_x, ess_src_y), a cosine taper to exactly zero at ess_src_r, nothing beyond: the
 -- source lies wholly inside the temperate surface circle (SpreadInSource, r < ess_src_r)
-function SpreadSource(x, y)
+-- the source's radial profile: 1 within ess_src_r - ess_src_w, a cosine taper to exactly 0 at ess_src_r, 0 beyond
+function SpreadProfile(x, y)
   local r = math.sqrt((x - ess_src_x)^2 + (y - ess_src_y)^2)
   local r0 = ess_src_r - ess_src_w
-  if r <= r0 then return ess_src_a end
+  if r <= r0 then return 1.0 end
   if r >= ess_src_r then return 0.0 end
-  return ess_src_a * 0.5 * (1.0 + math.cos(math.pi * (r - r0) / ess_src_w))
+  return 0.5 * (1.0 + math.cos(math.pi * (r - r0) / ess_src_w))
 end
 
--- inside the source circle (r < ess_src_r): +1 (the surface held at T0 there), else -1
+-- [case] source = "surface" (ess_vent = 0): the accumulation; "vent" (ess_vent = 1): none (the material comes in
+-- through the bed, SpreadVentW)
+function SpreadSource(x, y)
+  if ess_vent > 0 then return 0.0 end
+  return ess_src_a * SpreadProfile(x, y)
+end
+
+-- surface mode: inside the source circle (r < ess_src_r) +1 (the surface held at T0 there), else -1; vent: -1
 function SpreadInSource(x, y)
+  if ess_vent > 0 then return -1.0 end
   if math.sqrt((x - ess_src_x)^2 + (y - ess_src_y)^2) < ess_src_r then return 1.0 end
   return -1.0
+end
+
+-- vent: the upward velocity through the bed (m/yr), the source rate times the profile; 0 in surface mode
+function SpreadVentW(x, y)
+  if ess_vent > 0 then return ess_src_a * SpreadProfile(x, y) end
+  return 0.0
+end
+
+-- the bed temperature: ess_bed_T, in the vent rising with the profile to T0 (the material comes in temperate)
+function SpreadBedT(x, y)
+  if ess_vent > 0 then return ess_bed_T + (T0 - ess_bed_T) * SpreadProfile(x, y) end
+  return ess_bed_T
+end
+
+-- the initial temperature: Tsurf; vent: the column above the vent temperate, T0 with the profile (a warm plug the
+-- vent opens into)
+function SpreadTinit(x, y)
+  if ess_vent > 0 then return Tsurf + (T0 - Tsurf) * SpreadProfile(x, y) end
+  return Tsurf
 end
 
 -- the viscosity Arrhenius in T (Newtonian): viscosity at ess_arr_Tref, activation energy ess_arr_Q (J/mol)

@@ -4,7 +4,9 @@
 !!
 !! ICE ONLY (no bedrock, no filler): the footprint extruded from the bed (Bottom Surface = the frozen
 !! "bedrock" field, flat) to the free surface Zs. Derived from steady_template.sif:
-!!   * the accumulation only in the source circle: SpreadSource(x, y) (ess_utils.lua), nothing elsewhere;
+!!   * [case] source = "surface": the accumulation only in the source circle, SpreadSource(x, y) (ess_utils.lua),
+!!     the surface temperate there; "vent": the material comes in through the bed (w = SpreadVentW, T0), the column
+!!     above the vent temperate at the start (SpreadTinit), no accumulation, the surface cold everywhere;
 !!   * the viscosity Newtonian, Arrhenius in T: SpreadViscosity(T);
 !!   * the four sides walls with zero velocity, the bed no slip;
 !!   * the bed temperature fixed, T = ess_bed_T ([case] bed_temperature, default Tsurf); the surface
@@ -129,7 +131,8 @@ End
 
 Initial Condition 1
   Velocity 2 = 0.0
-  Temperature = Real #Tsurf
+  Temperature = Variable Coordinate 1, Coordinate 2
+    Real Lua "SpreadTinit(tx[0], tx[1])"
   Zs = Variable Coordinate 1
     Real
       Include "__CASE_DIR__/ics/zs.xy"
@@ -392,12 +395,14 @@ Boundary Condition 5
   Name = "bed"
   Body ID = 2
   Bottom Surface = Equals "bedrock"
-  ! no slip
+  ! no slip; [case] source = "vent": the inflow w = SpreadVentW through the bed in the vent circle
   Velocity 1 = 0.0
   Velocity 2 = 0.0
-  Velocity 3 = 0.0
+  Velocity 3 = Variable Coordinate 1, Coordinate 2
+    Real Lua "SpreadVentW(tx[0], tx[1])"
   ! the bed temperature fixed ([case] bed_temperature, default Tsurf)
-  Temperature = Real #ess_bed_T
+  Temperature = Variable Coordinate 1, Coordinate 2
+    Real Lua "SpreadBedT(tx[0], tx[1])"
 End
 
 Boundary Condition 6

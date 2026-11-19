@@ -13,6 +13,7 @@
 #   3. the source ON from the end of the static phase: CHUNKS (default 50) chunks, model time carried on; states in
 #      work/spread_ice/run_chunks/points/ (time stamps from the start of the static phase).
 # START=file.npz with T0=its model time: phase 3 from that state instead (e.g. to go on after a time-out).
+# STATIC_CHUNKS=0: no static phase. CFG=configs/spread_vent.toml: the vent version (work/spread_vent).
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 mkdir -p slurms
@@ -25,12 +26,15 @@ export LD_LIBRARY_PATH=$ELMER_PREFIX/lib:$ELMER_PREFIX/lib/elmersolver:$ELMER_PR
 export LIBRARY_PATH=$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}
 export ESS_MPIRUN="mpirun -np {n} --bind-to none"
 CFG=${CFG:-configs/spread_ice.toml}
-W=work/spread_ice
+W=${W:-work/$(basename $CFG .toml)}            # the config's work_dir (configs/X.toml: work/X)
 mkdir -p $W
 if [ ! -d $W/case/footprint ]; then python3 -u -m ess setup $CFG; fi
 if [ ! -f $W/state0.npz ]; then python3 -u -m ess init $CFG --out $W/state0.npz; fi
 DTS=${DT:-50}; NS=${STEPS:-20}
 if [ -z "$START" ]; then
+    if [ "${STATIC_CHUNKS:-10}" = 0 ] && [ ! -f $W/static.npz ]; then
+        cp $W/state0.npz $W/static.npz              # no static phase: the source on from the start
+    fi
     if [ ! -f $W/static.npz ]; then
         echo "$(date +%T) static phase, the source off: ${STATIC_CHUNKS:-10} chunks of $NS x $DTS yr"
         python3 -u -m ess run $CFG --state $W/state0.npz --chunks ${STATIC_CHUNKS:-10} --steps $NS --dt $DTS \
