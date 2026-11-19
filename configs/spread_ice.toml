@@ -1,0 +1,85 @@
+# ElmerSteadyStates TEST CASE (branch test/lava-spreading): a viscous gravity current fed by a central source, the
+# ice-sheet form of lava spreading. Same physical parameters and scales as the ice-sheet runs (case/parameters.lua).
+#
+#   * a square box spread_length_km x width, unstructured triangles of spread_res m, the land template's three layers
+#     (bedrock 10 zscale, filler, ice), extruded;
+#   * start: a uniform cold layer spread_thickness m on a flat bed (all grounded, ColdTempMask -1 everywhere, the ice
+#     at Tsurf throughout, the bedrock with the geothermal gradient below);
+#   * accumulation only in a circle in the middle: source_rate m/yr within source_radius_km (tanh edge
+#     source_edge_km), nothing elsewhere (no ablation: the current spreads for ever, no steady state);
+#   * free-slip walls on all four sides, NO SLIP on the bed;
+#   * viscosity Newtonian, Arrhenius in T: viscosity (parameters.lua) x exp(Q/R (1/T - 1/Tref)), Q = arrhenius_Q
+#     J/mol, Tref = arrhenius_Tref (default Tsurf: the initial layer has exactly `viscosity`);
+#   * heat: Tsurf at the surface (Robin), geothermal flux into the deep bedrock, the bed's cold mask fixed (no melting
+#     treatment: a test of the cold spreading).
+# Transient only (`ess run`), see jobs/spread_run.cmd.
+
+[paths]
+work_dir = "work/spread_ice"
+case_dir = "{work}/case"
+
+[case]
+geometry = "spread"
+parameters = "case/parameters.lua"
+spread_length_km = 600.0                # box side along x (km)
+width = 600000.0                        # box side along y (m)
+spread_res = 15000.0                    # triangle size (m)
+spread_thickness = 100.0                # initial uniform layer (m)
+spread_bed = 0.0                        # flat bed elevation (m)
+source_rate = 0.1                       # m/yr of ice in the source circle
+source_radius_km = 100.0
+source_edge_km = 5.0
+arrhenius_Q = 60000.0                   # J/mol (Paterson's ice value below -10 C)
+# arrhenius_Tref = 268.15               # default Tsurf
+gmsh = "gmsh"
+elmergrid = "ElmerGrid"
+
+[model]
+type = "elmer"
+
+[elmer]
+template = "elmer/steady_template.sif"
+mesh_db = "footprint"
+ess_lib = "elmer/SteadyStateIO"
+ess_utils = "elmer/ess_utils.lua"
+n_procs = 0                             # 0: $SLURM_NTASKS
+mpirun = "mpirun -np {n}"
+solver = "ElmerSolver"
+timeout = 21600
+keep_runs = false
+cache = false                           # a transient test: no reuse of runs
+vtu = false
+friction_heat = "flux"                  # zero on a no-slip bed
+strain_heat = false
+linear_stokes = "direct"                # MUMPS; "iterative" (GCR + ILU) for larger meshes
+linear_heat = "direct"
+diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "Zb", "ColdTempMask", "GroundedMask", "Output Accumulation"]
+
+[state]
+variables = ["Temperature", "Zs"]
+scales = { Temperature = 5.0, Zs = 50.0 }
+frozen = ["ColdTempMask", "GroundedMask", "Zb", "bedrock"]
+
+[parameter]
+name = "Tsurf"
+value = 268.15
+scale = 1.0
+
+[map]
+dt = 50.0
+n_steps = 20
+coupled_iters = 1
+rock_heat_capacity = 1.0                # the physical bedrock (a transient)
+
+[stability_map]
+dt = 50.0
+n_steps = 20
+rock_heat_capacity = 1.0
+
+[fd]
+eps = 1e-6
+scheme = "forward"
+
+[newton]
+tol = 1e-5
+maxit = 15

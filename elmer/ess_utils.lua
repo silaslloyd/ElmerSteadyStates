@@ -142,3 +142,18 @@ function surfaceT(H, Tsurf)
   if T > T0 then T = T0 end
   return T
 end
+
+-- [case] geometry = "spread" (ess/elmer.py _spread): the central source (m/yr of ice): ess_src_a within ess_src_r of
+-- (ess_src_x, ess_src_y), falling to zero over a tanh edge of width ess_src_w; nothing elsewhere
+function SpreadSource(x, y)
+  local r = math.sqrt((x - ess_src_x)^2 + (y - ess_src_y)^2)
+  return ess_src_a * 0.5 * (1.0 - math.tanh((r - ess_src_r) / ess_src_w))
+end
+
+-- the viscosity Arrhenius in T (Newtonian): viscosity at ess_arr_Tref, activation energy ess_arr_Q (J/mol)
+function SpreadViscosity(T)
+  local Tc = T
+  if Tc > T0 then Tc = T0 end
+  if Tc < 150.0 then Tc = 150.0 end
+  return viscosity * math.exp(ess_arr_Q / 8.314 * (1.0 / Tc - 1.0 / ess_arr_Tref))
+end

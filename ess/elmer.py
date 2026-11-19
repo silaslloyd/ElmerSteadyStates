@@ -59,6 +59,10 @@ class ElmerModel(Model):
         self.slab = cfg.get("case", {}).get("geometry", "land") == "slab"
         if self.slab:
             self.marine = True
+        # [case] geometry = "spread": the land template, a cold uniform layer on a flat bed in a square box (ess/case.py
+        # spread_geometry), fed by a circular source in the middle, no accumulation elsewhere, free-slip walls, a
+        # no-slip bed, viscosity Arrhenius in T. See _spread.
+        self.spread = cfg.get("case", {}).get("geometry", "land") == "spread"
         self.template = cfg["_path"](e.get("template", "elmer/steady_template_marine.sif" if self.marine
                                            else "elmer/steady_template.sif"))
         self.buoyancy_lib = cfg["_path"](e.get("buoyancy_lib", "elmer/Buoyancy"))
@@ -276,6 +280,17 @@ class ElmerModel(Model):
                                   "ess_Hs": "0.0", **self.lua_overrides}
         if self.marine:
             self.lua_overrides = {"ess_marine": "1.0", **self.lua_overrides}
+        if self.spread:
+            Ls, Ws = float(c["spread_length_km"]) * 1e3, float(c["width"])
+            Tref = c.get("arrhenius_Tref")
+            self.lua_overrides = {"ess_src_x": repr(float(c.get("source_x_km", Ls / 2e3)) * 1e3),
+                                  "ess_src_y": repr(float(c.get("source_y_km", Ws / 2e3)) * 1e3),
+                                  "ess_src_r": repr(float(c.get("source_radius_km", 100.0)) * 1e3),
+                                  "ess_src_w": repr(float(c.get("source_edge_km", 5.0)) * 1e3),
+                                  "ess_src_a": repr(float(c.get("source_rate", 0.1))),
+                                  "ess_arr_Q": repr(float(c.get("arrhenius_Q", 60e3))),
+                                  "ess_arr_Tref": repr(float(Tref)) if Tref is not None else "Tsurf",
+                                  **self.lua_overrides}
         if self.slab:
             self.slab_alpha = math.radians(float(c.get("slab_slope_deg", 0.1)))
             self.slab_length = float(c["slab_length_km"]) * 1e3
@@ -836,6 +851,8 @@ End
             text = text[:k] + blk.replace('  Convection = "Computed"', '  Convection = "None"   ! [elmer] convection = false', 1) + text[j:]
         if self.slab:
             text = self._slab(text)
+        if self.spread:
+            text = self._spread(text)
         if self.vertical_refine != 1:
             text = self._vertical_refine(text, self.vertical_refine)
         if self.step_check:
@@ -1189,6 +1206,44 @@ End
                 block = block.replace(ln, "", 1)
             text = text[:k] + block + "\n  ! [case] geometry = slab: periodic in x (no inflow / calving front)" + text[j:]
         return text
+
+    def _spread(self, text):
+        """[case] geometry = "spread" (land template): the accumulation the source SpreadSource(x, y) (ess_utils.lua:
+        ess_src_a m/yr within ess_src_r of (ess_src_x, ess_src_y), a tanh edge of width ess_src_w, nothing elsewhere:
+        no ablation, no thickness cut-off); the domain's four sides free-slip walls (no normal flow); the bed no slip;
+        the viscosity viscosity * exp(Q/R (1/T - 1/Tref)) (SpreadViscosity, Q = ess_arr_Q J/mol, Tref = ess_arr_Tref)."""
+        if self.marine or self.accum_schedule:
+            raise ValueError("[case] geometry = spread: the land template, no accumulation schedule")
+        if self.x_end < 1.0:
+            raise ValueError("[case] geometry = spread: no fixed margin (x_end)")
+        acc = re.compile(r'^(\s*(?:Zs|Output|FSSA) Accumulation = )Variable Coordinate 1, height\n(\s*)Real Lua '
+                         r'"AccumulationSmooth\(tx\[0\], tx\[1\] - 10\*zscale, aDIM, L\)"', re.M)
+        text, n = acc.subn(r'\1Variable Coordinate 1, Coordinate 2   ! [case] geometry = spread: the central source\n'
+                           r'\2Real Lua "SpreadSource(tx[0], tx[1])"', text)
+        if n != 3:
+            raise ValueError(f"spread: expected 3 accumulation entries (Zs, Output, FSSA) in the template, found {n}")
+        v = "  Viscosity = Real #viscosity\n"
+        if text.count(v) != 1:
+            raise ValueError("spread: no 'Viscosity = Real #viscosity' in the ice material of the template")
+        text = text.replace(v, "  ! [case] geometry = spread: Arrhenius in T, viscosity at Tref\n"
+                               "  Viscosity = Variable Temperature\n    Real Lua \"SpreadViscosity(tx[0])\"\n")
+        for name in ("inflow ice", "front ice"):        # walls: no normal flow, free slip along them
+            k = text.index(f'Name = "{name}"')
+            j = text.index("\nEnd", k)
+            blk = text[k:j]
+            if "  Velocity 2 = 0.0\n" not in blk:
+                raise ValueError(f"spread: no Velocity 2 = 0 in the {name} boundary condition of the template")
+            blk = blk.replace("  Velocity 2 = 0.0\n", "  ! [case] geometry = spread: a free-slip wall\n", 1)
+            text = text[:k] + blk + text[j:]
+        k = text.index('Name = "interface"\n  Body ID')
+        j = text.index("\nEnd", k)
+        blk = text[k:j]
+        a = "  Velocity 1 = 0.0\n  Flow Solution Name"
+        if a not in blk:
+            raise ValueError("spread: the interface boundary condition of the template changed")
+        blk = blk.replace(a, "  Velocity 1 = 0.0\n  Velocity 2 = 0.0   ! [case] geometry = spread: no slip\n"
+                             "  Velocity 3 = 0.0\n  Flow Solution Name", 1)
+        return text[:k] + blk + text[j:]
 
     @staticmethod
     def _vertical_refine(text, k):
