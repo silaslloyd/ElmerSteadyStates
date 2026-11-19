@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The spreading test (configs/spread_ice.toml, branch test/lava-spreading): the ice thickness of the chunk states of
 `ess run` (work/spread_ice/static_chunks/points/ and run_chunks/points/state_*.npz) as one plotly page:
-  * a map of the thickness above the initial layer, H - H0, with a slider over the states;
+  * a map of the surface horizontal speed sqrt(u^2 + v^2) (log10, from the Stokes solution) on the model's footprint
+    mesh, with a slider over the states (the hover also gives the thickness above the initial layer, H - H0);
   * the radial profiles H(r) about the source centre (azimuthal means), one line per state;
   * the front radius (where H - H0 first falls below --dh m, default 10, going outwards) against time, log-log, with
     the t^(1/2) slope of a constant-flux axisymmetric viscous gravity current (Huppert 1982) for comparison.
@@ -44,7 +45,6 @@ def main():
     H0 = float(c.get("spread_thickness", 100.0))
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
-    from scipy.interpolate import griddata
     rows = []
     for p in sorted(args):
         s = load_state(p)
@@ -59,6 +59,12 @@ def main():
         x = np.array([X[g] for g in gs])
         y = np.array([Y[g] for g in gs])
         H = zs - np.array([B[g] for g in gs])
+        # the horizontal speed at the surface nodes (m/yr), from the Stokes solution (NaN if the state has none)
+        try:
+            V = [dict(zip(*allc[find_name(allc, f"velocity {k}")])) for k in (1, 2)]
+            U = np.hypot(*[np.array([v_.get(g, np.nan) for g in gs], float) for v_ in V])
+        except KeyError:
+            U = np.full(len(gs), np.nan)
         t = float(s.meta.get("time", np.nan))
         r = np.hypot(x - xc, y - yc)
         edges = np.arange(0, r.max() + 5e3, 5e3)
@@ -67,29 +73,32 @@ def main():
         Hr = np.array([H[k == i].mean() if np.any(k == i) else np.nan for i in range(len(rb))])
         above = np.where(Hr - H0 < dh)[0]
         rf = float(rb[above[0]]) if len(above) else np.nan
-        rows.append(dict(t=t, x=x, y=y, H=H, rb=rb, Hr=Hr, rf=rf, name=os.path.basename(p)))
+        rows.append(dict(t=t, x=x, y=y, H=H, U=U, rb=rb, Hr=Hr, rf=rf, name=os.path.basename(p)))
         print(f"{os.path.basename(p)}: t {t:,.0f} yr, H {H.min():.1f} .. {H.max():.1f} m, front at r = {rf / 1e3:.1f} km")
     rows.sort(key=lambda r_: r_["t"])               # by model time (the static and the spreading phases' files)
-    xg = np.linspace(0, L, 150)
-    yg = np.linspace(0, W, 150)
-    XG, YG = np.meshgrid(xg, yg)
+    allU = np.concatenate([r_["U"][np.isfinite(r_["U"]) & (r_["U"] > 0)] for r_ in rows] + [np.array([1e-6])])
+    u_hi = float(np.log10(np.percentile(allU, 99.5)))
+    u_lo = u_hi - 4.0
     hmax = max(float(np.nanmax(r_["H"])) for r_ in rows) - H0
     fig = make_subplots(rows=2, cols=2, specs=[[{"rowspan": 2}, {}], [None, {}]],
                         column_widths=[0.5, 0.5],
-                        subplot_titles=("H - H0 (m)", "azimuthal mean thickness H(r)",
+                        subplot_titles=("surface horizontal speed (m/yr, log10)", "azimuthal mean thickness H(r)",
                                         f"front radius (H - H0 < {dh:g} m) against time"))
     # the map on the model's own footprint mesh (2D): the surface nodes triangulated (Delaunay: gmsh's triangles, up to
-    # the odd swapped diagonal), every triangle filled with the colour of its mean H - H0 (NB colour classes, one
-    # trace each: polygons separated by NaN) and its edges drawn
+    # the odd swapped diagonal), every triangle filled with the colour of log10 of its nodes' mean surface horizontal
+    # speed (NB colour classes over u_lo .. u_hi, one trace each: polygons separated by NaN) and its edges drawn
     from scipy.spatial import Delaunay
     from plotly.colors import sample_colorscale
     NB = 24
-    cols = sample_colorscale("Viridis", [(k + 0.5) / NB for k in range(NB)])
+    cols = sample_colorscale("Inferno", [(k + 0.5) / NB for k in range(NB)])
     map_idx = []
     for i, r_ in enumerate(rows):
         tri = Delaunay(np.c_[r_["x"], r_["y"]]).simplices
-        v = (r_["H"] - H0)[tri].mean(1)
-        cls = np.clip((v / max(hmax, 1e-9) * NB).astype(int), 0, NB - 1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            v = np.log10(r_["U"][tri].mean(1))
+            lu = np.log10(r_["U"])
+        v = np.where(np.isfinite(v), v, u_lo)
+        cls = np.clip(((v - u_lo) / (u_hi - u_lo) * NB).astype(int), 0, NB - 1)
         vis = i == len(rows) - 1
         idx = []
         for k in range(NB):
@@ -104,10 +113,12 @@ def main():
             idx.append(len(fig.data) - 1)
         # the colour bar (an invisible marker trace) and the hover values at the nodes
         fig.add_trace(go.Scatter(x=(r_["x"] / 1e3).astype(np.float32), y=(r_["y"] / 1e3).astype(np.float32),
-                                 mode="markers", marker=dict(size=3, opacity=0, color=(r_["H"] - H0).astype(np.float32),
-                                                             colorscale="Viridis", cmin=0, cmax=hmax,
-                                                             colorbar=dict(title="H - H0 (m)", x=0.46)),
-                                 hovertemplate="x %{x:.1f} y %{y:.1f} km<br>H - H0 %{marker.color:.1f} m<extra></extra>",
+                                 mode="markers", marker=dict(size=3, opacity=0, color=lu.astype(np.float32),
+                                                             colorscale="Inferno", cmin=u_lo, cmax=u_hi,
+                                                             colorbar=dict(title="log10 u_h (m/yr)", x=0.46)),
+                                 customdata=(r_["H"] - H0).astype(np.float32),
+                                 hovertemplate="x %{x:.1f} y %{y:.1f} km<br>log10 u_h %{marker.color:.2f}"
+                                               "<br>H - H0 %{customdata:.1f} m<extra></extra>",
                                  showlegend=False, visible=vis), row=1, col=1)
         idx.append(len(fig.data) - 1)
         map_idx.append(idx)
