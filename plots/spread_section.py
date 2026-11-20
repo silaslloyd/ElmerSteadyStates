@@ -245,7 +245,9 @@ def main():
     nostreams = "--no-streams" in args
     ntr = arg(args, "--tracers", 120, int)          # tracers along the drop's first surface (0: none)
     tdep = [float(v) for v in arg(args, "--tracer-depths", "0,10,20").split(",")]   # m below the surface: the "crust"
-    tseed = arg(args, "--seed-time", None, float)   # the state the tracers start on (default: the first with a velocity)
+    tseed = arg(args, "--seed-time", None, float)
+    pin_surface = "--pin-surface" in args            # the surface tracers held on the surface (off: free advection)
+    args = [a_ for a_ in args if a_ != "--pin-surface"]   # the state the tracers start on (default: the first with a velocity)
     args = [a_ for a_ in args if a_ != "--no-streams"]
     if not args:
         raise SystemExit(__doc__)
@@ -389,7 +391,7 @@ def main():
         zs0 = np.interp(xs0, sline, rows[i0][1][-1])
         x0 = np.concatenate([xs0 for _ in tdep])
         z0 = np.concatenate([zs0 - d_ for d_ in tdep])
-        onsurf = np.concatenate([np.full(len(xs0), d_ == 0.0) for d_ in tdep])
+        onsurf = (np.concatenate([np.full(len(xs0), d_ == 0.0) for d_ in tdep]) if pin_surface else None)
         part = track(rv[i0:], sline, x0, z0, on_surface=onsurf,
                      Hrel=float(c.get("spread_thickness", 100.0)) + float(c.get("margin_dh", 10.0)))
         trk = [None] * i0 + part
