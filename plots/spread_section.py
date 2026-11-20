@@ -7,6 +7,10 @@ model-time order):
     `viscosity` from parameters.lua;
   * the horizontal speed sqrt(u^2 + v^2) (m/yr, log10), from the state's diagnostics Velocity 1, 2;
   * the temperature T (K).
+On the speed panel, streamlines of the flow in the section plane (matplotlib streamplot of (velocity along the line,
+w)), by default in the FRAME OF THE MARGIN: the margin's outward speed (from the states' margin positions along the
+line, H > spread_thickness + 10 m) taken off, so a roll at the nose (surface -> nose -> bed) shows; --frame lab: as
+computed; --density (1.2); --no-streams.
 Each extruded level of the mesh is interpolated onto the section line (linear on the footprint's triangles), then every
 column onto a regular z grid (--nz levels): the colours are the model's values, nothing smoothed across levels.
 
@@ -17,7 +21,8 @@ tall (--vex default 1 then: true aspect, cropped). Default window: where the sur
 padded. Colour ranges: the data's (all states), not the model's possible range.
 
     python3 plots/spread_section.py STATE.npz [STATE2.npz ...] [--config configs/spread_vent.toml] [--axis x|y]
-                                    [--vex V] [--x XMIN XMAX | --panel PX] [--nx 400] [--nz 120] [--width 1200] [--out FILE.html]
+                                    [--vex V] [--x XMIN XMAX | --panel PX]
+                                    [--frame front|lab] [--density 1.2] [--no-streams] [--nx 400] [--nz 120] [--width 1200] [--out FILE.html]
 """
 import os
 import sys
@@ -40,8 +45,8 @@ def arg(args, name, default, conv=str, n=1):
 
 
 def section(s, axis, c0, sline):
-    """(Z, T, speed) on the extruded levels (nl x len(sline)) of the state s along the line {y = c0} (axis x) or
-    {x = c0} (axis y); speed NaN when the state has no velocity"""
+    """(Z, T, horizontal speed, velocity along the line, vertical velocity) on the extruded levels (nl x len(sline)) of
+    the state s along the line {y = c0} (axis x) or {x = c0} (axis y); the velocities NaN when the state has none"""
     from scipy.spatial import Delaunay
     from scipy.interpolate import LinearNDInterpolator
     allc = {**s.diag, **s.frozen}
@@ -62,9 +67,11 @@ def section(s, axis, c0, sline):
     X, Y, Z = look(cx), look(cy), look(cz)
     T = s.x[s.layout.slices()[bT.name]]
     try:
-        U = np.sqrt(sum(look(allc[find_name(allc, f"velocity {k}")]) ** 2 for k in (1, 2)))   # horizontal
+        V = [look(allc[find_name(allc, f"velocity {k}")]) for k in (1, 2, 3)]
+        U = np.hypot(V[0], V[1])                                   # horizontal
+        Ua, W = (V[0] if axis == "x" else V[1]), V[2]              # along the line, vertical
     except KeyError:
-        U = np.full(len(g), np.nan)
+        U = Ua = W = np.full(len(g), np.nan)
     col = np.unique(np.c_[np.round(X, 1), np.round(Y, 1)], axis=0, return_inverse=True)[1].ravel()
     ncol = col.max() + 1
     nl = len(g) // ncol
@@ -77,10 +84,10 @@ def section(s, axis, c0, sline):
     xy = np.empty((ncol, 2))
     xy[col[m0]] = np.c_[X[m0], Y[m0]]                 # each column's footprint position
     tri = Delaunay(xy)
-    out = [np.empty((nl, nx)) for _ in range(3)]
+    out = [np.empty((nl, nx)) for _ in range(5)]
     for k in range(nl):
         m = level == k
-        for f, v in zip(out, (Z, T, U)):
+        for f, v in zip(out, (Z, T, U, Ua, W)):
             vv = np.empty(ncol)
             vv[col[m]] = v[m]
             f[k] = LinearNDInterpolator(tri, vv)(pts)
@@ -126,6 +133,10 @@ def main():
     xwin = arg(args, "--x", None, float, n=2)
     panel_px = arg(args, "--panel", None, int)     # with it: the window cropped (about the vent) to panels this tall
     out = arg(args, "--out", None)
+    frame = arg(args, "--frame", "front")           # the streamlines' frame: "front" (moving with the margin) or "lab"
+    density = arg(args, "--density", 1.2, float)    # the streamlines' density (matplotlib streamplot)
+    nostreams = "--no-streams" in args
+    args = [a_ for a_ in args if a_ != "--no-streams"]
     if not args:
         raise SystemExit(__doc__)
     try:
@@ -180,12 +191,28 @@ def main():
     for p in args:
         s = load_state(p)
         t = float(s.meta.get("time", np.nan))
-        Zl, Tl, Ul = section(s, axis, c0, sline)
-        rows.append((t, Zl, Tl, Ul))
+        Zl, Tl, Ul, Al, Wl = section(s, axis, c0, sline)
+        rows.append((t, Zl, Tl, Ul, Al, Wl))
         print(f"{os.path.basename(p)}: t {t:,.0f} yr, T {np.nanmin(Tl):.2f} .. {np.nanmax(Tl):.2f} K, horizontal speed max "
               f"{np.nanmax(Ul) if np.isfinite(Ul).any() else np.nan:.3g} m/yr, surface {np.nanmin(Zl[-1]):.0f} .. "
               f"{np.nanmax(Zl[-1]):.0f} m")
     rows.sort(key=lambda r: r[0])
+    # the margin on each side of the centre along the line (thickness above the layer > H0 + 10 m) and its speed
+    H0l = float(c.get("spread_thickness", 100.0))
+    ctr = xc if axis == "x" else yc
+    Rf = []
+    for r_ in rows:
+        Hs = r_[1][-1] - r_[1][0]
+        ins = np.where(np.isfinite(Hs) & (Hs > H0l + 10.0))[0]
+        Rf.append(0.5 * (sline[ins[-1]] - sline[ins[0]]) if len(ins) else np.nan)
+    Rf = np.array(Rf)
+    tt = np.array([r_[0] for r_ in rows])
+    Rdot = np.zeros(len(rows))
+    if len(rows) > 1:
+        Rdot = np.gradient(Rf, tt) if np.all(np.diff(tt) > 0) else Rdot
+        Rdot = np.where(np.isfinite(Rdot), Rdot, 0.0)
+    if frame == "lab":
+        Rdot[:] = 0.0
     zmax = max(np.nanmax(r[1][-1]) for r in rows) * 1.05
     zmin = min(np.nanmin(r[1][0]) for r in rows)
     zg = np.linspace(zmin, zmax, nz)
@@ -213,8 +240,31 @@ def main():
                                  thickness=14, nticks=4)
     xs = sline / 1e3
     n = len(rows)
-    for i, (t, Zl, Tl, Ul) in enumerate(rows):
+    streams = []
+    if not nostreams:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    for i, (t, Zl, Tl, Ul, Al, Wl) in enumerate(rows):
         vis = i == n - 1
+        # the streamlines in the section plane: (velocity along the line - the margin's speed outward, w), drawn on
+        # the speed panel; in the front's frame the roll at the nose shows (surface -> nose -> bed)
+        sx = sy = None
+        if not nostreams and np.isfinite(Al).any():
+            Ga, Gw = on_grid(zg, Zl, Al), on_grid(zg, Zl, Wl)
+            urel = Ga - np.sign(sline - ctr)[None, :] * Rdot[i]
+            msk = ~(np.isfinite(urel) & np.isfinite(Gw))
+            fig_, ax_ = plt.subplots()
+            try:
+                sp = ax_.streamplot(xs, zg, np.ma.array(np.where(msk, 0, urel) / 1e3, mask=msk),
+                                    np.ma.array(np.where(msk, 0, Gw), mask=msk), density=density)
+                segs = sp.lines.get_segments()
+                if segs:
+                    sx = np.concatenate([np.r_[sg[:, 0], np.nan] for sg in segs])
+                    sy = np.concatenate([np.r_[sg[:, 1], np.nan] for sg in segs])
+            except Exception as e:                       # noqa: BLE001
+                print(f"t {t:,.0f}: no streamlines ({e})")
+            plt.close(fig_)
         G = on_grid(zg, Zl, Tl)
         with np.errstate(divide="ignore", invalid="ignore"):
             Gu = np.log10(on_grid(zg, Zl, Ul))
@@ -228,11 +278,16 @@ def main():
                           row=r, col=1)
             fig.add_trace(go.Scatter(x=xs, y=Zl[-1], mode="lines", line=dict(color="black", width=1), visible=vis,
                                      hoverinfo="skip", showlegend=False), row=r, col=1)
-    per = 6
+        fig.add_trace(go.Scatter(x=sx if sx is not None else [], y=sy if sy is not None else [], mode="lines",
+                                 line=dict(color="rgba(80,200,255,0.9)", width=1), visible=vis, hoverinfo="skip",
+                                 showlegend=False), row=2, col=1)
+        streams.append(Rdot[i])
+    per = 7
     steps = [dict(label=f"{r[0]:,.0f}", method="update",
                   args=[{"visible": [j // per == i for j in range(per * n)]},
                         {"title.text": f"section along {axis} through the source, t = {r[0]:,.0f} yr "
-                                       f"(vertical exaggeration {vex:g})"}])
+                                       f"(vertical exaggeration {vex:g}; streamlines in the {frame} frame"
+                                       + (f", margin {Rdot[i]:.3g} m/yr" if frame == "front" else "") + ")"}])
              for i, r in enumerate(rows)]
     for r in (1, 2, 3):
         fig.update_yaxes(title_text="z (m)", range=[zmin, zmax], scaleanchor=f"x{'' if r == 1 else r}",
@@ -241,7 +296,8 @@ def main():
     fig.update_xaxes(title_text=f"{axis} (km)", row=3, col=1)
     fig.update_layout(template="plotly_white", width=width, height=height, margin=dict(l=80, r=120, t=80, b=150),
                       title=f"section along {axis} through the source, t = {rows[-1][0]:,.0f} yr "
-                            f"(vertical exaggeration {vex:g})",
+                            f"(vertical exaggeration {vex:g}; streamlines in the {frame} frame"
+                            + (f", margin {Rdot[-1]:.3g} m/yr" if frame == "front" else "") + ")",
                       sliders=[dict(active=n - 1, currentvalue=dict(prefix="t (yr) = "), steps=steps, pad=dict(t=50))])
     out = out or os.path.join(os.path.dirname(os.path.abspath(args[0])), f"spread_section_{axis}.html")
     fig.write_html(out, include_plotlyjs="cdn")
