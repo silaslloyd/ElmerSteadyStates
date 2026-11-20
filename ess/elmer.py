@@ -309,6 +309,8 @@ class ElmerModel(Model):
                                                                   c.get("spread_thickness", 100.0))))),
                                   "ess_bed_z": repr(float(c.get("spread_bed", 0.0))),
                                   "ess_eta_cap": repr(float(c.get("viscosity_cap", 0.0))),
+                                  # [case] slope_deg: the bed tilted (gravity rotated in the x-z plane, down +x)
+                                  "ess_slope": repr(math.radians(float(c.get("slope_deg", 0.0)))),
                                   "ess_rad_eps": repr(float(c.get("surface_emissivity", 0.95))),
                                   "ess_conv_h": repr(float(c.get("surface_convection", 10.0))),
                                   # the vent's incoming material (and the initial plug above it), default T0
@@ -1257,6 +1259,16 @@ End
             text = text.replace(m.group(0), "  ! [case] surface_radiation: eps sigma (T^4 - Tsurf^4) + h_conv (T - Tsurf)\n"
                                                "  Heat transfer coefficient = Variable Temperature\n"
                                                '    Real Lua "SpreadSurfHTC(tx[0])"\n', 1)
+        if float(c.get("slope_deg", 0.0)) != 0.0:
+            # a slope down +x: gravity rotated by ess_slope in the x-z plane (the bed z = spread_bed stays the model's
+            # plane; z is the bed-normal height, Zs the thickness above it)
+            a = "  Flow BodyForce 1 = Real 0\n  Flow BodyForce 2 = Real 0\n  Flow BodyForce 3 = Real #-gravity\n"
+            if text.count(a) != 1:
+                raise ValueError("spread: the template's body force changed")
+            text = text.replace(a, "  ! [case] slope_deg: gravity tilted by ess_slope in the x-z plane (down +x)\n"
+                                   "  Flow BodyForce 1 = Real #gravity*math.sin(ess_slope)\n"
+                                   "  Flow BodyForce 2 = Real 0\n"
+                                   "  Flow BodyForce 3 = Real #-gravity*math.cos(ess_slope)\n")
         if c.get("bed_insulating", False):
             b = ('  ! the bed temperature fixed ([case] bed_temperature, default Tsurf)\n'
                  '  Temperature = Variable Coordinate 1, Coordinate 2\n'
