@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""The spreading test (configs/spread_ice.toml, branch test/lava-spreading): the ice thickness of the chunk states of
-`ess run` (work/spread_ice/static_chunks/points/ and run_chunks/points/state_*.npz) as one plotly page:
-  * the surface Zs in 3D on the model's footprint nodes, coloured by the surface horizontal speed sqrt(u^2 + v^2)
-    (log10, from the Stokes solution), with a slider over the states; the window: the current's extent (H - H0 >
-    --dh) over all states, padded by half; --vex the vertical exaggeration (default 1: true aspect);
-  * the radial profiles H(r) about the source centre (azimuthal means), one line per state;
-  * the front radius (where H - H0 first falls below --dh m, default 10, going outwards) against time, log-log, with
-    the t^(1/2) slope of a constant-flux axisymmetric viscous gravity current (Huppert 1982) for comparison.
+"""The spreading test (configs/spread_*.toml, branch test/lava-spreading): a top-down map of the surface horizontal
+speed sqrt(u^2 + v^2) (m/yr, from the Stokes solution at the surface nodes) of each state, one plotly page with a
+slider over the states (model-time order) and a "speed: log / linear" button; the current's margin (H - H0 = --dh m,
+default 10) drawn as a white line. The map: the surface nodes' values interpolated linearly (on their Delaunay
+triangles) onto a regular grid of about one sample per screen pixel (--width, default 1200 px); equal aspect; the
+window: the current's extent (H - H0 > --dh) over all states, padded by a quarter, within the box (--window XMIN XMAX
+YMIN YMAX in m to set it).
 
-    python3 plots/spread_plot.py STATE.npz [STATE2.npz ...] [--config configs/spread_ice.toml] [--dh 10] [--vex 1] [--out FILE.html]
+    python3 plots/spread_plot.py STATE.npz [STATE2.npz ...] [--config configs/spread_ice.toml] [--dh 10]
+                                 [--width 1200] [--window XMIN XMAX YMIN YMAX] [--out FILE.html]
 """
 import os
 import sys
@@ -33,7 +33,12 @@ def main():
     args = sys.argv[1:]
     cfgf = arg(args, "--config", os.path.join(ROOT, "configs", "spread_ice.toml"))
     dh = arg(args, "--dh", 10.0, float)
-    vex3 = arg(args, "--vex", 1.0, float)           # the surface's vertical exaggeration (default 1: true aspect)
+    width = arg(args, "--width", 1200, int)
+    win = None
+    if "--window" in args:
+        k = args.index("--window")
+        win = [float(v) for v in args[k + 1:k + 5]]
+        del args[k:k + 5]
     out = arg(args, "--out", None)
     if not args:
         raise SystemExit(__doc__)
@@ -46,7 +51,6 @@ def main():
     xc, yc = float(c.get("source_x_km", L / 2e3)) * 1e3, float(c.get("source_y_km", W / 2e3)) * 1e3
     H0 = float(c.get("spread_thickness", 100.0))
     import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
     rows = []
     for p in sorted(args):
         s = load_state(p)
@@ -70,87 +74,86 @@ def main():
         t = float(s.meta.get("time", np.nan))
         rows.append(dict(t=t, x=x, y=y, zs=zs, H=H, U=U, r=np.hypot(x - xc, y - yc), name=os.path.basename(p)))
     rows.sort(key=lambda r_: r_["t"])               # by model time (the static and the spreading phases' files)
-    # the window: the current's extent over all states (H - H0 > dh), padded by half, at least 3 km about the source
-    rmax = max([float(r_["r"][r_["H"] - H0 > dh].max()) for r_ in rows if np.any(r_["H"] - H0 > dh)] + [0.0])
-    half = max(1.5 * rmax, 3e3)
-    # radial profiles (azimuthal means in bins of ~half/60) and the front radius
-    dr = float(np.clip(half / 60, 50.0, 5e3))
-    for r_ in rows:
-        edges = np.arange(0, r_["r"].max() + dr, dr)
-        k = np.digitize(r_["r"], edges) - 1
-        r_["rb"] = 0.5 * (edges[1:] + edges[:-1])
-        r_["Hr"] = np.array([r_["H"][k == i].mean() if np.any(k == i) else np.nan for i in range(len(r_["rb"]))])
-        above = np.where(r_["Hr"] - H0 < dh)[0]
-        r_["rf"] = float(r_["rb"][above[0]]) if len(above) else np.nan
-        print(f"{r_['name']}: t {r_['t']:,.0f} yr, H {r_['H'].min():.1f} .. {r_['H'].max():.1f} m, front at r = "
-              f"{r_['rf'] / 1e3:.2f} km")
+    from scipy.spatial import Delaunay
+    from scipy.interpolate import LinearNDInterpolator
+
+    def fmt_t(t):
+        if not np.isfinite(t) or t == 0:
+            return "0"
+        if t >= 1000:
+            return f"{t:,.0f} yr"
+        if t >= 1:
+            return f"{t:.3g} yr"
+        if t >= 1 / 365.25:
+            return f"{t * 365.25:.3g} d"
+        if t >= 1 / 8766:
+            return f"{t * 8766:.3g} h"
+        return f"{t * 525960:.3g} min"
+    # the window: the current (H - H0 > dh) over all states, padded by a quarter (at least 2 elements' worth), in the box
+    if win is None:
+        xs_ = np.concatenate([r_["x"][r_["H"] - H0 > dh] for r_ in rows] + [np.array([])])
+        ys_ = np.concatenate([r_["y"][r_["H"] - H0 > dh] for r_ in rows] + [np.array([])])
+        if len(xs_):
+            pad = 0.25 * max(xs_.max() - xs_.min(), ys_.max() - ys_.min(), 1.0)
+            win = [max(0.0, xs_.min() - pad), min(L, xs_.max() + pad), max(0.0, ys_.min() - pad), min(W, ys_.max() + pad)]
+        else:
+            win = [0.0, L, 0.0, W]
+    x0, x1, y0, y1 = win
+    plot_w = width - 260
+    nx = max(200, plot_w)
+    ny = max(50, int(round(nx * (y1 - y0) / (x1 - x0))))
+    height = int(min(max(ny, 300), 1400)) + 220
+    gx, gy = np.linspace(x0, x1, nx), np.linspace(y0, y1, ny)
+    GX, GY = np.meshgrid(gx, gy)
     allU = np.concatenate([r_["U"][np.isfinite(r_["U"]) & (r_["U"] > 0)] for r_ in rows] + [np.array([1e-6])])
     u_hi = float(np.log10(np.percentile(allU, 99.5)))
     u_lo = u_hi - 4.0
-    hmax = max(float(np.nanmax(r_["H"])) for r_ in rows) - H0
-    fig = make_subplots(rows=2, cols=2, specs=[[{"rowspan": 2, "type": "scene"}, {}], [None, {}]],
-                        column_widths=[0.55, 0.45],
-                        subplot_titles=("the surface Zs, coloured by the surface horizontal speed (m/yr, log10)",
-                                        "azimuthal mean thickness H(r)",
-                                        f"front radius (H - H0 < {dh:g} m) against time"))
-    # the surface as a 3D mesh on the model's own footprint nodes (Delaunay of the surface nodes) within the window,
-    # the colour log10 of the horizontal speed at the surface
-    from scipy.spatial import Delaunay
-    map_idx = []
-    zlo = min(float(np.nanmin(r_["zs"] - r_["H"])) for r_ in rows)
-    zhi = max(float(np.nanmax(r_["zs"])) for r_ in rows)
+    u_lin_hi = float(np.percentile(allU, 99.5))
+    fig = go.Figure()
+    per = 3                                    # per state: log speed, linear speed, the margin line
     for i, r_ in enumerate(rows):
-        m = (np.abs(r_["x"] - xc) <= half) & (np.abs(r_["y"] - yc) <= half)
-        xs, ys = r_["x"][m], r_["y"][m]
-        tri = Delaunay(np.c_[xs, ys]).simplices
+        print(f"{r_['name']}: t {fmt_t(r_['t'])}, H {r_['H'].min():.2f} .. {r_['H'].max():.2f} m, surface speed max "
+              f"{np.nanmax(r_['U']) if np.isfinite(r_['U']).any() else np.nan:.3g} m/yr")
+        tri = Delaunay(np.c_[r_["x"], r_["y"]])
+        Ug = LinearNDInterpolator(tri, r_["U"])(GX, GY)
+        Hg = LinearNDInterpolator(tri, r_["H"] - H0)(GX, GY)
+        vis = i == len(rows) - 1
         with np.errstate(divide="ignore", invalid="ignore"):
-            lu = np.log10(r_["U"][m])
-        lu = np.where(np.isfinite(lu), lu, u_lo)
-        fig.add_trace(go.Mesh3d(x=(xs / 1e3).astype(np.float32), y=(ys / 1e3).astype(np.float32),
-                                z=r_["zs"][m].astype(np.float32), i=tri[:, 0], j=tri[:, 1], k=tri[:, 2],
-                                intensity=lu.astype(np.float32), colorscale="Inferno", cmin=u_lo, cmax=u_hi,
-                                colorbar=dict(title="log10 u_h (m/yr)", x=0.5, len=0.8), flatshading=False,
-                                lighting=dict(ambient=0.6, diffuse=0.6, specular=0.1, roughness=0.9),
-                                customdata=np.c_[(r_["H"][m] - H0)].astype(np.float32),
-                                hovertemplate="x %{x:.2f} y %{y:.2f} km<br>Zs %{z:.0f} m<br>log10 u_h "
-                                              "%{intensity:.2f}<extra></extra>",
-                                showscale=True, visible=i == len(rows) - 1), row=1, col=1)
-        map_idx.append([len(fig.data) - 1])
-    allmap = [j for idx in map_idx for j in idx]
-    for i, r_ in enumerate(rows):
-        fig.add_trace(go.Scatter(x=r_["rb"] / 1e3, y=r_["Hr"], mode="lines", name=f"{r_['t']:,.0f} yr",
-                                 line=dict(color=f"rgba(30,60,160,{0.2 + 0.8 * (i + 1) / len(rows):.2f})", width=1.4)),
-                      row=1, col=2)
-    tt = np.array([r_["t"] for r_ in rows])
-    rf = np.array([r_["rf"] for r_ in rows])
-    ok = np.isfinite(rf) & (tt > 0)
-    fig.add_trace(go.Scatter(x=tt[ok], y=rf[ok] / 1e3, mode="markers+lines", name="front", showlegend=False),
-                  row=2, col=2)
-    if ok.sum() >= 1:
-        t1, r1 = tt[ok][-1], rf[ok][-1] / 1e3
-        tl = np.array([tt[ok].min(), tt[ok].max()])
-        fig.add_trace(go.Scatter(x=tl, y=r1 * (tl / t1) ** 0.5, mode="lines", name="t^1/2", showlegend=False,
-                                 line=dict(dash="dot", color="grey")), row=2, col=2)
-    vex = vex3
-    zaspect = vex * max(zhi * 1.02 - zlo, 1.0) / (2 * half)
-    fig.update_scenes(xaxis=dict(title="x (km)", range=[(xc - half) / 1e3, (xc + half) / 1e3]),
-                      yaxis=dict(title="y (km)", range=[(yc - half) / 1e3, (yc + half) / 1e3]),
-                      zaxis=dict(title="z (m)", range=[zlo, zhi * 1.02]),
-                      aspectmode="manual", aspectratio=dict(x=1, y=1, z=zaspect),
-                      camera=dict(eye=dict(x=1.3, y=-1.3, z=0.9)), row=1, col=1)
-    fig.update_xaxes(title_text="r (km)", row=1, col=2)
-    fig.update_yaxes(title_text="H (m)", row=1, col=2)
-    fig.update_xaxes(title_text="t (yr)", type="log", row=2, col=2)
-    fig.update_yaxes(title_text="front radius (km)", type="log", row=2, col=2)
-    steps = [dict(label=f"{r_['t']:,.0f}", method="restyle",
-                  args=[{"visible": [j in set(map_idx[i]) for j in allmap]}, allmap]) for i, r_ in enumerate(rows)]
-    fig.update_layout(template="plotly_white", height=850, title=f"spreading test (surface: vertical exaggeration {vex:.1f})",
-                      sliders=[dict(active=len(rows) - 1, currentvalue=dict(prefix="surface at t (yr) = "), steps=steps,
-                                    x=0.0, len=0.48, pad=dict(t=40))],
-                      legend=dict(x=1.02, y=1.0))
+            lu = np.log10(Ug)
+        hov = "x %{x:.1f} m, y %{y:.1f} m<br>"
+        fig.add_trace(go.Heatmap(x=gx, y=gy, z=lu.astype(np.float32), colorscale="Inferno", zmin=u_lo, zmax=u_hi,
+                                 colorbar=dict(title="log10 u_h (m/yr)"), visible=vis,
+                                 hovertemplate=hov + "log10 u_h %{z:.2f}<extra></extra>"))
+        fig.add_trace(go.Heatmap(x=gx, y=gy, z=Ug.astype(np.float32), colorscale="Inferno", zmin=0.0, zmax=u_lin_hi,
+                                 colorbar=dict(title="u_h (m/yr)"), visible=False,
+                                 hovertemplate=hov + "u_h %{z:.3g} m/yr<extra></extra>"))
+        fig.add_trace(go.Contour(x=gx, y=gy, z=Hg.astype(np.float32), contours=dict(start=dh, end=dh, size=1.0,
+                                 coloring="none"), line=dict(color="white", width=1.5), showscale=False, visible=vis,
+                                 hoverinfo="skip"))
+    n = len(rows)
+    others = [j for j in range(per * n) if j % per == 2]          # the margin lines: the slider's; the speeds: the script's
+    steps = [dict(label=fmt_t(r_["t"]), method="update",
+                  args=[{"visible": [j // per == i for j in others]},
+                        {"title.text": f"surface horizontal speed, t = {fmt_t(r_['t'])} (white: the margin, "
+                                       f"H - H0 = {dh:g} m)"}, others]) for i, r_ in enumerate(rows)]
+    fig.update_xaxes(title_text="x (m)", range=[x0, x1], constrain="domain")
+    fig.update_yaxes(title_text="y (m)", range=[y0, y1], scaleanchor="x", scaleratio=1, constrain="domain")
+    fig.update_layout(template="plotly_white", width=width, height=height, margin=dict(l=70, r=150, t=80, b=130),
+                      title=f"surface horizontal speed, t = {fmt_t(rows[-1]['t'])} (white: the margin, H - H0 = {dh:g} m)",
+                      sliders=[dict(active=n - 1, currentvalue=dict(prefix="t = "), steps=steps, pad=dict(t=50))],
+                      updatemenus=[dict(type="buttons", direction="left", x=1.0, xanchor="right", y=1.0, yanchor="bottom",
+                                        pad=dict(t=0, b=10), showactive=False,
+                                        buttons=[dict(label="speed: log / linear", method="skip", args=[None])])])
+    js = ("var gd = document.getElementById('{plot_id}'); var per = %d, n = %d, cur = n - 1, mode = 'log';\n"
+          "function spd() { var idx = [], vis = [];\n"
+          "  for (var i = 0; i < n; i++) { idx.push(i * per, i * per + 1);\n"
+          "    vis.push(i == cur && mode == 'log', i == cur && mode == 'lin'); }\n"
+          "  Plotly.restyle(gd, {visible: vis}, idx); }\n"
+          "gd.on('plotly_sliderchange', function (e) { cur = e.step._index; spd(); });\n"
+          "gd.on('plotly_buttonclicked', function (e) { mode = (mode == 'log') ? 'lin' : 'log'; spd(); });\n") % (per, n)
     out = out or os.path.join(os.path.dirname(os.path.abspath(sorted(args)[-1])), "spread.html")
-    fig.write_html(out, include_plotlyjs="cdn")
-    print(f"-> {out}")
+    fig.write_html(out, include_plotlyjs="cdn", post_script=js)
+    print(f"-> {out} (map {nx} x {ny} samples, window x {x0:.0f} .. {x1:.0f} m, y {y0:.0f} .. {y1:.0f} m)")
 
 
 if __name__ == "__main__":
