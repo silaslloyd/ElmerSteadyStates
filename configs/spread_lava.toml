@@ -1,7 +1,7 @@
 # ElmerSteadyStates TEST CASE (branch test/lava-spreading): THE COOLING LAVA DROP, in the lava regime (dacite; m, yr,
 # MPa, K as everywhere, the parameters case/parameters_lava.lua). A 20 m x 100 m drop (the drop test's shape) on a 5 m
 # layer, all starting at 1173 K (900 C); the surface loses heat by radiation (emissivity 0.95) and convection (10
-# W/m^2/K) to air at 300 K; the bed insulating. Viscosity Arrhenius (Q 300 kJ/mol, 1e10 Pa s at 1173 K), capped at 1e6 x.
+# W/m^2/K) to air at 300 K; the bed insulating. Viscosity Arrhenius (Q 300 kJ/mol, 1e10 Pa s at 1173 K), capped at 1e4 x.
 # The extruded mesh geometrically refined towards the surface (31 levels, top layers ~5 cm) for the crust; the margin
 # remeshed (2 m within 20 m of it, 10 m inside, 40 m outside). Time steps of order 1e-5 .. 1e-4 yr (5 .. 50 min).
 
@@ -27,7 +27,7 @@ initial_temperature = 1173.15           # K: everything starts at the eruption t
 arrhenius_Q = 300000.0                  # J/mol: dacite-like, the viscosity x ~10 per 25 K near 1170 K
 arrhenius_Tref = 1173.15                # K: the viscosity is `viscosity` (1e10 Pa s) here
 arrhenius_Tmax = 1173.15                # K: no softer than at the eruption temperature
-viscosity_cap = 1.0e6                   # at most 1e6 x (1e16 Pa s): the cold crust, the solver's contrast bounded
+viscosity_cap = 1.0e4                   # at most 1e4 x (1e14 Pa s): the cold crust, still rigid on the run's time scale (1e6: GCR ~1800 its/step)
 bed_insulating = true                   # no heat flux through the bed: the lava cools only at its surface
 surface_radiation = true                # the surface: eps sigma (T^4 - Tsurf^4) + h_conv (T - Tsurf)
 surface_emissivity = 0.95
@@ -63,7 +63,7 @@ strain_heat = false
 stokes_element = "Bubbles"
 linear_stokes = "iterative"
 stokes_preconditioner = "ILU8"            # ILU8: ILU2 did not converge (GCR stalled at a relative residual ~0.95 after 5000 iterations, 250 m run)
-stokes_iterative_tol = 1.0e-8
+stokes_iterative_tol = 1.0e-6                # (1e-8: ~1800 GCR iterations a step with the crust)
 stokes_abort_not_converged = false
 linear_heat = "iterative"
 linear_free_surface = "direct"                # MUMPS (a small 2D system on 64 ranks; the iterative solve did not converge here)
