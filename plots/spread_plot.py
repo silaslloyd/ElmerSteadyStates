@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The spreading test (configs/spread_*.toml, branch test/lava-spreading): a top-down map of the surface horizontal
 speed sqrt(u^2 + v^2) (m/yr, from the Stokes solution at the surface nodes) of each state, one plotly page with a
-slider over the states (model-time order) and a "speed: log / linear" button; the current's margin (H - H0 = --dh m,
+slider over the states (model-time order), a "speed: log / linear" button and a "mesh on / off" button (the surface
+nodes' triangulation); the current's margin (H - H0 = --dh m,
 default 10) drawn as a white line. The map: the surface nodes' values interpolated linearly (on their Delaunay
 triangles) onto a regular grid of about one sample per screen pixel (--width, default 1200 px); equal aspect; the
 window: the current's extent (H - H0 > --dh) over all states, padded by a quarter, within the box (--window XMIN XMAX
@@ -113,7 +114,7 @@ def main():
     u_lo = u_hi - 4.0
     u_lin_hi = float(np.percentile(allU, 99.5))
     fig = go.Figure()
-    per = 3                                    # per state: log speed, linear speed, the margin line
+    per = 4                                    # per state: log speed, linear speed, the margin line, the mesh
     for i, r_ in enumerate(rows):
         print(f"{r_['name']}: t {fmt_t(r_['t'])}, H {r_['H'].min():.2f} .. {r_['H'].max():.2f} m, surface speed max "
               f"{np.nanmax(r_['U']) if np.isfinite(r_['U']).any() else np.nan:.3g} m/yr")
@@ -133,8 +134,19 @@ def main():
         fig.add_trace(go.Contour(x=gx, y=gy, z=Hg.astype(np.float32), contours=dict(start=dh, end=dh, size=1.0,
                                  coloring="none"), line=dict(color="white", width=1.5), showscale=False, visible=vis,
                                  hoverinfo="skip"))
+        # the mesh: the edges of the surface nodes' Delaunay triangulation (the footprint mesh's own triangles where
+        # gmsh's are Delaunay, as they normally are) within the window
+        sx_ = tri.simplices
+        e_ = np.unique(np.sort(np.r_[sx_[:, [0, 1]], sx_[:, [1, 2]], sx_[:, [0, 2]]], axis=1), axis=0)
+        inw = lambda k: (r_["x"][k] >= x0) & (r_["x"][k] <= x1) & (r_["y"][k] >= y0) & (r_["y"][k] <= y1)
+        e_ = e_[inw(e_[:, 0]) | inw(e_[:, 1])]
+        ex = np.c_[r_["x"][e_[:, 0]], r_["x"][e_[:, 1]], np.full(len(e_), np.nan)].ravel()
+        ey = np.c_[r_["y"][e_[:, 0]], r_["y"][e_[:, 1]], np.full(len(e_), np.nan)].ravel()
+        fig.add_trace(go.Scattergl(x=ex.astype(np.float32), y=ey.astype(np.float32), mode="lines",
+                                   line=dict(color="rgba(80,200,255,0.55)", width=0.6), visible=False,
+                                   hoverinfo="skip", showlegend=False))
     n = len(rows)
-    others = [j for j in range(per * n) if j % per == 2]          # the margin lines: the slider's; the speeds: the script's
+    others = [j for j in range(per * n) if j % per == 2]          # the margin lines: the slider's; the rest: the script's
     steps = [dict(label=fmt_t(r_["t"]), method="update",
                   args=[{"visible": [j // per == i for j in others]},
                         {"title.text": f"surface horizontal speed, t = {fmt_t(r_['t'])} (white: the margin, "
@@ -146,14 +158,17 @@ def main():
                       sliders=[dict(active=n - 1, currentvalue=dict(prefix="t = "), steps=steps, pad=dict(t=50))],
                       updatemenus=[dict(type="buttons", direction="left", x=1.0, xanchor="right", y=1.0, yanchor="bottom",
                                         pad=dict(t=0, b=10), showactive=False,
-                                        buttons=[dict(label="speed: log / linear", method="skip", args=[None])])])
-    js = ("var gd = document.getElementById('{plot_id}'); var per = %d, n = %d, cur = n - 1, mode = 'log';\n"
+                                        buttons=[dict(label="speed: log / linear", method="skip", args=[None]),
+                                                 dict(label="mesh on / off", method="skip", args=[None])])])
+    js = ("var gd = document.getElementById('{plot_id}'); var per = %d, n = %d, cur = n - 1, mode = 'log', mesh = false;\n"
           "function spd() { var idx = [], vis = [];\n"
-          "  for (var i = 0; i < n; i++) { idx.push(i * per, i * per + 1);\n"
-          "    vis.push(i == cur && mode == 'log', i == cur && mode == 'lin'); }\n"
+          "  for (var i = 0; i < n; i++) { idx.push(i * per, i * per + 1, i * per + 3);\n"
+          "    vis.push(i == cur && mode == 'log', i == cur && mode == 'lin', i == cur && mesh); }\n"
           "  Plotly.restyle(gd, {visible: vis}, idx); }\n"
           "gd.on('plotly_sliderchange', function (e) { cur = e.step._index; spd(); });\n"
-          "gd.on('plotly_buttonclicked', function (e) { mode = (mode == 'log') ? 'lin' : 'log'; spd(); });\n") % (per, n)
+          "gd.on('plotly_buttonclicked', function (e) {\n"
+          "  if (e.button.label.indexOf('mesh') == 0) { mesh = !mesh; } else { mode = (mode == 'log') ? 'lin' : 'log'; }\n"
+          "  spd(); });\n") % (per, n)
     out = out or os.path.join(os.path.dirname(os.path.abspath(sorted(args)[-1])), "spread.html")
     fig.write_html(out, include_plotlyjs="cdn", post_script=js)
     print(f"-> {out} (map {nx} x {ny} samples, window x {x0:.0f} .. {x1:.0f} m, y {y0:.0f} .. {y1:.0f} m)")
