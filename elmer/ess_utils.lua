@@ -206,9 +206,21 @@ end
 
 -- the viscosity Arrhenius in T (Newtonian): viscosity at ess_arr_Tref, activation energy ess_arr_Q (J/mol); the
 -- temperature capped at ess_arr_Tmax ([case] arrhenius_Tmax, default T0: no softening above it)
-function SpreadViscosity(T)
+function SpreadViscosity(T, z)
   local Tc = T
   if Tc > ess_arr_Tmax then Tc = ess_arr_Tmax end
   if Tc < 150.0 then Tc = 150.0 end
-  return viscosity * math.exp(ess_arr_Q / 8.314 * (1.0 / Tc - 1.0 / ess_arr_Tref))
+  local eta = viscosity * math.exp(ess_arr_Q / 8.314 * (1.0 / Tc - 1.0 / ess_arr_Tref))
+  -- [case] layer_viscosity_factor (ess_layer_f): a stiff base layer, x f below ess_layer_H above the bed, a smoothed
+  -- step of width ess_layer_d in log(viscosity): f^s, s = (1 - tanh((z - zb - H) / d)) / 2
+  local f = ess_layer_f or 1.0
+  if z ~= nil and f ~= 1.0 then
+    local u = (z - (ess_bed_z or 0.0) - ess_layer_H) / ess_layer_d
+    if u > 20.0 then u = 20.0 end
+    if u < -20.0 then u = -20.0 end
+    local e = math.exp(2.0 * u)
+    local s = 0.5 * (1.0 - (e - 1.0) / (e + 1.0))
+    eta = eta * math.exp(math.log(f) * s)
+  end
+  return eta
 end

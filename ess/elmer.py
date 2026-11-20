@@ -283,6 +283,7 @@ class ElmerModel(Model):
         if self.spread:
             Ls, Ws = float(c["spread_length_km"]) * 1e3, float(c["width"])
             Tref = c.get("arrhenius_Tref")
+            self.spread_case = dict(c)
             self.lua_overrides = {"ess_src_x": repr(float(c.get("source_x_km", Ls / 2e3)) * 1e3),
                                   "ess_src_y": repr(float(c.get("source_y_km", Ws / 2e3)) * 1e3),
                                   "ess_src_r": repr(float(c.get("source_radius_km", 100.0)) * 1e3),
@@ -299,6 +300,12 @@ class ElmerModel(Model):
                                   "ess_k_factor": repr(float(c.get("conductivity_factor", 1.0))),
                                   # all the vent's inflow (and plug) at its temperature, only the speed tapered
                                   "ess_vent_hot": "1.0" if c.get("vent_hot_inflow", False) else "0.0",
+                                  # a stiff base layer: the viscosity x layer_viscosity_factor below layer_thickness
+                                  # above the bed (a smoothed step of width layer_smooth, in log viscosity)
+                                  "ess_layer_f": repr(float(c.get("layer_viscosity_factor", 1.0))),
+                                  "ess_layer_H": repr(float(c.get("layer_thickness", c.get("spread_thickness", 100.0)))),
+                                  "ess_layer_d": repr(float(c.get("layer_smooth", 20.0))),
+                                  "ess_bed_z": repr(float(c.get("spread_bed", 0.0))),
                                   # the vent's incoming material (and the initial plug above it), default T0
                                   "ess_vent_T": (repr(float(c["vent_temperature"])) if c.get("vent_temperature") is not None
                                                  else "T0"),
@@ -1219,6 +1226,33 @@ End
             text = text[:k] + block + "\n  ! [case] geometry = slab: periodic in x (no inflow / calving front)" + text[j:]
         return text
 
+    def _spread_extras(self, text):
+        """elmer/spread_template.sif: [case] extrude_levels (default the template's 21) and extrude_density (a table
+        [[zeta, relative layer thickness], ...] over the normalised height zeta 0 (bed) .. 1 (surface); default the
+        template's [[0, 1], [1, 0.25]]: finer towards the surface); [case] layer_viscosity_factor > 1: the viscosity a
+        function of the height too (SpreadViscosity(T, z): the stiff base layer)"""
+        c = getattr(self, "spread_case", {})
+        lv, dens = c.get("extrude_levels"), c.get("extrude_density")
+        if lv is not None or dens is not None:
+            a = "  Extruded Mesh Levels = Integer 21\n"
+            b = "  Extruded Mesh Density = Variable Coordinate 3\n     Real\n     0.0 1.0\n     1.0 0.25\n"
+            if text.count(a) != 1 or text.count(b) != 1:
+                raise ValueError("spread: the template's extrusion lines changed (21 levels, density 1 .. 0.25)")
+            if lv is not None:
+                text = text.replace(a, f"  Extruded Mesh Levels = Integer {int(lv)}   ! [case] extrude_levels\n")
+            if dens is not None:
+                rows = "".join(f"     {float(z)!r} {float(d)!r}\n" for z, d in dens)
+                text = text.replace(b, "  Extruded Mesh Density = Variable Coordinate 3   ! [case] extrude_density\n"
+                                       f"     Real\n{rows}")         # the template's "End" follows
+        if float(c.get("layer_viscosity_factor", 1.0)) != 1.0:
+            v = '  Viscosity = Variable Temperature\n    Real Lua "SpreadViscosity(tx[0])"\n'
+            if text.count(v) != 1:
+                raise ValueError("spread: the template's viscosity lines changed (SpreadViscosity(tx[0]))")
+            text = text.replace(v, "  ! [case] layer_viscosity_factor: x it in the base layer (a step in height)\n"
+                                   '  Viscosity = Variable Temperature, Coordinate 3\n'
+                                   '    Real Lua "SpreadViscosity(tx[0], tx[1])"\n')
+        return text
+
     def _spread(self, text):
         """[case] geometry = "spread" (land template): the accumulation the source SpreadSource(x, y) (ess_utils.lua:
         ess_src_a m/yr within ess_src_r of (ess_src_x, ess_src_y), a tanh edge of width ess_src_w, nothing elsewhere:
@@ -1229,7 +1263,7 @@ End
         if self.x_end < 1.0:
             raise ValueError("[case] geometry = spread: no fixed margin (x_end)")
         if "SpreadSource" in text:                      # elmer/spread_template.sif (ice only): already the spread case
-            return text
+            return self._spread_extras(text)
         acc = re.compile(r'^(\s*(?:Zs|Output|FSSA) Accumulation = )Variable Coordinate 1, height\n(\s*)Real Lua '
                          r'"AccumulationSmooth\(tx\[0\], tx\[1\] - 10\*zscale, aDIM, L\)"', re.M)
         text, n = acc.subn(r'\1Variable Coordinate 1, Coordinate 2   ! [case] geometry = spread: the central source\n'

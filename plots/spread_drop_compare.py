@@ -169,12 +169,19 @@ def main():
         rmax = 0.5 * min(float(c["spread_length_km"]) * 1e3, float(c["width"]))
         alltimes = sorted(set().union(*[set(r_["t"] for r_ in m["rows"]) for m in mem]))
         shape = str(c.get("drop_shape", "smooth"))
-        rr, hs = thin_film(alltimes, H0c, A, R, D, rmax, shape=shape)
+        stiff = float(c.get("layer_viscosity_factor", 1.0)) > 10.0
+        if stiff:
+            # a stiff base layer: the drop on a rigid floor at H0c (a 0.5 m precursor film on it for the numerics)
+            hp = 0.5
+            rr, hs = thin_film(alltimes, hp, A, R, D, rmax, shape=shape)
+            hs = {k: v + (H0c - hp) for k, v in hs.items()}
+        else:
+            rr, hs = thin_film(alltimes, H0c, A, R, D, rmax, shape=shape)
         Vd = drop_shape(shape, np.zeros(1), A, R)[1]                   # the drop's volume (above the layer)
         # the virtual time origin: Huppert's point release reaches the drop's radius R at t_v, so the members' t
         # corresponds to his t + t_v (the same volume AND the same initial extent)
         t_v = (R / XI_N) ** 8 / (D * Vd ** 3)
-        hup = {"D": D, "V": Vd, "H0": H0c, "tv": t_v}
+        hup = {"D": D, "V": Vd, "H0": H0c, "tv": t_v, "stiff": stiff}
         print(f"Huppert: virtual origin t_v = {t_v:,.0f} yr (his front at the drop's radius {R / 1e3:g} km)")
         for tk, h in hs.items():
             below = np.where(h - H0 < dh)[0]
@@ -194,7 +201,8 @@ def main():
     if ideal:
         ti = np.array(sorted(ideal))
         fig.add_trace(go.Scatter(x=ti, y=np.array([ideal[k]["rf"] for k in ti]) / 1e3, mode="lines",
-                                 name="thin film, no slip", legendgroup="ideal",
+                                 name="thin film, no slip" + (" (on the rigid layer)" if hup and hup.get("stiff") else ""),
+                                 legendgroup="ideal",
                                  line=dict(color="black", dash="dash", width=2)), row=1, col=1)
     if hup:
         tl = np.geomspace(max(min(t for m in mem for t in [r_["t"] for r_ in m["rows"]] if t > 0), 1.0),
