@@ -204,7 +204,7 @@ def main():
             h_ = r_["H"] - H0
             tri = Delaunay(np.c_[x_, y_]).simplices
             inw = (x_ >= x0) & (x_ <= x1) & (y_ >= y0) & (y_ <= y1)
-            tri = tri[inw[tri].all(axis=1)]
+            tri = tri[inw[tri].any(axis=1)]          # every triangle touching the window (a clean edge, not a jagged one)
             vis = i == len(rows) - 1
             with np.errstate(divide="ignore", invalid="ignore"):
                 lu = np.log10(r_["U"])
