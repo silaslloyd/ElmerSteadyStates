@@ -44,10 +44,11 @@ surface_emissivity = 0.95
 surface_convection = 10.0               # W m^-2 K^-1
 extrude_levels = 31                     # 30 layers, graded towards BOTH ends (Elmer's element size h(zeta), zeta the
 extrude_density = [[0.0, 0.1], [0.0813, 0.1334], [0.1625, 0.1778], [0.2438, 0.2371], [0.325, 0.3162], [0.4062, 0.4217], [0.4875, 0.5623], [0.5687, 0.7499], [0.65, 1.0], [0.6937, 0.6451], [0.7375, 0.4162], [0.7812, 0.2685], [0.825, 0.1732], [0.8688, 0.1117], [0.9125, 0.07208], [0.9563, 0.0465], [1.0, 0.03]]   # relative height; log-linear 0.1 at the bed -> 1 at 0.65 -> 0.03 at the surface): the 25 m column ~49 cm at the bed, ~1 m at the ground's top (z = 5 m), ~15 cm at the surface; the 5 m layer ~10 cm .. ~3 cm
-spread_remesh_fine = 0.25               # m within 3 m of the margin (1 m smeared the cold ground over the mound's flanks: it locked)
+spread_remesh_fine = 0.1                # m within 1.5 m of the margin (0.25: the front under-resolved); its free-surface limit
+                                        # dx^2 / (rho g h^3 / (3 eta)) ~ 0.1 s at h = 0.5 m, ~0.4 s at h = 0.3 m
 spread_remesh_vent_fine = 0.25          # m over the vent and 3 m beyond its rim (the mound ~12 elements across, was 3)
 spread_remesh_vent_band_km = 0.003
-spread_remesh_band_km = 0.003
+spread_remesh_band_km = 0.0015          # 1.5 m either side of the margin (run in 30 s chunks: the front ~1 m per chunk)
 spread_remesh_coarse_in = 0.5           # m inside the flow
 spread_remesh_coarse_out = 2.0          # m on the bare ground
 gmsh = "gmsh"
