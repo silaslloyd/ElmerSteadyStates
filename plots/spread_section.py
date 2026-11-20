@@ -302,6 +302,28 @@ def main():
             return np.zeros_like(zgrid)
         u = np.clip((zgrid - zb0 - lay_c) / lay_d, -20, 20)
         return np.log10(lay_f) * 0.5 * (1 - np.tanh(u))
+    # as SpreadViscosity (elmer/ess_utils.lua) has it: Arrhenius x the layer step (not over the vent with
+    # layer_vent_soft), the precursor film (at most viscosity x film factor in its band), then the cap
+    film_d = float(c.get("precursor_film_m", 0.0))
+    film_top = float(c.get("precursor_film_top_m", c.get("spread_thickness", 100.0)))
+    film_f = float(c.get("precursor_film_factor", 1.0))
+    vent_soft = bool(c.get("layer_vent_soft", False))
+    src_r = float(c.get("source_radius_km", 100.0)) * 1e3
+
+    def visc_log10(T, zgrid, xline):
+        """log10 viscosity (Pa s) on the section's grid: T and zgrid (nz x nx), xline (nx) the distance along the line"""
+        v = np.log10(eta_pas * np.exp(Q / 8.314 * (1 / np.clip(T, 150.0, Tmax) - 1 / Tref)))
+        lay = layer_log10(zgrid)
+        if vent_soft:
+            px, py = (xline, np.full_like(xline, c0)) if axis == "x" else (np.full_like(xline, c0), xline)
+            lay = np.where((np.hypot(px - xc, py - yc) < src_r)[None, :], 0.0, lay)
+        v = v + lay
+        if film_d > 0:
+            zr = zgrid - zb0
+            v = np.where((zr <= film_top + 1e-6) & (zr >= film_top - film_d), np.minimum(v, np.log10(eta_pas * film_f)), v)
+        if cap > 0:
+            v = np.minimum(v, np.log10(eta_pas * cap))
+        return v
     Lline = L if axis == "x" else W
     c0 = yc if axis == "x" else xc
     if xwin:
@@ -474,7 +496,7 @@ def main():
         with np.errstate(divide="ignore", invalid="ignore"):
             Gu = np.log10(on_grid(zg, Zl, Ul))
         for r, z_, cs, lo, hi, title, hv in (
-                (1, eta(G) + layer_log10(np.broadcast_to(zg[:, None], G.shape)), "Viridis_r", eta(t_hi),
+                (1, visc_log10(G, np.broadcast_to(zg[:, None], G.shape), sline), "Viridis_r", eta(t_hi),
                  eta(t_lo) + (np.log10(lay_f) if lay_f != 1.0 else 0.0), "log10 eta", "log10 eta %{z:.2f}"),
                 (2, Gu, "Inferno", u_lo, u_hi, "log10 |u_h|", "log10 |u_h| %{z:.2f}"),
                 (3, G, "RdBu_r", t_lo, t_hi, "T (K)", "T %{z:.2f} K")):
