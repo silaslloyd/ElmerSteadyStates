@@ -369,11 +369,10 @@ Solver 2
   Exec Solver = "before all"
   Active Coordinate = Integer 3
   Variable = -nooutput DummyR
-  Mesh Velocity Variable = String "dSdt"
+  Mesh Velocity Variable = String "Mesh Velocity 3"   ! the heat solver subtracts "Mesh Velocity" (ALE)
   Mesh Update Variable = String "dS"
   Mesh Velocity First Zero = Logical True
   Exported Variable 1 = -dofs 1 "dS"
-  Exported Variable 2 = -dofs 1 "dSdt"
   Adjust Surface = Logical True
   Bubbles in global system = False
 End
@@ -399,11 +398,10 @@ Solver 4
   Exec Solver = "Before Timestep"
   Active Coordinate = Integer 3
   Variable = -nooutput DummyR
-  Mesh Velocity Variable = String "dSdt"
+  Mesh Velocity Variable = String "Mesh Velocity 3"   ! the heat solver subtracts "Mesh Velocity" (ALE)
   Mesh Update Variable = String "dS"
   Mesh Velocity First Zero = Logical True
   Exported Variable 1 = -dofs 1 "dS"
-  Exported Variable 2 = -dofs 1 "dSdt"
   Adjust Surface = Logical True
   Bubbles in global system = False
 End
@@ -411,6 +409,7 @@ End
 Solver 5
   Equation = "partial update"
   Procedure = "MeshSolve" "MeshSolver"
+  Compute Mesh Velocity = Logical False   ! "Mesh Velocity" is the mapper's (the surface-following motion)
   Exec Solver = "Before Timestep"
   Variable = -dofs 3 "Partial Vertical MeshUpdate"
   Linear System Solver = Iterative
