@@ -1,0 +1,109 @@
+# ElmerSteadyStates TEST CASE (branch test/lava-spreading): THE SIMPLEST ROLLING TEST. An isothermal drop (basalt
+# parameters, 1e4 Pa s everywhere, no temperature dependence) released on a 10 degree slope of stiff ground (x 1e4 by
+# height below 0.965 m) with the 3 cm precursor film; no vent, no cooling effect. The drop (0.5 m x 3 m) should run
+# down the slope (+x) at ~ rho g sin(10) h^2 / (3 eta) ~ 3-4 cm/s at first, stretching into a tongue with a blunt nose;
+# in the front's frame the surface rolls under at the nose (the caterpillar). 60 m x 20 m box, the drop at (10, 10) m.
+
+[paths]
+work_dir = "work/spread_basalt_roll"
+case_dir = "{work}/case"
+
+[case]
+geometry = "spread"
+source = "vent"                         # (no source: the vent mode only switches off the surface source's T0 condition)
+parameters = "case/parameters_basalt.lua" # BASALT: 2600 kg/m^3, 1200 J/kg/K, 1.0 W/m/K, 1e4 Pa s at the eruption temperature
+spread_length_km = 0.06                 # 60 m down the slope
+width = 20.0
+spread_res = 0.5                        # m: the starting mesh
+spread_thickness = 1.0                  # m: the cold ground (the background layer)
+margin_dh = 0.2                         # m of lava: the margin the remesher follows, H = 1.2 m
+spread_bed = 0.0
+source_rate = 0.0                       # no vent
+source_x_km = 0.01                      # the drop at x = 10 m ...
+source_y_km = 0.01                      # ... y = 10 m
+source_radius_km = 0.001
+drop_height_m = 0.5                     # the drop: 1 m + 0.5 m (1 - (r/R)^2)^2, R = 3 m (jobs/spread_drop.py)
+drop_radius_km = 0.003
+initial_temperature = 1423.15           # everything at the eruption temperature (isothermal anyway)
+bed_insulating = true
+arrhenius_Q = 0.0                       # no temperature dependence: 1e4 Pa s everywhere (the test)
+layer_viscosity_factor = 1.0e4          # the ground stiff by height: x 1e4 below ...
+layer_thickness = 1.0
+layer_step_centre = 0.965               # ... z = 0.965 m ...
+layer_smooth = 0.005                    # ... +- 5 mm
+precursor_film_m = 0.03                 # the film: 0.97 .. 1 m at most the lava's viscosity
+slope_deg = 10.0                        # down +x
+arrhenius_Tref = 1423.15                # K: the viscosity is `viscosity` (1e4 Pa s) here
+arrhenius_Tmax = 1423.15                # K: no softer than at the eruption temperature
+viscosity_cap = 1.0e4                   # at most 1e4 x (1e8 Pa s): the crust and the cold ground (reached below ~1040 K)
+surface_radiation = true                # the surface: eps sigma (T^4 - Tsurf^4) + h_conv (T - Tsurf)
+surface_emissivity = 0.95
+surface_convection = 10.0               # W m^-2 K^-1
+extrude_levels = 31                     # 30 layers, graded towards BOTH ends (Elmer's element size h(zeta), zeta the
+extrude_density = [[0.0, 0.1], [0.0813, 0.1334], [0.1625, 0.1778], [0.2438, 0.2371], [0.325, 0.3162], [0.4062, 0.4217], [0.4875, 0.5623], [0.5687, 0.7499], [0.65, 1.0], [0.6937, 0.6451], [0.7375, 0.4162], [0.7812, 0.2685], [0.825, 0.1732], [0.8688, 0.1117], [0.9125, 0.07208], [0.9563, 0.0465], [1.0, 0.03]]   # relative height; log-linear 0.1 at the bed -> 1 at 0.65 -> 0.03 at the surface): the 25 m column ~49 cm at the bed, ~1 m at the ground's top (z = 5 m), ~15 cm at the surface; the 5 m layer ~10 cm .. ~3 cm
+spread_remesh_fine = 0.1                # m within 1.5 m of the margin
+                                        # dx^2 / (rho g h^3 / (3 eta)) ~ 0.1 s at h = 0.5 m, ~0.4 s at h = 0.3 m
+spread_remesh_band_km = 0.0015          # 1.5 m either side of the margin (run in 30 s chunks: the front ~1 m per chunk)
+spread_remesh_coarse_in = 0.5           # m inside the flow
+spread_remesh_coarse_out = 1.0          # m outside
+gmsh = "gmsh"
+elmergrid = "ElmerGrid"
+
+[model]
+type = "elmer"
+
+[elmer]
+min_thickness = 0.5                     # m: the surface limiter Min Zs = bed + 0.5 (default bed + 5 lifted the 1 m ground to 5 m)
+template = "elmer/spread_template.sif"  # ICE ONLY (no bedrock, no filler): the geothermal flux at the ice base
+mesh_db = "footprint"
+ess_lib = "elmer/SteadyStateIO"
+ess_utils = "elmer/ess_utils.lua"
+n_procs = 0                             # 0: $SLURM_NTASKS
+mpirun = "mpirun -np {n}"
+solver = "ElmerSolver"
+timeout = 21600
+keep_runs = false
+cache = false                           # a transient test: no reuse of runs
+vtu = false
+friction_heat = "flux"                  # zero on a no-slip bed
+strain_heat = false
+# iterative, as the ice-stream runs (ElmerStreams): P1 + bubbles, GCR(250) + ILU8 to 1e-8, no abort when not converged;
+# heat BiCGStabL + ILU; the free surface direct (small 2D system)
+stokes_element = "Bubbles"
+linear_stokes = "iterative"
+stokes_preconditioner = "ILU8"            # ILU8: ILU2 did not converge (GCR stalled at a relative residual ~0.95 after 5000 iterations, 250 m run)
+stokes_iterative_tol = 1.0e-6                # (1e-8: ~1800 GCR iterations a step with the crust)
+stokes_abort_not_converged = false
+linear_heat = "iterative"               # BiCGStabL + ILU1 (run with ESS_HEAT_TOL=1e-8); MUMPS took ~4 s of a ~4 s step on 101 ranks. (The first iterative failure was in the run where Min Zs lifted the ground to 5 m.)
+linear_free_surface = "direct"                # MUMPS (a small 2D system on 64 ranks; the iterative solve did not converge here)
+surface_transfer = 0.1                  # the surface Robin coefficient ("Heat transfer coefficient"; default 1)
+diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "Output Accumulation"]
+
+[state]
+variables = ["Temperature", "Zs"]
+scales = { Temperature = 5.0, Zs = 50.0 }
+frozen = ["bedrock"]                     # the flat bed (fixed); no masks
+
+[parameter]
+name = "Tsurf"
+value = 300.0                           # Tsurf (K): the air (and the radiation's surroundings)
+scale = 1.0
+
+[map]
+dt = 50.0
+n_steps = 20
+coupled_iters = 1
+rock_heat_capacity = 1.0                # (no bedrock in this case)
+
+[stability_map]
+dt = 50.0
+n_steps = 20
+rock_heat_capacity = 1.0
+
+[fd]
+eps = 1e-6
+scheme = "forward"
+
+[newton]
+tol = 1e-5
+maxit = 15
