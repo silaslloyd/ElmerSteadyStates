@@ -9,7 +9,7 @@ triangles) onto a regular grid of about one sample per screen pixel (--width, de
 window: the current's extent (H - H0 > --dh) over all states, padded by a quarter, within the box (--window XMIN XMAX
 YMIN YMAX in m to set it).
 
-With --3d: the two maps as 3D surfaces (the surface Zs, coloured by u_h and by h), --vex the vertical exaggeration
+With --3d: one 3D surface (the surface Zs, coloured by u_h; no thickness map), --vex the vertical exaggeration
 (default 1: true aspect).
 
     python3 plots/spread_plot.py STATE.npz [STATE2.npz ...] [--config configs/spread_ice.toml] [--dh 10] [--3d] [--vex 1]
@@ -186,17 +186,17 @@ def main():
                                             buttons=[dict(label="speed: log / linear", method="skip", args=[None]),
                                                      dict(label="mesh on / off", method="skip", args=[None])])])
     else:
-        # 3D: the surface Zs on the surface nodes' triangles within the window, two scenes (u_h above, h below), the
-        # vertical exaggerated by vex; the margin (h = dh) a white line on the surface
+        # 3D: the surface Zs on the surface nodes' triangles within the window, coloured by u_h, the vertical
+        # exaggerated by vex; the margin (h = dh) a white line on the surface
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.tri as mtri
         zlo = min(float(np.nanmin(r_["zs"] - r_["H"])) for r_ in rows)
         zhi = max(float(np.nanmax(r_["zs"])) for r_ in rows)
         zr = max(zhi - zlo, 1e-6)
-        height = 1100
+        height = 800
         fig = go.Figure()
-        per = 7
+        per = 4                                    # per state: log u, linear u, the margin, the mesh
         for i, r_ in enumerate(rows):
             print(f"{r_['name']}: t {fmt_t(r_['t'])}, h {max(float(np.nanmax(r_['H'] - H0)), 0.0):.3f} m max, surface "
                   f"speed max {np.nanmax(r_['U']) if np.isfinite(r_['U']).any() else np.nan:.3g} m/yr")
@@ -239,23 +239,18 @@ def main():
             mesh = lambda sc: go.Scatter3d(x=ex, y=ey, z=ez, mode="lines", line=dict(color="rgba(80,200,255,0.6)",
                                            width=1), visible=False, hoverinfo="skip", showlegend=False, scene=sc)
             fig.add_trace(go.Mesh3d(**common, intensity=lu.astype(np.float32), colorscale="Inferno", cmin=u_lo,
-                                    cmax=u_hi, colorbar=dict(title="log10 u_h (m/yr)", y=0.77, len=0.4), visible=vis,
+                                    cmax=u_hi, colorbar=dict(title="log10 u_h (m/yr)", len=0.8), visible=vis,
                                     hovertemplate=hov + "log10 u_h %{intensity:.2f}<extra></extra>", scene="scene"))
             fig.add_trace(go.Mesh3d(**common, intensity=r_["U"].astype(np.float32), colorscale="Inferno", cmin=0.0,
-                                    cmax=u_lin_hi, colorbar=dict(title="u_h (m/yr)", y=0.77, len=0.4), visible=False,
+                                    cmax=u_lin_hi, colorbar=dict(title="u_h (m/yr)", len=0.8), visible=False,
                                     hovertemplate=hov + "u_h %{intensity:.3g} m/yr<extra></extra>", scene="scene"))
             fig.add_trace(margin("scene"))
             fig.add_trace(mesh("scene"))
-            fig.add_trace(go.Mesh3d(**common, intensity=np.clip(h_, 0, None).astype(np.float32), colorscale="Viridis",
-                                    cmin=0.0, cmax=h_hi, colorbar=dict(title="h (m)", y=0.25, len=0.4), visible=vis,
-                                    hovertemplate=hov + "h %{intensity:.3f} m<extra></extra>", scene="scene2"))
-            fig.add_trace(margin("scene2"))
-            fig.add_trace(mesh("scene2"))
         n = len(rows)
-        others = [j for j in range(per * n) if j % per in (2, 4, 5)]
+        others = [j for j in range(per * n) if j % per == 2]
         steps = [dict(label=fmt_t(r_["t"]), method="update",
                       args=[{"visible": [j // per == i for j in others]},
-                            {"title.text": f"t = {fmt_t(r_['t'])}: the surface coloured by u_h (above) and by h (below); "
+                            {"title.text": f"t = {fmt_t(r_['t'])}: the surface coloured by u_h; "
                                            f"vertical exaggeration {vex:g}"}, others])
                  for i, r_ in enumerate(rows)]
         sc = dict(xaxis=dict(title="x (m)", range=[x0, x1]), yaxis=dict(title="y (m)", range=[y0, y1]),
@@ -263,24 +258,25 @@ def main():
                   aspectratio=dict(x=1, y=(y1 - y0) / (x1 - x0), z=vex * zr / (x1 - x0)),
                   camera=dict(eye=dict(x=0.6, y=-1.3, z=0.8)))
         fig.update_layout(template="plotly_white", width=width, height=height,
-                          scene=dict(**sc, domain=dict(x=[0, 0.88], y=[0.52, 1.0])),
-                          scene2=dict(**sc, domain=dict(x=[0, 0.88], y=[0.0, 0.48])),
-                          title=f"t = {fmt_t(rows[-1]['t'])}: the surface coloured by u_h (above) and by h (below); "
-                                f"vertical exaggeration {vex:g}",
+                          scene=dict(**sc, domain=dict(x=[0, 0.88], y=[0.0, 1.0])),
+                          title=f"t = {fmt_t(rows[-1]['t'])}: the surface coloured by u_h; vertical exaggeration {vex:g}",
                           sliders=[dict(active=n - 1, currentvalue=dict(prefix="t = "), steps=steps, pad=dict(t=30))],
                           updatemenus=[dict(type="buttons", direction="left", x=1.0, xanchor="right", y=1.0,
                                             yanchor="bottom", pad=dict(t=0, b=10), showactive=False,
                                             buttons=[dict(label="speed: log / linear", method="skip", args=[None]),
                                                      dict(label="mesh on / off", method="skip", args=[None])])])
+    meshoff = "[3]" if three_d else "[3, 6]"       # the mesh traces' offsets in a state's block
     js = ("var gd = document.getElementById('{plot_id}'); var per = %d, n = %d, cur = n - 1, mode = 'log', mesh = false;\n"
+          "var meshoff = %s;\n"
           "function spd() { var idx = [], vis = [];\n"
-          "  for (var i = 0; i < n; i++) { idx.push(i * per, i * per + 1, i * per + 3, i * per + 6);\n"
-          "    vis.push(i == cur && mode == 'log', i == cur && mode == 'lin', i == cur && mesh, i == cur && mesh); }\n"
+          "  for (var i = 0; i < n; i++) { idx.push(i * per, i * per + 1);\n"
+          "    vis.push(i == cur && mode == 'log', i == cur && mode == 'lin');\n"
+          "    for (var k = 0; k < meshoff.length; k++) { idx.push(i * per + meshoff[k]); vis.push(i == cur && mesh); } }\n"
           "  Plotly.restyle(gd, {visible: vis}, idx); }\n"
           "gd.on('plotly_sliderchange', function (e) { cur = e.step._index; spd(); });\n"
           "gd.on('plotly_buttonclicked', function (e) {\n"
           "  if (e.button.label.indexOf('mesh') == 0) { mesh = !mesh; } else { mode = (mode == 'log') ? 'lin' : 'log'; }\n"
-          "  spd(); });\n") % (per, n)
+          "  spd(); });\n") % (per, n, meshoff)
     out = out or os.path.join(os.path.dirname(os.path.abspath(sorted(args)[-1])), "spread.html")
     fig.write_html(out, include_plotlyjs="cdn", post_script=js)
     print(f"-> {out} (map {nx} x {ny} samples, window x {x0:.0f} .. {x1:.0f} m, y {y0:.0f} .. {y1:.0f} m)")
