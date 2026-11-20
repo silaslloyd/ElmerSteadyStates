@@ -18,7 +18,7 @@ through the states (in the section plane, axisymmetric: the velocity along the l
 between consecutive states, RK2), coloured by their starting position: the surface material's fate (e.g. rolled
 under at the nose).
 Each extruded level of the mesh is interpolated onto the section line (linear on the footprint's triangles), then every
-column onto a regular z grid (--nz levels): the colours are the model's values, nothing smoothed across levels.
+column onto a regular z grid (--nz levels; default --nx one sample per screen pixel across, --nz two per pixel up each panel): the colours are the model's values, nothing smoothed across levels.
 
 The panels are drawn at a fixed vertical exaggeration --vex (z against the section's horizontal distance; default: a
 tenth of the old single-panel page's stretch, from the data's z range, printed); --x XMIN XMAX (km) to show only part of the line (the panels then get taller
@@ -28,7 +28,7 @@ padded. --height H: the exaggeration instead chosen so the page is H px tall (th
 
     python3 plots/spread_section.py STATE.npz [STATE2.npz ...] [--config configs/spread_vent.toml] [--axis x|y]
                                     [--vex V | --height H] [--x XMIN XMAX | --panel PX]
-                                    [--frame front|lab] [--density 1.2] [--no-streams] [--tracers 120] [--tracer-depths 0,10,20] [--seed-time T] [--nx 400] [--nz 120] [--width 1200] [--out FILE.html]
+                                    [--frame front|lab] [--density 1.2] [--no-streams] [--tracers 120] [--tracer-depths 0,10,20] [--seed-time T] [--nx NX] [--nz NZ] [--width 1200] [--out FILE.html]
 """
 import os
 import sys
@@ -248,8 +248,8 @@ def main():
     args = sys.argv[1:]
     cfgf = arg(args, "--config", os.path.join(ROOT, "configs", "spread_vent.toml"))
     axis = arg(args, "--axis", "x")
-    nx = arg(args, "--nx", 400, int)
-    nz = arg(args, "--nz", 120, int)
+    nx = arg(args, "--nx", None, int)               # default: one sample per screen pixel across the plot
+    nz = arg(args, "--nz", None, int)               # default: two per screen pixel up each panel
     vex = arg(args, "--vex", None, float)
     width = arg(args, "--width", 1200, int)
     page_h = arg(args, "--height", None, int)      # with it: the exaggeration set so the three panels fill a page this tall
@@ -326,6 +326,8 @@ def main():
         else:
             a, b = 0.0, Lline
         print(f"section window {a / 1e3:.0f} .. {b / 1e3:.0f} km (--x to set)")
+    if nx is None:
+        nx = max(400, width - 200)
     sline = np.linspace(a, b, nx)
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
@@ -357,7 +359,6 @@ def main():
         Rdot[:] = 0.0
     zmax = max(np.nanmax(r[1][-1]) for r in rows) * 1.05
     zmin = min(np.nanmin(r[1][0]) for r in rows)
-    zg = np.linspace(zmin, zmax, nz)
     allU = np.concatenate([r[3][np.isfinite(r[3]) & (r[3] > 0)] for r in rows] + [np.array([1e-3])])
     u_hi = float(np.log10(np.percentile(allU, 99.5)))
     u_lo = u_hi - 4.0
@@ -379,6 +380,11 @@ def main():
     # the panel height at exaggeration vex: the plot area ~ (width - margins) px for (b - a) of horizontal distance
     panel = max(40, int(round(plot_w * (zmax - zmin) * vex / (b - a))))
     height = 3 * panel + 2 * gap + 230
+    if nz is None:
+        nz = max(240, 2 * panel)                   # two per screen pixel (a retina screen)
+    zg = np.linspace(zmin, zmax, nz)
+    print(f"grid {nx} x {nz}: {(b - a) / (nx - 1):.3g} m x {(zmax - zmin) / (nz - 1):.3g} m per sample "
+          f"(--nx/--nz finer to zoom in)")
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=gap / (height - 230),
                         subplot_titles=("log10 viscosity (Pa s)", "log10 horizontal speed (m/yr), streamlines",
                                         "temperature (K)"))
