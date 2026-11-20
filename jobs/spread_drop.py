@@ -8,7 +8,9 @@ source_y_km):
                                      (Huppert's (1982) similarity shape: the drop on a dry no-slip bed is this shape at
                                      every time; volume 3/4 pi R^2 drop_height).
 The temperature is left as it is (the isothermal test), or set to [case] initial_temperature everywhere (the cooling
-drop: the drop and the thin layer start hot, the surface cools them).
+drop: the drop and the thin layer start hot, the surface cools them); with [case] layer_temperature as well, only the
+drop starts at initial_temperature and the layer below it (z < spread_bed + spread_thickness, at the nodes' heights
+after the drop is added: each column's levels keep their relative heights) at layer_temperature (the cold ground).
 
     python3 jobs/spread_drop.py CONFIG STATE.npz OUT.npz
 """
@@ -53,6 +55,23 @@ def main():
     if c.get("initial_temperature") is not None:     # the cooling drop: everything starts hot (the layer too)
         bT = next(b for b in s.layout.blocks if b.name.lower() == "temperature")
         parts[bT.name] = np.full_like(parts[bT.name], float(c["initial_temperature"]))
+        if c.get("layer_temperature") is not None:   # ... except the layer: the cold ground under the hot drop
+            Z = dict(zip(*allc[find_name(allc, "coordinate 3")]))
+            gT = bT.gids
+            xT = np.array([X[k] for k in gT])
+            yT = np.array([Y[k] for k in gT])
+            zT = np.array([Z[k] for k in gT])
+            rT = np.hypot(xT - xc, yT - yc)
+            if shape == "huppert":
+                addT = A * np.cbrt(np.clip(1 - (rT / R) ** 2, 0, None))
+            else:
+                addT = A * np.clip(1 - (rT / R) ** 2, 0, None) ** 2
+            zb, H0 = float(c.get("spread_bed", 0.0)), float(c["spread_thickness"])
+            znew = zb + (zT - zb) / H0 * (H0 + addT)  # the start state is the flat layer: its levels stretched
+            cold = znew <= zb + H0 + 1e-6
+            parts[bT.name] = np.where(cold, float(c["layer_temperature"]), float(c["initial_temperature"]))
+            print(f"temperature: the drop {float(c['initial_temperature']):g} K ({int((~cold).sum())} nodes), the "
+                  f"layer {float(c['layer_temperature']):g} K ({int(cold.sum())} nodes)")
     x = np.concatenate([parts[b.name] for b in s.layout.blocks])
     save_state(out, s.layout, x, s.p, s.frozen, s.diag, **{**s.meta, "time": 0.0, "drop_height_m": A,
                                                             "drop_radius_km": R / 1e3})

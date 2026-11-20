@@ -1,0 +1,103 @@
+# ElmerSteadyStates TEST CASE (branch test/lava-spreading): THE COOLING LAVA DROP ON COLD GROUND, in the lava regime
+# (dacite; m, yr, MPa, K as everywhere, the parameters case/parameters_lava.lua). As configs/spread_lava.toml (a 20 m x
+# 100 m drop at 1173 K (900 C), radiation (emissivity 0.95) and convection (10 W/m^2/K) to air at 300 K), but the 5 m
+# layer is COLD GROUND: it starts at 300 K (so at the viscosity cap, 1e14 Pa s: rigid on the run's time scale,
+# eta / (rho g H) ~ 6 yr under the drop) and the bed is held at 300 K (the drop's base conducts into the ground). Viscosity Arrhenius (Q 300 kJ/mol, 1e10 Pa s at 1173 K), capped at 1e4 x.
+# The extruded mesh geometrically refined towards the surface (31 levels, top layers ~5 cm) for the crust; the margin
+# remeshed (2 m within 20 m of it, 10 m inside, 40 m outside). Time steps of order 1e-5 .. 1e-4 yr (5 .. 50 min).
+
+[paths]
+work_dir = "work/spread_lava_cold"
+case_dir = "{work}/case"
+
+[case]
+geometry = "spread"
+source = "vent"                         # (no source: the vent mode only switches off the surface source's T0 condition)
+parameters = "case/parameters_lava.lua" # DACITE: 2500 kg/m^3, 1100 J/kg/K, 1.5 W/m/K, 1e10 Pa s at the eruption temperature
+spread_length_km = 0.6                  # a 600 m box
+width = 600.0
+spread_res = 10.0                       # m: the starting mesh
+spread_thickness = 5.0                  # m: the thin layer (2 m: hairline elements in the background, the free surface did not converge)
+margin_dh = 2.0                         # m: the margin the remesher follows, H = 7 m
+spread_bed = 0.0
+source_rate = 0.0
+source_radius_km = 0.001
+drop_height_m = 20.0                    # the drop: 5 m + 20 m (1 - (r/R)^2)^2, R = 100 m (jobs/spread_drop.py)
+drop_radius_km = 0.1
+initial_temperature = 1173.15           # K: the drop starts at the eruption temperature (900 C) ...
+layer_temperature = 300.0               # K: ... the layer below it cold (jobs/spread_drop.py: z < spread_thickness)
+bed_temperature = 300.0                 # K: the bed held cold (no bed_insulating)
+vent_temperature = 300.0                # K: (the vent mode's 1 m "vent" at the bed: the same, no source here)
+arrhenius_Q = 300000.0                  # J/mol: dacite-like, the viscosity x ~10 per 25 K near 1170 K
+arrhenius_Tref = 1173.15                # K: the viscosity is `viscosity` (1e10 Pa s) here
+arrhenius_Tmax = 1173.15                # K: no softer than at the eruption temperature
+viscosity_cap = 1.0e4                   # at most 1e4 x (1e14 Pa s): the cold crust, still rigid on the run's time scale (1e6: GCR ~1800 its/step)
+surface_radiation = true                # the surface: eps sigma (T^4 - Tsurf^4) + h_conv (T - Tsurf)
+surface_emissivity = 0.95
+surface_convection = 10.0               # W m^-2 K^-1
+extrude_levels = 31                     # 30 layers, GEOMETRICALLY finer towards the surface (thickness ratio 50 bottom/top;
+extrude_density = [[0.0, 1], [0.1, 0.6762], [0.2, 0.4573], [0.3, 0.3092], [0.4, 0.2091], [0.5, 0.1414], [0.6, 0.09564], [0.7, 0.06467], [0.8, 0.04373], [0.9, 0.02958], [1.0, 0.02]]   # was 400): ~5 cm at the top of a 25 m column, ~1 cm on the 5 m layer
+spread_remesh_fine = 2.0                # m within 20 m of the margin
+spread_remesh_band_km = 0.02
+spread_remesh_coarse_in = 10.0
+spread_remesh_coarse_out = 40.0
+gmsh = "gmsh"
+elmergrid = "ElmerGrid"
+
+[model]
+type = "elmer"
+
+[elmer]
+template = "elmer/spread_template.sif"  # ICE ONLY (no bedrock, no filler): the geothermal flux at the ice base
+mesh_db = "footprint"
+ess_lib = "elmer/SteadyStateIO"
+ess_utils = "elmer/ess_utils.lua"
+n_procs = 0                             # 0: $SLURM_NTASKS
+mpirun = "mpirun -np {n}"
+solver = "ElmerSolver"
+timeout = 21600
+keep_runs = false
+cache = false                           # a transient test: no reuse of runs
+vtu = false
+friction_heat = "flux"                  # zero on a no-slip bed
+strain_heat = false
+# iterative, as the ice-stream runs (ElmerStreams): P1 + bubbles, GCR(250) + ILU8 to 1e-8, no abort when not converged;
+# heat BiCGStabL + ILU; the free surface direct (small 2D system)
+stokes_element = "Bubbles"
+linear_stokes = "iterative"
+stokes_preconditioner = "ILU8"            # ILU8: ILU2 did not converge (GCR stalled at a relative residual ~0.95 after 5000 iterations, 250 m run)
+stokes_iterative_tol = 1.0e-6                # (1e-8: ~1800 GCR iterations a step with the crust)
+stokes_abort_not_converged = false
+linear_heat = "iterative"
+linear_free_surface = "direct"                # MUMPS (a small 2D system on 64 ranks; the iterative solve did not converge here)
+surface_transfer = 0.1                  # the surface Robin coefficient ("Heat transfer coefficient"; default 1)
+diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "Output Accumulation"]
+
+[state]
+variables = ["Temperature", "Zs"]
+scales = { Temperature = 5.0, Zs = 50.0 }
+frozen = ["bedrock"]                     # the flat bed (fixed); no masks
+
+[parameter]
+name = "Tsurf"
+value = 300.0                           # Tsurf (K): the air (and the radiation's surroundings)
+scale = 1.0
+
+[map]
+dt = 50.0
+n_steps = 20
+coupled_iters = 1
+rock_heat_capacity = 1.0                # (no bedrock in this case)
+
+[stability_map]
+dt = 50.0
+n_steps = 20
+rock_heat_capacity = 1.0
+
+[fd]
+eps = 1e-6
+scheme = "forward"
+
+[newton]
+tol = 1e-5
+maxit = 15
