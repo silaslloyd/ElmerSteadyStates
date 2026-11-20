@@ -170,6 +170,9 @@ Material 1
   ! Newtonian, Arrhenius in T (viscosity at ess_arr_Tref)
   Viscosity = Variable Temperature
     Real Lua "SpreadViscosity(tx[0])"
+  ! at the integration points (T, z interpolated first): evaluated at the nodes and interpolated, an element with
+  ! one stiff node (the cold ground, the cap) was almost as stiff throughout
+  Viscosity At IP = Logical True
 
   Relative Temperature = Variable Temperature
     Real Lua "tx[0] - 273.15"
