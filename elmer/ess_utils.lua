@@ -223,5 +223,16 @@ function SpreadViscosity(T, z)
     local s = 0.5 * (1.0 - (e - 1.0) / (e + 1.0))
     eta = eta * math.exp(math.log(f) * s)
   end
+  -- [case] viscosity_cap (ess_eta_cap): eta at most viscosity x cap (the cold crust: the solver's contrast bounded)
+  if (ess_eta_cap or 0) > 0 and eta > viscosity * ess_eta_cap then eta = viscosity * ess_eta_cap end
   return eta
+end
+
+-- [case] surface_radiation: the surface heat-transfer coefficient (model units) of radiation, linearised about the
+-- current temperature, plus convection: (eps sigma (T^2 + Ta^2) (T + Ta) + h_conv) W m^-2 K^-1, Ta = Tsurf;
+-- the flux h (T - Ta) is then eps sigma (T^4 - Ta^4) + h_conv (T - Ta)
+function SpreadSurfHTC(T)
+  local Ta = Tsurf
+  local hr = ess_rad_eps * 5.670374419e-8 * (T * T + Ta * Ta) * (T + Ta)
+  return (hr + ess_conv_h) * yearinsec / MPainPa
 end

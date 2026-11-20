@@ -308,6 +308,9 @@ class ElmerModel(Model):
                                   "ess_layer_c": repr(float(c.get("layer_step_centre", c.get("layer_thickness",
                                                                   c.get("spread_thickness", 100.0))))),
                                   "ess_bed_z": repr(float(c.get("spread_bed", 0.0))),
+                                  "ess_eta_cap": repr(float(c.get("viscosity_cap", 0.0))),
+                                  "ess_rad_eps": repr(float(c.get("surface_emissivity", 0.95))),
+                                  "ess_conv_h": repr(float(c.get("surface_convection", 10.0))),
                                   # the vent's incoming material (and the initial plug above it), default T0
                                   "ess_vent_T": (repr(float(c["vent_temperature"])) if c.get("vent_temperature") is not None
                                                  else "T0"),
@@ -1246,6 +1249,21 @@ End
                 rows = "".join(f"     {float(z)!r} {float(d)!r}\n" for z, d in dens)
                 text = text.replace(b, "  Extruded Mesh Density = Variable Coordinate 3   ! [case] extrude_density\n"
                                        f"     Real\n{rows}")         # the template's "End" follows
+        if c.get("surface_radiation", False):
+            # the surface: radiation (linearised, SpreadSurfHTC) + convection to Tsurf instead of a constant coefficient
+            m = re.search(r"^  Heat transfer coefficient = Real \S+\n", text, re.M)
+            if not m:
+                raise ValueError("spread: no 'Heat transfer coefficient = Real ...' in the template's surface BC")
+            text = text.replace(m.group(0), "  ! [case] surface_radiation: eps sigma (T^4 - Tsurf^4) + h_conv (T - Tsurf)\n"
+                                               "  Heat transfer coefficient = Variable Temperature\n"
+                                               '    Real Lua "SpreadSurfHTC(tx[0])"\n', 1)
+        if c.get("bed_insulating", False):
+            b = ('  ! the bed temperature fixed ([case] bed_temperature, default Tsurf)\n'
+                 '  Temperature = Variable Coordinate 1, Coordinate 2\n'
+                 '    Real Lua "SpreadBedT(tx[0], tx[1])"\n')
+            if text.count(b) != 1:
+                raise ValueError("spread: the template's bed temperature lines changed")
+            text = text.replace(b, "  ! [case] bed_insulating: no heat flux through the bed (no Dirichlet temperature)\n")
         if float(c.get("layer_viscosity_factor", 1.0)) != 1.0:
             v = '  Viscosity = Variable Temperature\n    Real Lua "SpreadViscosity(tx[0])"\n'
             if text.count(v) != 1:

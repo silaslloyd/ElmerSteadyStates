@@ -7,7 +7,8 @@ source_y_km):
     drop_shape = "huppert":          H = spread_thickness + drop_height_m (1 - (r / R)^2)^(1/3)
                                      (Huppert's (1982) similarity shape: the drop on a dry no-slip bed is this shape at
                                      every time; volume 3/4 pi R^2 drop_height).
-The temperature is left as it is (the test is isothermal).
+The temperature is left as it is (the isothermal test), or set to [case] initial_temperature everywhere (the cooling
+drop: the drop and the thin layer start hot, the surface cools them).
 
     python3 jobs/spread_drop.py CONFIG STATE.npz OUT.npz
 """
@@ -49,6 +50,9 @@ def main():
         vol = np.pi * R ** 2 * A / 3
     parts = s.layout.split(s.x)
     parts[bz.name] = parts[bz.name] + add
+    if c.get("initial_temperature") is not None:     # the cooling drop: everything starts hot (the layer too)
+        bT = next(b for b in s.layout.blocks if b.name.lower() == "temperature")
+        parts[bT.name] = np.full_like(parts[bT.name], float(c["initial_temperature"]))
     x = np.concatenate([parts[b.name] for b in s.layout.blocks])
     save_state(out, s.layout, x, s.p, s.frozen, s.diag, **{**s.meta, "time": 0.0, "drop_height_m": A,
                                                             "drop_radius_km": R / 1e3})

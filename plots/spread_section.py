@@ -253,7 +253,9 @@ def main():
     T0 = float(P["T0"])
     Tmax = float(c["arrhenius_Tmax"]) if c.get("arrhenius_Tmax") is not None else T0
     eta_pas = float(P["viscosity"]) * 1e6 * 365.25 * 86400        # MPa a -> Pa s
-    eta = lambda T: np.log10(eta_pas * np.exp(Q / 8.314 * (1 / np.clip(T, 150.0, Tmax) - 1 / Tref)))
+    cap = float(c.get("viscosity_cap", 0.0))            # SpreadViscosity's cap: at most viscosity x cap
+    eta = lambda T: np.minimum(np.log10(eta_pas * np.exp(Q / 8.314 * (1 / np.clip(T, 150.0, Tmax) - 1 / Tref))),
+                               np.log10(eta_pas * cap) if cap > 0 else np.inf)
     # the stiff base layer (SpreadViscosity(T, z)): x f^s, s = (1 - tanh((z - zb - centre) / d)) / 2
     lay_f = float(c.get("layer_viscosity_factor", 1.0))
     lay_c = float(c.get("layer_step_centre", c.get("layer_thickness", c.get("spread_thickness", 100.0))))
