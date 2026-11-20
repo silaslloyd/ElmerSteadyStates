@@ -52,11 +52,11 @@ strain_heat = false                     # isothermal
 # heat BiCGStabL + ILU; the free surface direct (small 2D system)
 stokes_element = "Bubbles"
 linear_stokes = "iterative"
-stokes_preconditioner = "ILU8"
+stokes_preconditioner = "ILU2"            # ILU2 (was ILU8): cheaper per iteration, the isoviscous Stokes converges with it
 stokes_iterative_tol = 1.0e-8
 stokes_abort_not_converged = false
 linear_heat = "iterative"
-linear_free_surface = "direct"                # MUMPS: the 2D surface system (BiCGStab + ILU1 diverged once the current flowed)
+linear_free_surface = "iterative"             # BiCGStab + ILU1 (not MUMPS: a direct solve of the 2D surface on hundreds of ranks scales badly)
 surface_transfer = 0.1                  # the surface Robin coefficient ("Heat transfer coefficient"; default 1)
 diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "Output Accumulation"]
 
