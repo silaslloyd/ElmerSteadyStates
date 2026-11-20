@@ -11,6 +11,10 @@ On the speed panel, streamlines of the flow in the section plane (matplotlib str
 w)), by default in the FRAME OF THE MARGIN: the margin's outward speed (from the states' margin positions along the
 line, H > spread_thickness + 10 m) taken off, so a roll at the nose (surface -> nose -> bed) shows; --frame lab: as
 computed; --density (1.2); --no-streams.
+On the temperature panel, --tracers N (120; 0: none) markers placed on the FIRST state's surface across the window and
+advected through the states (in the section plane, axisymmetric: the velocity along the line and w, linear in time
+between consecutive states, RK2), coloured by their starting position: the surface material's fate (e.g. rolled
+under at the nose).
 Each extruded level of the mesh is interpolated onto the section line (linear on the footprint's triangles), then every
 column onto a regular z grid (--nz levels): the colours are the model's values, nothing smoothed across levels.
 
@@ -22,7 +26,7 @@ padded. Colour ranges: the data's (all states), not the model's possible range.
 
     python3 plots/spread_section.py STATE.npz [STATE2.npz ...] [--config configs/spread_vent.toml] [--axis x|y]
                                     [--vex V] [--x XMIN XMAX | --panel PX]
-                                    [--frame front|lab] [--density 1.2] [--no-streams] [--nx 400] [--nz 120] [--width 1200] [--out FILE.html]
+                                    [--frame front|lab] [--density 1.2] [--no-streams] [--tracers 120] [--nx 400] [--nz 120] [--width 1200] [--out FILE.html]
 """
 import os
 import sys
@@ -111,6 +115,64 @@ def dome_extent(s, axis, c0, dh=10.0, band=5e3):
     return (float(along[m].min()), float(along[m].max())) if m.any() else None
 
 
+def col_vel(row, sline, xp, zp):
+    """the velocity (along the line, vertical) of a state's section `row` (t, Z, T, U, A, W levels) at the points
+    (xp, zp) (m): linear between the two neighbouring columns, along each column linear in z between the levels;
+    NaN outside the line; z clamped to the column"""
+    _, Zl, _, _, Al, Wl = row
+    j = np.clip(np.searchsorted(sline, xp) - 1, 0, len(sline) - 2)
+    f = np.clip((xp - sline[j]) / (sline[j + 1] - sline[j]), 0, 1)
+    ua, wa = np.full(len(xp), np.nan), np.full(len(xp), np.nan)
+    for i in range(len(xp)):
+        if not (sline[0] <= xp[i] <= sline[-1]):
+            continue
+        Zc = (1 - f[i]) * Zl[:, j[i]] + f[i] * Zl[:, j[i] + 1]
+        Ac = (1 - f[i]) * Al[:, j[i]] + f[i] * Al[:, j[i] + 1]
+        Wc = (1 - f[i]) * Wl[:, j[i]] + f[i] * Wl[:, j[i] + 1]
+        if not (np.all(np.isfinite(Zc)) and np.all(np.isfinite(Ac)) and np.all(np.isfinite(Wc))):
+            continue
+        z = min(max(zp[i], Zc[0]), Zc[-1])
+        ua[i], wa[i] = np.interp(z, Zc, Ac), np.interp(z, Zc, Wc)
+    return ua, wa
+
+
+def surf_bed(row, sline, xp):
+    """the surface and the bed of a state's section at xp"""
+    return np.interp(xp, sline, row[1][-1]), np.interp(xp, sline, row[1][0])
+
+
+def track(rows, sline, x0, z0, nsub=20):
+    """tracers advected in the section plane (axisymmetric: the velocity along the line and w) through the states'
+    times: RK2 with the velocity linear in time between consecutive states, nsub substeps per interval; kept between
+    the bed and the surface (the surface is a material surface here). Returns [(x, z) at each state's time]"""
+    x, z = np.asarray(x0, float).copy(), np.asarray(z0, float).copy()
+    out = [(x.copy(), z.copy())]
+    for i in range(len(rows) - 1):
+        r0, r1 = rows[i], rows[i + 1]
+        t0, t1 = r0[0], r1[0]
+        h = (t1 - t0) / nsub
+        v0 = lambda xp, zp: col_vel(r0, sline, xp, zp)
+        v1 = lambda xp, zp: col_vel(r1, sline, xp, zp)
+
+        def vel(xp, zp, a):
+            ua0, wa0 = v0(xp, zp)
+            ua1, wa1 = v1(xp, zp)
+            return (1 - a) * ua0 + a * ua1, (1 - a) * wa0 + a * wa1
+        for k in range(nsub):
+            a = k / nsub
+            u1, w1 = vel(x, z, a)
+            xm, zm = x + 0.5 * h * u1, z + 0.5 * h * w1
+            u2, w2 = vel(xm, zm, a + 0.5 / nsub)
+            x, z = x + h * u2, z + h * w2
+            a2 = (k + 1) / nsub
+            s0, b0 = surf_bed(r0, sline, x)
+            s1, b1 = surf_bed(r1, sline, x)
+            zs, zb = (1 - a2) * s0 + a2 * s1, (1 - a2) * b0 + a2 * b1
+            z = np.minimum(np.maximum(z, zb), zs)
+        out.append((x.copy(), z.copy()))
+    return out
+
+
 def on_grid(zg, Zl, F):
     """the level field F (nl x nx) on the regular z grid zg (columns: linear between the levels; NaN outside the ice)"""
     G = np.full((len(zg), Zl.shape[1]), np.nan)
@@ -136,6 +198,7 @@ def main():
     frame = arg(args, "--frame", "front")           # the streamlines' frame: "front" (moving with the margin) or "lab"
     density = arg(args, "--density", 1.2, float)    # the streamlines' density (matplotlib streamplot)
     nostreams = "--no-streams" in args
+    ntr = arg(args, "--tracers", 120, int)          # tracers on the first state's surface (0: none)
     args = [a_ for a_ in args if a_ != "--no-streams"]
     if not args:
         raise SystemExit(__doc__)
@@ -234,12 +297,20 @@ def main():
     gap = 70
     height = 3 * panel + 2 * gap + 230
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=gap / (height - 230),
-                        subplot_titles=("log10 viscosity (Pa s)", "log10 horizontal speed (m/yr)", "temperature (K)"))
+                        subplot_titles=("log10 viscosity (Pa s)", "log10 horizontal speed (m/yr), streamlines",
+                                        "temperature (K); tracers from the first state's surface"))
     cbar = lambda r, title: dict(title=dict(text=title, side="right"), lenmode="pixels", len=max(panel, 60),
                                  y=1 - ((r - 1) * (panel + gap) + panel / 2) / (height - 230), yanchor="middle",
                                  thickness=14, nticks=4)
     xs = sline / 1e3
     n = len(rows)
+    # tracers: a layer on the first state's surface, advected through the states (the third panel)
+    trk = None
+    if ntr > 0 and len(rows) > 1 and np.isfinite(rows[0][4]).any():
+        x0 = np.linspace(sline[0], sline[-1], ntr)
+        z0 = np.interp(x0, sline, rows[0][1][-1])
+        trk = track(rows, sline, x0, z0)
+        print(f"tracers: {ntr} on the surface at t {rows[0][0]:,.0f} yr, advected to t {rows[-1][0]:,.0f} yr")
     streams = []
     if not nostreams:
         import matplotlib
@@ -298,8 +369,14 @@ def main():
         fig.add_trace(go.Scatter(x=ax_x, y=ax_y, mode="markers", marker=dict(symbol="triangle-up", size=7, angle=ax_a,
                                  color="rgba(80,200,255,1)", line=dict(width=0)), visible=vis, hoverinfo="skip",
                                  showlegend=False), row=2, col=1)
+        tx, tz = (trk[i][0] / 1e3, trk[i][1]) if trk else ([], [])
+        fig.add_trace(go.Scatter(x=tx, y=tz, mode="markers",
+                                 marker=dict(size=5, color=np.arange(len(tx)) if trk else [], colorscale="Turbo",
+                                             line=dict(width=0.5, color="black")),
+                                 visible=vis, hovertemplate="tracer %{marker.color}<br>%{x:.2f} km, z %{y:.0f} m"
+                                                            "<extra></extra>", showlegend=False), row=3, col=1)
         streams.append(Rdot[i])
-    per = 8
+    per = 9
     steps = [dict(label=f"{r[0]:,.0f}", method="update",
                   args=[{"visible": [j // per == i for j in range(per * n)]},
                         {"title.text": f"section along {axis} through the source, t = {r[0]:,.0f} yr "
