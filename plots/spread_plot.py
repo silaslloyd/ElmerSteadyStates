@@ -94,15 +94,18 @@ def main():
         xs_ = np.concatenate([r_["x"][r_["H"] - H0 > dh] for r_ in rows] + [np.array([])])
         ys_ = np.concatenate([r_["y"][r_["H"] - H0 > dh] for r_ in rows] + [np.array([])])
         if len(xs_):
-            pad = 0.25 * max(xs_.max() - xs_.min(), ys_.max() - ys_.min(), 1.0)
+            # a quarter of the current's size, at least a tenth of the box (a young flow: not a 1 m window)
+            pad = max(0.25 * max(xs_.max() - xs_.min(), ys_.max() - ys_.min()), 0.1 * max(L, W))
             win = [max(0.0, xs_.min() - pad), min(L, xs_.max() + pad), max(0.0, ys_.min() - pad), min(W, ys_.max() + pad)]
         else:
             win = [0.0, L, 0.0, W]
     x0, x1, y0, y1 = win
-    plot_w = width - 260
-    nx = max(200, plot_w)
-    ny = max(50, int(round(nx * (y1 - y0) / (x1 - x0))))
-    height = int(min(max(ny, 300), 1400)) + 220
+    # the map fitted into about (width - 260) x 700 px at equal aspect; a sample per pixel
+    ppm = min((width - 260) / (x1 - x0), 700.0 / (y1 - y0))
+    nx = max(100, int(round((x1 - x0) * ppm)))
+    ny = max(50, int(round((y1 - y0) * ppm)))
+    height = ny + 220
+    width = max(nx + 260, 600)
     gx, gy = np.linspace(x0, x1, nx), np.linspace(y0, y1, ny)
     GX, GY = np.meshgrid(gx, gy)
     allU = np.concatenate([r_["U"][np.isfinite(r_["U"]) & (r_["U"] > 0)] for r_ in rows] + [np.array([1e-6])])
