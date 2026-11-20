@@ -70,6 +70,14 @@ def section(s, axis, c0, sline):
         return np.array([d.get(k, np.nan) for k in g.tolist()], float)
 
     X, Y, Z = look(cx), look(cy), look(cz)
+
+    def look_g(c, gg):
+        """c's values at the node ids gg (NaN where missing)"""
+        o2 = np.argsort(c[0])
+        i = np.clip(np.searchsorted(c[0][o2], gg), 0, len(c[0]) - 1)
+        v = c[1][o2][i].astype(float)
+        v[c[0][o2][i] != gg] = np.nan
+        return v
     T = s.x[s.layout.slices()[bT.name]]
     try:
         V = [look(allc[find_name(allc, f"velocity {k}")]) for k in (1, 2, 3)]
@@ -90,14 +98,16 @@ def section(s, axis, c0, sline):
     bz = blk.get("zs")
     if bz is not None:
         zs = s.layout.split(s.x)[bz.name]
-        xz, yz = (np.array([dict(zip(cc[0].tolist(), cc[1])).get(k, np.nan) for k in bz.gids.tolist()])
-                  for cc in (cx, cy))
-        kidx = {(a_, b_): i for i, (a_, b_) in enumerate(map(tuple, keys))}
+        xz, yz = look_g(cx, bz.gids), look_g(cy, bz.gids)
+        # each Zs node's column: the same rounding as the columns' keys, matched by a sorted search
+        kz = np.c_[np.round(xz, 1), np.round(yz, 1)]
+        kk = keys[:, 0] * 1e7 + keys[:, 1]
+        qq = kz[:, 0] * 1e7 + kz[:, 1]
+        o_ = np.argsort(kk)
+        pos = np.clip(np.searchsorted(kk[o_], qq), 0, len(kk) - 1)
+        hit = kk[o_][pos] == qq
         zcol = np.full(ncol, np.nan)
-        for xv, yv, v in zip(np.round(xz, 1), np.round(yz, 1), zs):
-            i = kidx.get((xv, yv))
-            if i is not None:
-                zcol[i] = v
+        zcol[o_[pos[hit]]] = zs[hit]
         bot = np.empty(ncol)
         top = np.empty(ncol)
         bot[col[level == 0]] = Z[level == 0]
