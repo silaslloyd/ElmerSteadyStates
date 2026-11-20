@@ -1,10 +1,12 @@
 # ElmerSteadyStates TEST CASE (branch test/lava-spreading): A BASALTIC (pahoehoe-like) FLOW FROM A VENT DOWN A GENTLE
 # SLOPE, for lobes / fingering at the front. Lava (case/parameters_basalt.lua: 2600 kg/m^3, 1200 J/kg/K, 1 W/m/K;
 # 1e4 Pa s at 1150 C, Arrhenius Q 300 kJ/mol, capped at 1e4 x) comes in through a 1.5 m vent at 1423 K, ~0.05 m^3/s,
-# onto 1 m of cold ground (300 K: at the cap, 1e8 Pa s; it creeps ~2 cm/h down the slope, the lava ~10-100 m/h) on a
-# 3 degree slope (gravity tilted, down +x); the surface radiates (emissivity 0.95) and convects (10 W/m^2/K) to air at
+# onto 1 m of cold ground (300 K: at the cap, 1e8 Pa s; it creeps ~8 cm/h down the slope, the lava ~100 m/h) on a
+# 10 degree slope (gravity tilted, down +x); the surface radiates (emissivity 0.95) and convects (10 W/m^2/K) to air at
 # 300 K, the bed is held at 300 K. A box 120 m down the slope x 50 m across, the vent 10 m from the top.
-# Scales (h the flow's thickness): mean speed rho g sin(3 deg) h^2 / (3 eta) = 40 m/h at h = 0.5 m, 160 m/h at 1 m; the
+# Scales (h the flow's thickness): radial spreading from the vent (Huppert 1982, constant flux) R ~ 0.23 m s^-1/2 sqrt(t),
+# h ~ 0.5-0.7 m, until R ~ h / sin(slope) ~ 3 m (~3 min); then down the slope at rho g sin(10 deg) h^2 / (3 eta) ~ 130 m/h
+# at h = 0.5 m; the
 # crust (1e4 x) ~ 1-3 cm in the first hour; the free surface's explicit limit ~ dx^2 / (rho g h^3 / (3 eta)): ~1 s for
 # h = 1 m on 1 m elements (the vent's mound), ~2.4 s for h = 0.5 m on 0.5 m (the front); on 0.25 m elements ~0.07 s (h = 1 m) .. 0.6 s (h = 0.5 m). Steps of 0.1 s.
 
@@ -34,7 +36,7 @@ arrhenius_Q = 300000.0                  # J/mol: dacite-like, the viscosity x ~1
 arrhenius_Tref = 1423.15                # K: the viscosity is `viscosity` (1e4 Pa s) here
 arrhenius_Tmax = 1423.15                # K: no softer than at the eruption temperature
 viscosity_cap = 1.0e4                   # at most 1e4 x (1e8 Pa s): the crust and the cold ground (reached below ~1040 K)
-slope_deg = 3.0                         # the bed tilted 3 degrees (gravity rotated in the x-z plane, down +x)
+slope_deg = 10.0                        # 10 degrees (3: the flow stays a radial pancake for ~40 min, until it is ~11 m across; at 10 ~3 min, ~3 m)
 surface_radiation = true                # the surface: eps sigma (T^4 - Tsurf^4) + h_conv (T - Tsurf)
 surface_emissivity = 0.95
 surface_convection = 10.0               # W m^-2 K^-1
