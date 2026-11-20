@@ -1741,9 +1741,9 @@ End
             loop = loop.replace('Exec Solver = "Before Timestep"', 'Exec Solver = "Always"   ! [elmer] fs_coupled: in the loop')
             loop = loop.replace('Equation = "MapCoordinate"', 'Equation = "MapCoordinateLoop"')
             loop = re.sub(r'\n *Variable = -nooutput DummyR', '\n  Variable = -nooutput DummyRLoop', loop)
-            # only the coordinates: no mesh velocity / update variables of its own. (The mappers' dSdt is not used by
-            # heat in either mode: HeatSolve subtracts a variable named "Mesh Velocity", which the templates do not
-            # have, so the heat advection is in the lab frame both coupled and not.)
+            # only the coordinates: no mesh velocity / update variables of its own. (The mesh velocity is the
+            # mappers' "Mesh Velocity 3", which HeatSolve subtracts from the flow (ALE); this loop copy leaves it
+            # as the Before-Timestep mapper set it.)
             loop = re.sub(r'\n *(Mesh Velocity Variable|Mesh Update Variable|Mesh Velocity First Zero|Exported Variable \d+)'
                           r' *=[^\n]*', '', loop)
             text = text.rstrip() + "\n\n! [elmer] fs_coupled: the mesh mapping inside the coupled loop\n" + loop + "\n"
