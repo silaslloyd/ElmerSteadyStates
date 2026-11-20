@@ -2,8 +2,12 @@
 """The drop test's start (configs/spread_drop_*.toml): a state (normally the config's state0.npz from `ess init`, the
 uniform layer spread_thickness on the flat bed) with a drop added on top about the box centre (or source_x_km,
 source_y_km):
-    H = spread_thickness + drop_height_m (1 - (r / R)^2)^2  for r < R = drop_radius_km
-(smooth at its edge; volume pi R^2 drop_height / 3). The temperature is left as it is (the test is isothermal).
+    drop_shape = "smooth" (default): H = spread_thickness + drop_height_m (1 - (r / R)^2)^2  for r < R = drop_radius_km
+                                     (smooth at its edge; volume pi R^2 drop_height / 3);
+    drop_shape = "huppert":          H = spread_thickness + drop_height_m (1 - (r / R)^2)^(1/3)
+                                     (Huppert's (1982) similarity shape: the drop on a dry no-slip bed is this shape at
+                                     every time; volume 3/4 pi R^2 drop_height).
+The temperature is left as it is (the test is isothermal).
 
     python3 jobs/spread_drop.py CONFIG STATE.npz OUT.npz
 """
@@ -36,14 +40,20 @@ def main():
     bz = blk["zs"]
     g = bz.gids
     r = np.hypot(np.array([X[k] for k in g]) - xc, np.array([Y[k] for k in g]) - yc)
-    add = A * np.clip(1 - (r / R) ** 2, 0, None) ** 2
+    shape = str(c.get("drop_shape", "smooth"))
+    if shape == "huppert":
+        add = A * np.cbrt(np.clip(1 - (r / R) ** 2, 0, None))
+        vol = 0.75 * np.pi * R ** 2 * A
+    else:
+        add = A * np.clip(1 - (r / R) ** 2, 0, None) ** 2
+        vol = np.pi * R ** 2 * A / 3
     parts = s.layout.split(s.x)
     parts[bz.name] = parts[bz.name] + add
     x = np.concatenate([parts[b.name] for b in s.layout.blocks])
     save_state(out, s.layout, x, s.p, s.frozen, s.diag, **{**s.meta, "time": 0.0, "drop_height_m": A,
                                                             "drop_radius_km": R / 1e3})
-    print(f"drop: {A:g} m high, radius {R / 1e3:g} km at ({xc / 1e3:g}, {yc / 1e3:g}) km; volume "
-          f"{np.pi * R ** 2 * A / 3:.3g} m^3; {int((add > 0).sum())} surface nodes raised -> {out}")
+    print(f"drop ({shape}): {A:g} m high, radius {R / 1e3:g} km at ({xc / 1e3:g}, {yc / 1e3:g}) km; volume "
+          f"{vol:.3g} m^3; {int((add > 0).sum())} surface nodes raised -> {out}")
 
 
 if __name__ == "__main__":

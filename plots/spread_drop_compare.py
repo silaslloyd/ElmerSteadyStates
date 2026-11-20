@@ -51,7 +51,14 @@ def profile(path, dr, H0):
     return float(s.meta.get("time", np.nan)), x, y, H
 
 
-def thin_film(times, H0, A, R, D, rmax=100e3, n=1000):
+def drop_shape(shape, r, A, R):
+    """the drop above the layer and its volume (jobs/spread_drop.py)"""
+    if shape == "huppert":
+        return A * np.cbrt(np.clip(1 - (r / R) ** 2, 0, None)), 0.75 * np.pi * R ** 2 * A
+    return A * np.clip(1 - (r / R) ** 2, 0, None) ** 2, np.pi * R ** 2 * A / 3
+
+
+def thin_film(times, H0, A, R, D, rmax=100e3, n=1000, shape="smooth"):
     """the idealised drop: lubrication theory on a no-slip flat bed (Huppert 1982, here with the background layer and
     the same initial drop): h_t = D (1/r) d/dr (r h^3 dh/dr), D = rho g / (3 eta) (1/(m yr)), h(r, 0) = H0 + A (1 -
     (r/R)^2)^2, no flux at r = 0 and at r = rmax (the walls). Finite volumes (n cells), BDF with a banded Jacobian.
@@ -61,7 +68,7 @@ def thin_film(times, H0, A, R, D, rmax=100e3, n=1000):
     dr = rmax / n
     r = (np.arange(n) + 0.5) * dr
     rf = np.arange(1, n) * dr                                   # the inner faces
-    h0 = H0 + A * np.clip(1 - (r / R) ** 2, 0, None) ** 2
+    h0 = H0 + drop_shape(shape, r, A, R)[0]
 
     def rhs(_, h):
         hf3 = (0.5 * (h[1:] + h[:-1])) ** 3
@@ -96,13 +103,20 @@ def main():
     labels = arg(args, "--labels", None)
     dh = arg(args, "--dh", 10.0, float)
     dr = arg(args, "--dr", 100.0, float)
-    H0 = arg(args, "--H0", 100.0, float)
-    out = arg(args, "--out", None)
+    H0 = arg(args, "--H0", None, float)            # default: the config's spread_thickness
     cfgf = arg(args, "--config", os.path.join(ROOT, "configs", "spread_drop_f0250.toml"))
+    out = arg(args, "--out", None)
     model = "--no-model" not in args
     args = [a for a in args if a != "--no-model"]
     if not args:
         raise SystemExit(__doc__)
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
+    ccase = tomllib.load(open(cfgf, "rb"))["case"]
+    if H0 is None:
+        H0 = float(ccase.get("spread_thickness", 100.0))
     labels = labels.split(",") if labels else [os.path.basename(os.path.dirname(os.path.dirname(os.path.abspath(d))))
                                                  or d for d in args]
     import plotly.graph_objects as go
@@ -146,20 +160,17 @@ def main():
     ideal = {}
     hup = None
     if model:
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib
         from ess.case import eval_lua_parameters
-        c = tomllib.load(open(cfgf, "rb"))["case"]
+        c = ccase
         P = eval_lua_parameters(os.path.join(ROOT, c.get("parameters", "case/parameters.lua")))
         D = abs(P["rhoi"] * P["gravity"]) / (3 * P["viscosity"])     # 1/(m yr), the model's units
         H0c = float(c.get("spread_thickness", 100.0))
         A, R = float(c["drop_height_m"]), float(c["drop_radius_km"]) * 1e3
         rmax = 0.5 * min(float(c["spread_length_km"]) * 1e3, float(c["width"]))
         alltimes = sorted(set().union(*[set(r_["t"] for r_ in m["rows"]) for m in mem]))
-        rr, hs = thin_film(alltimes, H0c, A, R, D, rmax)
-        Vd = np.pi * R ** 2 * A / 3                                    # the drop's volume (above the layer)
+        shape = str(c.get("drop_shape", "smooth"))
+        rr, hs = thin_film(alltimes, H0c, A, R, D, rmax, shape=shape)
+        Vd = drop_shape(shape, np.zeros(1), A, R)[1]                   # the drop's volume (above the layer)
         # the virtual time origin: Huppert's point release reaches the drop's radius R at t_v, so the members' t
         # corresponds to his t + t_v (the same volume AND the same initial extent)
         t_v = (R / XI_N) ** 8 / (D * Vd ** 3)
