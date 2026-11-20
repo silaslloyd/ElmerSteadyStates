@@ -254,6 +254,18 @@ def main():
     Tmax = float(c["arrhenius_Tmax"]) if c.get("arrhenius_Tmax") is not None else T0
     eta_pas = float(P["viscosity"]) * 1e6 * 365.25 * 86400        # MPa a -> Pa s
     eta = lambda T: np.log10(eta_pas * np.exp(Q / 8.314 * (1 / np.clip(T, 150.0, Tmax) - 1 / Tref)))
+    # the stiff base layer (SpreadViscosity(T, z)): x f^s, s = (1 - tanh((z - zb - centre) / d)) / 2
+    lay_f = float(c.get("layer_viscosity_factor", 1.0))
+    lay_c = float(c.get("layer_step_centre", c.get("layer_thickness", c.get("spread_thickness", 100.0))))
+    lay_d = float(c.get("layer_smooth", 20.0))
+    zb0 = float(c.get("spread_bed", 0.0))
+
+    def layer_log10(zgrid):
+        """log10 of the layer factor at the heights zgrid (any shape)"""
+        if lay_f == 1.0:
+            return np.zeros_like(zgrid)
+        u = np.clip((zgrid - zb0 - lay_c) / lay_d, -20, 20)
+        return np.log10(lay_f) * 0.5 * (1 - np.tanh(u))
     Lline = L if axis == "x" else W
     c0 = yc if axis == "x" else xc
     if xwin:
@@ -413,7 +425,8 @@ def main():
         with np.errstate(divide="ignore", invalid="ignore"):
             Gu = np.log10(on_grid(zg, Zl, Ul))
         for r, z_, cs, lo, hi, title, hv in (
-                (1, eta(G), "Viridis_r", eta(t_hi), eta(t_lo), "log10 eta", "log10 eta %{z:.2f}"),
+                (1, eta(G) + layer_log10(np.broadcast_to(zg[:, None], G.shape)), "Viridis_r", eta(t_hi),
+                 eta(t_lo) + (np.log10(lay_f) if lay_f != 1.0 else 0.0), "log10 eta", "log10 eta %{z:.2f}"),
                 (2, Gu, "Inferno", u_lo, u_hi, "log10 |u_h|", "log10 |u_h| %{z:.2f}"),
                 (3, G, "RdBu_r", t_lo, t_hi, "T (K)", "T %{z:.2f} K")):
             fig.add_trace(go.Heatmap(x=xs, y=zg, z=np.where(np.isfinite(G), z_, np.nan).astype(np.float32),
