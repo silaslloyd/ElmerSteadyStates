@@ -29,6 +29,10 @@ spread_remesh_fine = 1000.0              # m at the margin: THE RESOLUTION OF TH
 spread_remesh_band_km = 5.0
 layer_viscosity_factor = 1000.0         # the 100 m base layer 1000x stiffer than the drop (a step in height above the bed,
 layer_smooth = 20.0                     # smoothed over 20 m in log viscosity): effectively a rigid no-slip floor at 100 m
+layer_step_centre = 60.0                # m: the step centred 2 x layer_smooth BELOW the layer's top, so the drop above
+                                        # 100 m is soft (x1.02 at 100 m); the layer's top 40 m a thin soft film (its
+                                        # flux ~(40/500)^3 of the drop's: still a rigid floor). Centred at 100 m, the
+                                        # drop's thin edge (100 .. 140 m) froze: a flat top with walls, the front stuck.
 extrude_levels = 31                     # 30 layers (the template's 20), finer towards BOTH the bed and the surface, so
 extrude_density = [[0.0, 0.25], [0.5, 1.0], [1.0, 0.25]]   # the 100 m interface is resolved (~15 m layers near the bed)
 spread_remesh_coarse_in = 2000.0        # the same inside (and so the same time-step limit) in every member

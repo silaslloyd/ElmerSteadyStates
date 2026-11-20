@@ -305,6 +305,8 @@ class ElmerModel(Model):
                                   "ess_layer_f": repr(float(c.get("layer_viscosity_factor", 1.0))),
                                   "ess_layer_H": repr(float(c.get("layer_thickness", c.get("spread_thickness", 100.0)))),
                                   "ess_layer_d": repr(float(c.get("layer_smooth", 20.0))),
+                                  "ess_layer_c": repr(float(c.get("layer_step_centre", c.get("layer_thickness",
+                                                                  c.get("spread_thickness", 100.0))))),
                                   "ess_bed_z": repr(float(c.get("spread_bed", 0.0))),
                                   # the vent's incoming material (and the initial plug above it), default T0
                                   "ess_vent_T": (repr(float(c["vent_temperature"])) if c.get("vent_temperature") is not None

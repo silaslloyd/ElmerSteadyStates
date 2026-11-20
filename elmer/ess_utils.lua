@@ -215,7 +215,8 @@ function SpreadViscosity(T, z)
   -- step of width ess_layer_d in log(viscosity): f^s, s = (1 - tanh((z - zb - H) / d)) / 2
   local f = ess_layer_f or 1.0
   if z ~= nil and f ~= 1.0 then
-    local u = (z - (ess_bed_z or 0.0) - ess_layer_H) / ess_layer_d
+    -- centred at ess_layer_c (default the layer's top ess_layer_H; below it, the drop above the top stays soft)
+    local u = (z - (ess_bed_z or 0.0) - (ess_layer_c or ess_layer_H)) / ess_layer_d
     if u > 20.0 then u = 20.0 end
     if u < -20.0 then u = -20.0 end
     local e = math.exp(2.0 * u)
