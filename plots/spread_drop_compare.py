@@ -8,9 +8,10 @@
   * the IDEALISED DROP (black dashed, unless --no-model): lubrication theory for a viscous drop on a no-slip flat bed
     (Huppert 1982) with the same drop, the same background layer and the config's viscosity and density (--config,
     default configs/spread_drop_f0250.toml), solved axisymmetrically to the members' times;
-  * HUPPERT'S ANALYTICAL DROP (red dotted): the same volume on a DRY rigid no-slip bed, the similarity solution from a
-    point release at t = 0 (so it differs at early times, while the 20 km drop still remembers its start); in the
-    profiles drawn on top of the layer (h + H0) to share the axes.
+  * HUPPERT'S ANALYTICAL DROP (red dotted): the same volume on a DRY rigid no-slip bed, the similarity solution of a
+    point release, shifted to a virtual time origin t_v at which its front is at the drop's radius (the members' t is
+    his t + t_v: the same volume and the same initial extent; the initial SHAPE still differs, his (1 - r^2/R^2)^(1/3)
+    against the drop's (1 - r^2/R^2)^2); in the profiles drawn on top of the layer (h + H0) to share the axes.
 
     python3 plots/spread_drop_compare.py DIR [DIR ...] [--labels 2000,1000,...] [--dh 10] [--dr 100] [--config CFG] [--no-model] [--out FILE.html]
 
@@ -154,7 +155,11 @@ def main():
         alltimes = sorted(set().union(*[set(r_["t"] for r_ in m["rows"]) for m in mem]))
         rr, hs = thin_film(alltimes, H0c, A, R, D, rmax)
         Vd = np.pi * R ** 2 * A / 3                                    # the drop's volume (above the layer)
-        hup = {"D": D, "V": Vd, "H0": H0c}
+        # the virtual time origin: Huppert's point release reaches the drop's radius R at t_v, so the members' t
+        # corresponds to his t + t_v (the same volume AND the same initial extent)
+        t_v = (R / XI_N) ** 8 / (D * Vd ** 3)
+        hup = {"D": D, "V": Vd, "H0": H0c, "tv": t_v}
+        print(f"Huppert: virtual origin t_v = {t_v:,.0f} yr (his front at the drop's radius {R / 1e3:g} km)")
         for tk, h in hs.items():
             below = np.where(h - H0 < dh)[0]
             ideal[tk] = dict(rb=rr, H=h, rf=float(rr[below[0]]) if len(below) else np.nan)
@@ -178,8 +183,8 @@ def main():
     if hup:
         tl = np.geomspace(max(min(t for m in mem for t in [r_["t"] for r_ in m["rows"]] if t > 0), 1.0),
                           max(r_["t"] for m in mem for r_ in m["rows"]), 200)
-        fig.add_trace(go.Scatter(x=tl, y=np.array([huppert(t, hup["V"], hup["D"])[0] for t in tl]) / 1e3, mode="lines",
-                                 name="Huppert, dry no-slip bed", legendgroup="huppert",
+        fig.add_trace(go.Scatter(x=tl, y=np.array([huppert(t + hup["tv"], hup["V"], hup["D"])[0] for t in tl]) / 1e3,
+                                 mode="lines", name=f"Huppert, dry no-slip bed (t + {hup['tv']:,.0f} yr)", legendgroup="huppert",
                                  line=dict(color="crimson", dash="dot", width=2)), row=1, col=1)
     ref = mem[-1]
     tr = {round(r_["t"], 6): r_["rf"] for r_ in ref["rows"]}
@@ -201,8 +206,8 @@ def main():
                                      showlegend=False, line=dict(color=c, width=1.5), visible=k == len(times) - 1),
                           row=2, col=1)
             owner.append(k)
-        if hup and ts > 0:
-            Rh, hf = huppert(ts, hup["V"], hup["D"])
+        if hup:
+            Rh, hf = huppert(ts + hup["tv"], hup["V"], hup["D"])
             rr_ = np.linspace(0, 1.3 * Rh, 400)
             fig.add_trace(go.Scatter(x=rr_ / 1e3, y=hf(rr_) + hup["H0"], mode="lines", name="Huppert, dry no-slip bed",
                                      legendgroup="huppert", showlegend=False,
