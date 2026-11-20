@@ -4,9 +4,12 @@
     m), log-log, with Huppert's (1982) constant-volume similarity slope t^(1/8) for reference;
   * the azimuthal mean thickness H(r) of every member at a chosen time (a slider over every chunk time; at each,
     the members that have reached it);
-  * the front radius of each member against the finest one's, at the shared times.
+  * the front radius of each member against the finest one's, at the shared times;
+  * the IDEALISED DROP (black dashed, unless --no-model): lubrication theory for a viscous drop on a no-slip flat bed
+    (Huppert 1982) with the same drop, the same background layer and the config's viscosity and density (--config,
+    default configs/spread_drop_f0250.toml), solved axisymmetrically to the members' times.
 
-    python3 plots/spread_drop_compare.py DIR [DIR ...] [--labels 2000,1000,...] [--dh 10] [--dr 100] [--out FILE.html]
+    python3 plots/spread_drop_compare.py DIR [DIR ...] [--labels 2000,1000,...] [--dh 10] [--dr 100] [--config CFG] [--no-model] [--out FILE.html]
 
 DIR: a member's adapt/points folder (state_*.npz; a*_start.npz, the remeshed start, included).
 """
@@ -43,6 +46,32 @@ def profile(path, dr, H0):
     return float(s.meta.get("time", np.nan)), x, y, H
 
 
+def thin_film(times, H0, A, R, D, rmax=100e3, n=1000):
+    """the idealised drop: lubrication theory on a no-slip flat bed (Huppert 1982, here with the background layer and
+    the same initial drop): h_t = D (1/r) d/dr (r h^3 dh/dr), D = rho g / (3 eta) (1/(m yr)), h(r, 0) = H0 + A (1 -
+    (r/R)^2)^2, no flux at r = 0 and at r = rmax (the walls). Finite volumes (n cells), BDF with a banded Jacobian.
+    Returns (r, [h at each of times])."""
+    from scipy.integrate import solve_ivp
+    from scipy.sparse import diags
+    dr = rmax / n
+    r = (np.arange(n) + 0.5) * dr
+    rf = np.arange(1, n) * dr                                   # the inner faces
+    h0 = H0 + A * np.clip(1 - (r / R) ** 2, 0, None) ** 2
+
+    def rhs(_, h):
+        hf3 = (0.5 * (h[1:] + h[:-1])) ** 3
+        F = -D * rf * hf3 * (h[1:] - h[:-1]) / dr               # r q at the inner faces
+        Ff = np.concatenate([[0.0], F, [0.0]])
+        return -(Ff[1:] - Ff[:-1]) / (r * dr)
+
+    sp = diags([np.ones(n - 1), np.ones(n), np.ones(n - 1)], [-1, 0, 1])
+    ts = sorted(t for t in times if t > 0)
+    if not ts:
+        return r, {}
+    sol = solve_ivp(rhs, (0.0, ts[-1]), h0, method="BDF", t_eval=ts, jac_sparsity=sp, rtol=1e-6, atol=1e-3)
+    return r, {round(t, 6): sol.y[:, k] for k, t in enumerate(sol.t)}
+
+
 def main():
     args = sys.argv[1:]
     labels = arg(args, "--labels", None)
@@ -50,6 +79,9 @@ def main():
     dr = arg(args, "--dr", 100.0, float)
     H0 = arg(args, "--H0", 100.0, float)
     out = arg(args, "--out", None)
+    cfgf = arg(args, "--config", os.path.join(ROOT, "configs", "spread_drop_f0250.toml"))
+    model = "--no-model" not in args
+    args = [a for a in args if a != "--no-model"]
     if not args:
         raise SystemExit(__doc__)
     labels = labels.split(",") if labels else [os.path.basename(os.path.dirname(os.path.dirname(os.path.abspath(d))))
@@ -89,6 +121,26 @@ def main():
             mem.append(dict(lab=lab, rows=rows))
     if not mem:
         raise SystemExit("no states")
+    # the idealised drop (thin film, no slip) with the config's drop, layer and viscosity
+    ideal = {}
+    if model:
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib
+        from ess.case import eval_lua_parameters
+        c = tomllib.load(open(cfgf, "rb"))["case"]
+        P = eval_lua_parameters(os.path.join(ROOT, c.get("parameters", "case/parameters.lua")))
+        D = abs(P["rhoi"] * P["gravity"]) / (3 * P["viscosity"])     # 1/(m yr), the model's units
+        H0c = float(c.get("spread_thickness", 100.0))
+        A, R = float(c["drop_height_m"]), float(c["drop_radius_km"]) * 1e3
+        rmax = 0.5 * min(float(c["spread_length_km"]) * 1e3, float(c["width"]))
+        alltimes = sorted(set().union(*[set(r_["t"] for r_ in m["rows"]) for m in mem]))
+        rr, hs = thin_film(alltimes, H0c, A, R, D, rmax)
+        for tk, h in hs.items():
+            below = np.where(h - H0 < dh)[0]
+            ideal[tk] = dict(rb=rr, H=h, rf=float(rr[below[0]]) if len(below) else np.nan)
+        print(f"idealised thin film (no slip, D = {D:.3g} /(m yr)): front {', '.join(f'{ideal[k][chr(114) + chr(102)] / 1e3:.2f}' for k in sorted(ideal)[:3])} ... km")
     cols = sample_colorscale("Viridis", [0.1 + 0.8 * i / max(len(mem) - 1, 1) for i in range(len(mem))])
     fig = make_subplots(rows=2, cols=2, specs=[[{}, {}], [{"colspan": 2}, None]], vertical_spacing=0.12,
                         subplot_titles=(f"front radius (H < H0 + {dh:g} m) against time",
@@ -100,6 +152,11 @@ def main():
         ok = (t > 0) & np.isfinite(rf)
         fig.add_trace(go.Scatter(x=t[ok], y=rf[ok] / 1e3, mode="lines+markers", name=m["lab"], legendgroup=m["lab"],
                                  line=dict(color=c), marker=dict(size=4)), row=1, col=1)
+    if ideal:
+        ti = np.array(sorted(ideal))
+        fig.add_trace(go.Scatter(x=ti, y=np.array([ideal[k]["rf"] for k in ti]) / 1e3, mode="lines",
+                                 name="thin film, no slip", legendgroup="ideal",
+                                 line=dict(color="black", dash="dash", width=2)), row=1, col=1)
     ref = mem[-1]
     tr = {round(r_["t"], 6): r_["rf"] for r_ in ref["rows"]}
     for m, c in zip(mem, cols):
@@ -125,6 +182,11 @@ def main():
             fig.add_trace(go.Scatter(x=r_["rb"] / 1e3, y=r_["H"], mode="lines", name=m["lab"], legendgroup=m["lab"],
                                      showlegend=False, line=dict(color=c, width=1.5), visible=k == len(times) - 1),
                           row=2, col=1)
+            owner.append(k)
+        if ts in ideal:
+            fig.add_trace(go.Scatter(x=ideal[ts]["rb"] / 1e3, y=ideal[ts]["H"], mode="lines", name="thin film, no slip",
+                                     legendgroup="ideal", showlegend=False, line=dict(color="black", dash="dash", width=2),
+                                     visible=k == len(times) - 1), row=2, col=1)
             owner.append(k)
     idx = list(range(i0, i0 + len(owner)))
     steps = [dict(label=f"{ts:,.0f}", method="restyle", args=[{"visible": [o == k for o in owner]}, idx])
