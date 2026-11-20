@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""The spreading test (configs/spread_*.toml, branch test/lava-spreading): a top-down map of the surface horizontal
-speed sqrt(u^2 + v^2) (m/yr, from the Stokes solution at the surface nodes) of each state, one plotly page with a
+"""The spreading test (configs/spread_*.toml, branch test/lava-spreading): two top-down maps of each state, the surface
+horizontal speed sqrt(u^2 + v^2) (m/yr, from the Stokes solution at the surface nodes) and below it the thickness
+above the background layer h = H - H0 (the lava), one plotly page with a
 slider over the states (model-time order), a "speed: log / linear" button and a "mesh on / off" button (the surface
 nodes' triangulation); the current's margin (H - H0 = --dh m,
 default 10) drawn as a white line. The map: the surface nodes' values interpolated linearly (on their Delaunay
@@ -102,10 +103,12 @@ def main():
             win = [0.0, L, 0.0, W]
     x0, x1, y0, y1 = win
     # the map fitted into about (width - 260) x 700 px at equal aspect; a sample per pixel
-    ppm = min((width - 260) / (x1 - x0), 700.0 / (y1 - y0))
+    # two maps (the speed above, the lava's thickness below), each fitted into ~(width - 260) x 450 px at equal aspect
+    ppm = min((width - 260) / (x1 - x0), 450.0 / (y1 - y0))
     nx = max(100, int(round((x1 - x0) * ppm)))
     ny = max(50, int(round((y1 - y0) * ppm)))
-    height = ny + 220
+    gap = 90
+    height = 2 * ny + gap + 230
     width = max(nx + 260, 600)
     gx, gy = np.linspace(x0, x1, nx), np.linspace(y0, y1, ny)
     GX, GY = np.meshgrid(gx, gy)
@@ -113,11 +116,19 @@ def main():
     u_hi = float(np.log10(np.percentile(allU, 99.5)))
     u_lo = u_hi - 4.0
     u_lin_hi = float(np.percentile(allU, 99.5))
-    fig = go.Figure()
-    per = 4                                    # per state: log speed, linear speed, the margin line, the mesh
+    h_hi = max(float(np.nanmax(r_["H"] - H0)) for r_ in rows)
+    h_hi = h_hi if h_hi > 0 else 1.0
+    from plotly.subplots import make_subplots
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=gap / (height - 230),
+                        subplot_titles=("surface horizontal speed u_h", "lava thickness h = H - H0 (m)"))
+    yfrac = lambda r: 1 - ((r - 1) * (ny + gap) + ny / 2) / (height - 230)
+    cb = lambda r, title: dict(title=dict(text=title, side="right"), lenmode="pixels", len=ny, y=yfrac(r),
+                               yanchor="middle", thickness=14)
+    # per state: 0 log u, 1 linear u, 2 the margin on u, 3 the mesh on u, 4 h, 5 the margin on h, 6 the mesh on h
+    per = 7
     for i, r_ in enumerate(rows):
-        print(f"{r_['name']}: t {fmt_t(r_['t'])}, H {r_['H'].min():.2f} .. {r_['H'].max():.2f} m, surface speed max "
-              f"{np.nanmax(r_['U']) if np.isfinite(r_['U']).any() else np.nan:.3g} m/yr")
+        print(f"{r_['name']}: t {fmt_t(r_['t'])}, h {max(float(np.nanmax(r_['H'] - H0)), 0.0):.3f} m max, surface speed "
+              f"max {np.nanmax(r_['U']) if np.isfinite(r_['U']).any() else np.nan:.3g} m/yr")
         tri = Delaunay(np.c_[r_["x"], r_["y"]])
         Ug = LinearNDInterpolator(tri, r_["U"])(GX, GY)
         Hg = LinearNDInterpolator(tri, r_["H"] - H0)(GX, GY)
@@ -125,36 +136,43 @@ def main():
         with np.errstate(divide="ignore", invalid="ignore"):
             lu = np.log10(Ug)
         hov = "x %{x:.1f} m, y %{y:.1f} m<br>"
-        fig.add_trace(go.Heatmap(x=gx, y=gy, z=lu.astype(np.float32), colorscale="Inferno", zmin=u_lo, zmax=u_hi,
-                                 colorbar=dict(title="log10 u_h (m/yr)"), visible=vis,
-                                 hovertemplate=hov + "log10 u_h %{z:.2f}<extra></extra>"))
-        fig.add_trace(go.Heatmap(x=gx, y=gy, z=Ug.astype(np.float32), colorscale="Inferno", zmin=0.0, zmax=u_lin_hi,
-                                 colorbar=dict(title="u_h (m/yr)"), visible=False,
-                                 hovertemplate=hov + "u_h %{z:.3g} m/yr<extra></extra>"))
-        fig.add_trace(go.Contour(x=gx, y=gy, z=Hg.astype(np.float32), contours=dict(start=dh, end=dh, size=1.0,
-                                 coloring="none"), line=dict(color="white", width=1.5), showscale=False, visible=vis,
-                                 hoverinfo="skip"))
-        # the mesh: the edges of the surface nodes' Delaunay triangulation (the footprint mesh's own triangles where
-        # gmsh's are Delaunay, as they normally are) within the window
         sx_ = tri.simplices
         e_ = np.unique(np.sort(np.r_[sx_[:, [0, 1]], sx_[:, [1, 2]], sx_[:, [0, 2]]], axis=1), axis=0)
         inw = lambda k: (r_["x"][k] >= x0) & (r_["x"][k] <= x1) & (r_["y"][k] >= y0) & (r_["y"][k] <= y1)
         e_ = e_[inw(e_[:, 0]) | inw(e_[:, 1])]
-        ex = np.c_[r_["x"][e_[:, 0]], r_["x"][e_[:, 1]], np.full(len(e_), np.nan)].ravel()
-        ey = np.c_[r_["y"][e_[:, 0]], r_["y"][e_[:, 1]], np.full(len(e_), np.nan)].ravel()
-        fig.add_trace(go.Scattergl(x=ex.astype(np.float32), y=ey.astype(np.float32), mode="lines",
-                                   line=dict(color="rgba(80,200,255,0.55)", width=0.6), visible=False,
-                                   hoverinfo="skip", showlegend=False))
+        ex = np.c_[r_["x"][e_[:, 0]], r_["x"][e_[:, 1]], np.full(len(e_), np.nan)].ravel().astype(np.float32)
+        ey = np.c_[r_["y"][e_[:, 0]], r_["y"][e_[:, 1]], np.full(len(e_), np.nan)].ravel().astype(np.float32)
+        margin = lambda: go.Contour(x=gx, y=gy, z=Hg.astype(np.float32), contours=dict(start=dh, end=dh, size=1.0,
+                                    coloring="none"), line=dict(color="white", width=1.5), showscale=False,
+                                    visible=vis, hoverinfo="skip")
+        mesh = lambda: go.Scattergl(x=ex, y=ey, mode="lines", line=dict(color="rgba(80,200,255,0.55)", width=0.6),
+                                    visible=False, hoverinfo="skip", showlegend=False)
+        fig.add_trace(go.Heatmap(x=gx, y=gy, z=lu.astype(np.float32), colorscale="Inferno", zmin=u_lo, zmax=u_hi,
+                                 colorbar=cb(1, "log10 u_h (m/yr)"), visible=vis,
+                                 hovertemplate=hov + "log10 u_h %{z:.2f}<extra></extra>"), row=1, col=1)
+        fig.add_trace(go.Heatmap(x=gx, y=gy, z=Ug.astype(np.float32), colorscale="Inferno", zmin=0.0, zmax=u_lin_hi,
+                                 colorbar=cb(1, "u_h (m/yr)"), visible=False,
+                                 hovertemplate=hov + "u_h %{z:.3g} m/yr<extra></extra>"), row=1, col=1)
+        fig.add_trace(margin(), row=1, col=1)
+        fig.add_trace(mesh(), row=1, col=1)
+        fig.add_trace(go.Heatmap(x=gx, y=gy, z=Hg.astype(np.float32), colorscale="Viridis", zmin=0.0, zmax=h_hi,
+                                 colorbar=cb(2, "h (m)"), visible=vis,
+                                 hovertemplate=hov + "h %{z:.3f} m<extra></extra>"), row=2, col=1)
+        fig.add_trace(margin(), row=2, col=1)
+        fig.add_trace(mesh(), row=2, col=1)
     n = len(rows)
-    others = [j for j in range(per * n) if j % per == 2]          # the margin lines: the slider's; the rest: the script's
+    others = [j for j in range(per * n) if j % per in (2, 4, 5)]  # the slider's; the speeds and meshes: the script's
     steps = [dict(label=fmt_t(r_["t"]), method="update",
                   args=[{"visible": [j // per == i for j in others]},
-                        {"title.text": f"surface horizontal speed, t = {fmt_t(r_['t'])} (white: the margin, "
-                                       f"H - H0 = {dh:g} m)"}, others]) for i, r_ in enumerate(rows)]
-    fig.update_xaxes(title_text="x (m)", range=[x0, x1], constrain="domain")
-    fig.update_yaxes(title_text="y (m)", range=[y0, y1], scaleanchor="x", scaleratio=1, constrain="domain")
+                        {"title.text": f"t = {fmt_t(r_['t'])} (white: the margin, h = {dh:g} m)"}, others])
+             for i, r_ in enumerate(rows)]
+    for r in (1, 2):
+        fig.update_xaxes(range=[x0, x1], constrain="domain", row=r, col=1)
+        fig.update_yaxes(title_text="y (m)", range=[y0, y1], scaleanchor=f"x{'' if r == 1 else r}", scaleratio=1,
+                         constrain="domain", row=r, col=1)
+    fig.update_xaxes(title_text="x (m)", row=2, col=1)
     fig.update_layout(template="plotly_white", width=width, height=height, margin=dict(l=70, r=150, t=80, b=130),
-                      title=f"surface horizontal speed, t = {fmt_t(rows[-1]['t'])} (white: the margin, H - H0 = {dh:g} m)",
+                      title=f"t = {fmt_t(rows[-1]['t'])} (white: the margin, h = {dh:g} m)",
                       sliders=[dict(active=n - 1, currentvalue=dict(prefix="t = "), steps=steps, pad=dict(t=50))],
                       updatemenus=[dict(type="buttons", direction="left", x=1.0, xanchor="right", y=1.0, yanchor="bottom",
                                         pad=dict(t=0, b=10), showactive=False,
@@ -162,8 +180,8 @@ def main():
                                                  dict(label="mesh on / off", method="skip", args=[None])])])
     js = ("var gd = document.getElementById('{plot_id}'); var per = %d, n = %d, cur = n - 1, mode = 'log', mesh = false;\n"
           "function spd() { var idx = [], vis = [];\n"
-          "  for (var i = 0; i < n; i++) { idx.push(i * per, i * per + 1, i * per + 3);\n"
-          "    vis.push(i == cur && mode == 'log', i == cur && mode == 'lin', i == cur && mesh); }\n"
+          "  for (var i = 0; i < n; i++) { idx.push(i * per, i * per + 1, i * per + 3, i * per + 6);\n"
+          "    vis.push(i == cur && mode == 'log', i == cur && mode == 'lin', i == cur && mesh, i == cur && mesh); }\n"
           "  Plotly.restyle(gd, {visible: vis}, idx); }\n"
           "gd.on('plotly_sliderchange', function (e) { cur = e.step._index; spd(); });\n"
           "gd.on('plotly_buttonclicked', function (e) {\n"
