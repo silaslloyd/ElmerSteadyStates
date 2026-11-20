@@ -2,7 +2,8 @@
 """The drop test's resolution series (configs/spread_drop_f*.toml): one page comparing the members.
   * the front radius against time (the azimuthal mean thickness H(r) falls below spread_thickness + --dh, default 10
     m), log-log, with Huppert's (1982) constant-volume similarity slope t^(1/8) for reference;
-  * the azimuthal mean thickness H(r) of every member at a chosen time (a slider over the times all members have);
+  * the azimuthal mean thickness H(r) of every member at a chosen time (a slider over every chunk time; at each,
+    the members that have reached it);
   * the front radius of each member against the finest one's, at the shared times.
 
     python3 plots/spread_drop_compare.py DIR [DIR ...] [--labels 2000,1000,...] [--dh 10] [--dr 100] [--out FILE.html]
@@ -112,27 +113,31 @@ def main():
         tl = np.array([min(t_all), max(t_all)])
         fig.add_trace(go.Scatter(x=tl, y=r1 * (tl / t1) ** 0.125, mode="lines", name="t^1/8", line=dict(dash="dot",
                                  color="grey")), row=1, col=1)
-    # profiles at the times every member has
-    shared = sorted(set.intersection(*[set(round(r_["t"], 6) for r_ in m["rows"]) for m in mem]))
+    # profiles: a slider over every chunk time any member has; at each, the members that have reached it
+    times = sorted(set().union(*[set(round(r_["t"], 6) for r_ in m["rows"]) for m in mem]))
     i0 = len(fig.data)
-    for k, ts in enumerate(shared):
+    owner = []                                  # the slider step of each profile trace
+    for k, ts in enumerate(times):
         for m, c in zip(mem, cols):
-            r_ = next(r for r in m["rows"] if round(r["t"], 6) == ts)
+            r_ = next((r for r in m["rows"] if round(r["t"], 6) == ts), None)
+            if r_ is None:
+                continue
             fig.add_trace(go.Scatter(x=r_["rb"] / 1e3, y=r_["H"], mode="lines", name=m["lab"], legendgroup=m["lab"],
-                                     showlegend=False, line=dict(color=c, width=1.5), visible=k == len(shared) - 1),
+                                     showlegend=False, line=dict(color=c, width=1.5), visible=k == len(times) - 1),
                           row=2, col=1)
-    nm = len(mem)
-    steps = [dict(label=f"{ts:,.0f}", method="restyle",
-                  args=[{"visible": [j // nm == k for j in range(nm * len(shared))]},
-                        list(range(i0, i0 + nm * len(shared)))]) for k, ts in enumerate(shared)]
+            owner.append(k)
+    idx = list(range(i0, i0 + len(owner)))
+    steps = [dict(label=f"{ts:,.0f}", method="restyle", args=[{"visible": [o == k for o in owner]}, idx])
+             for k, ts in enumerate(times)]
+    print(f"profiles: {len(times)} times ({', '.join(f'{t:g}' for t in times[:3])}{' ...' if len(times) > 3 else ''})")
     fig.update_xaxes(title_text="t (yr)", type="log", row=1, col=1)
     fig.update_yaxes(title_text="front radius (km)", type="log", row=1, col=1)
     fig.update_xaxes(title_text="t (yr)", type="log", row=1, col=2)
     fig.update_xaxes(title_text="r (km)", row=2, col=1)
     fig.update_yaxes(title_text="H (m)", row=2, col=1)
     fig.update_layout(template="plotly_white", height=950, title="drop test: the margin-resolution series",
-                      sliders=[dict(active=max(len(shared) - 1, 0), currentvalue=dict(prefix="profiles at t (yr) = "),
-                                    steps=steps, pad=dict(t=40))] if shared else [])
+                      sliders=[dict(active=max(len(times) - 1, 0), currentvalue=dict(prefix="profiles at t (yr) = "),
+                                    steps=steps, pad=dict(t=50))] if times else [])
     out = out or os.path.join(os.getcwd(), "spread_drop_compare.html")
     fig.write_html(out, include_plotlyjs="cdn")
     print(f"-> {out}")
