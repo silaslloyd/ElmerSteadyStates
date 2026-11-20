@@ -77,12 +77,34 @@ def section(s, axis, c0, sline):
         Ua, W = (V[0] if axis == "x" else V[1]), V[2]              # along the line, vertical
     except KeyError:
         U = Ua = W = np.full(len(g), np.nan)
-    col = np.unique(np.c_[np.round(X, 1), np.round(Y, 1)], axis=0, return_inverse=True)[1].ravel()
+    keys, col = np.unique(np.c_[np.round(X, 1), np.round(Y, 1)], axis=0, return_inverse=True)
+    col = col.ravel()
     ncol = col.max() + 1
     nl = len(g) // ncol
     o = np.lexsort((Z, col))
     level = np.empty(len(g), int)
     level[o] = np.tile(np.arange(nl), ncol)
+    # the node heights from the state's own Zs: a state whose stored coordinates are not its geometry (a start state
+    # made from another, e.g. the drop added to the flat layer's Zs, jobs/spread_drop.py) is drawn as it is. Each
+    # column's levels keep their relative positions zeta between its bed (level 0) and its top.
+    bz = blk.get("zs")
+    if bz is not None:
+        zs = s.layout.split(s.x)[bz.name]
+        xz, yz = (np.array([dict(zip(cc[0].tolist(), cc[1])).get(k, np.nan) for k in bz.gids.tolist()])
+                  for cc in (cx, cy))
+        kidx = {(a_, b_): i for i, (a_, b_) in enumerate(map(tuple, keys))}
+        zcol = np.full(ncol, np.nan)
+        for xv, yv, v in zip(np.round(xz, 1), np.round(yz, 1), zs):
+            i = kidx.get((xv, yv))
+            if i is not None:
+                zcol[i] = v
+        bot = np.empty(ncol)
+        top = np.empty(ncol)
+        bot[col[level == 0]] = Z[level == 0]
+        top[col[level == nl - 1]] = Z[level == nl - 1]
+        ok = np.isfinite(zcol)
+        zeta = (Z - bot[col]) / np.where(top[col] > bot[col], top[col] - bot[col], 1.0)
+        Z = np.where(ok[col], bot[col] + zeta * (zcol[col] - bot[col]), Z)
     nx = len(sline)
     pts = np.c_[sline, np.full(nx, c0)] if axis == "x" else np.c_[np.full(nx, c0), sline]
     m0 = level == 0
