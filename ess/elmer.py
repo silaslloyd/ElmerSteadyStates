@@ -182,8 +182,12 @@ class ElmerModel(Model):
         # [elmer] min_zs (m above sea level): the surface limiter Min Zs = max(bed + 5, min_zs), so over a bed
         # below sea level the ice is at least as thick as the water is deep (a marine-like thickness);
         # unset: Min Zs = bed + 5 (the run inputs, and so the cached runs, are unchanged)
+        # [elmer] min_thickness (m, default 5): the limiter's thickness above the bed (a thinner layer, e.g. the basalt
+        # test's 1 m of ground, needs it below its own thickness: at 5 m the surface was lifted to bed + 5 everywhere)
         mz = e.get("min_zs")
-        self.min_zs_expr = "tx[0] + 5" if mz is None else f"max(tx[0] + 5, {float(mz)!r})"
+        mh = float(e.get("min_thickness", 5.0))
+        mhs = "5" if mh == 5.0 else repr(mh)
+        self.min_zs_expr = f"tx[0] + {mhs}" if mz is None else f"max(tx[0] + {mhs}, {float(mz)!r})"
         # surface temperature: "constant" (Tsurf everywhere) or "snout" (Tsurf where the ice is thicker
         # than snout_thickness, linear to T0 at zero thickness: ElmerStreams' warm snout)
         self.surface_temp = str(e.get("surface_temp", "constant"))

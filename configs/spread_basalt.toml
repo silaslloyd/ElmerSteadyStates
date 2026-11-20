@@ -53,6 +53,7 @@ elmergrid = "ElmerGrid"
 type = "elmer"
 
 [elmer]
+min_thickness = 0.5                     # m: the surface limiter Min Zs = bed + 0.5 (default bed + 5 lifted the 1 m ground to 5 m)
 template = "elmer/spread_template.sif"  # ICE ONLY (no bedrock, no filler): the geothermal flux at the ice base
 mesh_db = "footprint"
 ess_lib = "elmer/SteadyStateIO"
