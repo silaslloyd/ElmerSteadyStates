@@ -74,7 +74,7 @@ linear_stokes = "iterative"
 stokes_preconditioner = "ILU8"            # ILU8: ILU2 did not converge (GCR stalled at a relative residual ~0.95 after 5000 iterations, 250 m run)
 stokes_iterative_tol = 1.0e-6                # (1e-8: ~1800 GCR iterations a step with the crust)
 stokes_abort_not_converged = false
-linear_heat = "direct"                  # MUMPS: BiCGStabL + ILU1 did not converge (2000 its, residual 1e-4) in the first step (the vent inflow ~1 cm/s on cm-thin elements)
+linear_heat = "iterative"               # BiCGStabL + ILU1 (run with ESS_HEAT_TOL=1e-8); MUMPS took ~4 s of a ~4 s step on 101 ranks. (The first iterative failure was in the run where Min Zs lifted the ground to 5 m.)
 linear_free_surface = "direct"                # MUMPS (a small 2D system on 64 ranks; the iterative solve did not converge here)
 surface_transfer = 0.1                  # the surface Robin coefficient ("Heat transfer coefficient"; default 1)
 diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "Output Accumulation"]
