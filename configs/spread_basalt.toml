@@ -40,7 +40,8 @@ slope_deg = 10.0                        # 10 degrees (3: the flow stays a radial
 precursor_film_m = 0.03                 # the top 3 cm of the ground (0.97 .. 1 m) at most the lava's viscosity, whatever its
                                         # temperature: a mobile film for the front (on rigid ground the height-function front
                                         # is pinned: the surface node ahead sits in stiff material and never moves)
-surface_radiation = true                # the surface: eps sigma (T^4 - Tsurf^4) + h_conv (T - Tsurf)
+surface_radiation = false               # TEST (20 Nov): no surface heat loss, so no cooled skin (was radiation + convection);
+                                        # with surface_transfer = 0 below the surface is insulating
 surface_emissivity = 0.95
 surface_convection = 10.0               # W m^-2 K^-1
 extrude_levels = 31                     # 30 layers, graded towards BOTH ends (Elmer's element size h(zeta), zeta the
@@ -83,7 +84,7 @@ stokes_iterative_tol = 1.0e-6                # (1e-8: ~1800 GCR iterations a ste
 stokes_abort_not_converged = false
 linear_heat = "iterative"               # BiCGStabL + ILU1 (run with ESS_HEAT_TOL=1e-8); MUMPS took ~4 s of a ~4 s step on 101 ranks. (The first iterative failure was in the run where Min Zs lifted the ground to 5 m.)
 linear_free_surface = "direct"                # MUMPS (a small 2D system on 64 ranks; the iterative solve did not converge here)
-surface_transfer = 0.1                  # the surface Robin coefficient ("Heat transfer coefficient"; default 1)
+surface_transfer = 0.0                  # TEST: the surface insulating (no skin); the radiative run had 0.1 overridden by surface_radiation
 diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "Output Accumulation"]
 
 [state]
