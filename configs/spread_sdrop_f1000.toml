@@ -3,7 +3,8 @@
 # layer 1000x more viscous than the drop: the viscosity a smoothed step in the height above the bed (SpreadViscosity(T,
 # z), [case] layer_viscosity_factor, layer_thickness = spread_thickness, layer_smooth), so the layer is a rigid
 # no-slip floor and the drop should spread as Huppert's (1982) drop on a dry no-slip bed (heights above the layer).
-# 31 extruded levels, refined at the bed and the surface, to resolve the interface.
+# 31 extruded levels, refined at the bed and the surface, to resolve the interface. One of the series 2000, 1000, 500,
+# 250 m at the margin (configs/spread_sdrop_f*.toml), everything else the same.
 
 [paths]
 work_dir = "work/spread_sdrop_f1000"

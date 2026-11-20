@@ -1,0 +1,95 @@
+# ElmerSteadyStates TEST CASE (branch test/lava-spreading): THE DROP ON A STIFF LAYER, margin resolution 250 m. The
+# drop test (configs/spread_drop_f0250.toml: the isothermal 1000 m x 20 km drop on a 100 m layer, no source) with the
+# layer 1000x more viscous than the drop: the viscosity a smoothed step in the height above the bed (SpreadViscosity(T,
+# z), [case] layer_viscosity_factor, layer_thickness = spread_thickness, layer_smooth), so the layer is a rigid
+# no-slip floor and the drop should spread as Huppert's (1982) drop on a dry no-slip bed (heights above the layer).
+# 31 extruded levels, refined at the bed and the surface, to resolve the interface. One of the series 2000, 1000, 500,
+# 250 m at the margin (configs/spread_sdrop_f*.toml), everything else the same.
+
+[paths]
+work_dir = "work/spread_sdrop_f0250"
+case_dir = "{work}/case"
+
+[case]
+geometry = "spread"
+parameters = "case/parameters.lua"
+spread_length_km = 200.0                # box side along x (km)
+width = 200000.0                        # box side along y (m)
+spread_res = 2000.0                     # triangle size (m) of the starting mesh
+spread_thickness = 100.0                # initial uniform layer (m)
+spread_bed = 0.0                        # flat bed elevation (m)
+source_rate = 0.0                       # no source: the drop only
+source_radius_km = 1.0
+drop_height_m = 1000.0                  # the drop on the layer: H0 + drop_height (1 - (r/R)^2)^2 (jobs/spread_drop.py)
+drop_radius_km = 20.0
+arrhenius_Q = 60000.0                   # (isothermal: T = 273.15 K everywhere, so eta = viscosity throughout)
+arrhenius_Tref = 273.15
+bed_temperature = 273.15
+spread_remesh_fine = 250.0              # m at the margin: THE RESOLUTION OF THIS MEMBER of the series 2000, 1000, 500, 250
+spread_remesh_band_km = 5.0
+layer_viscosity_factor = 1000.0         # the 100 m base layer 1000x stiffer than the drop (a step in height above the bed,
+layer_smooth = 20.0                     # smoothed over 20 m in log viscosity): effectively a rigid no-slip floor at 100 m
+extrude_levels = 31                     # 30 layers (the template's 20), finer towards BOTH the bed and the surface, so
+extrude_density = [[0.0, 0.25], [0.5, 1.0], [1.0, 0.25]]   # the 100 m interface is resolved (~15 m layers near the bed)
+spread_remesh_coarse_in = 2000.0        # the same inside (and so the same time-step limit) in every member
+spread_remesh_coarse_out = 8000.0
+gmsh = "gmsh"
+elmergrid = "ElmerGrid"
+
+[model]
+type = "elmer"
+
+[elmer]
+template = "elmer/spread_template.sif"  # ICE ONLY (no bedrock, no filler): the geothermal flux at the ice base
+mesh_db = "footprint"
+ess_lib = "elmer/SteadyStateIO"
+ess_utils = "elmer/ess_utils.lua"
+n_procs = 0                             # 0: $SLURM_NTASKS
+mpirun = "mpirun -np {n}"
+solver = "ElmerSolver"
+timeout = 21600
+keep_runs = false
+cache = false                           # a transient test: no reuse of runs
+vtu = false
+friction_heat = "flux"                  # zero on a no-slip bed
+strain_heat = false                     # isothermal
+# iterative, as the ice-stream runs (ElmerStreams): P1 + bubbles, GCR(250) + ILU8 to 1e-8, no abort when not converged;
+# heat BiCGStabL + ILU; the free surface direct (small 2D system)
+stokes_element = "Bubbles"
+linear_stokes = "iterative"
+stokes_preconditioner = "ILU8"
+stokes_iterative_tol = 1.0e-8
+stokes_abort_not_converged = false
+linear_heat = "iterative"
+linear_free_surface = "direct"                # MUMPS: the 2D surface system (BiCGStab + ILU1 diverged once the current flowed)
+surface_transfer = 0.1                  # the surface Robin coefficient ("Heat transfer coefficient"; default 1)
+diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "Output Accumulation"]
+
+[state]
+variables = ["Temperature", "Zs"]
+scales = { Temperature = 5.0, Zs = 50.0 }
+frozen = ["bedrock"]                     # the flat bed (fixed); no masks
+
+[parameter]
+name = "Tsurf"
+value = 273.15                          # Tsurf (K): the same as everything else (isothermal)
+scale = 1.0
+
+[map]
+dt = 50.0
+n_steps = 20
+coupled_iters = 1
+rock_heat_capacity = 1.0                # (no bedrock in this case)
+
+[stability_map]
+dt = 50.0
+n_steps = 20
+rock_heat_capacity = 1.0
+
+[fd]
+eps = 1e-6
+scheme = "forward"
+
+[newton]
+tol = 1e-5
+maxit = 15
