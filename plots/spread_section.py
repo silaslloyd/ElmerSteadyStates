@@ -175,11 +175,15 @@ def surf_bed(row, sline, xp):
     return np.interp(xp, sline, row[1][-1]), np.interp(xp, sline, row[1][0])
 
 
-def track(rows, sline, x0, z0, nsub=20):
+def track(rows, sline, x0, z0, nsub=20, on_surface=None, Hrel=None):
     """tracers advected in the section plane (axisymmetric: the velocity along the line and w) through the states'
     times: RK2 with the velocity linear in time between consecutive states, nsub substeps per interval; kept between
-    the bed and the surface (the surface is a material surface here). Returns [(x, z) at each state's time]"""
+    the bed and the surface. on_surface (bool per tracer): tracers ON the free surface (a material surface: nothing
+    added or removed there) stay on it, moved along it by the surface velocity, until they reach the front (where the
+    thickness falls below Hrel, the layer + the margin's dh); there they leave it (rolled under) and move with the flow.
+    Returns [(x, z) at each state's time]"""
     x, z = np.asarray(x0, float).copy(), np.asarray(z0, float).copy()
+    pin = np.zeros(len(x), bool) if on_surface is None else np.asarray(on_surface, bool).copy()
     out = [(x.copy(), z.copy())]
     for i in range(len(rows) - 1):
         r0, r1 = rows[i], rows[i + 1]
@@ -202,6 +206,13 @@ def track(rows, sline, x0, z0, nsub=20):
             s0, b0 = surf_bed(r0, sline, x)
             s1, b1 = surf_bed(r1, sline, x)
             zs, zb = (1 - a2) * s0 + a2 * s1, (1 - a2) * b0 + a2 * b1
+            if pin.any():
+                # on the surface: kept on it; released where the thickness falls below Hrel (the front)
+                front = (zs - zb) < (Hrel if Hrel is not None else 0.0)
+                rel = pin & front
+                pin = pin & ~front
+                z = np.where(pin, zs, z)
+                z = np.where(rel, np.minimum(z, zs), z)
             z = np.minimum(np.maximum(z, zb), zs)
         out.append((x.copy(), z.copy()))
     return out
@@ -378,7 +389,9 @@ def main():
         zs0 = np.interp(xs0, sline, rows[i0][1][-1])
         x0 = np.concatenate([xs0 for _ in tdep])
         z0 = np.concatenate([zs0 - d_ for d_ in tdep])
-        part = track(rv[i0:], sline, x0, z0)
+        onsurf = np.concatenate([np.full(len(xs0), d_ == 0.0) for d_ in tdep])
+        part = track(rv[i0:], sline, x0, z0, on_surface=onsurf,
+                     Hrel=float(c.get("spread_thickness", 100.0)) + float(c.get("margin_dh", 10.0)))
         trk = [None] * i0 + part
         print(f"tracers: {ntr} x {len(tdep)} on the surface at t {rows[i0][0]:,.0f} yr, advected to "
               f"t {rows[-1][0]:,.0f} yr")
