@@ -308,6 +308,10 @@ class ElmerModel(Model):
                                   # above the bed (a smoothed step of width layer_smooth, in log viscosity)
                                   "ess_layer_f": repr(float(c.get("layer_viscosity_factor", 1.0))),
                                   "ess_layer_ventsoft": "1.0" if c.get("layer_vent_soft", False) else "0.0",
+                                  # [case] precursor_film_m: a soft band at the background layer's top (SpreadViscosity)
+                                  "ess_film_d": repr(float(c.get("precursor_film_m", 0.0))),
+                                  "ess_film_top": repr(float(c.get("precursor_film_top_m", c.get("spread_thickness", 100.0)))),
+                                  "ess_film_f": repr(float(c.get("precursor_film_factor", 1.0))),
                                   "ess_layer_H": repr(float(c.get("layer_thickness", c.get("spread_thickness", 100.0)))),
                                   "ess_layer_d": repr(float(c.get("layer_smooth", 20.0))),
                                   "ess_layer_c": repr(float(c.get("layer_step_centre", c.get("layer_thickness",
@@ -1281,7 +1285,7 @@ End
             if text.count(b) != 1:
                 raise ValueError("spread: the template's bed temperature lines changed")
             text = text.replace(b, "  ! [case] bed_insulating: no heat flux through the bed (no Dirichlet temperature)\n")
-        if float(c.get("layer_viscosity_factor", 1.0)) != 1.0:
+        if float(c.get("layer_viscosity_factor", 1.0)) != 1.0 or float(c.get("precursor_film_m", 0.0)) > 0:
             v = '  Viscosity = Variable Temperature\n    Real Lua "SpreadViscosity(tx[0])"\n'
             if text.count(v) != 1:
                 raise ValueError("spread: the template's viscosity lines changed (SpreadViscosity(tx[0]))")

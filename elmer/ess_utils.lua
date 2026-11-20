@@ -225,6 +225,16 @@ function SpreadViscosity(T, z, x, y)
     local s = 0.5 * (1.0 - (e - 1.0) / (e + 1.0))
     eta = eta * math.exp(math.log(f) * s)
   end
+  -- [case] precursor_film_m (ess_film_d > 0): in a band of that thickness at the top of the background layer
+  -- (ess_film_top - d <= z - zb <= ess_film_top, fixed in space) eta at most viscosity x ess_film_f, whatever the
+  -- temperature or the layer step: a mobile film the current's front can advance into (on a rigid layer the
+  -- height-function front is pinned: the surface node ahead does not move)
+  if (ess_film_d or 0) > 0 and z ~= nil then
+    local zr = z - (ess_bed_z or 0.0)
+    if zr <= ess_film_top + 1.0e-6 and zr >= ess_film_top - ess_film_d then
+      if eta > viscosity * ess_film_f then eta = viscosity * ess_film_f end
+    end
+  end
   -- [case] viscosity_cap (ess_eta_cap): eta at most viscosity x cap (the cold crust: the solver's contrast bounded)
   if (ess_eta_cap or 0) > 0 and eta > viscosity * ess_eta_cap then eta = viscosity * ess_eta_cap end
   return eta
