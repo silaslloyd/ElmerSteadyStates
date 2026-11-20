@@ -3,7 +3,7 @@
 # 100 m drop at 1173 K (900 C), radiation (emissivity 0.95) and convection (10 W/m^2/K) to air at 300 K), but the 5 m
 # layer is COLD GROUND: it starts at 300 K (so at the viscosity cap, 1e14 Pa s: rigid on the run's time scale,
 # eta / (rho g H) ~ 6 yr under the drop) and the bed is held at 300 K (the drop's base conducts into the ground). Viscosity Arrhenius (Q 300 kJ/mol, 1e10 Pa s at 1173 K), capped at 1e4 x.
-# The extruded mesh geometrically refined towards the surface (31 levels, top layers ~5 cm) for the crust; the margin
+# The extruded mesh graded towards both the surface (the crust) and the bed (the ground; 31 levels); the margin
 # remeshed (2 m within 20 m of it, 10 m inside, 40 m outside). Time steps of order 1e-5 .. 1e-4 yr (5 .. 50 min).
 
 [paths]
@@ -35,8 +35,8 @@ viscosity_cap = 1.0e4                   # at most 1e4 x (1e14 Pa s): the cold cr
 surface_radiation = true                # the surface: eps sigma (T^4 - Tsurf^4) + h_conv (T - Tsurf)
 surface_emissivity = 0.95
 surface_convection = 10.0               # W m^-2 K^-1
-extrude_levels = 31                     # 30 layers, GEOMETRICALLY finer towards the surface (thickness ratio 50 bottom/top;
-extrude_density = [[0.0, 1], [0.1, 0.6762], [0.2, 0.4573], [0.3, 0.3092], [0.4, 0.2091], [0.5, 0.1414], [0.6, 0.09564], [0.7, 0.06467], [0.8, 0.04373], [0.9, 0.02958], [1.0, 0.02]]   # was 400): ~5 cm at the top of a 25 m column, ~1 cm on the 5 m layer
+extrude_levels = 31                     # 30 layers, graded towards BOTH ends (Elmer's element size h(zeta), zeta the
+extrude_density = [[0.0, 0.1], [0.0813, 0.1334], [0.1625, 0.1778], [0.2438, 0.2371], [0.325, 0.3162], [0.4062, 0.4217], [0.4875, 0.5623], [0.5687, 0.7499], [0.65, 1.0], [0.6937, 0.6451], [0.7375, 0.4162], [0.7812, 0.2685], [0.825, 0.1732], [0.8688, 0.1117], [0.9125, 0.07208], [0.9563, 0.0465], [1.0, 0.03]]   # relative height; log-linear 0.1 at the bed -> 1 at 0.65 -> 0.03 at the surface): the 25 m column ~49 cm at the bed, ~1 m at the ground's top (z = 5 m), ~15 cm at the surface; the 5 m layer ~10 cm .. ~3 cm
 spread_remesh_fine = 2.0                # m within 20 m of the margin
 spread_remesh_band_km = 0.02
 spread_remesh_coarse_in = 10.0

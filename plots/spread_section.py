@@ -362,6 +362,7 @@ def main():
     allU = np.concatenate([r[3][np.isfinite(r[3]) & (r[3] > 0)] for r in rows] + [np.array([1e-3])])
     u_hi = float(np.log10(np.percentile(allU, 99.5)))
     u_lo = u_hi - 4.0
+    u_lin_hi = float(np.percentile(allU, 99.5))        # the linear scale's top
     # the colour ranges from the data (all states; 0.5 .. 99.5 percentiles), not the model's whole possible range
     allT = np.concatenate([r[2][np.isfinite(r[2])].ravel() for r in rows])
     t_lo, t_hi = (float(v) for v in np.percentile(allT, [0.5, 99.5]))
@@ -476,6 +477,13 @@ def main():
                                      colorscale=cs, zmin=lo, zmax=hi, colorbar=cbar(r, title), visible=vis,
                                      hovertemplate=f"%{{x:.1f}} km, z %{{y:.0f}} m<br>{hv}<extra></extra>"),
                           row=r, col=1)
+            if r == 2:      # the speed also on a LINEAR scale (hidden; the "log / linear" button swaps them)
+                Gl = on_grid(zg, Zl, Ul)
+                fig.add_trace(go.Heatmap(x=xs, y=zg, z=np.where(np.isfinite(G), Gl, np.nan).astype(np.float32),
+                                         colorscale="Inferno", zmin=0.0, zmax=u_lin_hi, colorbar=cbar(r, "|u_h| (m/yr)"),
+                                         visible=False,
+                                         hovertemplate="%{x:.3f} km, z %{y:.2f} m<br>|u_h| %{z:.3g} m/yr<extra></extra>"),
+                              row=r, col=1)
             fig.add_trace(go.Scatter(x=xs, y=Zl[-1], mode="lines", line=dict(color="black", width=1), visible=vis,
                                      hoverinfo="skip", showlegend=False), row=r, col=1)
         fig.add_trace(go.Scatter(x=sx if sx is not None else [], y=sy if sy is not None else [], mode="lines",
@@ -493,12 +501,17 @@ def main():
                                      visible=vis, hovertemplate="tracer %{marker.color}<br>%{x:.2f} km, z %{y:.0f} m"
                                                                 "<extra></extra>", showlegend=False), row=r, col=1)
         streams.append(Rdot[i])
-    per = 11
+    per = 12
+    # the speed heatmaps (log: 2nd trace of a state, linear: 3rd) are left to the page's script (the log / linear
+    # button): the slider sets the visibility of every other trace
+    spd = {2, 3}
+    others = [j for j in range(per * n) if j % per not in spd]
     steps = [dict(label=fmt_t(r[0]), method="update",
-                  args=[{"visible": [j // per == i for j in range(per * n)]},
+                  args=[{"visible": [j // per == i for j in others]},
                         {"title.text": f"section along {axis} through the source, t = {fmt_t(r[0])} "
                                        f"(vertical exaggeration {vex:g}; streamlines in the {frame} frame"
-                                       + (f", margin {Rdot[i]:.3g} m/yr" if frame == "front" else "") + ")"}])
+                                       + (f", margin {Rdot[i]:.3g} m/yr" if frame == "front" else "") + ")"},
+                        others])
              for i, r in enumerate(rows)]
     for r in (1, 2, 3):
         fig.update_yaxes(title_text="z (m)", range=[zmin, zmax], scaleanchor=f"x{'' if r == 1 else r}",
@@ -509,9 +522,20 @@ def main():
                       title=f"section along {axis} through the source, t = {fmt_t(rows[-1][0])} "
                             f"(vertical exaggeration {vex:g}; streamlines in the {frame} frame"
                             + (f", margin {Rdot[-1]:.3g} m/yr" if frame == "front" else "") + ")",
-                      sliders=[dict(active=n - 1, currentvalue=dict(prefix="t = "), steps=steps, pad=dict(t=50))])
+                      sliders=[dict(active=n - 1, currentvalue=dict(prefix="t = "), steps=steps, pad=dict(t=50))],
+                      updatemenus=[dict(type="buttons", direction="left", x=1.0, xanchor="right", y=1.0,
+                                        yanchor="bottom", pad=dict(t=0, b=10), showactive=False,
+                                        buttons=[dict(label="speed: log / linear", method="skip", args=[None])])])
+    # the speed panel's scale: log (default) or linear, kept across the slider
+    js = ("var gd = document.getElementById('{plot_id}'); var per = %d, n = %d, cur = n - 1, mode = 'log';\n"
+          "function spd() { var idx = [], vis = [];\n"
+          "  for (var i = 0; i < n; i++) { idx.push(i * per + 2, i * per + 3);\n"
+          "    vis.push(i == cur && mode == 'log', i == cur && mode == 'lin'); }\n"
+          "  Plotly.restyle(gd, {visible: vis}, idx); }\n"
+          "gd.on('plotly_sliderchange', function (e) { cur = e.step._index; spd(); });\n"
+          "gd.on('plotly_buttonclicked', function (e) { mode = (mode == 'log') ? 'lin' : 'log'; spd(); });\n") % (per, n)
     out = out or os.path.join(os.path.dirname(os.path.abspath(args[0])), f"spread_section_{axis}.html")
-    fig.write_html(out, include_plotlyjs="cdn")
+    fig.write_html(out, include_plotlyjs="cdn", post_script=js)
     print(f"-> {out} (panels {panel} px at vertical exaggeration {vex:g})")
 
 
