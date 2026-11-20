@@ -1,8 +1,8 @@
 # ElmerSteadyStates TEST CASE (branch test/lava-spreading): THE COOLING LAVA DROP, in the lava regime (dacite; m, yr,
-# MPa, K as everywhere, the parameters case/parameters_lava.lua). A 20 m x 100 m drop (the drop test's shape) on a 2 m
+# MPa, K as everywhere, the parameters case/parameters_lava.lua). A 20 m x 100 m drop (the drop test's shape) on a 5 m
 # layer, all starting at 1173 K (900 C); the surface loses heat by radiation (emissivity 0.95) and convection (10
 # W/m^2/K) to air at 300 K; the bed insulating. Viscosity Arrhenius (Q 300 kJ/mol, 1e10 Pa s at 1173 K), capped at 1e6 x.
-# The extruded mesh geometrically refined towards the surface (31 levels, top layers ~1 cm) for the crust; the margin
+# The extruded mesh geometrically refined towards the surface (31 levels, top layers ~5 cm) for the crust; the margin
 # remeshed (2 m within 20 m of it, 10 m inside, 40 m outside). Time steps of order 1e-5 .. 1e-4 yr (5 .. 50 min).
 
 [paths]
@@ -16,12 +16,12 @@ parameters = "case/parameters_lava.lua" # DACITE: 2500 kg/m^3, 1100 J/kg/K, 1.5 
 spread_length_km = 0.6                  # a 600 m box
 width = 600.0
 spread_res = 10.0                       # m: the starting mesh
-spread_thickness = 2.0                  # m: the thin layer (the free surface needs some thickness; the mesh mapper's minimum 1 m)
-margin_dh = 1.0                         # m: the margin the remesher follows, H = 3 m
+spread_thickness = 5.0                  # m: the thin layer (2 m: hairline elements in the background, the free surface did not converge)
+margin_dh = 2.0                         # m: the margin the remesher follows, H = 7 m
 spread_bed = 0.0
 source_rate = 0.0
 source_radius_km = 0.001
-drop_height_m = 20.0                    # the drop: 2 m + 20 m (1 - (r/R)^2)^2, R = 100 m (jobs/spread_drop.py)
+drop_height_m = 20.0                    # the drop: 5 m + 20 m (1 - (r/R)^2)^2, R = 100 m (jobs/spread_drop.py)
 drop_radius_km = 0.1
 initial_temperature = 1173.15           # K: everything starts at the eruption temperature (900 C), the drop and the layer
 arrhenius_Q = 300000.0                  # J/mol: dacite-like, the viscosity x ~10 per 25 K near 1170 K
@@ -32,8 +32,8 @@ bed_insulating = true                   # no heat flux through the bed: the lava
 surface_radiation = true                # the surface: eps sigma (T^4 - Tsurf^4) + h_conv (T - Tsurf)
 surface_emissivity = 0.95
 surface_convection = 10.0               # W m^-2 K^-1
-extrude_levels = 31                     # 30 layers, GEOMETRICALLY finer towards the surface (thickness ratio e^6 ~ 400
-extrude_density = [[0.0, 1], [0.1, 0.5488], [0.2, 0.3012], [0.3, 0.1653], [0.4, 0.09072], [0.5, 0.04979], [0.6, 0.02732], [0.7, 0.015], [0.8, 0.00823], [0.9, 0.004517], [1.0, 0.002479]]   # bottom/top): ~1 cm at the top of a 22 m column, for the crust
+extrude_levels = 31                     # 30 layers, GEOMETRICALLY finer towards the surface (thickness ratio 50 bottom/top;
+extrude_density = [[0.0, 1], [0.1, 0.6762], [0.2, 0.4573], [0.3, 0.3092], [0.4, 0.2091], [0.5, 0.1414], [0.6, 0.09564], [0.7, 0.06467], [0.8, 0.04373], [0.9, 0.02958], [1.0, 0.02]]   # was 400): ~5 cm at the top of a 25 m column, ~1 cm on the 5 m layer
 spread_remesh_fine = 2.0                # m within 20 m of the margin
 spread_remesh_band_km = 0.02
 spread_remesh_coarse_in = 10.0
@@ -66,7 +66,7 @@ stokes_preconditioner = "ILU8"            # ILU8: ILU2 did not converge (GCR sta
 stokes_iterative_tol = 1.0e-8
 stokes_abort_not_converged = false
 linear_heat = "iterative"
-linear_free_surface = "iterative"             # BiCGStab + ILU1 (not MUMPS: a direct solve of the 2D surface on hundreds of ranks scales badly)
+linear_free_surface = "direct"                # MUMPS (a small 2D system on 64 ranks; the iterative solve did not converge here)
 surface_transfer = 0.1                  # the surface Robin coefficient ("Heat transfer coefficient"; default 1)
 diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "Output Accumulation"]
 
