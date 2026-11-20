@@ -256,9 +256,9 @@ def main():
         sc = dict(xaxis=dict(title="x (m)", range=[x0, x1]), yaxis=dict(title="y (m)", range=[y0, y1]),
                   zaxis=dict(title="z (m)", range=[zlo, zhi + 0.02 * zr]), aspectmode="manual",
                   aspectratio=dict(x=1, y=(y1 - y0) / (x1 - x0), z=vex * zr / (x1 - x0)),
-                  camera=dict(eye=dict(x=0.6, y=-1.3, z=0.8)))
-        fig.update_layout(template="plotly_white", width=width, height=height,
-                          scene=dict(**sc, domain=dict(x=[0, 0.88], y=[0.0, 1.0])),
+                  camera=dict(eye=dict(x=0.45, y=-0.95, z=0.6)))
+        fig.update_layout(template="plotly_white", autosize=True, margin=dict(l=10, r=10, t=90, b=60),
+                          scene=dict(**sc, domain=dict(x=[0, 0.92], y=[0.0, 1.0])),
                           title=f"t = {fmt_t(rows[-1]['t'])}: the surface coloured by u_h; vertical exaggeration {vex:g}",
                           sliders=[dict(active=n - 1, currentvalue=dict(prefix="t = "), steps=steps, pad=dict(t=30))],
                           updatemenus=[dict(type="buttons", direction="left", x=1.0, xanchor="right", y=1.0,
@@ -278,7 +278,11 @@ def main():
           "  if (e.button.label.indexOf('mesh') == 0) { mesh = !mesh; } else { mode = (mode == 'log') ? 'lin' : 'log'; }\n"
           "  spd(); });\n") % (per, n, meshoff)
     out = out or os.path.join(os.path.dirname(os.path.abspath(sorted(args)[-1])), "spread.html")
-    fig.write_html(out, include_plotlyjs="cdn", post_script=js)
+    if three_d:     # the whole browser window (resizes with it)
+        fig.write_html(out, include_plotlyjs="cdn", post_script=js, default_width="100%", default_height="96vh",
+                       config=dict(responsive=True))
+    else:
+        fig.write_html(out, include_plotlyjs="cdn", post_script=js)
     print(f"-> {out} (map {nx} x {ny} samples, window x {x0:.0f} .. {x1:.0f} m, y {y0:.0f} .. {y1:.0f} m)")
 
 
