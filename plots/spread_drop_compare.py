@@ -15,7 +15,8 @@
 
     python3 plots/spread_drop_compare.py DIR [DIR ...] [--labels 2000,1000,...] [--dh 10] [--dr 100] [--config CFG] [--no-model] [--out FILE.html]
 
-DIR: a member's adapt/points folder (state_*.npz; a*_start.npz, the remeshed start, included).
+DIR: a member's adapt/points folder (state_*.npz), or a folder with them and a001_start.npz (the remeshed start at
+t = 0, the drop itself; also looked for in DIR/..).
 """
 import glob
 import os
@@ -70,10 +71,12 @@ def thin_film(times, H0, A, R, D, rmax=100e3, n=1000):
 
     sp = diags([np.ones(n - 1), np.ones(n), np.ones(n - 1)], [-1, 0, 1])
     ts = sorted(t for t in times if t > 0)
+    out = {0.0: h0} if any(t <= 0 for t in times) else {}
     if not ts:
-        return r, {}
+        return r, out
     sol = solve_ivp(rhs, (0.0, ts[-1]), h0, method="BDF", t_eval=ts, jac_sparsity=sp, rtol=1e-6, atol=1e-3)
-    return r, {round(t, 6): sol.y[:, k] for k, t in enumerate(sol.t)}
+    out.update({round(t, 6): sol.y[:, k] for k, t in enumerate(sol.t)})
+    return r, out
 
 
 XI_N = (2 ** 10 / (3 ** 4 * np.pi ** 3)) ** 0.125      # Huppert (1982): 0.894
@@ -107,7 +110,9 @@ def main():
     from plotly.colors import sample_colorscale
     mem = []
     for d, lab in zip(args, labels):
-        files = sorted(glob.glob(os.path.join(d, "state_*.npz")) + glob.glob(os.path.join(d, "a*_start.npz")))
+        # the chunks' states, and the remeshed start (t = 0: the drop itself) from DIR or the folder above it
+        files = sorted(glob.glob(os.path.join(d, "state_*.npz")) + glob.glob(os.path.join(d, "a001_start.npz"))
+                       + glob.glob(os.path.join(d, "..", "a001_start.npz")))
         rows = []
         for f in files:
             t, x, y, H = profile(f, dr, H0)
