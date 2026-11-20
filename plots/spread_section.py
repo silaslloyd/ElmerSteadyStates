@@ -11,7 +11,8 @@ On the speed panel, streamlines of the flow in the section plane (matplotlib str
 w)), by default in the FRAME OF THE MARGIN: the margin's outward speed (from the states' margin positions along the
 line, H > spread_thickness + 10 m) taken off, so a roll at the nose (surface -> nose -> bed) shows; --frame lab: as
 computed; --density (1.2); --no-streams.
-On every panel, --tracers N (120; 0: none) markers placed along the drop's surface in the FIRST state (where it is
+On every panel, --tracers N (120; 0: none) markers placed along the drop's surface in one state (--seed-time T; default
+the first state with a velocity, i.e. not a remeshed start) (where it is
 thicker than the layer by 10 m), at --tracer-depths (m below the surface, default 0,10,20: a "crust"), and advected
 through the states (in the section plane, axisymmetric: the velocity along the line and w, linear in time
 between consecutive states, RK2), coloured by their starting position: the surface material's fate (e.g. rolled
@@ -27,7 +28,7 @@ padded. Colour ranges: the data's (all states), not the model's possible range.
 
     python3 plots/spread_section.py STATE.npz [STATE2.npz ...] [--config configs/spread_vent.toml] [--axis x|y]
                                     [--vex V] [--x XMIN XMAX | --panel PX]
-                                    [--frame front|lab] [--density 1.2] [--no-streams] [--tracers 120] [--tracer-depths 0,10,20] [--nx 400] [--nz 120] [--width 1200] [--out FILE.html]
+                                    [--frame front|lab] [--density 1.2] [--no-streams] [--tracers 120] [--tracer-depths 0,10,20] [--seed-time T] [--nx 400] [--nz 120] [--width 1200] [--out FILE.html]
 """
 import os
 import sys
@@ -233,6 +234,7 @@ def main():
     nostreams = "--no-streams" in args
     ntr = arg(args, "--tracers", 120, int)          # tracers along the drop's first surface (0: none)
     tdep = [float(v) for v in arg(args, "--tracer-depths", "0,10,20").split(",")]   # m below the surface: the "crust"
+    tseed = arg(args, "--seed-time", None, float)   # the state the tracers start on (default: the first with a velocity)
     args = [a_ for a_ in args if a_ != "--no-streams"]
     if not args:
         raise SystemExit(__doc__)
@@ -341,30 +343,33 @@ def main():
     # tracers: a layer on the first state's surface, advected through the states (the third panel)
     trk = None
     hasv = [bool(np.isfinite(r_[4]).any()) for r_ in rows]
-    if ntr > 0 and len(rows) > 1 and any(hasv):
-        # a state without the velocity (e.g. a remeshed start, a*_start.npz): the nearest later state's velocity
+    if ntr > 0 and any(hasv):
+        # seeded on the surface of one state (default the first with a velocity: a remeshed start has none, and the
+        # first interval from it is where the drop changes fastest), tracked from there on; before it, none
+        if tseed is None:
+            i0 = hasv.index(True)
+        else:
+            i0 = int(np.argmin([abs(r_[0] - tseed) for r_ in rows]))
         rv = list(rows)
-        for i in range(len(rows) - 1, -1, -1):
+        for i in range(len(rows) - 1, -1, -1):          # a later state without the velocity: the nearest one's
             if not hasv[i]:
                 j = next((k for k in range(i + 1, len(rows)) if hasv[k]), None)
                 if j is None:
                     j = max(k for k in range(i) if hasv[k])
-                rv[i] = (rows[i][0], rows[i][1], rows[i][2], rows[i][3],
-                         np.array([np.interp(sline, sline, a_) for a_ in rows[j][4]]),
-                         np.array([np.interp(sline, sline, a_) for a_ in rows[j][5]]))
-        # along the drop's surface only (thicker than the layer by 10 m), at each of the depths below it
-        Hs0 = rows[0][1][-1] - rows[0][1][0]
+                rv[i] = rows[i][:4] + (rows[j][4], rows[j][5])
+        Hs0 = rows[i0][1][-1] - rows[i0][1][0]
         ins = np.where(np.isfinite(Hs0) & (Hs0 > float(c.get("spread_thickness", 100.0)) + 10.0))[0]
         xa, xb = (sline[ins[0]], sline[ins[-1]]) if len(ins) else (sline[0], sline[-1])
         xs0 = np.linspace(xa, xb, ntr)
-        zs0 = np.interp(xs0, sline, rows[0][1][-1])
+        zs0 = np.interp(xs0, sline, rows[i0][1][-1])
         x0 = np.concatenate([xs0 for _ in tdep])
         z0 = np.concatenate([zs0 - d_ for d_ in tdep])
-        trk = track(rv, sline, x0, z0)
-        print(f"tracers: {ntr} on the surface at t {rows[0][0]:,.0f} yr, advected to t {rows[-1][0]:,.0f} yr"
-              + (f" ({hasv.count(False)} state(s) without the velocity: the next state's used)" if not all(hasv) else ""))
+        part = track(rv[i0:], sline, x0, z0)
+        trk = [None] * i0 + part
+        print(f"tracers: {ntr} x {len(tdep)} on the surface at t {rows[i0][0]:,.0f} yr, advected to "
+              f"t {rows[-1][0]:,.0f} yr")
     elif ntr > 0:
-        print("tracers: none (" + ("one state" if len(rows) < 2 else "no state has the velocity") + ")")
+        print("tracers: none (no state has the velocity)")
     streams = []
     if not nostreams:
         import matplotlib
@@ -423,8 +428,9 @@ def main():
         fig.add_trace(go.Scatter(x=ax_x, y=ax_y, mode="markers", marker=dict(symbol="triangle-up", size=7, angle=ax_a,
                                  color="rgba(80,200,255,1)", line=dict(width=0)), visible=vis, hoverinfo="skip",
                                  showlegend=False), row=2, col=1)
-        tx, tz = (trk[i][0] / 1e3, trk[i][1]) if trk else ([], [])
-        tc = (np.tile(np.arange(ntr), len(tdep)) if trk else [])          # coloured by the starting position
+        have = trk is not None and trk[i] is not None
+        tx, tz = (trk[i][0] / 1e3, trk[i][1]) if have else ([], [])
+        tc = (np.tile(np.arange(ntr), len(tdep)) if have else [])         # coloured by the starting position
         for r in (1, 2, 3):
             fig.add_trace(go.Scatter(x=tx, y=tz, mode="markers",
                                      marker=dict(size=4, color=tc, colorscale="Turbo", line=dict(width=0.4, color="black")),
