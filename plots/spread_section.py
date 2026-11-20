@@ -24,10 +24,10 @@ The panels are drawn at a fixed vertical exaggeration --vex (z against the secti
 tenth of the old single-panel page's stretch, from the data's z range, printed); --x XMIN XMAX (km) to show only part of the line (the panels then get taller
 at the same exaggeration); --panel PX: the window instead centred on the vent and just wide enough for panels PX
 tall (--vex default 1 then: true aspect, cropped). Default window: where the surface stands > 10 m above the background layer in any state,
-padded. Colour ranges: the data's (all states), not the model's possible range.
+padded. --height H: the exaggeration instead chosen so the page is H px tall (the panels fill it). Colour ranges: the data's (all states), not the model's possible range.
 
     python3 plots/spread_section.py STATE.npz [STATE2.npz ...] [--config configs/spread_vent.toml] [--axis x|y]
-                                    [--vex V] [--x XMIN XMAX | --panel PX]
+                                    [--vex V | --height H] [--x XMIN XMAX | --panel PX]
                                     [--frame front|lab] [--density 1.2] [--no-streams] [--tracers 120] [--tracer-depths 0,10,20] [--seed-time T] [--nx 400] [--nz 120] [--width 1200] [--out FILE.html]
 """
 import os
@@ -48,6 +48,21 @@ def arg(args, name, default, conv=str, n=1):
         del args[k:k + 1 + n]
         return v[0] if n == 1 else v
     return default
+
+
+def fmt_t(t):
+    """a model time (yr) for labels, in a unit that shows it: yr, days, hours or minutes"""
+    if t == 0:
+        return "0"
+    if t >= 1000:
+        return f"{t:,.0f} yr"
+    if t >= 1:
+        return f"{t:.3g} yr"
+    if t >= 1 / 365.25:
+        return f"{t * 365.25:.3g} d"
+    if t >= 1 / 8766:
+        return f"{t * 8766:.3g} h"
+    return f"{t * 525960:.3g} min"
 
 
 def section(s, axis, c0, sline):
@@ -237,6 +252,7 @@ def main():
     nz = arg(args, "--nz", 120, int)
     vex = arg(args, "--vex", None, float)
     width = arg(args, "--width", 1200, int)
+    page_h = arg(args, "--height", None, int)      # with it: the exaggeration set so the three panels fill a page this tall
     xwin = arg(args, "--x", None, float, n=2)
     panel_px = arg(args, "--panel", None, int)     # with it: the window cropped (about the vent) to panels this tall
     out = arg(args, "--out", None)
@@ -351,13 +367,17 @@ def main():
     if t_hi - t_lo < 1.0:
         t_lo, t_hi = t_lo - 0.5, t_hi + 0.5
     plot_w = width - 200
+    gap = 70
+    if page_h is not None:
+        # the exaggeration that makes the page page_h px tall: 3 panels + 2 gaps + 230 px of title, axis and slider
+        pnl = max(40, (page_h - 230 - 2 * gap) // 3)
+        vex = float(f"{pnl * (b - a) / (plot_w * (zmax - zmin)):.2g}")
     if vex is None:
         # a tenth of the old single-panel page's stretch: the whole line over ~plot_w px, the z range over ~470 px
         v_old = (Lline / plot_w) / ((zmax - zmin) / 470.0)
         vex = float(f"{v_old / 10:.2g}")
     # the panel height at exaggeration vex: the plot area ~ (width - margins) px for (b - a) of horizontal distance
     panel = max(40, int(round(plot_w * (zmax - zmin) * vex / (b - a))))
-    gap = 70
     height = 3 * panel + 2 * gap + 230
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=gap / (height - 230),
                         subplot_titles=("log10 viscosity (Pa s)", "log10 horizontal speed (m/yr), streamlines",
@@ -468,9 +488,9 @@ def main():
                                                                 "<extra></extra>", showlegend=False), row=r, col=1)
         streams.append(Rdot[i])
     per = 11
-    steps = [dict(label=f"{r[0]:,.0f}", method="update",
+    steps = [dict(label=fmt_t(r[0]), method="update",
                   args=[{"visible": [j // per == i for j in range(per * n)]},
-                        {"title.text": f"section along {axis} through the source, t = {r[0]:,.0f} yr "
+                        {"title.text": f"section along {axis} through the source, t = {fmt_t(r[0])} "
                                        f"(vertical exaggeration {vex:g}; streamlines in the {frame} frame"
                                        + (f", margin {Rdot[i]:.3g} m/yr" if frame == "front" else "") + ")"}])
              for i, r in enumerate(rows)]
@@ -480,10 +500,10 @@ def main():
         fig.update_xaxes(range=[a / 1e3, b / 1e3], constrain="domain", row=r, col=1)
     fig.update_xaxes(title_text=f"{axis} (km)", row=3, col=1)
     fig.update_layout(template="plotly_white", width=width, height=height, margin=dict(l=80, r=120, t=80, b=150),
-                      title=f"section along {axis} through the source, t = {rows[-1][0]:,.0f} yr "
+                      title=f"section along {axis} through the source, t = {fmt_t(rows[-1][0])} "
                             f"(vertical exaggeration {vex:g}; streamlines in the {frame} frame"
                             + (f", margin {Rdot[-1]:.3g} m/yr" if frame == "front" else "") + ")",
-                      sliders=[dict(active=n - 1, currentvalue=dict(prefix="t (yr) = "), steps=steps, pad=dict(t=50))])
+                      sliders=[dict(active=n - 1, currentvalue=dict(prefix="t = "), steps=steps, pad=dict(t=50))])
     out = out or os.path.join(os.path.dirname(os.path.abspath(args[0])), f"spread_section_{axis}.html")
     fig.write_html(out, include_plotlyjs="cdn")
     print(f"-> {out} (panels {panel} px at vertical exaggeration {vex:g})")
