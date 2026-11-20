@@ -306,11 +306,25 @@ def main():
     n = len(rows)
     # tracers: a layer on the first state's surface, advected through the states (the third panel)
     trk = None
-    if ntr > 0 and len(rows) > 1 and np.isfinite(rows[0][4]).any():
+    hasv = [bool(np.isfinite(r_[4]).any()) for r_ in rows]
+    if ntr > 0 and len(rows) > 1 and any(hasv):
+        # a state without the velocity (e.g. a remeshed start, a*_start.npz): the nearest later state's velocity
+        rv = list(rows)
+        for i in range(len(rows) - 1, -1, -1):
+            if not hasv[i]:
+                j = next((k for k in range(i + 1, len(rows)) if hasv[k]), None)
+                if j is None:
+                    j = max(k for k in range(i) if hasv[k])
+                rv[i] = (rows[i][0], rows[i][1], rows[i][2], rows[i][3],
+                         np.array([np.interp(sline, sline, a_) for a_ in rows[j][4]]),
+                         np.array([np.interp(sline, sline, a_) for a_ in rows[j][5]]))
         x0 = np.linspace(sline[0], sline[-1], ntr)
         z0 = np.interp(x0, sline, rows[0][1][-1])
-        trk = track(rows, sline, x0, z0)
-        print(f"tracers: {ntr} on the surface at t {rows[0][0]:,.0f} yr, advected to t {rows[-1][0]:,.0f} yr")
+        trk = track(rv, sline, x0, z0)
+        print(f"tracers: {ntr} on the surface at t {rows[0][0]:,.0f} yr, advected to t {rows[-1][0]:,.0f} yr"
+              + (f" ({hasv.count(False)} state(s) without the velocity: the next state's used)" if not all(hasv) else ""))
+    elif ntr > 0:
+        print("tracers: none (" + ("one state" if len(rows) < 2 else "no state has the velocity") + ")")
     streams = []
     if not nostreams:
         import matplotlib
