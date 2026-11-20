@@ -83,8 +83,10 @@ def default_opt(c):
     """the remeshing settings from [case] (spread_remesh_* keys, defaults below)"""
     res = float(c.get("spread_res", 5000.0))
     Ls, Ws = float(c["spread_length_km"]) * 1e3, float(c["width"])
-    return dict(src_x=float(c.get("source_x_km", Ls / 2e3)) * 1e3, src_y=float(c.get("source_y_km", Ws / 2e3)) * 1e3,
-                src_r=float(c.get("source_radius_km", 100.0)) * 1e3,
+    src = (dict(src_x=float(c.get("source_x_km", Ls / 2e3)) * 1e3, src_y=float(c.get("source_y_km", Ws / 2e3)) * 1e3,
+                src_r=float(c.get("source_radius_km", 100.0)) * 1e3)
+           if float(c.get("source_rate", 0.1)) > 0 else {})      # no source (a drop test): nothing at the centre
+    return dict(**src,
                 fine=float(c.get("spread_remesh_fine", 2000.0)),
                 band=float(c.get("spread_remesh_band_km", 10.0)) * 1e3,
                 # the vent: its own size (default the margin's) and band; the dome is thickest over it, where the
@@ -191,8 +193,8 @@ def size_field(x, y, tri, H, opt):
     h = grade(h, x, y, tri, opt["grade"])
     n_est = np.sum(_areas(x, y, tri) / (0.433 * h ** 2))
     rep = (f"size: {opt['fine']:g} m within {opt['band'] / 1e3:g} km of the margin (H = {opt['Hc']:g} m; "
-           f"{nm} points); the vent (r = {opt.get('src_r', 0) / 1e3:g} km) {opt.get('vent_fine', opt['fine']):g} m within "
-           f"{opt.get('vent_band', opt['band']) / 1e3:g} km of its rim; grading {opt['grade']:g}, {opt['coarse_in']:g} m inside the current, "
+           f"{nm} points)" + (f"; the vent (r = {opt['src_r'] / 1e3:g} km) {opt.get('vent_fine', opt['fine']):g} m within "
+           f"{opt.get('vent_band', opt['band']) / 1e3:g} km of its rim" if "src_r" in opt else "") + f"; grading {opt['grade']:g}, {opt['coarse_in']:g} m inside the current, "
            f"{opt['coarse_out']:g} m outside; ~{n_est:.0f} triangles")
     return h, P, rep
 

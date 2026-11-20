@@ -32,6 +32,10 @@ START=${START:-$W/static.npz}
 if [ ! -f $START ]; then                        # no static phase of its own: its own initial state (the uniform cold
     if [ ! -f $W/state0.npz ]; then python3 -u -m ess init $CFG --out $W/state0.npz; fi   # layer and the vent's plug)
     START=$W/state0.npz
+    if grep -q "^drop_height_m" $CFG; then      # the drop test: the drop on the uniform layer
+        python3 -u jobs/spread_drop.py $CFG $W/state0.npz $W/drop0.npz
+        START=$W/drop0.npz
+    fi
 fi
 echo "$(date +%T) adaptive spreading run: $CFG from $START"
 python3 -u jobs/spread_adapt.py $CFG --state $START ${T0:+--t0 $T0} --chunks ${CHUNKS:-50} --steps ${STEPS:-200} \
