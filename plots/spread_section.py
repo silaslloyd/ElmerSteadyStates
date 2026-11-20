@@ -250,6 +250,7 @@ def main():
         # the streamlines in the section plane: (velocity along the line - the margin's speed outward, w), drawn on
         # the speed panel; in the front's frame the roll at the nose shows (surface -> nose -> bed)
         sx = sy = None
+        ax_x, ax_y, ax_a = [], [], []                     # the arrowheads: one per streamline, at its middle
         if not nostreams and np.isfinite(Al).any():
             Ga, Gw = on_grid(zg, Zl, Al), on_grid(zg, Zl, Wl)
             urel = Ga - np.sign(sline - ctr)[None, :] * Rdot[i]
@@ -258,10 +259,23 @@ def main():
             try:
                 sp = ax_.streamplot(xs, zg, np.ma.array(np.where(msk, 0, urel) / 1e3, mask=msk),
                                     np.ma.array(np.where(msk, 0, Gw), mask=msk), density=density)
-                segs = sp.lines.get_segments()
+                segs = sp.lines.get_segments()        # one polyline per streamline, in the flow direction
                 if segs:
                     sx = np.concatenate([np.r_[sg[:, 0], np.nan] for sg in segs])
                     sy = np.concatenate([np.r_[sg[:, 1], np.nan] for sg in segs])
+                for sg in segs:
+                    if len(sg) < 3:
+                        continue
+                    # the middle by length on the screen (x km -> m, z m x vex), the direction there
+                    d = np.hypot(np.diff(sg[:, 0]) * 1e3, np.diff(sg[:, 1]) * vex)
+                    cl = np.r_[0.0, np.cumsum(d)]
+                    if cl[-1] <= 0:
+                        continue
+                    j = int(np.clip(np.searchsorted(cl, cl[-1] / 2), 1, len(sg) - 1))
+                    dx, dz = (sg[j, 0] - sg[j - 1, 0]) * 1e3, (sg[j, 1] - sg[j - 1, 1]) * vex
+                    ax_x.append(sg[j, 0])
+                    ax_y.append(sg[j, 1])
+                    ax_a.append(float(np.degrees(np.arctan2(dx, dz))))   # plotly: clockwise from up
             except Exception as e:                       # noqa: BLE001
                 print(f"t {t:,.0f}: no streamlines ({e})")
             plt.close(fig_)
@@ -281,8 +295,11 @@ def main():
         fig.add_trace(go.Scatter(x=sx if sx is not None else [], y=sy if sy is not None else [], mode="lines",
                                  line=dict(color="rgba(80,200,255,0.9)", width=1), visible=vis, hoverinfo="skip",
                                  showlegend=False), row=2, col=1)
+        fig.add_trace(go.Scatter(x=ax_x, y=ax_y, mode="markers", marker=dict(symbol="triangle-up", size=7, angle=ax_a,
+                                 color="rgba(80,200,255,1)", line=dict(width=0)), visible=vis, hoverinfo="skip",
+                                 showlegend=False), row=2, col=1)
         streams.append(Rdot[i])
-    per = 7
+    per = 8
     steps = [dict(label=f"{r[0]:,.0f}", method="update",
                   args=[{"visible": [j // per == i for j in range(per * n)]},
                         {"title.text": f"section along {axis} through the source, t = {r[0]:,.0f} yr "
