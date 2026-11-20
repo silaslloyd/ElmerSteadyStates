@@ -101,7 +101,10 @@ def section(s, axis, c0, sline):
         Ua, W = (V[0] if axis == "x" else V[1]), V[2]              # along the line, vertical
     except KeyError:
         U = Ua = W = np.full(len(g), np.nan)
-    keys, col = np.unique(np.c_[np.round(X, 1), np.round(Y, 1)], axis=0, return_inverse=True)
+    # the columns: nodes at the same (x, y) to 1e-4 m (extruded, so exactly equal; 0.1 m rounding merged the columns
+    # of a 0.1 m mesh), as integer keys
+    ikey = lambda a, b: np.c_[np.round(np.asarray(a) * 1e4), np.round(np.asarray(b) * 1e4)].astype(np.int64)
+    keys, col = np.unique(ikey(X, Y), axis=0, return_inverse=True)
     col = col.ravel()
     ncol = col.max() + 1
     nl = len(g) // ncol
@@ -115,15 +118,17 @@ def section(s, axis, c0, sline):
     if bz is not None:
         zs = s.layout.split(s.x)[bz.name]
         xz, yz = look_g(cx, bz.gids), look_g(cy, bz.gids)
-        # each Zs node's column: the same rounding as the columns' keys, matched by a sorted search
-        kz = np.c_[np.round(xz, 1), np.round(yz, 1)]
-        kk = keys[:, 0] * 1e7 + keys[:, 1]
-        qq = kz[:, 0] * 1e7 + kz[:, 1]
-        o_ = np.argsort(kk)
-        pos = np.clip(np.searchsorted(kk[o_], qq), 0, len(kk) - 1)
-        hit = kk[o_][pos] == qq
+        # each Zs node's column: the same integer keys, matched through one joint np.unique
+        okz = np.isfinite(xz) & np.isfinite(yz)
+        kz = ikey(np.where(okz, xz, 0.0), np.where(okz, yz, 0.0))
+        u_, inv_ = np.unique(np.r_[keys, kz], axis=0, return_inverse=True)
+        inv_ = inv_.ravel()
+        idx = np.full(len(u_), -1)
+        idx[inv_[:len(keys)]] = np.arange(len(keys))
+        cz = idx[inv_[len(keys):]]
+        hit = okz & (cz >= 0)
         zcol = np.full(ncol, np.nan)
-        zcol[o_[pos[hit]]] = zs[hit]
+        zcol[cz[hit]] = zs[hit]
         bot = np.empty(ncol)
         top = np.empty(ncol)
         bot[col[level == 0]] = Z[level == 0]
@@ -325,7 +330,7 @@ def main():
             a, b = max(0.0, lo - pad), min(Lline, hi + pad)
         else:
             a, b = 0.0, Lline
-        print(f"section window {a / 1e3:.0f} .. {b / 1e3:.0f} km (--x to set)")
+        print(f"section window {a / 1e3:.3g} .. {b / 1e3:.3g} km (--x to set)")
     if nx is None:
         nx = max(400, width - 200)
     sline = np.linspace(a, b, nx)
