@@ -52,7 +52,7 @@ strain_heat = false                     # isothermal
 # heat BiCGStabL + ILU; the free surface direct (small 2D system)
 stokes_element = "Bubbles"
 linear_stokes = "iterative"
-stokes_preconditioner = "ILU2"            # ILU2 (was ILU8): cheaper per iteration, the isoviscous Stokes converges with it
+stokes_preconditioner = "ILU2"            # ILU2 (was ILU8): cheaper per iteration, maybe more iterations (untested here)
 stokes_iterative_tol = 1.0e-8
 stokes_abort_not_converged = false
 linear_heat = "iterative"
