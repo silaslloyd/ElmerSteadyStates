@@ -11,8 +11,9 @@ On the speed panel, streamlines of the flow in the section plane (matplotlib str
 w)), by default in the FRAME OF THE MARGIN: the margin's outward speed (from the states' margin positions along the
 line, H > spread_thickness + 10 m) taken off, so a roll at the nose (surface -> nose -> bed) shows; --frame lab: as
 computed; --density (1.2); --no-streams.
-On the temperature panel, --tracers N (120; 0: none) markers placed on the FIRST state's surface across the window and
-advected through the states (in the section plane, axisymmetric: the velocity along the line and w, linear in time
+On every panel, --tracers N (120; 0: none) markers placed along the drop's surface in the FIRST state (where it is
+thicker than the layer by 10 m), at --tracer-depths (m below the surface, default 0,10,20: a "crust"), and advected
+through the states (in the section plane, axisymmetric: the velocity along the line and w, linear in time
 between consecutive states, RK2), coloured by their starting position: the surface material's fate (e.g. rolled
 under at the nose).
 Each extruded level of the mesh is interpolated onto the section line (linear on the footprint's triangles), then every
@@ -26,7 +27,7 @@ padded. Colour ranges: the data's (all states), not the model's possible range.
 
     python3 plots/spread_section.py STATE.npz [STATE2.npz ...] [--config configs/spread_vent.toml] [--axis x|y]
                                     [--vex V] [--x XMIN XMAX | --panel PX]
-                                    [--frame front|lab] [--density 1.2] [--no-streams] [--tracers 120] [--nx 400] [--nz 120] [--width 1200] [--out FILE.html]
+                                    [--frame front|lab] [--density 1.2] [--no-streams] [--tracers 120] [--tracer-depths 0,10,20] [--nx 400] [--nz 120] [--width 1200] [--out FILE.html]
 """
 import os
 import sys
@@ -198,7 +199,8 @@ def main():
     frame = arg(args, "--frame", "front")           # the streamlines' frame: "front" (moving with the margin) or "lab"
     density = arg(args, "--density", 1.2, float)    # the streamlines' density (matplotlib streamplot)
     nostreams = "--no-streams" in args
-    ntr = arg(args, "--tracers", 120, int)          # tracers on the first state's surface (0: none)
+    ntr = arg(args, "--tracers", 120, int)          # tracers along the drop's first surface (0: none)
+    tdep = [float(v) for v in arg(args, "--tracer-depths", "0,10,20").split(",")]   # m below the surface: the "crust"
     args = [a_ for a_ in args if a_ != "--no-streams"]
     if not args:
         raise SystemExit(__doc__)
@@ -298,7 +300,7 @@ def main():
     height = 3 * panel + 2 * gap + 230
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=gap / (height - 230),
                         subplot_titles=("log10 viscosity (Pa s)", "log10 horizontal speed (m/yr), streamlines",
-                                        "temperature (K); tracers from the first state's surface"))
+                                        "temperature (K)"))
     cbar = lambda r, title: dict(title=dict(text=title, side="right"), lenmode="pixels", len=max(panel, 60),
                                  y=1 - ((r - 1) * (panel + gap) + panel / 2) / (height - 230), yanchor="middle",
                                  thickness=14, nticks=4)
@@ -318,8 +320,14 @@ def main():
                 rv[i] = (rows[i][0], rows[i][1], rows[i][2], rows[i][3],
                          np.array([np.interp(sline, sline, a_) for a_ in rows[j][4]]),
                          np.array([np.interp(sline, sline, a_) for a_ in rows[j][5]]))
-        x0 = np.linspace(sline[0], sline[-1], ntr)
-        z0 = np.interp(x0, sline, rows[0][1][-1])
+        # along the drop's surface only (thicker than the layer by 10 m), at each of the depths below it
+        Hs0 = rows[0][1][-1] - rows[0][1][0]
+        ins = np.where(np.isfinite(Hs0) & (Hs0 > float(c.get("spread_thickness", 100.0)) + 10.0))[0]
+        xa, xb = (sline[ins[0]], sline[ins[-1]]) if len(ins) else (sline[0], sline[-1])
+        xs0 = np.linspace(xa, xb, ntr)
+        zs0 = np.interp(xs0, sline, rows[0][1][-1])
+        x0 = np.concatenate([xs0 for _ in tdep])
+        z0 = np.concatenate([zs0 - d_ for d_ in tdep])
         trk = track(rv, sline, x0, z0)
         print(f"tracers: {ntr} on the surface at t {rows[0][0]:,.0f} yr, advected to t {rows[-1][0]:,.0f} yr"
               + (f" ({hasv.count(False)} state(s) without the velocity: the next state's used)" if not all(hasv) else ""))
@@ -384,13 +392,14 @@ def main():
                                  color="rgba(80,200,255,1)", line=dict(width=0)), visible=vis, hoverinfo="skip",
                                  showlegend=False), row=2, col=1)
         tx, tz = (trk[i][0] / 1e3, trk[i][1]) if trk else ([], [])
-        fig.add_trace(go.Scatter(x=tx, y=tz, mode="markers",
-                                 marker=dict(size=5, color=np.arange(len(tx)) if trk else [], colorscale="Turbo",
-                                             line=dict(width=0.5, color="black")),
-                                 visible=vis, hovertemplate="tracer %{marker.color}<br>%{x:.2f} km, z %{y:.0f} m"
-                                                            "<extra></extra>", showlegend=False), row=3, col=1)
+        tc = (np.tile(np.arange(ntr), len(tdep)) if trk else [])          # coloured by the starting position
+        for r in (1, 2, 3):
+            fig.add_trace(go.Scatter(x=tx, y=tz, mode="markers",
+                                     marker=dict(size=4, color=tc, colorscale="Turbo", line=dict(width=0.4, color="black")),
+                                     visible=vis, hovertemplate="tracer %{marker.color}<br>%{x:.2f} km, z %{y:.0f} m"
+                                                                "<extra></extra>", showlegend=False), row=r, col=1)
         streams.append(Rdot[i])
-    per = 9
+    per = 11
     steps = [dict(label=f"{r[0]:,.0f}", method="update",
                   args=[{"visible": [j // per == i for j in range(per * n)]},
                         {"title.text": f"section along {axis} through the source, t = {r[0]:,.0f} yr "
