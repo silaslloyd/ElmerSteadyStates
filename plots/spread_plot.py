@@ -9,7 +9,10 @@ triangles) onto a regular grid of about one sample per screen pixel (--width, de
 window: the current's extent (H - H0 > --dh) over all states, padded by a quarter, within the box (--window XMIN XMAX
 YMIN YMAX in m to set it).
 
-    python3 plots/spread_plot.py STATE.npz [STATE2.npz ...] [--config configs/spread_ice.toml] [--dh 10]
+With --3d: the two maps as 3D surfaces (the surface Zs, coloured by u_h and by h), --vex the vertical exaggeration
+(default 1: true aspect).
+
+    python3 plots/spread_plot.py STATE.npz [STATE2.npz ...] [--config configs/spread_ice.toml] [--dh 10] [--3d] [--vex 1]
                                  [--width 1200] [--window XMIN XMAX YMIN YMAX] [--out FILE.html]
 """
 import os
@@ -36,6 +39,9 @@ def main():
     cfgf = arg(args, "--config", os.path.join(ROOT, "configs", "spread_ice.toml"))
     dh = arg(args, "--dh", 10.0, float)
     width = arg(args, "--width", 1200, int)
+    three_d = "--3d" in args                       # the maps as 3D surfaces (Zs), coloured by u_h and by h
+    args = [a_ for a_ in args if a_ != "--3d"]
+    vex = arg(args, "--vex", 1.0, float)           # (--3d) the vertical exaggeration (default 1: true aspect)
     win = None
     if "--window" in args:
         k = args.index("--window")
@@ -118,66 +124,154 @@ def main():
     u_lin_hi = float(np.percentile(allU, 99.5))
     h_hi = max(float(np.nanmax(r_["H"] - H0)) for r_ in rows)
     h_hi = h_hi if h_hi > 0 else 1.0
-    from plotly.subplots import make_subplots
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=gap / (height - 230),
-                        subplot_titles=("surface horizontal speed u_h", "lava thickness h = H - H0 (m)"))
-    yfrac = lambda r: 1 - ((r - 1) * (ny + gap) + ny / 2) / (height - 230)
-    cb = lambda r, title: dict(title=dict(text=title, side="right"), lenmode="pixels", len=ny, y=yfrac(r),
-                               yanchor="middle", thickness=14)
-    # per state: 0 log u, 1 linear u, 2 the margin on u, 3 the mesh on u, 4 h, 5 the margin on h, 6 the mesh on h
-    per = 7
-    for i, r_ in enumerate(rows):
-        print(f"{r_['name']}: t {fmt_t(r_['t'])}, h {max(float(np.nanmax(r_['H'] - H0)), 0.0):.3f} m max, surface speed "
-              f"max {np.nanmax(r_['U']) if np.isfinite(r_['U']).any() else np.nan:.3g} m/yr")
-        tri = Delaunay(np.c_[r_["x"], r_["y"]])
-        Ug = LinearNDInterpolator(tri, r_["U"])(GX, GY)
-        Hg = LinearNDInterpolator(tri, r_["H"] - H0)(GX, GY)
-        vis = i == len(rows) - 1
-        with np.errstate(divide="ignore", invalid="ignore"):
-            lu = np.log10(Ug)
-        hov = "x %{x:.1f} m, y %{y:.1f} m<br>"
-        sx_ = tri.simplices
-        e_ = np.unique(np.sort(np.r_[sx_[:, [0, 1]], sx_[:, [1, 2]], sx_[:, [0, 2]]], axis=1), axis=0)
-        inw = lambda k: (r_["x"][k] >= x0) & (r_["x"][k] <= x1) & (r_["y"][k] >= y0) & (r_["y"][k] <= y1)
-        e_ = e_[inw(e_[:, 0]) | inw(e_[:, 1])]
-        ex = np.c_[r_["x"][e_[:, 0]], r_["x"][e_[:, 1]], np.full(len(e_), np.nan)].ravel().astype(np.float32)
-        ey = np.c_[r_["y"][e_[:, 0]], r_["y"][e_[:, 1]], np.full(len(e_), np.nan)].ravel().astype(np.float32)
-        margin = lambda: go.Contour(x=gx, y=gy, z=Hg.astype(np.float32), contours=dict(start=dh, end=dh, size=1.0,
-                                    coloring="none"), line=dict(color="white", width=1.5), showscale=False,
-                                    visible=vis, hoverinfo="skip")
-        mesh = lambda: go.Scattergl(x=ex, y=ey, mode="lines", line=dict(color="rgba(80,200,255,0.55)", width=0.6),
-                                    visible=False, hoverinfo="skip", showlegend=False)
-        fig.add_trace(go.Heatmap(x=gx, y=gy, z=lu.astype(np.float32), colorscale="Inferno", zmin=u_lo, zmax=u_hi,
-                                 colorbar=cb(1, "log10 u_h (m/yr)"), visible=vis,
-                                 hovertemplate=hov + "log10 u_h %{z:.2f}<extra></extra>"), row=1, col=1)
-        fig.add_trace(go.Heatmap(x=gx, y=gy, z=Ug.astype(np.float32), colorscale="Inferno", zmin=0.0, zmax=u_lin_hi,
-                                 colorbar=cb(1, "u_h (m/yr)"), visible=False,
-                                 hovertemplate=hov + "u_h %{z:.3g} m/yr<extra></extra>"), row=1, col=1)
-        fig.add_trace(margin(), row=1, col=1)
-        fig.add_trace(mesh(), row=1, col=1)
-        fig.add_trace(go.Heatmap(x=gx, y=gy, z=Hg.astype(np.float32), colorscale="Viridis", zmin=0.0, zmax=h_hi,
-                                 colorbar=cb(2, "h (m)"), visible=vis,
-                                 hovertemplate=hov + "h %{z:.3f} m<extra></extra>"), row=2, col=1)
-        fig.add_trace(margin(), row=2, col=1)
-        fig.add_trace(mesh(), row=2, col=1)
-    n = len(rows)
-    others = [j for j in range(per * n) if j % per in (2, 4, 5)]  # the slider's; the speeds and meshes: the script's
-    steps = [dict(label=fmt_t(r_["t"]), method="update",
-                  args=[{"visible": [j // per == i for j in others]},
-                        {"title.text": f"t = {fmt_t(r_['t'])} (white: the margin, h = {dh:g} m)"}, others])
-             for i, r_ in enumerate(rows)]
-    for r in (1, 2):
-        fig.update_xaxes(range=[x0, x1], constrain="domain", row=r, col=1)
-        fig.update_yaxes(title_text="y (m)", range=[y0, y1], scaleanchor=f"x{'' if r == 1 else r}", scaleratio=1,
-                         constrain="domain", row=r, col=1)
-    fig.update_xaxes(title_text="x (m)", row=2, col=1)
-    fig.update_layout(template="plotly_white", width=width, height=height, margin=dict(l=70, r=150, t=80, b=130),
-                      title=f"t = {fmt_t(rows[-1]['t'])} (white: the margin, h = {dh:g} m)",
-                      sliders=[dict(active=n - 1, currentvalue=dict(prefix="t = "), steps=steps, pad=dict(t=50))],
-                      updatemenus=[dict(type="buttons", direction="left", x=1.0, xanchor="right", y=1.0, yanchor="bottom",
-                                        pad=dict(t=0, b=10), showactive=False,
-                                        buttons=[dict(label="speed: log / linear", method="skip", args=[None]),
-                                                 dict(label="mesh on / off", method="skip", args=[None])])])
+    if not three_d:
+        from plotly.subplots import make_subplots
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=gap / (height - 230),
+                            subplot_titles=("surface horizontal speed u_h", "lava thickness h = H - H0 (m)"))
+        yfrac = lambda r: 1 - ((r - 1) * (ny + gap) + ny / 2) / (height - 230)
+        cb = lambda r, title: dict(title=dict(text=title, side="right"), lenmode="pixels", len=ny, y=yfrac(r),
+                                   yanchor="middle", thickness=14)
+        # per state: 0 log u, 1 linear u, 2 the margin on u, 3 the mesh on u, 4 h, 5 the margin on h, 6 the mesh on h
+        per = 7
+        for i, r_ in enumerate(rows):
+            print(f"{r_['name']}: t {fmt_t(r_['t'])}, h {max(float(np.nanmax(r_['H'] - H0)), 0.0):.3f} m max, surface speed "
+                  f"max {np.nanmax(r_['U']) if np.isfinite(r_['U']).any() else np.nan:.3g} m/yr")
+            tri = Delaunay(np.c_[r_["x"], r_["y"]])
+            Ug = LinearNDInterpolator(tri, r_["U"])(GX, GY)
+            Hg = LinearNDInterpolator(tri, r_["H"] - H0)(GX, GY)
+            vis = i == len(rows) - 1
+            with np.errstate(divide="ignore", invalid="ignore"):
+                lu = np.log10(Ug)
+            hov = "x %{x:.1f} m, y %{y:.1f} m<br>"
+            sx_ = tri.simplices
+            e_ = np.unique(np.sort(np.r_[sx_[:, [0, 1]], sx_[:, [1, 2]], sx_[:, [0, 2]]], axis=1), axis=0)
+            inw = lambda k: (r_["x"][k] >= x0) & (r_["x"][k] <= x1) & (r_["y"][k] >= y0) & (r_["y"][k] <= y1)
+            e_ = e_[inw(e_[:, 0]) | inw(e_[:, 1])]
+            ex = np.c_[r_["x"][e_[:, 0]], r_["x"][e_[:, 1]], np.full(len(e_), np.nan)].ravel().astype(np.float32)
+            ey = np.c_[r_["y"][e_[:, 0]], r_["y"][e_[:, 1]], np.full(len(e_), np.nan)].ravel().astype(np.float32)
+            margin = lambda: go.Contour(x=gx, y=gy, z=Hg.astype(np.float32), contours=dict(start=dh, end=dh, size=1.0,
+                                        coloring="none"), line=dict(color="white", width=1.5), showscale=False,
+                                        visible=vis, hoverinfo="skip")
+            mesh = lambda: go.Scattergl(x=ex, y=ey, mode="lines", line=dict(color="rgba(80,200,255,0.55)", width=0.6),
+                                        visible=False, hoverinfo="skip", showlegend=False)
+            fig.add_trace(go.Heatmap(x=gx, y=gy, z=lu.astype(np.float32), colorscale="Inferno", zmin=u_lo, zmax=u_hi,
+                                     colorbar=cb(1, "log10 u_h (m/yr)"), visible=vis,
+                                     hovertemplate=hov + "log10 u_h %{z:.2f}<extra></extra>"), row=1, col=1)
+            fig.add_trace(go.Heatmap(x=gx, y=gy, z=Ug.astype(np.float32), colorscale="Inferno", zmin=0.0, zmax=u_lin_hi,
+                                     colorbar=cb(1, "u_h (m/yr)"), visible=False,
+                                     hovertemplate=hov + "u_h %{z:.3g} m/yr<extra></extra>"), row=1, col=1)
+            fig.add_trace(margin(), row=1, col=1)
+            fig.add_trace(mesh(), row=1, col=1)
+            fig.add_trace(go.Heatmap(x=gx, y=gy, z=Hg.astype(np.float32), colorscale="Viridis", zmin=0.0, zmax=h_hi,
+                                     colorbar=cb(2, "h (m)"), visible=vis,
+                                     hovertemplate=hov + "h %{z:.3f} m<extra></extra>"), row=2, col=1)
+            fig.add_trace(margin(), row=2, col=1)
+            fig.add_trace(mesh(), row=2, col=1)
+        n = len(rows)
+        others = [j for j in range(per * n) if j % per in (2, 4, 5)]  # the slider's; the speeds and meshes: the script's
+        steps = [dict(label=fmt_t(r_["t"]), method="update",
+                      args=[{"visible": [j // per == i for j in others]},
+                            {"title.text": f"t = {fmt_t(r_['t'])} (white: the margin, h = {dh:g} m)"}, others])
+                 for i, r_ in enumerate(rows)]
+        for r in (1, 2):
+            fig.update_xaxes(range=[x0, x1], constrain="domain", row=r, col=1)
+            fig.update_yaxes(title_text="y (m)", range=[y0, y1], scaleanchor=f"x{'' if r == 1 else r}", scaleratio=1,
+                             constrain="domain", row=r, col=1)
+        fig.update_xaxes(title_text="x (m)", row=2, col=1)
+        fig.update_layout(template="plotly_white", width=width, height=height, margin=dict(l=70, r=150, t=80, b=130),
+                          title=f"t = {fmt_t(rows[-1]['t'])} (white: the margin, h = {dh:g} m)",
+                          sliders=[dict(active=n - 1, currentvalue=dict(prefix="t = "), steps=steps, pad=dict(t=50))],
+                          updatemenus=[dict(type="buttons", direction="left", x=1.0, xanchor="right", y=1.0, yanchor="bottom",
+                                            pad=dict(t=0, b=10), showactive=False,
+                                            buttons=[dict(label="speed: log / linear", method="skip", args=[None]),
+                                                     dict(label="mesh on / off", method="skip", args=[None])])])
+    else:
+        # 3D: the surface Zs on the surface nodes' triangles within the window, two scenes (u_h above, h below), the
+        # vertical exaggerated by vex; the margin (h = dh) a white line on the surface
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.tri as mtri
+        zlo = min(float(np.nanmin(r_["zs"] - r_["H"])) for r_ in rows)
+        zhi = max(float(np.nanmax(r_["zs"])) for r_ in rows)
+        zr = max(zhi - zlo, 1e-6)
+        height = 1100
+        fig = go.Figure()
+        per = 7
+        for i, r_ in enumerate(rows):
+            print(f"{r_['name']}: t {fmt_t(r_['t'])}, h {max(float(np.nanmax(r_['H'] - H0)), 0.0):.3f} m max, surface "
+                  f"speed max {np.nanmax(r_['U']) if np.isfinite(r_['U']).any() else np.nan:.3g} m/yr")
+            x_, y_, z_ = r_["x"], r_["y"], r_["zs"]
+            h_ = r_["H"] - H0
+            tri = Delaunay(np.c_[x_, y_]).simplices
+            inw = (x_ >= x0) & (x_ <= x1) & (y_ >= y0) & (y_ <= y1)
+            tri = tri[inw[tri].all(axis=1)]
+            vis = i == len(rows) - 1
+            with np.errstate(divide="ignore", invalid="ignore"):
+                lu = np.log10(r_["U"])
+            lu = np.where(np.isfinite(lu), lu, u_lo)
+            common = dict(x=x_.astype(np.float32), y=y_.astype(np.float32), z=z_.astype(np.float32),
+                          i=tri[:, 0], j=tri[:, 1], k=tri[:, 2], flatshading=False,
+                          lighting=dict(ambient=0.75, diffuse=0.4, specular=0.05, roughness=0.9))
+            hov = "x %{x:.1f} m, y %{y:.1f} m, z %{z:.2f} m<br>"
+            # the margin: the contour h = dh on the triangles, lifted onto the surface
+            mx, my, mz = [], [], []
+            try:
+                T_ = mtri.Triangulation(x_, y_, tri)
+                import matplotlib.pyplot as plt
+                f_, ax_ = plt.subplots()
+                cs_ = ax_.tricontour(T_, h_, levels=[dh])
+                zi = mtri.LinearTriInterpolator(T_, z_)
+                for seg in cs_.allsegs[0]:
+                    zz = np.asarray(zi(seg[:, 0], seg[:, 1]), float) + 0.003 * zr
+                    mx += list(seg[:, 0]) + [np.nan]
+                    my += list(seg[:, 1]) + [np.nan]
+                    mz += list(zz) + [np.nan]
+                plt.close(f_)
+            except Exception as e:                       # noqa: BLE001
+                print(f"  no margin line ({e})")
+            e_ = np.unique(np.sort(np.r_[tri[:, [0, 1]], tri[:, [1, 2]], tri[:, [0, 2]]], axis=1), axis=0)
+            nan = np.full(len(e_), np.nan)
+            ex = np.c_[x_[e_[:, 0]], x_[e_[:, 1]], nan].ravel().astype(np.float32)
+            ey = np.c_[y_[e_[:, 0]], y_[e_[:, 1]], nan].ravel().astype(np.float32)
+            ez = (np.c_[z_[e_[:, 0]], z_[e_[:, 1]], nan].ravel() + 0.002 * zr).astype(np.float32)
+            margin = lambda sc: go.Scatter3d(x=mx, y=my, z=mz, mode="lines", line=dict(color="white", width=4),
+                                             visible=vis, hoverinfo="skip", showlegend=False, scene=sc)
+            mesh = lambda sc: go.Scatter3d(x=ex, y=ey, z=ez, mode="lines", line=dict(color="rgba(80,200,255,0.6)",
+                                           width=1), visible=False, hoverinfo="skip", showlegend=False, scene=sc)
+            fig.add_trace(go.Mesh3d(**common, intensity=lu.astype(np.float32), colorscale="Inferno", cmin=u_lo,
+                                    cmax=u_hi, colorbar=dict(title="log10 u_h (m/yr)", y=0.77, len=0.4), visible=vis,
+                                    hovertemplate=hov + "log10 u_h %{intensity:.2f}<extra></extra>", scene="scene"))
+            fig.add_trace(go.Mesh3d(**common, intensity=r_["U"].astype(np.float32), colorscale="Inferno", cmin=0.0,
+                                    cmax=u_lin_hi, colorbar=dict(title="u_h (m/yr)", y=0.77, len=0.4), visible=False,
+                                    hovertemplate=hov + "u_h %{intensity:.3g} m/yr<extra></extra>", scene="scene"))
+            fig.add_trace(margin("scene"))
+            fig.add_trace(mesh("scene"))
+            fig.add_trace(go.Mesh3d(**common, intensity=np.clip(h_, 0, None).astype(np.float32), colorscale="Viridis",
+                                    cmin=0.0, cmax=h_hi, colorbar=dict(title="h (m)", y=0.25, len=0.4), visible=vis,
+                                    hovertemplate=hov + "h %{intensity:.3f} m<extra></extra>", scene="scene2"))
+            fig.add_trace(margin("scene2"))
+            fig.add_trace(mesh("scene2"))
+        n = len(rows)
+        others = [j for j in range(per * n) if j % per in (2, 4, 5)]
+        steps = [dict(label=fmt_t(r_["t"]), method="update",
+                      args=[{"visible": [j // per == i for j in others]},
+                            {"title.text": f"t = {fmt_t(r_['t'])}: the surface coloured by u_h (above) and by h (below); "
+                                           f"vertical exaggeration {vex:g}"}, others])
+                 for i, r_ in enumerate(rows)]
+        sc = dict(xaxis=dict(title="x (m)", range=[x0, x1]), yaxis=dict(title="y (m)", range=[y0, y1]),
+                  zaxis=dict(title="z (m)", range=[zlo, zhi + 0.02 * zr]), aspectmode="manual",
+                  aspectratio=dict(x=1, y=(y1 - y0) / (x1 - x0), z=vex * zr / (x1 - x0)),
+                  camera=dict(eye=dict(x=0.6, y=-1.3, z=0.8)))
+        fig.update_layout(template="plotly_white", width=width, height=height,
+                          scene=dict(**sc, domain=dict(x=[0, 0.88], y=[0.52, 1.0])),
+                          scene2=dict(**sc, domain=dict(x=[0, 0.88], y=[0.0, 0.48])),
+                          title=f"t = {fmt_t(rows[-1]['t'])}: the surface coloured by u_h (above) and by h (below); "
+                                f"vertical exaggeration {vex:g}",
+                          sliders=[dict(active=n - 1, currentvalue=dict(prefix="t = "), steps=steps, pad=dict(t=30))],
+                          updatemenus=[dict(type="buttons", direction="left", x=1.0, xanchor="right", y=1.0,
+                                            yanchor="bottom", pad=dict(t=0, b=10), showactive=False,
+                                            buttons=[dict(label="speed: log / linear", method="skip", args=[None]),
+                                                     dict(label="mesh on / off", method="skip", args=[None])])])
     js = ("var gd = document.getElementById('{plot_id}'); var per = %d, n = %d, cur = n - 1, mode = 'log', mesh = false;\n"
           "function spd() { var idx = [], vis = [];\n"
           "  for (var i = 0; i < n; i++) { idx.push(i * per, i * per + 1, i * per + 3, i * per + 6);\n"
