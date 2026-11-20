@@ -1,0 +1,110 @@
+# ElmerSteadyStates TEST CASE (branch test/lava-spreading): configs/spread_basalt.toml WITHOUT THE THERMAL STIFFENING,
+# to test whether the lava piling up over the vent is thermal locking (the cold ground smeared over the front's
+# elements, at up to 1e4 x the viscosity). The lava isothermal in viscosity (arrhenius_Q = 0: 1e4 Pa s everywhere,
+# the temperature still solved but not felt); the ground stiff by HEIGHT instead (x 1e4 below z = 1 m, a step of
+# +- 3 cm), except over the vent (layer_vent_soft: the conduit stays open). Everything else as spread_basalt.
+
+[paths]
+work_dir = "work/spread_basalt_iso"
+case_dir = "{work}/case"
+
+[case]
+geometry = "spread"
+source = "vent"                         # (no source: the vent mode only switches off the surface source's T0 condition)
+parameters = "case/parameters_basalt.lua" # BASALT: 2600 kg/m^3, 1200 J/kg/K, 1.0 W/m/K, 1e4 Pa s at the eruption temperature
+spread_length_km = 0.12                 # 120 m down the slope (x)
+width = 50.0                            # m across (y)
+spread_res = 2.0                        # m: the starting mesh
+spread_thickness = 1.0                  # m: the cold ground (the background layer)
+margin_dh = 0.2                         # m of lava: the margin the remesher follows, H = 1.2 m
+spread_bed = 0.0
+source_rate = 319025.7                  # m/yr up through the vent (1.01 cm/s): 0.05 m^3/s over its 4.95 m^2 (with the taper)
+source_x_km = 0.01                      # the vent 10 m below the top of the box, on the centre line
+source_y_km = 0.025
+source_edge_km = 0.0005                 # full within 1 m, a cosine taper to zero at 1.5 m
+vent_hot_inflow = true                  # all the inflow at the vent temperature (and the conduit through the ground hot)
+source_radius_km = 0.0015                # a 1.5 m vent
+bed_temperature = 300.0                 # K: the bed held cold (no bed_insulating)
+vent_temperature = 1423.15               # K: the lava erupts at 1150 C
+arrhenius_Q = 0.0                       # no temperature dependence: 1e4 Pa s everywhere (the test)
+arrhenius_Tref = 1423.15                # K: the viscosity is `viscosity` (1e4 Pa s) here
+arrhenius_Tmax = 1423.15                # K: no softer than at the eruption temperature
+viscosity_cap = 1.0e4                   # at most 1e4 x (1e8 Pa s): the crust and the cold ground (reached below ~1040 K)
+slope_deg = 3.0                         # the bed tilted 3 degrees (gravity rotated in the x-z plane, down +x)
+layer_viscosity_factor = 1.0e4          # the ground stiff by height: x 1e4 (1e8 Pa s, the cap) below ...
+layer_thickness = 1.0
+layer_step_centre = 1.0                 # ... z = 1 m (the ground's top) ...
+layer_smooth = 0.03                     # ... a tanh step of +- 3 cm in log viscosity ...
+layer_vent_soft = true                  # ... but not over the vent (the conduit through the ground)
+surface_radiation = true                # the surface: eps sigma (T^4 - Tsurf^4) + h_conv (T - Tsurf)
+surface_emissivity = 0.95
+surface_convection = 10.0               # W m^-2 K^-1
+extrude_levels = 31                     # 30 layers, graded towards BOTH ends (Elmer's element size h(zeta), zeta the
+extrude_density = [[0.0, 0.1], [0.0813, 0.1334], [0.1625, 0.1778], [0.2438, 0.2371], [0.325, 0.3162], [0.4062, 0.4217], [0.4875, 0.5623], [0.5687, 0.7499], [0.65, 1.0], [0.6937, 0.6451], [0.7375, 0.4162], [0.7812, 0.2685], [0.825, 0.1732], [0.8688, 0.1117], [0.9125, 0.07208], [0.9563, 0.0465], [1.0, 0.03]]   # relative height; log-linear 0.1 at the bed -> 1 at 0.65 -> 0.03 at the surface): the 25 m column ~49 cm at the bed, ~1 m at the ground's top (z = 5 m), ~15 cm at the surface; the 5 m layer ~10 cm .. ~3 cm
+spread_remesh_fine = 0.25               # m within 3 m of the margin (1 m smeared the cold ground over the mound's flanks: it locked)
+spread_remesh_vent_fine = 0.25          # m over the vent and 3 m beyond its rim (the mound ~12 elements across, was 3)
+spread_remesh_vent_band_km = 0.003
+spread_remesh_band_km = 0.003
+spread_remesh_coarse_in = 0.5           # m inside the flow
+spread_remesh_coarse_out = 2.0          # m on the bare ground
+gmsh = "gmsh"
+elmergrid = "ElmerGrid"
+
+[model]
+type = "elmer"
+
+[elmer]
+min_thickness = 0.5                     # m: the surface limiter Min Zs = bed + 0.5 (default bed + 5 lifted the 1 m ground to 5 m)
+template = "elmer/spread_template.sif"  # ICE ONLY (no bedrock, no filler): the geothermal flux at the ice base
+mesh_db = "footprint"
+ess_lib = "elmer/SteadyStateIO"
+ess_utils = "elmer/ess_utils.lua"
+n_procs = 0                             # 0: $SLURM_NTASKS
+mpirun = "mpirun -np {n}"
+solver = "ElmerSolver"
+timeout = 21600
+keep_runs = false
+cache = false                           # a transient test: no reuse of runs
+vtu = false
+friction_heat = "flux"                  # zero on a no-slip bed
+strain_heat = false
+# iterative, as the ice-stream runs (ElmerStreams): P1 + bubbles, GCR(250) + ILU8 to 1e-8, no abort when not converged;
+# heat BiCGStabL + ILU; the free surface direct (small 2D system)
+stokes_element = "Bubbles"
+linear_stokes = "iterative"
+stokes_preconditioner = "ILU8"            # ILU8: ILU2 did not converge (GCR stalled at a relative residual ~0.95 after 5000 iterations, 250 m run)
+stokes_iterative_tol = 1.0e-6                # (1e-8: ~1800 GCR iterations a step with the crust)
+stokes_abort_not_converged = false
+linear_heat = "iterative"               # BiCGStabL + ILU1 (run with ESS_HEAT_TOL=1e-8); MUMPS took ~4 s of a ~4 s step on 101 ranks. (The first iterative failure was in the run where Min Zs lifted the ground to 5 m.)
+linear_free_surface = "direct"                # MUMPS (a small 2D system on 64 ranks; the iterative solve did not converge here)
+surface_transfer = 0.1                  # the surface Robin coefficient ("Heat transfer coefficient"; default 1)
+diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "Output Accumulation"]
+
+[state]
+variables = ["Temperature", "Zs"]
+scales = { Temperature = 5.0, Zs = 50.0 }
+frozen = ["bedrock"]                     # the flat bed (fixed); no masks
+
+[parameter]
+name = "Tsurf"
+value = 300.0                           # Tsurf (K): the air (and the radiation's surroundings)
+scale = 1.0
+
+[map]
+dt = 50.0
+n_steps = 20
+coupled_iters = 1
+rock_heat_capacity = 1.0                # (no bedrock in this case)
+
+[stability_map]
+dt = 50.0
+n_steps = 20
+rock_heat_capacity = 1.0
+
+[fd]
+eps = 1e-6
+scheme = "forward"
+
+[newton]
+tol = 1e-5
+maxit = 15

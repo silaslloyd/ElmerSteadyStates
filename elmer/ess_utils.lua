@@ -206,7 +206,7 @@ end
 
 -- the viscosity Arrhenius in T (Newtonian): viscosity at ess_arr_Tref, activation energy ess_arr_Q (J/mol); the
 -- temperature capped at ess_arr_Tmax ([case] arrhenius_Tmax, default T0: no softening above it)
-function SpreadViscosity(T, z)
+function SpreadViscosity(T, z, x, y)
   local Tc = T
   if Tc > ess_arr_Tmax then Tc = ess_arr_Tmax end
   if Tc < 150.0 then Tc = 150.0 end
@@ -214,7 +214,9 @@ function SpreadViscosity(T, z)
   -- [case] layer_viscosity_factor (ess_layer_f): a stiff base layer, x f below ess_layer_H above the bed, a smoothed
   -- step of width ess_layer_d in log(viscosity): f^s, s = (1 - tanh((z - zb - H) / d)) / 2
   local f = ess_layer_f or 1.0
-  if z ~= nil and f ~= 1.0 then
+  -- ess_layer_ventsoft ([case] layer_vent_soft): not over the vent (x, y given): the conduit through the layer open
+  local invent = (ess_layer_ventsoft or 0) > 0 and x ~= nil and SpreadProfile(x, y) > 0
+  if z ~= nil and f ~= 1.0 and not invent then
     -- centred at ess_layer_c (default the layer's top ess_layer_H; below it, the drop above the top stays soft)
     local u = (z - (ess_bed_z or 0.0) - (ess_layer_c or ess_layer_H)) / ess_layer_d
     if u > 20.0 then u = 20.0 end

@@ -307,6 +307,7 @@ class ElmerModel(Model):
                                   # a stiff base layer: the viscosity x layer_viscosity_factor below layer_thickness
                                   # above the bed (a smoothed step of width layer_smooth, in log viscosity)
                                   "ess_layer_f": repr(float(c.get("layer_viscosity_factor", 1.0))),
+                                  "ess_layer_ventsoft": "1.0" if c.get("layer_vent_soft", False) else "0.0",
                                   "ess_layer_H": repr(float(c.get("layer_thickness", c.get("spread_thickness", 100.0)))),
                                   "ess_layer_d": repr(float(c.get("layer_smooth", 20.0))),
                                   "ess_layer_c": repr(float(c.get("layer_step_centre", c.get("layer_thickness",
@@ -1284,9 +1285,15 @@ End
             v = '  Viscosity = Variable Temperature\n    Real Lua "SpreadViscosity(tx[0])"\n'
             if text.count(v) != 1:
                 raise ValueError("spread: the template's viscosity lines changed (SpreadViscosity(tx[0]))")
-            text = text.replace(v, "  ! [case] layer_viscosity_factor: x it in the base layer (a step in height)\n"
-                                   '  Viscosity = Variable Temperature, Coordinate 3\n'
-                                   '    Real Lua "SpreadViscosity(tx[0], tx[1])"\n')
+            if c.get("layer_vent_soft", False):
+                # [case] layer_vent_soft: not in the vent's column (the conduit through a stiff ground stays open)
+                text = text.replace(v, "  ! [case] layer_viscosity_factor: x it in the base layer (a step in height), not in the vent\n"
+                                       '  Viscosity = Variable Temperature, Coordinate 3, Coordinate 1, Coordinate 2\n'
+                                       '    Real Lua "SpreadViscosity(tx[0], tx[1], tx[2], tx[3])"\n')
+            else:
+                text = text.replace(v, "  ! [case] layer_viscosity_factor: x it in the base layer (a step in height)\n"
+                                       '  Viscosity = Variable Temperature, Coordinate 3\n'
+                                       '    Real Lua "SpreadViscosity(tx[0], tx[1])"\n')
         return text
 
     def _spread(self, text):
