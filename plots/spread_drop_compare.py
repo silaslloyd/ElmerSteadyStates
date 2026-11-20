@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """The drop test's resolution series (configs/spread_drop_f*.toml): one page comparing the members.
   * the front radius against time (the azimuthal mean thickness H(r) falls below spread_thickness + --dh, default 10
-    m), log-log, with Huppert's (1982) constant-volume similarity slope t^(1/8) for reference;
+    m), log-log;
   * the azimuthal mean thickness H(r) of every member at a chosen time (a slider over every chunk time; at each,
     the members that have reached it);
   * the front radius of each member against the finest one's, at the shared times;
   * the IDEALISED DROP (black dashed, unless --no-model): lubrication theory for a viscous drop on a no-slip flat bed
     (Huppert 1982) with the same drop, the same background layer and the config's viscosity and density (--config,
-    default configs/spread_drop_f0250.toml), solved axisymmetrically to the members' times.
+    default configs/spread_drop_f0250.toml), solved axisymmetrically to the members' times;
+  * HUPPERT'S ANALYTICAL DROP (red dotted): the same volume on a DRY rigid no-slip bed, the similarity solution from a
+    point release at t = 0 (so it differs at early times, while the 20 km drop still remembers its start); in the
+    profiles drawn on top of the layer (h + H0) to share the axes.
 
     python3 plots/spread_drop_compare.py DIR [DIR ...] [--labels 2000,1000,...] [--dh 10] [--dr 100] [--config CFG] [--no-model] [--out FILE.html]
 
@@ -72,6 +75,18 @@ def thin_film(times, H0, A, R, D, rmax=100e3, n=1000):
     return r, {round(t, 6): sol.y[:, k] for k, t in enumerate(sol.t)}
 
 
+XI_N = (2 ** 10 / (3 ** 4 * np.pi ** 3)) ** 0.125      # Huppert (1982): 0.894
+
+
+def huppert(t, V, D):
+    """Huppert's (1982) similarity solution: a volume V of viscous fluid spreading axisymmetrically on a DRY, rigid,
+    no-slip flat bed (lubrication), from a point release at t = 0: R(t) = xi_N (D V^3 t)^(1/8),
+    h(r, t) = xi_N^(2/3) (V / (D t))^(1/4) [3/16 (1 - (r/R)^2)]^(1/3), D = rho g / (3 eta). Returns (R, h(r) function)."""
+    R = XI_N * (D * V ** 3 * t) ** 0.125
+    amp = XI_N ** (2 / 3) * (V / (D * t)) ** 0.25
+    return R, lambda r: np.where(r < R, amp * np.cbrt(3 / 16 * np.clip(1 - (r / R) ** 2, 0, None)), 0.0)
+
+
 def main():
     args = sys.argv[1:]
     labels = arg(args, "--labels", None)
@@ -123,6 +138,7 @@ def main():
         raise SystemExit("no states")
     # the idealised drop (thin film, no slip) with the config's drop, layer and viscosity
     ideal = {}
+    hup = None
     if model:
         try:
             import tomllib
@@ -137,6 +153,8 @@ def main():
         rmax = 0.5 * min(float(c["spread_length_km"]) * 1e3, float(c["width"]))
         alltimes = sorted(set().union(*[set(r_["t"] for r_ in m["rows"]) for m in mem]))
         rr, hs = thin_film(alltimes, H0c, A, R, D, rmax)
+        Vd = np.pi * R ** 2 * A / 3                                    # the drop's volume (above the layer)
+        hup = {"D": D, "V": Vd, "H0": H0c}
         for tk, h in hs.items():
             below = np.where(h - H0 < dh)[0]
             ideal[tk] = dict(rb=rr, H=h, rf=float(rr[below[0]]) if len(below) else np.nan)
@@ -157,6 +175,12 @@ def main():
         fig.add_trace(go.Scatter(x=ti, y=np.array([ideal[k]["rf"] for k in ti]) / 1e3, mode="lines",
                                  name="thin film, no slip", legendgroup="ideal",
                                  line=dict(color="black", dash="dash", width=2)), row=1, col=1)
+    if hup:
+        tl = np.geomspace(max(min(t for m in mem for t in [r_["t"] for r_ in m["rows"]] if t > 0), 1.0),
+                          max(r_["t"] for m in mem for r_ in m["rows"]), 200)
+        fig.add_trace(go.Scatter(x=tl, y=np.array([huppert(t, hup["V"], hup["D"])[0] for t in tl]) / 1e3, mode="lines",
+                                 name="Huppert, dry no-slip bed", legendgroup="huppert",
+                                 line=dict(color="crimson", dash="dot", width=2)), row=1, col=1)
     ref = mem[-1]
     tr = {round(r_["t"], 6): r_["rf"] for r_ in ref["rows"]}
     for m, c in zip(mem, cols):
@@ -164,12 +188,6 @@ def main():
         dv = [r_["rf"] - tr[round(r_["t"], 6)] for r_ in m["rows"] if round(r_["t"], 6) in tr and r_["t"] > 0]
         fig.add_trace(go.Scatter(x=tt, y=dv, mode="lines+markers", name=m["lab"], legendgroup=m["lab"],
                                  showlegend=False, line=dict(color=c), marker=dict(size=4)), row=1, col=2)
-    t_all = [r_["t"] for r_ in ref["rows"] if r_["t"] > 0]
-    if t_all:
-        t1, r1 = t_all[-1], ref["rows"][-1]["rf"] / 1e3
-        tl = np.array([min(t_all), max(t_all)])
-        fig.add_trace(go.Scatter(x=tl, y=r1 * (tl / t1) ** 0.125, mode="lines", name="t^1/8", line=dict(dash="dot",
-                                 color="grey")), row=1, col=1)
     # profiles: a slider over every chunk time any member has; at each, the members that have reached it
     times = sorted(set().union(*[set(round(r_["t"], 6) for r_ in m["rows"]) for m in mem]))
     i0 = len(fig.data)
@@ -181,6 +199,14 @@ def main():
                 continue
             fig.add_trace(go.Scatter(x=r_["rb"] / 1e3, y=r_["H"], mode="lines", name=m["lab"], legendgroup=m["lab"],
                                      showlegend=False, line=dict(color=c, width=1.5), visible=k == len(times) - 1),
+                          row=2, col=1)
+            owner.append(k)
+        if hup and ts > 0:
+            Rh, hf = huppert(ts, hup["V"], hup["D"])
+            rr_ = np.linspace(0, 1.3 * Rh, 400)
+            fig.add_trace(go.Scatter(x=rr_ / 1e3, y=hf(rr_) + hup["H0"], mode="lines", name="Huppert, dry no-slip bed",
+                                     legendgroup="huppert", showlegend=False,
+                                     line=dict(color="crimson", dash="dot", width=2), visible=k == len(times) - 1),
                           row=2, col=1)
             owner.append(k)
         if ts in ideal:
