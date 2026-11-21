@@ -4,17 +4,16 @@
 The observation behind it (the refined sweep): the temperate part (head .. grounding line) keeps the same profile in
 every steady state; only the cold (subtemperate) part upstream of the head changes shape. So:
 
-    temperate, x >= HEAD:   the newest point's surface (absolute x);
-    cold,      x <  HEAD:   every point's surface in s = x / head (0 = divide, 1 = its head), each s extrapolated
-                            in the head position (a polynomial of degree DEG over the points) to HEAD.
+    temperate, x >= HEAD:   the newest point's surface (absolute x): the common temperate curve;
+    cold,      x <  HEAD:   a self-similar dome on it, Zs = Zs_T(HEAD) + a f(x / HEAD): f (f(0) = 1, f(1) = 0) the
+                            newest point's shape, the height a = Zs(divide) - Zs(head) by a power law a ~ head^p
+                            fitted over the last --fit points (default 8; the points' a and p, the shape's drift printed).
 
-The two parts are joined at HEAD: the extrapolated cold surface's jump to the temperate one there is printed and
-taken out over the last --blend-km of the cold part (linearly). Writes FILE.npz (x m, zs m, head_km, xgl_km, deg,
-jump_m) for jobs/sia_start.py --surface, and FILE.html: the points' surfaces, the extrapolations of degree 1, 2, 3
-(the chosen one solid) and the --compare states' surfaces.
+No jump at the head. Writes FILE.npz (x m, zs m, head_km, xgl_km, ...) for jobs/sia_start.py --surface, and FILE.html:
+the points' surfaces, the start and the --compare states' surfaces.
 
-    python3 plots/extrap_surface.py WORK_SWEEP_ROOT [ROOT2 ...] --head-km 894.4 [--deg 2] [--last N] [--blend-km 20]
-                                    [--compare S.npz ...] [--out FILE]
+    python3 plots/extrap_surface.py ROOT [ROOT2 ...] --head-km 894.4 [--fit 8] [--last N] [--compare S.npz ...]
+                                    [--out FILE]
 
 ROOT: a refined sweep's folder (seg_*/sweep.csv, points/state_*.npz), e.g. work/flowline_rect_coarse/sweep_refined.
 """
@@ -49,9 +48,8 @@ def take(args, name, n=1, conv=float, default=None, many=False):
 def main():
     args = sys.argv[1:]
     args, head_t = take(args, "--head-km")
-    args, deg = take(args, "--deg", conv=int, default=2)
+    args, fit = take(args, "--fit", conv=int, default=8)
     args, last = take(args, "--last", conv=int, default=0)
-    args, blend = take(args, "--blend-km", default=20.0)
     args, out = take(args, "--out", conv=str)
     args, comp = take(args, "--compare", conv=str, default=[], many=True)
     if not args or head_t is None:
@@ -83,34 +81,32 @@ def main():
               f"Zs(head) {np.interp(h, xs, zs):7.1f} m")
     heads, cold = np.array(heads), np.array(cold)
     _, _, xgl_n, xs_n, zs_n = prof[-1]
-    hc = heads.mean()
-
-    def extrap(k):
-        k = min(k, len(ds) - 1)
-        c = np.polyfit(heads - hc, cold, k)                  # every s at once (columns of cold)
-        return sum(c[i] * (head_t - hc) ** (k - i) for i in range(k + 1))
-
-    zt = float(np.interp(head_t, xs_n, zs_n))           # the temperate surface at the new head (newest point)
-    res = {}
-    for k in (1, 2, 3):
-        zc = extrap(k)
-        res[k] = (zc, float(zt - zc[-1]))
-    zc, jump = res[deg]
+    # the cold dome: Zs(x) = Zs(head) + a(head) f(x / head), f(0) = 1, f(1) = 0. Zs(head) is the common temperate curve
+    # (the newest point's surface at the new head); the height a by a power law a ~ head^p fitted (log-log) over the
+    # last --fit points; the shape f the newest point's (its drift over the points printed)
+    zh = cold[:, -1]
+    amp = cold[:, 0] - zh
+    f = (cold - zh[:, None]) / amp[:, None]
+    nf = min(fit, len(ds))
+    pw, lc = np.polyfit(np.log(heads[-nf:]), np.log(amp[-nf:]), 1)
+    zt = float(np.interp(head_t, xs_n, zs_n))
+    a_t = float(np.exp(lc) * head_t ** pw)
+    pw_all = np.polyfit(np.log(heads), np.log(amp), 1)[0]
+    zc = zt + a_t * f[-1]
     xc = S * head_t
-    w = np.clip(1.0 - (head_t - xc) / max(blend, 1e-9), 0.0, 1.0)
-    zc = zc + jump * w
     warm = xs_n > head_t
     x = np.r_[xc[:-1], head_t, xs_n[warm]]
     z = np.r_[zc[:-1], zt, zs_n[warm]]
-    print(f"extrapolated from {len(ds)} points (heads {heads.min():.1f} .. {heads.max():.1f} km) to the head at "
-          f"{head_t:g} km ({head_t - heads.max():+.1f} km beyond the last)")
-    for k in (1, 2, 3):
-        zk, jk = res[k]
-        print(f"  degree {k}: Zs(divide) {zk[0]:7.1f} m, Zs(x = {0.5 * head_t:.0f} km) {np.interp(0.5, S, zk):7.1f} m, "
-              f"jump to the temperate surface at the head {jk:+.1f} m" + ("   <- used" if k == deg else ""))
+    print(f"the dome height a = Zs(divide) - Zs(head): {amp[0]:.1f} m (head {heads[0]:.1f} km) .. {amp[-1]:.1f} m "
+          f"(head {heads[-1]:.1f} km); a ~ head^p: p = {pw:.3f} over the last {nf} points ({pw_all:.3f} over all)")
+    print(f"the dome shape f(x / head): max change over all points {np.abs(f[-1] - f[0]).max():.3f}, over the last "
+          f"{nf} {np.abs(f[-1] - f[-nf]).max():.3f} (0 = self-similar)")
+    print(f"at the head {head_t:g} km ({head_t - heads.max():+.1f} km beyond the last point): Zs(head) {zt:.1f} m (the "
+          f"temperate curve), a {a_t:.1f} m -> Zs(divide) {zc[0]:.1f} m, Zs(x = {0.5 * head_t:.0f} km) "
+          f"{np.interp(0.5, S, zc):.1f} m")
     out = out or os.path.join(os.path.dirname(os.path.normpath(args[0])), f"extrap_head{int(round(head_t)):04d}")
-    np.savez(out + ".npz", x=x * 1e3, zs=z, head_km=head_t, xgl_km=xgl_n, deg=deg, jump_m=jump,
-             heads_km=heads, d_km=np.array(ds))
+    np.savez(out + ".npz", x=x * 1e3, zs=z, head_km=head_t, xgl_km=xgl_n, deg=0, jump_m=0.0, power=pw,
+             amp_m=a_t, heads_km=heads, d_km=np.array(ds))
     print(f"-> {out}.npz")
     import plotly.graph_objects as go
     fig = go.Figure()
@@ -120,12 +116,7 @@ def main():
         fig.add_trace(go.Scatter(x=xs[g], y=zs[g], mode="lines", name=f"d {d:g} km (head {h:.0f})",
                                  line=dict(width=1, color=f"rgba(60,90,160,{0.15 + 0.8 * i / max(n - 1, 1):.2f})"),
                                  legendgroup="pts", showlegend=i in (0, n - 1)))
-    for k in (1, 2, 3):
-        zk, jk = res[k]
-        fig.add_trace(go.Scatter(x=xc, y=zk, mode="lines", name=f"cold part, degree {k} (jump {jk:+.0f} m)",
-                                 line=dict(width=2, dash=None if k == deg else "dot"),
-                                 visible=True if k == deg else "legendonly"))
-    fig.add_trace(go.Scatter(x=x, y=z, mode="lines", name=f"the start (degree {deg}, joined)",
+    fig.add_trace(go.Scatter(x=x, y=z, mode="lines", name=f"the start (dome height {a_t:.0f} m, p = {pw:.2f})",
                              line=dict(width=3, color="black")))
     for p in comp:
         if not os.path.exists(p):

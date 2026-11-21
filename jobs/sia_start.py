@@ -210,8 +210,8 @@ def main():
         zs_sia = cz + Z * np.interp(xz / X, xd, bd + hd)
         if ext is not None:
             zs_sia = np.interp(xz, ext["x"], ext["zs"])
-            log(f"surface from {a.surface} (head {head:g} km, cold part extrapolated with degree {int(ext['deg'])}, "
-                f"jump {float(ext['jump_m']):+.1f} m taken out)")
+            log(f"surface from {a.surface} (head {head:g} km, the cold dome extrapolated: height {float(ext['amp_m']):.0f} m, "
+                f"p = {float(ext['power']):.2f})")
         grounded = xz <= xgl + 1.0              # the columns up to the grounding line (the source's, as the mesh's)
         zb_on_zs = np.interp(xz, *column_profile(s, "zb"))
         x = s.x.copy() if x_cold is None else x_cold
