@@ -19,7 +19,8 @@ instead (smoother, much slower in the browser).
 
 --sia [--sia-file F.npz]: a dimensionless SIA steady profile (default plots/data/sia_profile.npz: x, bed, h) drawn over
 every state in three scalings (grounding-line thickness + bed slope; grounding-line position + bed slope; the nominal
-scales), dashed, each a legend entry (click to hide).
+scales; the size match), dashed, each a legend entry (click to hide). Fitted to the last state (the sweep's newest
+point); --sia-first: to the first.
 
 --rock: the bedrock's temperature too (down to the bottom of the 10 zscale rock), not only the ice.
 
@@ -282,7 +283,8 @@ def main():
     args = [a for a in args if a != "--rock"]
     args, sia_file = opt(args, "--sia-file", conv=str)
     sia = "--sia" in args or sia_file is not None
-    args = [a for a in args if a != "--sia"]
+    sia_first = "--sia-first" in args
+    args = [a for a in args if a not in ("--sia", "--sia-first")]
     if sia and sia_file is None:
         sia_file = os.path.join(HERE, "data", "sia_profile.npz")
     if not args:
@@ -333,7 +335,8 @@ def main():
             t.update(visible=(k == 0))
         traces += ftr + lines
         per.append(len(ftr) + len(lines))
-    extra = sia_overlay(go, built[0][1], sia_file) if sia else []
+    # fitted to the LAST state (the sweep's newest point, the shortest patch); --sia-first: to the first
+    extra = sia_overlay(go, built[0 if sia_first else -1][1], sia_file) if sia else []
     nstate = len(traces)
     fig = go.Figure(traces + extra)
     # the axes fixed over all the states (no rescaling when the slider moves)
