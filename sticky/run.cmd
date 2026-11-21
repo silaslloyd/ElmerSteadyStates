@@ -20,7 +20,9 @@ SIF=${SIF:-drop.sif} GRD=${GRD:-box.grd}       # the fine version: SIF=drop_fine
 MESH=$(basename $GRD .grd)
 mkdir -p $R && cp sticky/$SIF sticky/sticky.lua sticky/$GRD $R/ && cd $R
 ElmerGrid 1 2 $GRD -autoclean > grid.log 2>&1
-[ "$N" -gt 1 ] && ElmerGrid 2 2 $MESH -metiskway $N -nooverwrite >> grid.log 2>&1
+# HALO=1: partition with halo elements (needed by Elmer's FCT transport, which reads the matrix entries across the
+# partition interfaces from the halo elements: without them CRS_FCTLowOrder crashes in parallel)
+[ "$N" -gt 1 ] && ElmerGrid 2 2 $MESH -metiskway $N ${HALO:+-halo} -nooverwrite >> grid.log 2>&1
 echo $SIF > ELMERSOLVER_STARTINFO
 echo "$(date +%T) ElmerSolver on $N ranks in $R ($(command -v ElmerSolver))"
 if [ "$N" -gt 1 ]; then mpirun -np $N --bind-to none ElmerSolver $SIF > elmer.log 2>&1 ; else ElmerSolver $SIF > elmer.log 2>&1 ; fi
