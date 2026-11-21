@@ -25,5 +25,5 @@ export ESS_MPIRUN="mpirun -np {n} --bind-to none"
 unset ESS_SLIDING ESS_HEAT_LIMITER ESS_SEA_SPRING_DT ESS_STRAIN_HEAT_POSITIVE ESS_NO_CONVECTION
 echo "$(date +%T) sia start ${FROM:+from $FROM}"
 python3 -u jobs/sia_start.py configs/flowline_rect_coarse.toml ${FROM:+--from-state $FROM} \
-    --heat-dt ${HEAT_DT:-1e6} --heat-steps ${HEAT_STEPS:-2} $([ "${NO_NEWTON:-0}" = 1 ] && echo --no-newton)
+    --heat-dt ${HEAT_DT:-1e4} --heat-steps ${HEAT_STEPS:-30} $([ "${COLD_START:-1}" = 0 ] && echo --no-cold-start) $([ "${NO_NEWTON:-0}" = 1 ] && echo --no-newton)
 echo "$(date +%T) done"

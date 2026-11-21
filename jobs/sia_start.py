@@ -11,9 +11,13 @@ against a converged sweep state SRC (default: the refined sweep's newest point).
        patch head; d = x_gl - head), config <work>/refined/s<head>.toml, mesh <work>/s<head>/ (as jobs/jump_refined.py);
     2. ess setup, ess init, ess transfer --from SRC (the shelf, the bedrock, the masks), jobs/shelf_break.py;
     3. the grounded surface replaced by the SIA's (clipped to Zb + 1 m), the patch for d -> <work>/sia/s<head>/start_sia.npz;
-    4. steady heat on that fixed geometry: ess run --heat-only (Stokes and heat, no free surface), HEAT_STEPS x HEAT_DT
-       yr, the grounding line frozen, no remasking -> <work>/sia/s<head>/start_heat.npz;
-    5. Newton with the contact grounding-line rounds (ess sweep at that one d) -> <work>/sia/s<head>/sweep/.
+       The stretch between the source's patch head and the SIA's (cold now) gets a COLD start temperature: every
+       column there the profile of the source's last cold column (the steady heat is not unique: warm stays warm by
+       its friction heating, cold stays cold; the first try without this kept the old warm region); outputs *_c;
+    4. steady heat on that fixed geometry: ess run --heat-only (Stokes and heat, no free surface), --heat-steps x
+       --heat-dt yr (30 x 1e4: 2 x 1e6 left nodes above melting), the grounding line frozen, no remasking
+       -> <work>/sia/s<head>/start_heat_c.npz;
+    5. Newton with the contact grounding-line rounds (ess sweep at that one d) -> <work>/sia/s<head>/sweep_c/.
 Rerunning resumes (each step's output kept).
 
     python3 jobs/sia_start.py CONFIG [--from-state SRC.npz] [--sia plots/data/sia_profile.npz] [--pad-km 10]
@@ -67,6 +71,37 @@ def bed_profile(s):
     return u, v[k]
 
 
+def cold_columns(s, x_from, x_to, x_ref):
+    """the temperature of every column in (x_from, x_to) (m) set to the column at x_ref's profile: the ice by its relative
+    height zeta = (z - zb) / (zs - zb), the bedrock by its depth below the base (s's own geometry: the node coordinates
+    belong to it). Returns the new x and the number of nodes set."""
+    gx, Xc = s.diag[find_name(s.diag, "coordinate 1")]
+    gz, Zc = s.diag[find_name(s.diag, "coordinate 3")]
+    sl = s.layout.slices()
+    bt = next(b for b in s.layout.blocks if b.name.lower() == "temperature")
+    T = s.x[sl[bt.name]].copy()
+    xn = Xc[np.searchsorted(gx, bt.gids)]
+    zn = Zc[np.searchsorted(gz, bt.gids)]
+    zb = np.interp(xn, *column_profile(s, "zb"))
+    zs = np.interp(xn, *column_profile(s, "zs"))
+    ice = zn >= zb - 0.5
+    zeta = (zn - zb) / np.maximum(zs - zb, 1.0)
+    depth = zb - zn
+    xr = np.round(xn, 0)
+    cols = np.unique(xr)
+    xref = cols[cols <= x_ref].max()
+    ref = xr == xref
+    ri, rr = ref & ice, ref & ~ice
+    oi, orr = np.argsort(zeta[ri]), np.argsort(depth[rr])
+    tgt = (xn > x_from) & (xn < x_to)
+    T[tgt & ice] = np.interp(zeta[tgt & ice], zeta[ri][oi], T[ri][oi])
+    if rr.any():
+        T[tgt & ~ice] = np.interp(depth[tgt & ~ice], depth[rr][orr], T[rr][orr])
+    x = s.x.copy()
+    x[sl[bt.name]] = T
+    return x, int(tgt.sum()), float(xref)
+
+
 def sia_fit(src, path):
     """the temperate fit: (X m, Z m, c m, x_t m (the SIA's transition on the run), the SIA's x, bed, h; the fit's rms)"""
     z = np.load(path)
@@ -96,8 +131,11 @@ def main():
     ap.add_argument("--pad-km", type=float, default=10.0)
     ap.add_argument("--grade-km", type=float, default=10.0)
     ap.add_argument("--fine", type=float, default=250.0)
-    ap.add_argument("--heat-dt", type=float, default=1e6)
-    ap.add_argument("--heat-steps", type=int, default=2)
+    ap.add_argument("--heat-dt", type=float, default=1e4)
+    ap.add_argument("--heat-steps", type=int, default=30)
+    ap.add_argument("--no-cold-start", action="store_true",
+                    help="keep the source's temperature between its patch head and the SIA's (the first try: the old "
+                         "warm region stayed warm, the friction heating feeding it)")
     ap.add_argument("--gl-rounds", type=int, default=6)
     ap.add_argument("--no-newton", action="store_true")
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10")
@@ -141,9 +179,19 @@ def main():
     sdir = os.path.join(work, "sia", tag)
     os.makedirs(sdir, exist_ok=True)
     # 3. the SIA surface on the grounded columns, the patch for d
-    st3 = os.path.join(sdir, "start_sia.npz")
+    sfx = "" if a.no_cold_start else "_c"
+    st3 = os.path.join(sdir, f"start_sia{sfx}.npz")
     if not os.path.exists(st3):
         s = load_state(st2)
+        x_cold = None
+        if not a.no_cold_start:             # the newly cold stretch (the source's head .. the SIA's) started cold
+            d_src = float(src.meta.get("sweep_d", np.nan))
+            if not np.isfinite(d_src):
+                raise SystemExit(f"{srcf}: no meta sweep_d (the source's patch length): give --no-cold-start")
+            h_old = xgl - d_src
+            x_cold, n_c, xref = cold_columns(s, h_old - 5e3, xt, h_old - 10e3)
+            log(f"cold start: {n_c} temperature nodes in {(h_old - 5e3) / 1e3:.1f} .. {xt / 1e3:.1f} km set to the "
+                f"column at {xref / 1e3:.1f} km (the source's last cold one, its head at {h_old / 1e3:.1f} km)")
         gx, Xc = s.diag[find_name(s.diag, "coordinate 1")]
         sl = s.layout.slices()
         bz = next(b for b in s.layout.blocks if b.name.lower() == "zs")
@@ -151,7 +199,7 @@ def main():
         zs_sia = cz + Z * np.interp(xz / X, xd, bd + hd)
         grounded = xz <= xgl + 1.0              # the columns up to the grounding line (the source's, as the mesh's)
         zb_on_zs = np.interp(xz, *column_profile(s, "zb"))
-        x = s.x.copy()
+        x = s.x.copy() if x_cold is None else x_cold
         old = x[sl[bz.name]].copy()
         new = np.where(grounded, np.maximum(zs_sia, zb_on_zs + 1.0), old)
         x[sl[bz.name]] = new
@@ -167,7 +215,7 @@ def main():
         save_state(st3, s.layout, x, s.p, frozen, s.diag, sweep_d=d * 1e3, x_gl=xg, source=srcf,
                    sia_scale_x=X, sia_scale_z=Z, sia_shift=cz)
     # 4. steady heat on the fixed geometry
-    st4 = os.path.join(sdir, "start_heat.npz")
+    st4 = os.path.join(sdir, f"start_heat{sfx}.npz")
     if not os.path.exists(st4):
         env = dict(os.environ, ESS_SEA_SPRING_DT=os.environ.get("ESS_SEA_SPRING_DT", "50"))   # the map's spring
         run([py, "-u", "-m", "ess", "run", cfgf, "--state", st3, "--heat-only", "--dt", f"{a.heat_dt:g}",
@@ -179,7 +227,7 @@ def main():
         return
     # 5. Newton with the contact rounds at that d
     run([py, "-u", "-m", "ess", "sweep", cfgf, "--state", st4, "--d-start-km", f"{d:g}", "--d-end-km", f"{d:g}",
-         "--gl-rounds", str(a.gl_rounds), "--out", os.path.join(sdir, "sweep")])
+         "--gl-rounds", str(a.gl_rounds), "--out", os.path.join(sdir, f"sweep{sfx}")])
     log("done")
 
 
