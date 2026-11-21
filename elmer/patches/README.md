@@ -50,9 +50,12 @@ preconditioner's pressure block
   Block BFBt = Logical True: the LAST block (the pressure) solved by z = K^-1 (C - B A Bt) K^-1 r, K = C - B Bt, in
   Elmer's diagonally scaled system (diag of the velocity block = 1 there: BFBt with D = diag(A) becomes D = I; the
   stabilised form keeps the bubbles' pressure block C in both factors, exact for D = A). Every product with B, Bt, A
-  and C is a part of the monolithic product (BlockMatrixVectorProdMono, correct in parallel); nothing new is
-  assembled. K^-1: a flexible CG on -K, preconditioned by the last block's assembled matrix C solved with the
-  "block NN:" keywords (e.g. one BoomerAMG V-cycle).
+  and C is a part of the monolithic product (BlockMatrixVectorProdMono, correct in parallel).
+  K^-1: a flexible CG on -K, preconditioned by -K = B Bt - C ASSEMBLED once per linear solve from the block matrices
+  (partition-local products: exact in serial, approximate at the partition interfaces in parallel; parallel
+  structures from the block's variable, as BlockSolveInt makes them) and solved with the "block NN:" keywords (one
+  BoomerAMG V-cycle). (The first version preconditioned the K solves by C alone: CG needed ~1700 iterations to 1e-2 on
+  the lava matrices, the K solves stopped at 50 unsolved and the outer GCR stalled at ~0.96.)
        Block BFBt Tolerance = Real (the K solves' relative residual; default 1e-2)
        Block BFBt Max Iterations = Integer (default 50)
        Block BFBt Output = Integer (every n-th CG iteration's residual; default 0: none)

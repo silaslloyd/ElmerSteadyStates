@@ -2,7 +2,7 @@
 # ELMER_PREFIX=/SCRATCH/$USER/elmer/install3). As stokes_block_amg_comp.sif.in (per-component Block Gauss-Seidel
 # u | v | w | p, BoomerAMG HMIS + ext+i per velocity component to 0.01, outer GCR(250) to 1e-6), but the pressure block
 # by S~^-1 = K^-1 (C - B A Bt) K^-1, K = C - B Bt (in Elmer's diagonally scaled system), instead of the 1/mu pressure
-# mass matrix. On Elmer's own matrices (tiny case, exact velocity solves) the outer GCR count: x 1e4 viscosity jump
+# mass matrix (K^-1 by flexible CG, preconditioned by one BoomerAMG V-cycle on -K assembled). On Elmer's own matrices (tiny case, exact velocity solves) the outer GCR count: x 1e4 viscosity jump
 # 270 -> 67, uniform 74 -> 45, no-slip walls 198 -> 78. Block 44 (C, the bubbles' pressure block): one BoomerAMG
 # V-cycle, the preconditioner of BFBt's K solves.
   Linear System Solver = "Block"
@@ -63,6 +63,6 @@
   block 44: Linear System Iterative = Logical True
   block 44: Linear System Use HYPRE = Logical True
   block 44: Linear System Iterative Method = BoomerAMG
-  block 44: Linear System Max Iterations = 1   ! ONE V-cycle: the preconditioner of the K solves inside BFBt
+  block 44: Linear System Max Iterations = 1   ! ONE V-cycle on the assembled -K = B Bt - C: the preconditioner of the K solves inside BFBt
   block 44: Linear System Convergence Tolerance = 1.0e-12
   block 44: Linear System Abort Not Converged = Logical False

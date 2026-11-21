@@ -1,6 +1,15 @@
 --- a/fem/src/BlockSolve.F90
 +++ b/fem/src/BlockSolve.F90
-@@ -3808,6 +3808,10 @@
+@@ -62,6 +62,8 @@
+   TYPE(Solver_t), POINTER, SAVE :: SolverRef
+   TYPE(Variable_t), POINTER :: SolverVar => Null()
+   TYPE(Matrix_t), POINTER :: SolverMatrix => Null(), SaveMatrix
++  ! ESS patch (BFBt): -K = B Bt - C assembled (partition-local products), the preconditioner of the K solves
++  TYPE(Matrix_t), POINTER, SAVE, PRIVATE :: BFBtKmat => Null()
+ 
+ CONTAINS
+ 
+@@ -3808,6 +3810,10 @@
      CHARACTER(:), ALLOCATABLE :: str
      INTEGER(KIND=AddrInt) :: AddrFunc
      EXTERNAL :: AddrFunc
@@ -11,7 +20,7 @@
  
      CALL Info('BlockMatrixPrec','Starting block matrix preconditioning',Level=8)
  
-@@ -3899,6 +3903,29 @@
+@@ -3899,6 +3905,30 @@
  
      BlockSch = ListCheckPrefix( Params,'Schur Operator' )
  
@@ -36,12 +45,13 @@
 +      IF( GotOrder ) THEN
 +        IF( BlockOrder(NoVar) /= NoVar ) CALL Fatal('BlockMatrixPrec','Block BFBt: the pressure (last) block must be solved last')
 +      END IF
++      IF( TotMatrix % NoIters <= 1 .OR. .NOT. ASSOCIATED( BFBtKmat ) ) CALL BFBtBuildK()
 +    END IF
 +
      IF( BlockGS .OR. BlockSch ) THEN
        ALLOCATE( vtmp(n), rtmp(n), xtmp(n),STAT=istat)
        IF ( istat /= 0 ) CALL Fatal('BlockMatrixPrec','Memory allocation error for wrk space!')
-@@ -3921,6 +3948,16 @@
+@@ -3921,6 +3951,16 @@
           u(offset(i)+1:offset(i+1)) = v(offset(i)+1:offset(i+1)); cycle
        end if
  
@@ -58,12 +68,12 @@
        ! We do probably not want to compute the change within each iteration
        CALL ListAddLogical( Params,'Skip Advance Nonlinear iter',.TRUE.)
        CALL ListAddLogical( Params,'Skip Compute Nonlinear Change',.TRUE.)
-@@ -4240,8 +4277,159 @@
+@@ -4240,8 +4280,206 @@
        CALL Info('BlockMatrixPrec',Message,Level=10)
      END IF
  
 +    IF( DoBFBt ) THEN
-+      CALL Info('BlockMatrixPrec','BFBt: '//I2S(BFBtCount)//' CG iterations in the two K solves',Level=6)
++      CALL Info('BlockMatrixPrec','BFBt: '//I2S(BFBtCount)//' CG iterations in the two K solves',Level=5)
 +    END IF
 +
      CALL Info('BlockMatrixPrec','Finished block matrix preconditioning',Level=8)
@@ -138,7 +148,54 @@
 +      IF( isParallel ) d = ParallelReduction( d )
 +    END FUNCTION BFBtDot
 +
-+    ! z = (-C)^-1 q: the last block's assembled matrix C solved for -q with the "block NN:" keywords
++    ! -K = -C + sum_c B_c Bt_c (positive definite; D = I: the scaled system), the products partition-local (exact in serial; at the
++    ! partition interfaces only approximate: it is only the preconditioner of the K solves, whose products are exact)
++    SUBROUTINE BFBtBuildK()
++      TYPE(Matrix_t), POINTER :: Cm, Bc, Btc
++      TYPE(Variable_t), POINTER :: SaveVar
++      INTEGER :: c, ii, jj, kk, j2, np
++      REAL(KIND=dp) :: val
++      IF( ASSOCIATED( BFBtKmat ) ) CALL FreeMatrix( BFBtKmat )
++      Cm => TotMatrix % Submatrix(NoVar,NoVar) % Mat
++      np = Cm % NumberOfRows
++      BFBtKmat => AllocateMatrix()
++      BFBtKmat % FORMAT = MATRIX_LIST
++      CALL List_AddToMatrixElement( BFBtKmat % ListMatrix, np, np, 0.0_dp )
++      DO ii = 1, np
++        DO jj = Cm % Rows(ii), Cm % Rows(ii+1)-1
++          CALL List_AddToMatrixElement( BFBtKmat % ListMatrix, ii, Cm % Cols(jj), -Cm % Values(jj) )
++        END DO
++      END DO
++      DO c = 1, NoVar-1
++        Bc => TotMatrix % Submatrix(NoVar,c) % Mat
++        Btc => TotMatrix % Submatrix(c,NoVar) % Mat
++        IF( .NOT. ASSOCIATED(Bc) .OR. .NOT. ASSOCIATED(Btc) ) CYCLE
++        IF( Bc % NumberOfRows == 0 .OR. Btc % NumberOfRows == 0 ) CYCLE
++        DO ii = 1, Bc % NumberOfRows
++          DO jj = Bc % Rows(ii), Bc % Rows(ii+1)-1
++            kk = Bc % Cols(jj)
++            val = Bc % Values(jj)
++            IF( val == 0.0_dp ) CYCLE
++            IF( kk > Btc % NumberOfRows ) CYCLE
++            DO j2 = Btc % Rows(kk), Btc % Rows(kk+1)-1
++              CALL List_AddToMatrixElement( BFBtKmat % ListMatrix, ii, Btc % Cols(j2), val * Btc % Values(j2) )
++            END DO
++          END DO
++        END DO
++      END DO
++      CALL List_toCRSMatrix( BFBtKmat )
++      IF( isParallel ) THEN
++        ! the parallel structures as BlockSolveInt makes them for the block matrices: from the block's variable
++        SaveVar => Solver % Variable
++        Solver % Variable => TotMatrix % SubVector(NoVar) % Var
++        CALL ParallelInitMatrix( Solver, BFBtKmat )
++        IF( ASSOCIATED( BFBtKmat % ParMatrix ) ) CALL SetMatrixParEnv( BFBtKmat )
++        Solver % Variable => SaveVar
++      END IF
++      CALL Info('BlockMatrixPrec','BFBt: assembled -K = B Bt - C ('//I2S(SIZE(BFBtKmat % Values))//' entries)',Level=6)
++    END SUBROUTINE BFBtBuildK
++
++    ! z = (-K)^-1 q approximately: the assembled -K solved for q with the "block NN:" keywords (one AMG V-cycle)
 +    SUBROUTINE BFBtPrecC( q, z )
 +      REAL(KIND=dp), INTENT(IN) :: q(:)
 +      REAL(KIND=dp), INTENT(OUT) :: z(:)
@@ -146,16 +203,16 @@
 +      TYPE(Variable_t), POINTER :: CVar
 +      INTEGER, POINTER :: CPerm(:)
 +      REAL(KIND=dp), ALLOCATABLE :: bl(:), xl(:)
-+      Cm => TotMatrix % Submatrix(NoVar,NoVar) % Mat
++      Cm => BFBtKmat
 +      CVar => TotMatrix % SubVector(NoVar) % Var
 +      ALLOCATE( bl(Cm % NumberOfRows), xl(Cm % NumberOfRows) )
 +      bl = 0.0_dp
 +      xl = 0.0_dp
 +      IF( isParallel ) THEN
 +        CPerm => TotMatrix % Submatrix(NoVar,NoVar) % ParPerm
-+        bl(CPerm) = -q
++        bl(CPerm) = q
 +      ELSE
-+        bl(1:SIZE(q)) = -q
++        bl(1:SIZE(q)) = q
 +      END IF
 +      CALL ListPushNameSpace('block '//I2S(11*NoVar)//':')
 +      IF( NoNestedScaling ) CALL ListAddLogical( Params,'Linear System Skip Scaling',.TRUE.)
@@ -170,7 +227,7 @@
 +      DEALLOCATE( bl, xl )
 +    END SUBROUTINE BFBtPrecC
 +
-+    ! x = K^-1 r: flexible CG on (-K) x = -r, preconditioned by (-C)^-1
++    ! x = K^-1 r: flexible CG on (-K) x = -r, preconditioned by the assembled K (BFBtPrecC)
 +    SUBROUTINE BFBtKinv( r, x )
 +      REAL(KIND=dp), INTENT(IN) :: r(:)
 +      REAL(KIND=dp), INTENT(OUT) :: x(:)
