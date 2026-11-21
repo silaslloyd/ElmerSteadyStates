@@ -1,0 +1,220 @@
+--- a/fem/src/BlockSolve.F90
++++ b/fem/src/BlockSolve.F90
+@@ -3808,6 +3808,10 @@
+     CHARACTER(:), ALLOCATABLE :: str
+     INTEGER(KIND=AddrInt) :: AddrFunc
+     EXTERNAL :: AddrFunc
++    ! ESS patch (BFBt): the pressure block by the stabilised BFBt approximation of the Schur complement
++    LOGICAL :: DoBFBt
++    INTEGER :: BFBtMaxIter, BFBtOut, BFBtCount, ntot, p0
++    REAL(KIND=dp) :: BFBtTol
+ 
+     CALL Info('BlockMatrixPrec','Starting block matrix preconditioning',Level=8)
+ 
+@@ -3899,6 +3903,29 @@
+ 
+     BlockSch = ListCheckPrefix( Params,'Schur Operator' )
+ 
++    ! ESS patch (BFBt): "Block BFBt = Logical True" -> the LAST block (the pressure) by
++    !   S~^-1 = K^-1 (C - B A Bt) K^-1,   K = C - B Bt
++    ! in Elmer's diagonally scaled system (diag(A) = 1 there, so D = diag(A) = I). Every product with B, Bt, A, C
++    ! is a part of the monolithic product (BlockMatrixVectorProdMono: correct in parallel); K^-1 by a flexible CG on
++    ! -K, preconditioned by the last block's assembled matrix C (the bubbles' pressure block) solved with the
++    ! "block NN:" keywords (e.g. one BoomerAMG V-cycle). Keywords: Block BFBt Tolerance (Real, default 1e-2),
++    ! Block BFBt Max Iterations (Integer, 50), Block BFBt Output (Integer, 0: none; n: every n-th CG iteration).
++    DoBFBt = ListGetLogical( Params,'Block BFBt',Found )
++    IF( DoBFBt ) THEN
++      BFBtTol = ListGetCReal( Params,'Block BFBt Tolerance',Found )
++      IF(.NOT. Found) BFBtTol = 1.0e-2_dp
++      BFBtMaxIter = ListGetInteger( Params,'Block BFBt Max Iterations',Found )
++      IF(.NOT. Found) BFBtMaxIter = 50
++      BFBtOut = ListGetInteger( Params,'Block BFBt Output',Found )
++      ntot = offset(NoVar+1)
++      p0 = offset(NoVar)
++      BFBtCount = 0
++      IF( NoVar < 2 ) CALL Fatal('BlockMatrixPrec','Block BFBt needs at least two blocks (velocity | pressure)')
++      IF( GotOrder ) THEN
++        IF( BlockOrder(NoVar) /= NoVar ) CALL Fatal('BlockMatrixPrec','Block BFBt: the pressure (last) block must be solved last')
++      END IF
++    END IF
++
+     IF( BlockGS .OR. BlockSch ) THEN
+       ALLOCATE( vtmp(n), rtmp(n), xtmp(n),STAT=istat)
+       IF ( istat /= 0 ) CALL Fatal('BlockMatrixPrec','Memory allocation error for wrk space!')
+@@ -3921,6 +3948,16 @@
+          u(offset(i)+1:offset(i+1)) = v(offset(i)+1:offset(i+1)); cycle
+       end if
+ 
++      ! ESS patch (BFBt): the pressure block (the last), on the packed vectors directly
++      IF( DoBFBt .AND. i == NoVar ) THEN
++        IF( BlockGS ) THEN
++          CALL BFBtApply( vtmp(offset(i)+1:offset(i+1)), u(offset(i)+1:offset(i+1)) )
++        ELSE
++          CALL BFBtApply( v(offset(i)+1:offset(i+1)), u(offset(i)+1:offset(i+1)) )
++        END IF
++        CYCLE
++      END IF
++
+       ! We do probably not want to compute the change within each iteration
+       CALL ListAddLogical( Params,'Skip Advance Nonlinear iter',.TRUE.)
+       CALL ListAddLogical( Params,'Skip Compute Nonlinear Change',.TRUE.)
+@@ -4240,8 +4277,159 @@
+       CALL Info('BlockMatrixPrec',Message,Level=10)
+     END IF
+ 
++    IF( DoBFBt ) THEN
++      CALL Info('BlockMatrixPrec','BFBt: '//I2S(BFBtCount)//' CG iterations in the two K solves',Level=6)
++    END IF
++
+     CALL Info('BlockMatrixPrec','Finished block matrix preconditioning',Level=8)
+ 
++  CONTAINS
++
++    ! ESS patch (BFBt) ---------------------------------------------------------------------------------------------
++    ! z = K^-1 (C - B A Bt) K^-1 r on the packed pressure vectors (r, z of size offset(NoVar+1) - offset(NoVar))
++    SUBROUTINE BFBtApply( r, z )
++      REAL(KIND=dp), INTENT(IN) :: r(:)
++      REAL(KIND=dp), INTENT(OUT) :: z(:)
++      REAL(KIND=dp), ALLOCATABLE :: y(:), t(:)
++      ALLOCATE( y(SIZE(r)), t(SIZE(r)) )
++      CALL BFBtKinv( r, y )
++      CALL BFBtMid( y, t )
++      CALL BFBtKinv( t, z )
++      DEALLOCATE( y, t )
++    END SUBROUTINE BFBtApply
++
++    ! The monolithic product s = K_full w on packed vectors of size ntot
++    SUBROUTINE BFBtMono( w, s )
++      REAL(KIND=dp), INTENT(IN) :: w(:)
++      REAL(KIND=dp), INTENT(OUT) :: s(:)
++      INTEGER :: lipar(50)
++      lipar = 0
++      lipar(3) = ntot
++      CALL BlockMatrixVectorProdMono( w, s, lipar )
++    END SUBROUTINE BFBtMono
++
++    ! out = K y = C y - B (Bt y)
++    SUBROUTINE BFBtK( y, out )
++      REAL(KIND=dp), INTENT(IN) :: y(:)
++      REAL(KIND=dp), INTENT(OUT) :: out(:)
++      REAL(KIND=dp), ALLOCATABLE :: w(:), s(:), cy(:)
++      ALLOCATE( w(ntot), s(ntot), cy(SIZE(y)) )
++      w = 0.0_dp
++      w(p0+1:ntot) = y
++      CALL BFBtMono( w, s )
++      cy = s(p0+1:ntot)
++      w = 0.0_dp
++      w(1:p0) = s(1:p0)
++      CALL BFBtMono( w, s )
++      out = cy - s(p0+1:ntot)
++      DEALLOCATE( w, s, cy )
++    END SUBROUTINE BFBtK
++
++    ! out = (C - B A Bt) y
++    SUBROUTINE BFBtMid( y, out )
++      REAL(KIND=dp), INTENT(IN) :: y(:)
++      REAL(KIND=dp), INTENT(OUT) :: out(:)
++      REAL(KIND=dp), ALLOCATABLE :: w(:), s(:), cy(:)
++      ALLOCATE( w(ntot), s(ntot), cy(SIZE(y)) )
++      w = 0.0_dp
++      w(p0+1:ntot) = y
++      CALL BFBtMono( w, s )          ! s = [Bt y ; C y]
++      cy = s(p0+1:ntot)
++      w = 0.0_dp
++      w(1:p0) = s(1:p0)
++      CALL BFBtMono( w, s )          ! s = [A Bt y ; B Bt y]
++      w = 0.0_dp
++      w(1:p0) = s(1:p0)
++      CALL BFBtMono( w, s )          ! s = [A A Bt y ; B A Bt y]
++      out = cy - s(p0+1:ntot)
++      DEALLOCATE( w, s, cy )
++    END SUBROUTINE BFBtMid
++
++    ! The global dot product of packed vectors (each rank holds its own dofs)
++    FUNCTION BFBtDot( a, b ) RESULT( d )
++      REAL(KIND=dp), INTENT(IN) :: a(:), b(:)
++      REAL(KIND=dp) :: d
++      d = SUM( a * b )
++      IF( isParallel ) d = ParallelReduction( d )
++    END FUNCTION BFBtDot
++
++    ! z = (-C)^-1 q: the last block's assembled matrix C solved for -q with the "block NN:" keywords
++    SUBROUTINE BFBtPrecC( q, z )
++      REAL(KIND=dp), INTENT(IN) :: q(:)
++      REAL(KIND=dp), INTENT(OUT) :: z(:)
++      TYPE(Matrix_t), POINTER :: Cm
++      TYPE(Variable_t), POINTER :: CVar
++      INTEGER, POINTER :: CPerm(:)
++      REAL(KIND=dp), ALLOCATABLE :: bl(:), xl(:)
++      Cm => TotMatrix % Submatrix(NoVar,NoVar) % Mat
++      CVar => TotMatrix % SubVector(NoVar) % Var
++      ALLOCATE( bl(Cm % NumberOfRows), xl(Cm % NumberOfRows) )
++      bl = 0.0_dp
++      xl = 0.0_dp
++      IF( isParallel ) THEN
++        CPerm => TotMatrix % Submatrix(NoVar,NoVar) % ParPerm
++        bl(CPerm) = -q
++      ELSE
++        bl(1:SIZE(q)) = -q
++      END IF
++      CALL ListPushNameSpace('block '//I2S(11*NoVar)//':')
++      IF( NoNestedScaling ) CALL ListAddLogical( Params,'Linear System Skip Scaling',.TRUE.)
++      CALL SolveLinearSystem( Cm, bl, xl, CVar % Norm, CVar % DOFs, Solver )
++      IF( NoNestedScaling ) CALL ListAddLogical( Params,'Linear System Skip Scaling',.FALSE.)
++      CALL ListPopNameSpace()
++      IF( isParallel ) THEN
++        z = xl(CPerm)
++      ELSE
++        z = xl(1:SIZE(z))
++      END IF
++      DEALLOCATE( bl, xl )
++    END SUBROUTINE BFBtPrecC
++
++    ! x = K^-1 r: flexible CG on (-K) x = -r, preconditioned by (-C)^-1
++    SUBROUTINE BFBtKinv( r, x )
++      REAL(KIND=dp), INTENT(IN) :: r(:)
++      REAL(KIND=dp), INTENT(OUT) :: x(:)
++      REAL(KIND=dp), ALLOCATABLE :: res(:), zz(:), zold(:), pp(:), qq(:)
++      REAL(KIND=dp) :: rz, rz2, alpha, beta, r0, rn
++      INTEGER :: it, m
++      m = SIZE(r)
++      ALLOCATE( res(m), zz(m), zold(m), pp(m), qq(m) )
++      x = 0.0_dp
++      res = -r
++      r0 = SQRT( BFBtDot( res, res ) )
++      IF( r0 <= TINY(r0) ) THEN
++        DEALLOCATE( res, zz, zold, pp, qq )
++        RETURN
++      END IF
++      CALL BFBtPrecC( res, zz )
++      pp = zz
++      zold = zz
++      rz = BFBtDot( res, zz )
++      DO it = 1, BFBtMaxIter
++        CALL BFBtK( pp, qq )
++        qq = -qq
++        alpha = rz / BFBtDot( pp, qq )
++        x = x + alpha * pp
++        res = res - alpha * qq
++        rn = SQRT( BFBtDot( res, res ) )
++        BFBtCount = BFBtCount + 1
++        IF( BFBtOut > 0 ) THEN
++          IF( MOD(it,BFBtOut) == 0 ) THEN
++            WRITE( Message,'(A,I0,A,ES12.4)') 'BFBt K solve: ', it, ' ', rn / r0
++            CALL Info('BlockMatrixPrec',Message,Level=4)
++          END IF
++        END IF
++        IF( rn <= BFBtTol * r0 ) EXIT
++        CALL BFBtPrecC( res, zz )
++        rz2 = BFBtDot( res, zz - zold )      ! flexible (Polak-Ribiere): the preconditioner may vary
++        beta = rz2 / rz
++        rz = BFBtDot( res, zz )
++        pp = zz + beta * pp
++        zold = zz
++      END DO
++      DEALLOCATE( res, zz, zold, pp, qq )
++    END SUBROUTINE BFBtKinv
++
+   END SUBROUTINE BlockMatrixPrec
+ 
+ 

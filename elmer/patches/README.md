@@ -44,3 +44,19 @@ extruded meshes, for Elmer's own parallel Krylov solvers (GCR, BiCGStab, ... wit
   rotation), so C is exactly P^T A P. Diagnostics for the first 3 applications per solve ("Linear System Column
   Coarse Diagnostics" = n): |P^T (r - A x1)| / |P^T r| (Galerkin consistency, ~1e-12), |r - A x1|/|r|, and the
   sizes of the coarse and local corrections.
+
+04-bfbt.patch (fem/src/BlockSolve.F90): the BFBt approximation of the Stokes Schur complement for the block
+preconditioner's pressure block
+  Block BFBt = Logical True: the LAST block (the pressure) solved by z = K^-1 (C - B A Bt) K^-1 r, K = C - B Bt, in
+  Elmer's diagonally scaled system (diag of the velocity block = 1 there: BFBt with D = diag(A) becomes D = I; the
+  stabilised form keeps the bubbles' pressure block C in both factors, exact for D = A). Every product with B, Bt, A
+  and C is a part of the monolithic product (BlockMatrixVectorProdMono, correct in parallel); nothing new is
+  assembled. K^-1: a flexible CG on -K, preconditioned by the last block's assembled matrix C solved with the
+  "block NN:" keywords (e.g. one BoomerAMG V-cycle).
+       Block BFBt Tolerance = Real (the K solves' relative residual; default 1e-2)
+       Block BFBt Max Iterations = Integer (default 50)
+       Block BFBt Output = Integer (every n-th CG iteration's residual; default 0: none)
+  The pressure block must be solved last (natural Block Order). Without the keyword Elmer behaves as unpatched.
+  Use: elmer/stokes_block_bfbt.sif.in. Measured on Elmer's own matrices (the tiny lava case, exact velocity solves),
+  outer GCR iterations, the 1/mu pressure mass -> BFBt: viscosity jump x 1e4 270 -> 67, uniform 74 -> 45, no-slip
+  walls 198 -> 78.
