@@ -71,7 +71,7 @@
        ! We do probably not want to compute the change within each iteration
        CALL ListAddLogical( Params,'Skip Advance Nonlinear iter',.TRUE.)
        CALL ListAddLogical( Params,'Skip Compute Nonlinear Change',.TRUE.)
-@@ -4240,8 +4283,232 @@
+@@ -4240,8 +4283,241 @@
        CALL Info('BlockMatrixPrec',Message,Level=10)
      END IF
  
@@ -180,6 +180,7 @@
 +      TYPE(Variable_t), POINTER :: SaveVar
 +      INTEGER :: c, ii, jj, kk, j2, np
 +      REAL(KIND=dp) :: val
++      REAL(KIND=dp), ALLOCATABLE, TARGET :: tmpv(:)
 +      IF( ASSOCIATED( BFBtKmat ) ) CALL FreeMatrix( BFBtKmat )
 +      Cm => TotMatrix % Submatrix(NoVar,NoVar) % Mat
 +      np = Cm % NumberOfRows
@@ -214,7 +215,15 @@
 +        SaveVar => Solver % Variable
 +        Solver % Variable => TotMatrix % SubVector(NoVar) % Var
 +        CALL ParallelInitMatrix( Solver, BFBtKmat )
-+        IF( ASSOCIATED( BFBtKmat % ParMatrix ) ) CALL SetMatrixParEnv( BFBtKmat )
++        IF( ASSOCIATED( BFBtKmat % ParMatrix ) ) THEN
++          CALL SetMatrixParEnv( BFBtKmat )
++          ! the split (inside / interface) structures the parallel product needs, as BlockKrylovIter makes them for
++          ! the block matrices (ParallelInitSolve expects full local vectors)
++          ALLOCATE( tmpv(BFBtKmat % NumberOfRows) )
++          tmpv = 0.0_dp
++          CALL ParallelInitSolve( BFBtKmat, tmpv, tmpv, tmpv )
++          DEALLOCATE( tmpv )
++        END IF
 +        Solver % Variable => SaveVar
 +      END IF
 +      CALL Info('BlockMatrixPrec','BFBt: assembled -K = B Bt - C ('//I2S(SIZE(BFBtKmat % Values))//' entries)',Level=6)
