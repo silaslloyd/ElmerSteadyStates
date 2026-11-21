@@ -220,7 +220,9 @@ def sia_overlay(go, lines0, path):
       - "GL fit": z scale from the thickness at the grounding line (the profile's flotation point h rho_i / rho_w = -bed
         matched to the run's grounding-line thickness), x scale from the bed slope (the profile's 0.05 Z/X = the run's);
       - "GL position": x scale from the grounding line's position, z scale from the bed slope;
-      - "nominal": case/parameters.lua's xscale / zscale (340 km, 1069 m).
+      - "nominal": case/parameters.lua's xscale / zscale (340 km, 1069 m);
+      - "size match": x scale from the grounding line's position, z scale from its thickness (the same size as the
+        run's sheet; the bed slope then differs from the run's).
     Each: x from the divide, the bed shifted vertically onto the run's bed (least squares over the grounded run bed)."""
     zz = np.load(path)
     xd, bd, hd = zz["x"], zz["bed"], zz["h"]
@@ -241,10 +243,11 @@ def sia_overlay(go, lines0, path):
     Z = Hgl / float(hd[-1]); fits["GL fit"] = (Z * slope_d / s_run, Z)
     X = xgl * 1e3 / float(xd[-1]); fits["GL position"] = (X, s_run * X / slope_d)
     fits["nominal"] = (Xn, Zn)
+    fits["size match"] = (xgl * 1e3 / float(xd[-1]), Hgl / float(hd[-1]))     # GL position and GL thickness
     print(f"SIA profile: run grounding line {xgl:.1f} km, thickness there {Hgl:.0f} m, bed slope {s_run:.3e}; "
           f"profile flotation at x = {xd[-1]:.4f}, h = {hd[-1]:.4f}")
     out = []
-    for (name, (X, Z)), col in zip(fits.items(), ("#16a085", "#e67e22", "#7f8c8d")):
+    for (name, (X, Z)), col in zip(fits.items(), ("#16a085", "#e67e22", "#7f8c8d", "#c0392b")):
         xk = xd * X / 1e3
         bz = bd * Z
         mm, bm = xr_[m], br_[m]
