@@ -31,6 +31,7 @@
 !  Linear System Row Equilibration = Logical True
 
   block 11: Linear System Iterative = Logical True
+  block 11: Linear System Solver = "iterative"   ! REQUIRED: without it the block falls back to the solver's "Block" -> BlockSolve recursion (IterSolver depth 65, the >250 GB/node OOMs)
   block 11: Linear System Use HYPRE = Logical True
   block 11: Linear System Scaling = Logical False
 !  block 11: Linear System Row Equilibration = Logical True

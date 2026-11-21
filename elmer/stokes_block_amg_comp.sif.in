@@ -24,6 +24,7 @@
   $blocktol = 0.01
 
   block 11: Linear System Iterative = Logical True
+  block 11: Linear System Solver = "iterative"   ! REQUIRED: without it the block falls back to the solver's "Block" -> BlockSolve recursion (IterSolver depth 65, the >250 GB/node OOMs)
   block 11: Linear System Use HYPRE = Logical True
   block 11: Linear System Iterative Method = BoomerAMG
   block 11: Linear System Max Iterations = 100
@@ -31,6 +32,7 @@
   block 11: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
 
   block 22: Linear System Iterative = Logical True
+  block 22: Linear System Solver = "iterative"   ! REQUIRED: without it the block falls back to the solver's "Block" -> BlockSolve recursion (IterSolver depth 65, the >250 GB/node OOMs)
   block 22: Linear System Use HYPRE = Logical True
   block 22: Linear System Iterative Method = BoomerAMG
   block 22: Linear System Max Iterations = 100
@@ -38,6 +40,7 @@
   block 22: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
 
   block 33: Linear System Iterative = Logical True
+  block 33: Linear System Solver = "iterative"   ! REQUIRED: without it the block falls back to the solver's "Block" -> BlockSolve recursion (IterSolver depth 65, the >250 GB/node OOMs)
   block 33: Linear System Use HYPRE = Logical True
   block 33: Linear System Iterative Method = BoomerAMG
   block 33: Linear System Max Iterations = 100
