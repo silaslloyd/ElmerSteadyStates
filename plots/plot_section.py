@@ -19,7 +19,8 @@ instead (smoother, much slower in the browser).
 
 --sia [--sia-file F.npz]: a dimensionless SIA steady profile (default plots/data/sia_profile.npz: x, bed, h) drawn over
 every state in three scalings (grounding-line thickness + bed slope; grounding-line position + bed slope; the nominal
-scales; the size match), dashed, each a legend entry (click to hide). Fitted to the last state (the sweep's newest
+scales; the size match), dashed, each a legend entry (click to hide); with its basal temperature (Tb, dimensionless,
+0 = melting) the cold/temperate transition marked (a diamond on its bed, a line up to its surface). Fitted to the last state (the sweep's newest
 point); --sia-first: to the first.
 
 --rock: the bedrock's temperature too (down to the bottom of the 10 zscale rock), not only the ice.
@@ -230,6 +231,12 @@ def sia_overlay(go, lines0, path):
     fl = hd * RHO_I / RHO_W < -bd
     i = int(np.argmax(fl)) if fl.any() else len(xd) - 1     # the profile's flotation point
     xd, bd, hd = xd[:i + 1], bd[:i + 1], hd[:i + 1]
+    xt = None                                                   # the cold/temperate transition (Tb >= 0 from there on)
+    if "Tb" in zz.files:
+        tb = zz["Tb"][:i + 1]
+        warm = tb >= -1e-9
+        if warm.any() and not warm[0]:
+            xt = float(xd[np.argmax(warm)])
     slope_d = float(np.polyfit(xd, bd, 1)[0])                  # -0.05
     L = {t.name: (np.asarray(t.x, float), np.asarray(t.y, float)) for t in lines0}
     (xs_, zs_), (xb_, zb_), (xr_, br_) = L["Zs (surface)"], L["Zb (ice base)"], L["bed"]
@@ -246,7 +253,8 @@ def sia_overlay(go, lines0, path):
     fits["nominal"] = (Xn, Zn)
     fits["size match"] = (xgl * 1e3 / float(xd[-1]), Hgl / float(hd[-1]))     # GL position and GL thickness
     print(f"SIA profile: run grounding line {xgl:.1f} km, thickness there {Hgl:.0f} m, bed slope {s_run:.3e}; "
-          f"profile flotation at x = {xd[-1]:.4f}, h = {hd[-1]:.4f}")
+          f"profile flotation at x = {xd[-1]:.4f}, h = {hd[-1]:.4f}" +
+          (f"; temperate bed from x = {xt:.4f}" if xt is not None else ""))
     out = []
     for (name, (X, Z)), col in zip(fits.items(), ("#16a085", "#e67e22", "#7f8c8d", "#c0392b")):
         xk = xd * X / 1e3
@@ -255,7 +263,8 @@ def sia_overlay(go, lines0, path):
         ok = (mm >= xk[0]) & (mm <= xk[-1])
         shift = float(np.mean(bm[ok] - np.interp(mm[ok], xk, bz))) if ok.any() else 0.0
         print(f"  {name}: x scale {X / 1e3:.1f} km, z scale {Z:.0f} m (nominal {Xn / 1e3:.1f} km, {Zn:.0f} m); "
-              f"grounding line at {xk[-1]:.1f} km, its thickness {hd[-1] * Z:.0f} m; bed shifted {shift:+.0f} m")
+              f"grounding line at {xk[-1]:.1f} km, its thickness {hd[-1] * Z:.0f} m; bed shifted {shift:+.0f} m" +
+              (f"; temperate from {xt * X / 1e3:.1f} km" if xt is not None else ""))
         lab = f"SIA {name} ({X / 1e3:.0f} km, {Z:.0f} m)"
         out.append(go.Scatter(x=xk, y=bz + shift + hd * Z, mode="lines", name=lab, legendgroup=name,
                               line=dict(color=col, width=2.0, dash="dash"),
@@ -263,6 +272,14 @@ def sia_overlay(go, lines0, path):
         out.append(go.Scatter(x=xk, y=bz + shift, mode="lines", name=f"SIA bed ({name})", legendgroup=name,
                               showlegend=False, line=dict(color=col, width=1.2, dash="dot"),
                               hovertemplate=f"x %{{x:.1f}} km<br>SIA bed ({name}) %{{y:.0f}} m<extra></extra>"))
+        if xt is not None:          # the temperate transition: a marker on the bed and a thin line up to the surface
+            xk_t = xt * X / 1e3
+            zb_t = float(np.interp(xt, xd, bd)) * Z + shift
+            zs_t = zb_t + float(np.interp(xt, xd, hd)) * Z
+            out.append(go.Scatter(x=[xk_t, xk_t], y=[zb_t, zs_t], mode="lines+markers", legendgroup=name,
+                                  showlegend=False, line=dict(color=col, width=1.5),
+                                  marker=dict(symbol=["diamond", "line-ew"], size=[11, 1], color=col),
+                                  hovertemplate=f"SIA ({name}): temperate bed from {xk_t:.1f} km<extra></extra>"))
     return out
 
 
