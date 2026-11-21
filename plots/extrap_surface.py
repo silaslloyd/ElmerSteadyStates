@@ -79,6 +79,8 @@ def main():
     args, minp = take(args, "--min-points", conv=int, default=6)
     args, margin = take(args, "--margin-km", default=5.0)
     args, tbfit = take(args, "--tb-fit-km", default=150.0)
+    tbhist = "--tb-history" in args
+    args = [v for v in args if v != "--tb-history"]
     args, last = take(args, "--last", conv=int, default=0)
     args, out = take(args, "--out", conv=str)
     args, comp = take(args, "--compare", conv=str, default=[], many=True)
@@ -151,6 +153,8 @@ def main():
     xn_t, Tn = tbp[-1]
     TZ = np.array([np.where(xg <= h - margin, np.interp(xg, xu, Tu), np.nan) for (_, h, _, _, _), (xu, Tu) in zip(prof, tbp)])
     te, tr = extrap_hist(TZ, fit, minp, (head_t - heads[-1]) / dh)
+    if not tbhist:                  # default: the newest point's near the divide too (its history is slow, r -> 1: a kink)
+        te[:] = np.nan
     okt = np.isfinite(te)
     mt = int(np.flatnonzero(okt)[-1]) if okt.any() else -1
     xtb = np.r_[xg, head_t, xs_n[warm]]
