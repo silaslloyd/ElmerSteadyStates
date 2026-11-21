@@ -183,7 +183,7 @@ Solver 3
   Filename = File "volume.dat"
   Parallel Reduce = Logical True    ! one file: the sums / max / min over the ranks
   Variable 1 = Lava
-  Operator 1 = volume int
+  Operator 1 = int                  ! the lava volume (m^3)
   Variable 2 = Lava
   Operator 2 = max
   Variable 3 = Lava
