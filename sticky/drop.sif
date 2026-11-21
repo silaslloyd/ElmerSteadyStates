@@ -181,6 +181,7 @@ Solver 3
   Equation = "Lava Volume"
   Procedure = "SaveData" "SaveScalars"
   Filename = File "volume.dat"
+  Parallel Reduce = Logical True    ! one file: the sums / max / min over the ranks
   Variable 1 = Lava
   Operator 1 = volume int
   Variable 2 = Lava
