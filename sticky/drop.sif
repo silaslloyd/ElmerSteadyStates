@@ -166,13 +166,16 @@ Solver 2
   Stabilize = Logical True
   Bubbles = Logical False
   Apply Limiter = Logical True
+  ! Elmer's limiter is SOFT: the nodes out of [0, 1] after a solve are fixed at the limit in the NEXT nonlinear
+  ! iteration, so it needs more than one (with 1 the over- and undershoots grew: 1.21 / -0.30 in 9 steps)
   Linear System Solver = Iterative
   Linear System Iterative Method = BiCGStab
   Linear System Max Iterations = 1000
   Linear System Preconditioning = ILU0
   Linear System Convergence Tolerance = 1.0e-10
   Linear System Abort Not Converged = Logical False
-  Nonlinear System Max Iterations = 1
+  Nonlinear System Max Iterations = 4
+  Nonlinear System Convergence Tolerance = 1.0e-6
   Steady State Convergence Tolerance = 1.0e-6
 End
 

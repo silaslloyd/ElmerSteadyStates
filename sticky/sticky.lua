@@ -14,9 +14,11 @@ function lava0(x, y, z)
   if z <= h then return 1.0 else return 0.0 end
 end
 
--- density: linear in f; viscosity: log-linear (geometric) in f
+-- density and viscosity both LINEAR (arithmetic) in f: the cells the interface crosses act as lava, not as a heavy
+-- nearly inviscid fluid (the geometric viscosity blend gave mu = 100 Pa s at f = 0.5 with rho = 1300 kg/m^3: those cells
+-- slumped at ~m/s and the run went unstable)
 function rho(f) f = clamp01(f); return rho_a + f * (rho_l - rho_a) end
-function mu(f)  f = clamp01(f); return 10.0^( f * math.log10(mu_l) + (1.0 - f) * math.log10(mu_a) ) end
+function mu(f)  f = clamp01(f); return mu_a + f * (mu_l - mu_a) end
 
 gx = g * math.sin(slope)            -- the body force per unit mass, the slope down +x
 gz = -g * math.cos(slope)
