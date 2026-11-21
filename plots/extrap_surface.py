@@ -5,15 +5,18 @@ The observation behind it (the refined sweep): the temperate part (head .. groun
 every steady state; only the cold (subtemperate) part upstream of the head changes shape. So:
 
     temperate, x >= HEAD:   the newest point's surface (absolute x): the common temperate curve;
-    cold,      x <  HEAD:   a self-similar dome on it, Zs = Zs_T(HEAD) + a f(x / HEAD): f (f(0) = 1, f(1) = 0) the
-                            newest point's shape, the height a = Zs(divide) - Zs(head) by a power law a ~ head^p
-                            fitted over the last --fit points (default 8; the points' a and p, the shape's drift printed).
+    cold, every x cold in >= --min-points states (default 6; cold: x <= head - --margin-km 5): its own history Zs(x)
+          over the heads extrapolated: the gains per step geometric (log|gain| linear over the last --fit, default 10,
+          states), summed on to HEAD (as the divide's: its gains shrink by ~0.95 per 12.5 km step). Up to the first x
+          without enough cold states or with gains of mixed sign / not shrinking: x_e;
+    bridge, x_e .. HEAD (never cold yet: no history): a cubic from the extrapolated end (value, slope) to the temperate
+          curve at HEAD (value; the slope of the newest point's cold surface just above its head).
 
-No jump at the head. Writes FILE.npz (x m, zs m, head_km, xgl_km, ...) for jobs/sia_start.py --surface, and FILE.html:
-the points' surfaces, the start and the --compare states' surfaces.
+Writes FILE.npz (x m, zs m, head_km, xgl_km, x_extrap_km) for jobs/sia_start.py --surface, and FILE.html: the points'
+surfaces, the start (the bridge in orange) and the --compare states' surfaces.
 
-    python3 plots/extrap_surface.py ROOT [ROOT2 ...] --head-km 894.4 [--fit 8] [--last N] [--compare S.npz ...]
-                                    [--out FILE]
+    python3 plots/extrap_surface.py ROOT [ROOT2 ...] --head-km 894.4 [--fit 10] [--min-points 6] [--margin-km 5]
+                                    [--last N] [--compare S.npz ...] [--out FILE]
 
 ROOT: a refined sweep's folder (seg_*/sweep.csv, points/state_*.npz), e.g. work/flowline_rect_coarse/sweep_refined.
 """
@@ -48,7 +51,9 @@ def take(args, name, n=1, conv=float, default=None, many=False):
 def main():
     args = sys.argv[1:]
     args, head_t = take(args, "--head-km")
-    args, fit = take(args, "--fit", conv=int, default=8)
+    args, fit = take(args, "--fit", conv=int, default=10)
+    args, minp = take(args, "--min-points", conv=int, default=6)
+    args, margin = take(args, "--margin-km", default=5.0)
     args, last = take(args, "--last", conv=int, default=0)
     args, out = take(args, "--out", conv=str)
     args, comp = take(args, "--compare", conv=str, default=[], many=True)
@@ -65,8 +70,7 @@ def main():
         ds = ds[-last:]
     if len(ds) < 2:
         raise SystemExit(f"{len(ds)} converged points found")
-    S = np.linspace(0.0, 1.0, 801)
-    heads, xgls, cold, prof = [], [], [], []
+    heads, xgls, prof = [], [], []
     for d in ds:
         s = load_state(pts[d])
         xgl = gl_position(s.frozen, s.diag) / 1e3
@@ -75,38 +79,63 @@ def main():
         xs = xs / 1e3
         heads.append(h)
         xgls.append(xgl)
-        cold.append(np.interp(S * h, xs, zs))
         prof.append((d, h, xgl, xs, zs))
         print(f"d {d:7.1f} km  head {h:7.2f} km  grounding line {xgl:8.2f} km  Zs(divide) {zs[0]:7.1f} m  "
               f"Zs(head) {np.interp(h, xs, zs):7.1f} m")
-    heads, cold = np.array(heads), np.array(cold)
+    heads = np.array(heads)
     _, _, xgl_n, xs_n, zs_n = prof[-1]
-    # the cold dome: Zs(x) = Zs(head) + a(head) f(x / head), f(0) = 1, f(1) = 0. Zs(head) is the common temperate curve
-    # (the newest point's surface at the new head); the height a by a power law a ~ head^p fitted (log-log) over the
-    # last --fit points; the shape f the newest point's (its drift over the points printed)
-    zh = cold[:, -1]
-    amp = cold[:, 0] - zh
-    f = (cold - zh[:, None]) / amp[:, None]
-    nf = min(fit, len(ds))
-    pw, lc = np.polyfit(np.log(heads[-nf:]), np.log(amp[-nf:]), 1)
+    # 1. every x cold in >= --min-points states: its own history Zs(x) over the heads (the states with head > x +
+    #    --margin-km), the gains per step fitted as geometric (log|gain| linear in the head over the last --fit),
+    #    summed on to the new head. Stops at the first x without --min-points or with gains of mixed sign / growing.
+    dh = float(np.median(np.diff(heads)))
+    xg = np.arange(0.0, head_t, 2.0)
+    Z = np.array([np.where(xg <= h - margin, np.interp(xg, xs, zs), np.nan) for (_, h, _, xs, zs) in prof])
+    ze, ratio = np.full(len(xg), np.nan), np.full(len(xg), np.nan)
+    for m in range(len(xg)):
+        v = Z[:, m]
+        v = v[np.isfinite(v)][-fit:]
+        if len(v) < minp:
+            break
+        g = np.diff(v)
+        if not (np.all(g > 0) or np.all(g < 0)):
+            break
+        kk = np.arange(len(g))
+        sl, ic = np.polyfit(kk, np.log(np.abs(g)), 1)
+        r = float(np.exp(sl))
+        if r >= 1.0:
+            break
+        g_last = np.sign(g[-1]) * np.exp(ic + sl * kk[-1])
+        n = (head_t - heads[-1]) / dh
+        ze[m] = v[-1] + g_last * r * (1 - r ** n) / (1 - r)
+        ratio[m] = r
+    ok = np.isfinite(ze)
+    if not ok.any():
+        raise SystemExit("no x with a usable history (lower --min-points?)")
+    me = int(np.flatnonzero(ok)[-1])
+    x_e, z_e = xg[me], ze[me]
+    s_e = (ze[me] - ze[me - 3]) / (xg[me] - xg[me - 3]) if me >= 3 else 0.0
+    # 2. the bridge x_e .. head: a cubic (Hermite) from the extrapolated end (its value, slope) to the temperate curve at
+    #    the new head (its value; the slope of the newest point's cold surface just above its head)
     zt = float(np.interp(head_t, xs_n, zs_n))
-    a_t = float(np.exp(lc) * head_t ** pw)
-    pw_all = np.polyfit(np.log(heads), np.log(amp), 1)[0]
-    zc = zt + a_t * f[-1]
-    xc = S * head_t
+    hn = heads[-1]
+    s_t = (np.interp(hn - 1.0, xs_n, zs_n) - np.interp(hn - 6.0, xs_n, zs_n)) / 5.0
+    L = head_t - x_e
+    xb = np.linspace(x_e, head_t, max(int(L / 2.0), 2) + 1)
+    u = (xb - x_e) / L
+    zb_ = ((2 * u ** 3 - 3 * u ** 2 + 1) * z_e + (u ** 3 - 2 * u ** 2 + u) * L * s_e
+           + (-2 * u ** 3 + 3 * u ** 2) * zt + (u ** 3 - u ** 2) * L * s_t)
     warm = xs_n > head_t
-    x = np.r_[xc[:-1], head_t, xs_n[warm]]
-    z = np.r_[zc[:-1], zt, zs_n[warm]]
-    print(f"the dome height a = Zs(divide) - Zs(head): {amp[0]:.1f} m (head {heads[0]:.1f} km) .. {amp[-1]:.1f} m "
-          f"(head {heads[-1]:.1f} km); a ~ head^p: p = {pw:.3f} over the last {nf} points ({pw_all:.3f} over all)")
-    print(f"the dome shape f(x / head): max change over all points {np.abs(f[-1] - f[0]).max():.3f}, over the last "
-          f"{nf} {np.abs(f[-1] - f[-nf]).max():.3f} (0 = self-similar)")
-    print(f"at the head {head_t:g} km ({head_t - heads.max():+.1f} km beyond the last point): Zs(head) {zt:.1f} m (the "
-          f"temperate curve), a {a_t:.1f} m -> Zs(divide) {zc[0]:.1f} m, Zs(x = {0.5 * head_t:.0f} km) "
-          f"{np.interp(0.5, S, zc):.1f} m")
+    x = np.r_[xg[:me + 1], xb[1:], xs_n[warm]]
+    z = np.r_[ze[:me + 1], zb_[1:], zs_n[warm]]
+    print(f"extrapolated pointwise: x = 0 .. {x_e:.0f} km (each from its last <= {fit} cold states, >= {minp}); "
+          f"gain ratios per {dh:g} km step {np.nanmin(ratio):.3f} .. {np.nanmax(ratio):.3f}; to the head at {head_t:g} km "
+          f"({head_t - hn:+.1f} km beyond the last point)")
+    print(f"the bridge {x_e:.0f} .. {head_t:g} km: from {z_e:.1f} m (slope {s_e * 1e3 / 1e3:.3f} m/km) to the temperate "
+          f"curve {zt:.1f} m (slope {s_t:.3f} m/km, the newest point's cold surface above its head)")
+    print("Zs: " + "  ".join(f"{xx:.0f} km {np.interp(xx, x, z):.0f} m" for xx in (0, 100, 200, 300, 400, 500, 600, 700, 800)))
     out = out or os.path.join(os.path.dirname(os.path.normpath(args[0])), f"extrap_head{int(round(head_t)):04d}")
-    np.savez(out + ".npz", x=x * 1e3, zs=z, head_km=head_t, xgl_km=xgl_n, deg=0, jump_m=0.0, power=pw,
-             amp_m=a_t, heads_km=heads, d_km=np.array(ds))
+    np.savez(out + ".npz", x=x * 1e3, zs=z, head_km=head_t, xgl_km=xgl_n, x_extrap_km=x_e, heads_km=heads,
+             d_km=np.array(ds))
     print(f"-> {out}.npz")
     import plotly.graph_objects as go
     fig = go.Figure()
@@ -116,8 +145,9 @@ def main():
         fig.add_trace(go.Scatter(x=xs[g], y=zs[g], mode="lines", name=f"d {d:g} km (head {h:.0f})",
                                  line=dict(width=1, color=f"rgba(60,90,160,{0.15 + 0.8 * i / max(n - 1, 1):.2f})"),
                                  legendgroup="pts", showlegend=i in (0, n - 1)))
-    fig.add_trace(go.Scatter(x=x, y=z, mode="lines", name=f"the start (dome height {a_t:.0f} m, p = {pw:.2f})",
-                             line=dict(width=3, color="black")))
+    fig.add_trace(go.Scatter(x=x, y=z, mode="lines", name="the start", line=dict(width=3, color="black")))
+    fig.add_trace(go.Scatter(x=xb, y=zb_, mode="lines", name=f"(the bridge {x_e:.0f} .. {head_t:g} km)",
+                             line=dict(width=3, color="orange")))
     for p in comp:
         if not os.path.exists(p):
             print(f"--compare {p}: not found, skipped")
