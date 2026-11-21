@@ -764,6 +764,8 @@ End
             "__RESTART_BLOCK__": rb,
             "__POST_BLOCK__": pb,
             "__FRICTION_HEAT__": self._friction_heat_block(),
+            "__BED_T__": ('Variable Coordinate 1\n    Real Lua "ess_tbed(tx[0])"' if "ess_tbed" in self.lua_overrides
+                          else "Real #T0"),
             "__FS_EXEC__": '"Never"' if self.heat_only else ('"Always"' if self.fs_coupled else '"after Timestep"'),
             "__OUTPUT_LEVEL__": str(self.output_level),
             "__MIN_ZS_EXPR__": self.min_zs_expr,

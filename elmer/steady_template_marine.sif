@@ -795,8 +795,9 @@ __GL_SLIDING__
   Partial Vertical MeshUpdate 3 = Real 0.0
 
   ! T = T0 under the shelf and where the frozen cold/temperate mask says temperate,
-  ! frictional heat flux (natural BC) elsewhere (tempbc with ess_marine = 1)
-  Temperature = Real #T0
+  ! frictional heat flux (natural BC) elsewhere (tempbc with ess_marine = 1). The Dirichlet value: T0, or
+  ! with an --lua ess_tbed=function(x) .. override that function of x (jobs/sia_start.py's heat solve)
+  Temperature = __BED_T__
   Temperature Condition = Variable "groundedmask", "ColdTempMask", "Coordinate 1"
     Real Lua "tempbc(tx[0], tx[1], tx[2])"
 

@@ -16,8 +16,10 @@ against a converged sweep state SRC (default: the refined sweep's newest point).
        its friction heating, cold stays cold; the first try without this kept the old warm region); outputs *_c;
     4. steady heat on that fixed geometry: ess run --heat-only (Stokes and heat, no free surface), --heat-steps x
        --heat-dt yr (30 x 1e4: 2 x 1e6 left nodes above melting), the grounding line frozen, no remasking
-       -> <work>/sia/s<head>/start_heat_c.npz;
-    5. Newton with the contact grounding-line rounds (ess sweep at that one d) -> <work>/sia/s<head>/sweep_c/.
+       -> <work>/sia/s<head>/start_heat_cb.npz; by default the whole grounded bed FIXED at the SIA's basal temperature
+       T0 + 5 K Tb(x / X) (--bed temperate with an ess_tbed table: the template's bed Dirichlet value), --no-bed-sia: the
+       model's own bed condition (outputs without the b);
+    5. Newton with the contact grounding-line rounds (ess sweep at that one d) -> <work>/sia/s<head>/sweep_cb/.
 Rerunning resumes (each step's output kept).
 
     python3 jobs/sia_start.py CONFIG [--from-state SRC.npz] [--sia plots/data/sia_profile.npz] [--pad-km 10]
@@ -133,6 +135,9 @@ def main():
     ap.add_argument("--fine", type=float, default=250.0)
     ap.add_argument("--heat-dt", type=float, default=1e4)
     ap.add_argument("--heat-steps", type=int, default=30)
+    ap.add_argument("--no-bed-sia", action="store_true",
+                    help="the heat solve with the model's own bed condition (flux where cold) instead of the whole "
+                         "grounded bed fixed at the SIA's basal temperature T0 + Tscale Tb(x / X)")
     ap.add_argument("--no-cold-start", action="store_true",
                     help="keep the source's temperature between its patch head and the SIA's (the first try: the old "
                          "warm region stayed warm, the friction heating feeding it)")
@@ -179,7 +184,7 @@ def main():
     sdir = os.path.join(work, "sia", tag)
     os.makedirs(sdir, exist_ok=True)
     # 3. the SIA surface on the grounded columns, the patch for d
-    sfx = "" if a.no_cold_start else "_c"
+    sfx = ("" if a.no_cold_start else "_c") + ("" if a.no_bed_sia else "b")
     st3 = os.path.join(sdir, f"start_sia{sfx}.npz")
     if not os.path.exists(st3):
         s = load_state(st2)
@@ -218,8 +223,26 @@ def main():
     st4 = os.path.join(sdir, f"start_heat{sfx}.npz")
     if not os.path.exists(st4):
         env = dict(os.environ, ESS_SEA_SPRING_DT=os.environ.get("ESS_SEA_SPRING_DT", "50"))   # the map's spring
+        extra = []
+        if not a.no_bed_sia:        # the whole bed Dirichlet: T0 + Tscale Tb_SIA(x / X) (T0 beyond the grounding line)
+            z = np.load(a.sia)
+            xs_, tb_ = z["x"], z["Tb"]
+            ok = np.isfinite(tb_) & (xs_ <= xd[-1])
+            xs_, tb_ = xs_[ok], np.minimum(tb_[ok], 0.0)
+            grid = np.arange(0.0, xgl + 1.0, 2000.0)
+            tt = 273.15 + 5.0 * np.interp(grid / X, xs_, tb_)
+            extra = ["--bed", "temperate",
+                     "--lua", "ess_tbed_x={" + ",".join(f"{v:.1f}" for v in grid) + "}",
+                     "--lua", "ess_tbed_t={" + ",".join(f"{v:.5f}" for v in tt) + "}",
+                     "--lua", "ess_tbed=function(x) local X, T = ess_tbed_x, ess_tbed_t; local n = #X; "
+                              "if x <= X[1] then return T[1] end; if x >= X[n] then return T[n] end; "
+                              "local lo, hi = 1, n; while hi - lo > 1 do local m = math.floor((lo + hi) / 2); "
+                              "if X[m] <= x then lo = m else hi = m end end; "
+                              "return T[lo] + (T[hi] - T[lo]) * (x - X[lo]) / (X[hi] - X[lo]) end"]
+            log(f"heat: the grounded bed fixed at the SIA's basal temperature ({tt.min():.2f} .. {tt.max():.2f} K, "
+                f"{len(grid)} points every 2 km), T0 beyond the grounding line")
         run([py, "-u", "-m", "ess", "run", cfgf, "--state", st3, "--heat-only", "--dt", f"{a.heat_dt:g}",
-             "--steps", str(a.heat_steps), "--gl", "frozen", "--no-remask", "--out", st4], env=env)
+             "--steps", str(a.heat_steps), "--gl", "frozen", "--no-remask", "--out", st4] + extra, env=env)
         h = load_state(st4)
         if "sweep_d" not in h.meta:                 # ess sweep's resume needs no meta; keep d for the plots
             save_state(st4, h.layout, h.x, h.p, h.frozen, h.diag, **h.meta, sweep_d=d * 1e3)
