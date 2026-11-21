@@ -1,0 +1,57 @@
+# DIAGNOSTIC twin of stokes_block_amg_comp.sif.in: the same per-component Block Gauss-Seidel (u | v | w | p), but the
+# velocity blocks by IDR(s) + ILU0 instead of Hypre BoomerAMG -- Elmer's own SD_Step_stokes_vec_blockprec settings. If
+# this converges where the Hypre version stalls (outer GCR at 0.9999 for 50+ iterations on spread_amg_small), the fault is
+# in the Hypre path of the block solves; if it stalls too, in the per-component block set-up itself.
+  Linear System Solver = "Block"
+  Block Gauss-Seidel = Logical True
+  Block Matrix Reuse = Logical False
+  Block Scaling = Logical False
+  Block Preconditioner = Logical True
+  Linear System Residual Output = 25
+
+  Outer: Linear System Solver = "Iterative"
+  Outer: Linear System Iterative Method = GCR
+  Outer: Linear System GCR Restart = 250
+  Outer: Linear System Residual Output = 1
+  Outer: Linear System Max Iterations = 500
+  Outer: Linear System Abort Not Converged = False
+  Outer: Linear System Convergence Tolerance = 1e-6
+
+  $blocktol = 0.01
+
+  block 11: Linear System Solver = "iterative"
+  block 11: Linear System Iterative Method = idrs
+  block 11: Linear System Preconditioning = ilu
+  block 11: Linear System Scaling = false
+  block 11: Linear System Max Iterations = 1000
+  block 11: Linear System Convergence Tolerance = $blocktol
+  block 11: Linear System Residual Output = 100
+  block 11: Linear System Abort Not Converged = Logical False
+
+  block 22: Linear System Solver = "iterative"
+  block 22: Linear System Iterative Method = idrs
+  block 22: Linear System Preconditioning = ilu
+  block 22: Linear System Scaling = false
+  block 22: Linear System Max Iterations = 1000
+  block 22: Linear System Convergence Tolerance = $blocktol
+  block 22: Linear System Residual Output = 100
+  block 22: Linear System Abort Not Converged = Logical False
+
+  block 33: Linear System Solver = "iterative"
+  block 33: Linear System Iterative Method = idrs
+  block 33: Linear System Preconditioning = ilu
+  block 33: Linear System Scaling = false
+  block 33: Linear System Max Iterations = 1000
+  block 33: Linear System Convergence Tolerance = $blocktol
+  block 33: Linear System Residual Output = 100
+  block 33: Linear System Abort Not Converged = Logical False
+
+
+  block 44: Linear System Convergence Tolerance = $blocktol
+  block 44: Linear System Solver = "iterative"
+  block 44: Linear System Scaling = false
+  block 44: Linear System Preconditioning = ilu
+  block 44: Linear System Residual Output = 1
+  block 44: Linear System Max Iterations = 500
+  block 44: Linear System Iterative Method = idrs
+  block 44: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
