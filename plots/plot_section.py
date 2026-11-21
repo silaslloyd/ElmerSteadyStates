@@ -20,7 +20,9 @@ instead (smoother, much slower in the browser).
 --sia [--sia-file F.npz]: a dimensionless SIA steady profile (default plots/data/sia_profile.npz: x, bed, h) drawn over
 every state in three scalings (grounding-line thickness + bed slope; grounding-line position + bed slope; the nominal
 scales; the size match), dashed, each a legend entry (click to hide); with its basal temperature (Tb, dimensionless,
-0 = melting) the cold/temperate transition marked (a diamond on its bed, a line up to its surface). Fitted to the last state (the sweep's newest
+0 = melting) the cold/temperate transition marked (a diamond on its bed, a line up to its surface), and a fifth curve, shown
+first (the others hidden until clicked): the "temperate fit", x scale from the grounding line's position, the thickness
+on the run's own bed scaled by least squares on the surface over the profile's temperate range. Fitted to the last state (the sweep's newest
 point); --sia-first: to the first.
 
 --rock: the bedrock's temperature too (down to the bottom of the 10 zscale rock), not only the ice.
@@ -256,6 +258,30 @@ def sia_overlay(go, lines0, path):
           f"profile flotation at x = {xd[-1]:.4f}, h = {hd[-1]:.4f}" +
           (f"; temperate bed from x = {xt:.4f}" if xt is not None else ""))
     out = []
+    # "temperate fit": x scale from the grounding line's position (as the size match), the thickness Z h on the run's
+    # own bed with Z by least squares on the surface over the profile's TEMPERATE range (x_t .. grounding line)
+    if xt is not None:
+        X = xgl * 1e3 / float(xd[-1])
+        xk = xd * X / 1e3
+        mt = xk >= xt * X / 1e3
+        brun = np.interp(xk[mt], xr_, br_)
+        Hrun = np.interp(xk[mt], xs_, zs_) - brun
+        Z = float(np.sum(hd[mt] * Hrun) / np.sum(hd[mt] ** 2))
+        zs_fit = np.interp(xk, xr_, br_) + Z * hd
+        rmsd = float(np.sqrt(np.mean((zs_fit[mt] - np.interp(xk[mt], xs_, zs_)) ** 2)))
+        xk_t = xt * X / 1e3
+        print(f"  temperate fit: x scale {X / 1e3:.1f} km, z scale {Z:.0f} m (thickness on the run's bed, fitted over "
+              f"{xk_t:.1f} .. {xk[-1]:.1f} km: rms surface misfit {rmsd:.1f} m); grounding-line thickness {hd[-1] * Z:.0f} m")
+        col = "#8e44ad"
+        lab = f"SIA temperate fit ({X / 1e3:.0f} km, {Z:.0f} m; rms {rmsd:.0f} m)"
+        out.append(go.Scatter(x=xk, y=zs_fit, mode="lines", name=lab, legendgroup="tfit",
+                              line=dict(color=col, width=2.4, dash="dash"),
+                              hovertemplate="x %{x:.1f} km<br>SIA surface (temperate fit) %{y:.0f} m<extra></extra>"))
+        zb_t = float(np.interp(xk_t, xr_, br_))
+        out.append(go.Scatter(x=[xk_t, xk_t], y=[zb_t, float(np.interp(xk_t, xk, zs_fit))], mode="lines+markers",
+                              legendgroup="tfit", showlegend=False, line=dict(color=col, width=1.5),
+                              marker=dict(symbol=["diamond", "line-ew"], size=[11, 1], color=col),
+                              hovertemplate=f"SIA (temperate fit): temperate bed from {xk_t:.1f} km<extra></extra>"))
     for (name, (X, Z)), col in zip(fits.items(), ("#16a085", "#e67e22", "#7f8c8d", "#c0392b")):
         xk = xd * X / 1e3
         bz = bd * Z
@@ -266,18 +292,19 @@ def sia_overlay(go, lines0, path):
               f"grounding line at {xk[-1]:.1f} km, its thickness {hd[-1] * Z:.0f} m; bed shifted {shift:+.0f} m" +
               (f"; temperate from {xt * X / 1e3:.1f} km" if xt is not None else ""))
         lab = f"SIA {name} ({X / 1e3:.0f} km, {Z:.0f} m)"
-        out.append(go.Scatter(x=xk, y=bz + shift + hd * Z, mode="lines", name=lab, legendgroup=name,
+        vis = "legendonly" if xt is not None else True       # with the temperate fit: the others hidden at first
+        out.append(go.Scatter(x=xk, y=bz + shift + hd * Z, mode="lines", name=lab, legendgroup=name, visible=vis,
                               line=dict(color=col, width=2.0, dash="dash"),
                               hovertemplate=f"x %{{x:.1f}} km<br>SIA surface ({name}) %{{y:.0f}} m<extra></extra>"))
         out.append(go.Scatter(x=xk, y=bz + shift, mode="lines", name=f"SIA bed ({name})", legendgroup=name,
-                              showlegend=False, line=dict(color=col, width=1.2, dash="dot"),
+                              showlegend=False, visible=vis, line=dict(color=col, width=1.2, dash="dot"),
                               hovertemplate=f"x %{{x:.1f}} km<br>SIA bed ({name}) %{{y:.0f}} m<extra></extra>"))
         if xt is not None:          # the temperate transition: a marker on the bed and a thin line up to the surface
             xk_t = xt * X / 1e3
             zb_t = float(np.interp(xt, xd, bd)) * Z + shift
             zs_t = zb_t + float(np.interp(xt, xd, hd)) * Z
             out.append(go.Scatter(x=[xk_t, xk_t], y=[zb_t, zs_t], mode="lines+markers", legendgroup=name,
-                                  showlegend=False, line=dict(color=col, width=1.5),
+                                  showlegend=False, visible=vis, line=dict(color=col, width=1.5),
                                   marker=dict(symbol=["diamond", "line-ew"], size=[11, 1], color=col),
                                   hovertemplate=f"SIA ({name}): temperate bed from {xk_t:.1f} km<extra></extra>"))
     return out
