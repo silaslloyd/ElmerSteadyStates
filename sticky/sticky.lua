@@ -1,6 +1,9 @@
 -- Sticky-air lava test (sticky/drop.sif): material properties from the lava fraction f (0 air, 1 lava), SI units.
 rho_l, rho_a = 2600.0, 1.0          -- kg/m^3
 mu_l,  mu_a  = 1.0e4, 1.0           -- Pa s (air 1e4 x weaker: (mu_a/mu_l) (L/h_air)^3 ~ 1e-4 (2.5/0.7)^3 ~ 5e-3)
+-- solver tests at other contrasts: the environment variable STICKY_MU_L (e.g. sbatch --export=ALL,STICKY_MU_L=1e8,...)
+local mu_env = os and os.getenv and tonumber(os.getenv("STICKY_MU_L"))
+if mu_env then mu_l = mu_env; print("sticky.lua: mu_l = " .. mu_l .. " Pa s (STICKY_MU_L)") end
 g, slope = 9.81, math.rad(10.0)     -- down +x
 xc, yc, R, H = 4.0, 4.0, 2.5, 0.5   -- the drop: h = H (1 - (r/R)^2)^2 for r < R
 
