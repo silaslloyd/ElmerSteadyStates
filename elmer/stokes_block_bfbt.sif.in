@@ -11,7 +11,7 @@
   Block Scaling = Logical False
   Block Preconditioner = Logical True
   Block BFBt = Logical True                 ! ESS patch 04: the pressure block by stabilised BFBt (elmer/patches/04-bfbt.patch)
-  Block BFBt Tolerance = Real 1.0e-2        ! the K = C - B Bt solves (flexible CG, preconditioned by block 44's C)
+  Block BFBt Tolerance = Real 1.0e-2        ! the K = C - B Bt solves (flexible CG, preconditioned by -K assembled, block 44 keywords)
   Block BFBt Max Iterations = Integer 50
   Block BFBt Output = Integer 0
   Linear System Residual Output = 25
