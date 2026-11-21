@@ -59,6 +59,10 @@ Body Force 1
   Flow BodyForce 1 = Variable Lava
     Real Lua "rho(tx[0]) * gx"
   Flow BodyForce 2 = Real 0.0
+  FrontX = Variable Lava, Coordinate 1
+    Real Lua "frontx(tx[0], tx[1])"
+  LavaU = Variable Lava, Velocity 1
+    Real Lua "lavau(tx[0], tx[1])"
   Lava Lower Limit = Real 0.0       ! the limiter of the lava advection (Solver 2)
   Lava Upper Limit = Real 1.0
   Flow BodyForce 3 = Variable Lava
@@ -163,6 +167,9 @@ Solver 2
   ! The interface smears over ~2-3 cells. (Elmer's FCT and ParticleAdvector crashed in parallel; AdvectionReaction DG
   ! crashed setting its initial condition.)
   Variable = Lava
+  Exported Variable 1 = FrontX       ! diagnostics (Body Force 1): x where the lava fraction > 1/2, else 0
+  Exported Variable 2 = LavaU        ! ... the downslope velocity inside the lava, else 0
+  Update Exported Variables = Logical True
   Stabilize = Logical True
   Bubbles = Logical False
   Apply Limiter = Logical True
@@ -193,6 +200,10 @@ Solver 3
   Operator 3 = min
   Variable 4 = Velocity 1
   Operator 4 = max
+  Variable 5 = FrontX
+  Operator 5 = max
+  Variable 6 = LavaU
+  Operator 6 = max
 End
 
 ! the footprint's sides (box.grd: 1 x = 0, 2 x = L, 3 y = 0, 4 y = W), then the extrusion's bed (5) and top (6)

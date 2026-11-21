@@ -22,3 +22,8 @@ function mu(f)  f = clamp01(f); return mu_a + f * (mu_l - mu_a) end
 
 gx = g * math.sin(slope)            -- the body force per unit mass, the slope down +x
 gz = -g * math.cos(slope)
+
+-- diagnostics (exported variables of the lava advection, sticky/drop.sif): the front's x where the lava fraction is
+-- above 1/2, and the downslope velocity inside the lava (0 in the air)
+function frontx(f, x) if f > 0.5 then return x else return 0.0 end end
+function lavau(f, u)  if f > 0.5 then return u else return 0.0 end end
