@@ -131,6 +131,13 @@ def main():
     ap.add_argument("--predictor", choices=["none", "secant"], default="none",
                     help="secant: each Newton from the linear extrapolation of the last two converged points (the "
                          "point before a segment's start carried over onto its mesh)")
+    ap.add_argument("--prev-state", help="with --from-state: the converged point before it (the secant's second "
+                                         "point for the first new point)")
+    ap.add_argument("--out-root", default="sweep_refined",
+                    help="the segments' folder under the work dir (another name: a branch run beside the main sweep)")
+    ap.add_argument("--tag-prefix", default="m",
+                    help="the segments' tag prefix (configs <work>/refined/<tag>.toml, meshes <work>/<tag>/): another "
+                         "prefix keeps a branch's meshes apart from the main sweep's")
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10",
                     help="jobs/shelf_break.py's arguments (as jobs/flowline_coarse_newton.cmd)")
     a = ap.parse_args()
@@ -150,15 +157,16 @@ def main():
         if not (a.from_state and a.d_km is not None):
             raise SystemExit("give --from-sweep DIR, or --from-state STATE.npz with --d-km D")
         d0, src = a.d_km, a.from_state
+        prev = a.prev_state
     os.makedirs(os.path.join(work, "refined"), exist_ok=True)
-    seg_root = os.path.join(work, "sweep_refined")
+    seg_root = os.path.join(work, a.out_root)
     os.makedirs(seg_root, exist_ok=True)
     py = sys.executable
     while d0 > a.d_end_km + 1e-6:
         s = load_state(src)
         xgl = gl_position(s.frozen, s.diag) / 1e3
         h0 = xgl - d0
-        tag = f"m{int(round(h0)):04d}"
+        tag = f"{a.tag_prefix}{int(round(h0)):04d}"
         d1 = max(d0 - a.span_km, a.d_end_km)
         seg = os.path.join(seg_root, f"seg_{tag}")
         got, allc = last_converged(seg)
