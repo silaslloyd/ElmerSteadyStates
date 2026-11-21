@@ -167,7 +167,8 @@ def main():
         xt = float(ext["head_km"]) * 1e3
     head = xt / 1e3
     d = round((xgl / 1e3 - head) * 10) / 10
-    tag = f"{'e' if ext is not None else 's'}{int(round(head)):04d}"     # its own mesh folder: runs side by side
+    ext_tb = ext is not None and "tb" in ext.files
+    tag = f"{('t' if ext_tb else 'e') if ext is not None else 's'}{int(round(head)):04d}"     # its own mesh folder: runs side by side
     log(f"from {os.path.relpath(srcf, ROOT)} (grounding line {xgl / 1e3:.2f} km); SIA temperate fit: x scale "
         f"{X / 1e3:.1f} km, z scale {Z:.0f} m, translated {cz:+.0f} m (rms surface misfit {rms:.1f} m over the "
         f"temperate range); the SIA's transition at {head:.2f} km: d = {d:g} km ({tag})")
@@ -190,7 +191,7 @@ def main():
     sdir = os.path.join(work, "sia", tag)
     os.makedirs(sdir, exist_ok=True)
     # 3. the SIA surface on the grounded columns, the patch for d
-    sfx = ("" if a.no_cold_start else "_c") + ("" if a.no_bed_sia else "b") + ("e" if ext is not None else "")
+    sfx = ("" if a.no_cold_start else "_c") + ("" if a.no_bed_sia else "b") + ("e" if ext is not None else "") + ("t" if ext_tb else "")
     st3 = os.path.join(sdir, f"start_sia{sfx}.npz")
     if not os.path.exists(st3):
         s = load_state(st2)
@@ -240,6 +241,8 @@ def main():
             xs_, tb_ = xs_[ok], np.minimum(tb_[ok], 0.0)
             grid = np.arange(0.0, xgl + 1.0, 2000.0)
             tt = 273.15 + 5.0 * np.interp(grid / X, xs_, tb_)
+            if ext_tb:              # the extrapolated basal temperature (plots/extrap_surface.py) instead of the SIA's
+                tt = 273.15 + np.minimum(np.interp(grid, ext["tb_x"], ext["tb"]), 0.0)
             extra = ["--bed", "temperate",
                      "--lua", "ess_tbed_x={" + ",".join(f"{v:.1f}" for v in grid) + "}",
                      "--lua", "ess_tbed_t={" + ",".join(f"{v:.5f}" for v in tt) + "}",
@@ -248,7 +251,8 @@ def main():
                               "local lo, hi = 1, n; while hi - lo > 1 do local m = math.floor((lo + hi) / 2); "
                               "if X[m] <= x then lo = m else hi = m end end; "
                               "return T[lo] + (T[hi] - T[lo]) * (x - X[lo]) / (X[hi] - X[lo]) end"]
-            log(f"heat: the grounded bed fixed at the SIA's basal temperature ({tt.min():.2f} .. {tt.max():.2f} K, "
+            src_t = "extrapolated" if ext_tb else "SIA's"
+            log(f"heat: the grounded bed fixed at the {src_t} basal temperature ({tt.min():.2f} .. {tt.max():.2f} K, "
                 f"{len(grid)} points every 2 km), T0 beyond the grounding line")
         run([py, "-u", "-m", "ess", "run", cfgf, "--state", st3, "--heat-only", "--dt", f"{a.heat_dt:g}",
              "--steps", str(a.heat_steps), "--gl", "frozen", "--no-remask", "--out", st4] + extra, env=env)

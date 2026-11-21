@@ -32,7 +32,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "jobs"))
 from sweep_refined import converged  # noqa: E402
 from sia_start import column_profile  # noqa: E402
-from ess.spectrum import gl_position  # noqa: E402
+from ess.spectrum import _bed, basal_temperature, gl_position  # noqa: E402
 from ess.statefile import load_state  # noqa: E402
 
 
@@ -46,6 +46,30 @@ def take(args, name, n=1, conv=float, default=None, many=False):
             j += 1
         return args[:k] + args[j:], [conv(v) for v in args[k + 1:j]]
     return args[:k] + args[k + 2:], conv(args[k + 1])
+
+
+def extrap_hist(Z, fit, minp, n):
+    """every column of Z (rows: the states in order of the head, NaN where not cold): its last <= fit values' gains
+    geometric (log|gain| linear), summed on n steps; NaN from the first column without minp values or with gains of
+    mixed sign / not shrinking"""
+    ze, ratio = np.full(Z.shape[1], np.nan), np.full(Z.shape[1], np.nan)
+    for m in range(Z.shape[1]):
+        v = Z[:, m]
+        v = v[np.isfinite(v)][-fit:]
+        if len(v) < minp:
+            break
+        g = np.diff(v)
+        if not (np.all(g > 0) or np.all(g < 0)):
+            break
+        kk = np.arange(len(g))
+        sl, ic = np.polyfit(kk, np.log(np.abs(g)), 1)
+        r = float(np.exp(sl))
+        if r >= 1.0:
+            break
+        g_last = np.sign(g[-1]) * np.exp(ic + sl * kk[-1])
+        ze[m] = v[-1] + g_last * r * (1 - r ** n) / (1 - r)
+        ratio[m] = r
+    return ze, ratio
 
 
 def main():
@@ -70,7 +94,7 @@ def main():
         ds = ds[-last:]
     if len(ds) < 2:
         raise SystemExit(f"{len(ds)} converged points found")
-    heads, xgls, prof = [], [], []
+    heads, xgls, prof, tbp = [], [], [], []
     for d in ds:
         s = load_state(pts[d])
         xgl = gl_position(s.frozen, s.diag) / 1e3
@@ -80,6 +104,11 @@ def main():
         heads.append(h)
         xgls.append(xgl)
         prof.append((d, h, xgl, xs, zs))
+        g, xpos, gr = _bed(s.frozen, s.diag)
+        Tb = basal_temperature(s.layout, s.x, g) - 273.15
+        o = np.argsort(xpos[gr])
+        xu, ku = np.unique(np.round(xpos[gr][o] / 1e3, 3), return_index=True)
+        tbp.append((xu, Tb[gr][o][ku]))
         print(f"d {d:7.1f} km  head {h:7.2f} km  grounding line {xgl:8.2f} km  Zs(divide) {zs[0]:7.1f} m  "
               f"Zs(head) {np.interp(h, xs, zs):7.1f} m")
     heads = np.array(heads)
@@ -90,24 +119,7 @@ def main():
     dh = float(np.median(np.diff(heads)))
     xg = np.arange(0.0, head_t, 2.0)
     Z = np.array([np.where(xg <= h - margin, np.interp(xg, xs, zs), np.nan) for (_, h, _, xs, zs) in prof])
-    ze, ratio = np.full(len(xg), np.nan), np.full(len(xg), np.nan)
-    for m in range(len(xg)):
-        v = Z[:, m]
-        v = v[np.isfinite(v)][-fit:]
-        if len(v) < minp:
-            break
-        g = np.diff(v)
-        if not (np.all(g > 0) or np.all(g < 0)):
-            break
-        kk = np.arange(len(g))
-        sl, ic = np.polyfit(kk, np.log(np.abs(g)), 1)
-        r = float(np.exp(sl))
-        if r >= 1.0:
-            break
-        g_last = np.sign(g[-1]) * np.exp(ic + sl * kk[-1])
-        n = (head_t - heads[-1]) / dh
-        ze[m] = v[-1] + g_last * r * (1 - r ** n) / (1 - r)
-        ratio[m] = r
+    ze, ratio = extrap_hist(Z, fit, minp, (head_t - heads[-1]) / dh)
     ok = np.isfinite(ze)
     if not ok.any():
         raise SystemExit("no x with a usable history (lower --min-points?)")
@@ -133,8 +145,33 @@ def main():
     print(f"the bridge {x_e:.0f} .. {head_t:g} km: from {z_e:.1f} m (slope {s_e * 1e3 / 1e3:.3f} m/km) to the temperate "
           f"curve {zt:.1f} m (slope {s_t:.3f} m/km, the newest point's cold surface above its head)")
     print("Zs: " + "  ".join(f"{xx:.0f} km {np.interp(xx, x, z):.0f} m" for xx in (0, 100, 200, 300, 400, 500, 600, 700, 800)))
+    # the basal temperature (T - 273.15 K, grounded): the same pointwise extrapolation where it has a usable history;
+    # beyond, the newest point's profile by the distance above its head (shifted to the new head), blended over the
+    # bridge from the extrapolated end; melting from the head on
+    xn_t, Tn = tbp[-1]
+    TZ = np.array([np.where(xg <= h - margin, np.interp(xg, xu, Tu), np.nan) for (_, h, _, _, _), (xu, Tu) in zip(prof, tbp)])
+    te, tr = extrap_hist(TZ, fit, minp, (head_t - heads[-1]) / dh)
+    okt = np.isfinite(te)
+    mt = int(np.flatnonzero(okt)[-1]) if okt.any() else -1
+    sh = head_t - hn
+    xtb = np.r_[xg, head_t, xs_n[warm]]
+    tsh = np.interp(xtb - sh, xn_t, Tn)
+    if mt >= 0:
+        x_te = xg[mt]
+        uu = np.clip((xtb - x_te) / (head_t - x_te), 0.0, 1.0)
+        tb = np.where(xtb <= x_te, np.interp(xtb, xg[:mt + 1], te[:mt + 1]),
+                      tsh + (te[mt] - np.interp(x_te - sh, xn_t, Tn)) * (1.0 - uu))
+    else:
+        x_te = 0.0
+        tb = tsh
+    tb = np.where(xtb >= head_t, 0.0, np.minimum(tb, 0.0))
+    print(f"basal temperature: extrapolated pointwise to {x_te:.0f} km" + (f" (gain ratios {np.nanmin(tr):.3f} .. "
+          f"{np.nanmax(tr):.3f})" if mt >= 0 else " (no usable history)") + f", beyond the newest point's profile "
+          f"shifted by {sh:+.1f} km (its head to the new one)")
+    print("T_b - 273.15: " + "  ".join(f"{xx:.0f} km {np.interp(xx, xtb, tb):+.3f}" for xx in
+                                       (0, 100, 200, 300, 400, 500, 600, 700, 800, 850, 880, 890)))
     out = out or os.path.join(os.path.dirname(os.path.normpath(args[0])), f"extrap_head{int(round(head_t)):04d}")
-    np.savez(out + ".npz", x=x * 1e3, zs=z, head_km=head_t, xgl_km=xgl_n, x_extrap_km=x_e, heads_km=heads,
+    np.savez(out + ".npz", x=x * 1e3, zs=z, tb_x=xtb * 1e3, tb=tb, head_km=head_t, xgl_km=xgl_n, x_extrap_km=x_e, heads_km=heads,
              d_km=np.array(ds))
     print(f"-> {out}.npz")
     import plotly.graph_objects as go
@@ -163,6 +200,18 @@ def main():
     fig.update_layout(template="plotly_white", xaxis_title="x (km)", yaxis_title="z (m)",
                       title=f"surface extrapolated to the patch head at {head_t:g} km (cold part from {len(ds)} points)")
     fig.write_html(out + ".html", include_plotlyjs="cdn")
+    ft = go.Figure()
+    for i, ((d, h, _, _, _), (xu, Tu)) in enumerate(zip(prof, tbp)):
+        ft.add_trace(go.Scatter(x=xu, y=Tu, mode="lines", name=f"d {d:g} km (head {h:.0f})", legendgroup="pts",
+                                line=dict(width=1, color=f"rgba(60,90,160,{0.15 + 0.8 * i / max(n - 1, 1):.2f})"),
+                                showlegend=i in (0, n - 1)))
+    ft.add_trace(go.Scatter(x=xtb, y=tb, mode="lines", name="the start's bed (heat solve Dirichlet)",
+                            line=dict(width=3, color="black")))
+    ft.add_vline(x=head_t, line=dict(color="red", dash="dash", width=1))
+    ft.update_layout(template="plotly_white", xaxis_title="x (km)", yaxis_title="T_b - 273.15 (K)",
+                     title=f"basal temperature extrapolated to the patch head at {head_t:g} km")
+    ft.write_html(out + "_tb.html", include_plotlyjs="cdn")
+    print(f"-> {out}_tb.html")
     print(f"-> {out}.html")
 
 
