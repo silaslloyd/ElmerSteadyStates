@@ -1,0 +1,25 @@
+***** ElmerGrid input file: the fine sticky box's footprint (half box x 0..10, y 4..8 m) at 20 cm (BFBt diagnosis) *****
+Version = 210903
+Coordinate System = Cartesian 2D
+Subcell Divisions in 2D = 1 1
+Subcell Limits 1 = 0.0 10.0
+Subcell Limits 2 = 4.0 8.0
+Material Structure in 2D
+  1
+End
+Materials Interval = 1 1
+Boundary Definitions
+! type     out      int
+  3        -1        1        1
+  2        -2        1        1
+  4        -3        1        1
+  1        -4        1        1
+End
+Numbering = Horizontal
+Element Degree = 1
+Element Innernodes = False
+Triangles = True
+Element Ratios 1 = 1
+Element Ratios 2 = 1
+Element Divisions 1 = 50
+Element Divisions 2 = 20
