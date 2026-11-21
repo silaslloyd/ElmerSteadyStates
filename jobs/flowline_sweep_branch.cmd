@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --output=./slurms/flowline_sweep_branch_%j.out
 #SBATCH --job-name=flbranch
-#SBATCH --ntasks=128
+#SBATCH --ntasks=64
 #SBATCH --time=3-00:00:00
 #
 # A BRANCH of the refined marine sweep (jobs/sweep_refined.py), beside the main one (flowline_sweep_refined.cmd), to
 # test speed-ups on the same points: from the converged point FROM_STATE (d = D_KM km; PREV_STATE the point before it,
 # for the secant predictor), segments in work/flowline_rect_coarse/<OUT_ROOT>/ (default sweep_branch) with meshes
-# tagged <TAG_PREFIX> (default b), PREDICTOR (default secant), on all SLURM_NTASKS ranks (default 128: a whole node).
+# tagged <TAG_PREFIX> (default b), PREDICTOR (default secant), on SLURM_NTASKS ranks (default 64: 128 ran each model run ~1.6x slower, 7.2 vs 4.5 min).
 # The Newton fix of adb19f8 (the forcing term capped at eta_max) is in the code.
 #   sbatch jobs/flowline_sweep_branch.cmd
 set -e
