@@ -1,0 +1,115 @@
+# ElmerSteadyStates TEST CASE (branch test/lava-spreading): VISCOSITY-JUMP TEST, spread_amg_small (graded layers) with
+# NO stiff ground (layer_viscosity_factor = 1: 1e4 Pa s everywhere) in its own work dir. Compare the outer GCR
+# iterations per step with spread_amg_small (~180 a step to 1e-6). The original header:
+# ElmerSteadyStates TEST CASE (branch test/lava-spreading): AMG MEMORY DIAGNOSTIC. spread_basalt_roll_thin_amg (Hypre
+# BoomerAMG per velocity component) ran out of memory at its first Stokes solve (>250 GB/node on 2 nodes; the ILU block
+# version 47 GB). The same vertical structure (31 levels, graded to 0.01 at the surface; the 2 cm film) on a small
+# horizontal mesh (20 m x 10 m box, 5 cm at the tip, 0.5/1 m inside/outside) that fits, with Elmer's output level 6 (Hypre
+# print level 1: BoomerAMG's levels, rows and operator complexity after each set-up). Run alongside the same mesh with
+# GCR + ILU8 (ESS_LINEAR_STOKES=iterative) to compare memory. A solver test only: the drop (R = 2 m) at (6, 5) m.
+
+[paths]
+work_dir = "work/amg_small_uni"       # short: Elmer reads at most 128 characters of the mesh path
+case_dir = "{work}/case"
+
+[case]
+geometry = "spread"
+source = "vent"                         # (no source: the vent mode only switches off the surface source's T0 condition)
+parameters = "case/parameters_basalt.lua" # BASALT: 2600 kg/m^3, 1200 J/kg/K, 1.0 W/m/K, 1e4 Pa s at the eruption temperature
+spread_length_km = 0.02                 # 20 m down the slope
+width = 10.0
+spread_res = 0.5                        # m: the starting mesh
+spread_thickness = 1.0                  # m: the cold ground (the background layer)
+margin_dh = 0.03                        # m of lava: the margin at the real tip (just above the film)
+spread_bed = 0.0
+source_rate = 0.0                       # no vent
+source_x_km = 0.006                     # the drop at x = 6 m ...
+source_y_km = 0.005                     # ... y = 5 m
+source_radius_km = 0.001
+drop_height_m = 0.5                     # the drop: 1 m + 0.5 m (1 - (r/R)^2)^2, R = 3 m (jobs/spread_drop.py)
+drop_radius_km = 0.002
+initial_temperature = 1423.15           # everything at the eruption temperature (isothermal anyway)
+bed_insulating = true
+arrhenius_Q = 0.0                       # no temperature dependence: 1e4 Pa s everywhere (the test)
+layer_viscosity_factor = 1.0            # UNIFORM: no stiff ground (the viscosity-jump test), 1e4 Pa s everywhere
+layer_thickness = 1.0
+layer_step_centre = 0.975               # the stiff ground below the film ...
+layer_smooth = 0.003                    # ... +- 3 mm
+precursor_film_m = 0.02                 # 2 cm, resolved: 1 cm elements across, ~5 nodes through
+slope_deg = 10.0                        # down +x
+arrhenius_Tref = 1423.15                # K: the viscosity is `viscosity` (1e4 Pa s) here
+arrhenius_Tmax = 1423.15                # K: no softer than at the eruption temperature
+viscosity_cap = 1.0e4                   # at most 1e4 x (1e8 Pa s): the crust and the cold ground (reached below ~1040 K)
+surface_radiation = true                # the surface: eps sigma (T^4 - Tsurf^4) + h_conv (T - Tsurf)
+surface_emissivity = 0.95
+surface_convection = 10.0               # W m^-2 K^-1
+extrude_levels = 31                     # 30 layers, graded towards BOTH ends (Elmer's element size h(zeta), zeta the
+extrude_density = [[0.0, 0.1], [0.0813, 0.1334], [0.1625, 0.1778], [0.2438, 0.2371], [0.325, 0.3162], [0.4062, 0.4217], [0.4875, 0.5623], [0.5687, 0.7499], [0.65, 1.0], [0.6937, 0.5623], [0.7375, 0.3162], [0.7812, 0.1778], [0.825, 0.1], [0.8688, 0.05623], [0.9125, 0.03162], [0.9563, 0.01778], [1.0, 0.01]]   # graded to 0.01 at the surface: ~3.5 mm top elements on a 1 m column, 5-6 nodes in the top 2 cm
+spread_remesh_fine = 0.05               # m at the tip ...
+                                        # dx^2 / (rho g h^3 / (3 eta)) ~ 0.1 s at h = 0.5 m, ~0.4 s at h = 0.3 m
+spread_remesh_band_km = 0.0005          # ... within 0.5 m of it, graded 0.2 beyond
+spread_remesh_coarse_in = 0.5           # m inside the drop
+spread_remesh_coarse_out = 1.0          # m outside
+gmsh = "gmsh"
+elmergrid = "ElmerGrid"
+
+[model]
+type = "elmer"
+
+[elmer]
+min_thickness = 0.5                     # m: the surface limiter Min Zs = bed + 0.5 (default bed + 5 lifted the 1 m ground to 5 m)
+template = "elmer/spread_template.sif"  # ICE ONLY (no bedrock, no filler): the geothermal flux at the ice base
+mesh_db = "footprint"
+ess_lib = "elmer/SteadyStateIO"
+ess_utils = "elmer/ess_utils.lua"
+n_procs = 0                             # 0: $SLURM_NTASKS
+mpirun = "mpirun -np {n}"
+solver = "ElmerSolver"
+timeout = 21600
+keep_runs = false
+cache = false                           # a transient test: no reuse of runs
+vtu = false
+friction_heat = "flux"                  # zero on a no-slip bed
+strain_heat = false
+# iterative, as the ice-stream runs (ElmerStreams): P1 + bubbles, GCR(250) + ILU8 to 1e-8, no abort when not converged;
+# heat BiCGStabL + ILU; the free surface direct (small 2D system)
+stokes_element = "Bubbles"
+linear_stokes = "block"
+stokes_block_file = "elmer/stokes_block_amg_comp.sif.in"   # per-component BoomerAMG
+output_level = 6                        # Hypre print level 1: the AMG hierarchy statistics
+stokes_preconditioner = "ILU8"            # ILU8: ILU2 did not converge (GCR stalled at a relative residual ~0.95 after 5000 iterations, 250 m run)
+stokes_iterative_tol = 1.0e-6                # (1e-8: ~1800 GCR iterations a step with the crust)
+stokes_abort_not_converged = false
+linear_heat = "iterative"               # BiCGStabL + ILU1 (run with ESS_HEAT_TOL=1e-8); MUMPS took ~4 s of a ~4 s step on 101 ranks. (The first iterative failure was in the run where Min Zs lifted the ground to 5 m.)
+linear_free_surface = "direct"                # MUMPS (a small 2D system on 64 ranks; the iterative solve did not converge here)
+surface_transfer = 0.1                  # the surface Robin coefficient ("Heat transfer coefficient"; default 1)
+diagnostics = ["Velocity 1", "Velocity 2", "Velocity 3", "Output Accumulation"]
+
+[state]
+variables = ["Temperature", "Zs"]
+scales = { Temperature = 5.0, Zs = 50.0 }
+frozen = ["bedrock"]                     # the flat bed (fixed); no masks
+
+[parameter]
+name = "Tsurf"
+value = 300.0                           # Tsurf (K): the air (and the radiation's surroundings)
+scale = 1.0
+
+[map]
+dt = 50.0
+n_steps = 20
+coupled_iters = 1
+rock_heat_capacity = 1.0                # (no bedrock in this case)
+
+[stability_map]
+dt = 50.0
+n_steps = 20
+rock_heat_capacity = 1.0
+
+[fd]
+eps = 1e-6
+scheme = "forward"
+
+[newton]
+tol = 1e-5
+maxit = 15
