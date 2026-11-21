@@ -71,7 +71,7 @@
        ! We do probably not want to compute the change within each iteration
        CALL ListAddLogical( Params,'Skip Advance Nonlinear iter',.TRUE.)
        CALL ListAddLogical( Params,'Skip Compute Nonlinear Change',.TRUE.)
-@@ -4240,8 +4283,227 @@
+@@ -4240,8 +4283,232 @@
        CALL Info('BlockMatrixPrec',Message,Level=10)
      END IF
  
@@ -148,15 +148,20 @@
 +      REAL(KIND=dp), INTENT(IN) :: x(:)
 +      REAL(KIND=dp), INTENT(OUT) :: y(:)
 +      REAL(KIND=dp), ALLOCATABLE, TARGET :: xc(:), yc(:)
-+      ALLOCATE( xc(SIZE(x)), yc(SIZE(y)) )
-+      xc = x
++      INTEGER :: m
++      ! buffers of the matrix's local size (as BlockMatrixVectorProd's MaxSize): the parallel product takes and
++      ! returns the packed (owned) values in their leading entries but works on the full local length
++      m = MAX( BFBtKmat % NumberOfRows, SIZE(x), SIZE(y) )
++      ALLOCATE( xc(m), yc(m) )
++      xc = 0.0_dp
++      xc(1:SIZE(x)) = x
 +      yc = 0.0_dp
 +      IF( isParallel ) THEN
 +        CALL ParallelMatrixVector( BFBtKmat, xc, yc )
 +      ELSE
 +        CALL CRS_MatrixVectorMultiply( BFBtKmat, xc, yc )
 +      END IF
-+      y = yc
++      y = yc(1:SIZE(y))
 +      DEALLOCATE( xc, yc )
 +    END SUBROUTINE BFBtKasm
 +
