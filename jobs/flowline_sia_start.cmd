@@ -8,6 +8,7 @@
 # "temperate fit" against the refined sweep's newest point (or FROM=state.npz), a refined mesh around the SIA's
 # cold/temperate transition (the patch head), the state transferred, the grounded surface set to the SIA's, steady heat
 # on that geometry (ess run --heat-only, HEAT_STEPS x HEAT_DT yr), then Newton with the contact grounding-line rounds.
+# SURFACE=FILE.npz (plots/extrap_surface.py): the extrapolated surface instead of the SIA's (mesh e<head>, outputs *_cbe).
 # Output work/flowline_rect_coarse/sia/s<head>/ (start_sia.npz, start_heat.npz, sweep/). NO_NEWTON=1: stop after the
 # heat solve. Resubmitting resumes.
 #   sbatch jobs/flowline_sia_start.cmd
@@ -25,5 +26,5 @@ export ESS_MPIRUN="mpirun -np {n} --bind-to none"
 unset ESS_SLIDING ESS_HEAT_LIMITER ESS_SEA_SPRING_DT ESS_STRAIN_HEAT_POSITIVE ESS_NO_CONVECTION
 echo "$(date +%T) sia start ${FROM:+from $FROM}"
 python3 -u jobs/sia_start.py configs/flowline_rect_coarse.toml ${FROM:+--from-state $FROM} \
-    --heat-dt ${HEAT_DT:-1e4} --heat-steps ${HEAT_STEPS:-30} $([ "${COLD_START:-1}" = 0 ] && echo --no-cold-start) $([ "${BED_SIA:-1}" = 0 ] && echo --no-bed-sia) $([ "${NO_NEWTON:-0}" = 1 ] && echo --no-newton)
+    --heat-dt ${HEAT_DT:-1e4} --heat-steps ${HEAT_STEPS:-30} $([ "${COLD_START:-1}" = 0 ] && echo --no-cold-start) $([ "${BED_SIA:-1}" = 0 ] && echo --no-bed-sia) $([ "${NO_NEWTON:-0}" = 1 ] && echo --no-newton) ${SURFACE:+--surface $SURFACE}
 echo "$(date +%T) done"

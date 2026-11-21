@@ -20,6 +20,8 @@ against a converged sweep state SRC (default: the refined sweep's newest point).
        T0 + 5 K Tb(x / X) (--bed temperate with an ess_tbed table: the template's bed Dirichlet value), --no-bed-sia: the
        model's own bed condition (outputs without the b);
     5. Newton with the contact grounding-line rounds (ess sweep at that one d) -> <work>/sia/s<head>/sweep_cb/.
+--surface FILE.npz (plots/extrap_surface.py): the grounded surface from FILE (the cold part extrapolated from the sweep's
+points, the temperate part the newest point's) instead of the SIA's, the head from it; outputs *_cbe.
 Rerunning resumes (each step's output kept).
 
     python3 jobs/sia_start.py CONFIG [--from-state SRC.npz] [--sia plots/data/sia_profile.npz] [--pad-km 10]
@@ -143,6 +145,7 @@ def main():
                          "warm region stayed warm, the friction heating feeding it)")
     ap.add_argument("--gl-rounds", type=int, default=6)
     ap.add_argument("--no-newton", action="store_true")
+    ap.add_argument("--surface", help="the grounded surface from plots/extrap_surface.py's FILE.npz (x, zs, head_km: the cold part extrapolated from the sweep's points, the temperate part the newest point's) instead of the SIA's; the patch head from it; outputs *e")
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10")
     a = ap.parse_args()
     cfg = load_config(a.config)
@@ -159,9 +162,12 @@ def main():
         srcf = min(pts)[1]                      # the smallest d: the newest point
     src = load_state(srcf)
     X, Z, cz, xt, (xd, bd, hd), rms, xgl = sia_fit(src, a.sia)
+    ext = np.load(a.surface) if a.surface else None
+    if ext is not None:
+        xt = float(ext["head_km"]) * 1e3
     head = xt / 1e3
     d = round((xgl / 1e3 - head) * 10) / 10
-    tag = f"s{int(round(head)):04d}"
+    tag = f"{'e' if ext is not None else 's'}{int(round(head)):04d}"     # its own mesh folder: runs side by side
     log(f"from {os.path.relpath(srcf, ROOT)} (grounding line {xgl / 1e3:.2f} km); SIA temperate fit: x scale "
         f"{X / 1e3:.1f} km, z scale {Z:.0f} m, translated {cz:+.0f} m (rms surface misfit {rms:.1f} m over the "
         f"temperate range); the SIA's transition at {head:.2f} km: d = {d:g} km ({tag})")
@@ -184,7 +190,7 @@ def main():
     sdir = os.path.join(work, "sia", tag)
     os.makedirs(sdir, exist_ok=True)
     # 3. the SIA surface on the grounded columns, the patch for d
-    sfx = ("" if a.no_cold_start else "_c") + ("" if a.no_bed_sia else "b")
+    sfx = ("" if a.no_cold_start else "_c") + ("" if a.no_bed_sia else "b") + ("e" if ext is not None else "")
     st3 = os.path.join(sdir, f"start_sia{sfx}.npz")
     if not os.path.exists(st3):
         s = load_state(st2)
@@ -202,6 +208,10 @@ def main():
         bz = next(b for b in s.layout.blocks if b.name.lower() == "zs")
         xz = Xc[np.searchsorted(gx, bz.gids)]
         zs_sia = cz + Z * np.interp(xz / X, xd, bd + hd)
+        if ext is not None:
+            zs_sia = np.interp(xz, ext["x"], ext["zs"])
+            log(f"surface from {a.surface} (head {head:g} km, cold part extrapolated with degree {int(ext['deg'])}, "
+                f"jump {float(ext['jump_m']):+.1f} m taken out)")
         grounded = xz <= xgl + 1.0              # the columns up to the grounding line (the source's, as the mesh's)
         zb_on_zs = np.interp(xz, *column_profile(s, "zb"))
         x = s.x.copy() if x_cold is None else x_cold
