@@ -1,0 +1,25 @@
+***** ElmerGrid input file: the sticky-air box's footprint (16 m x 8 m), extruded by ElmerSolver *****
+Version = 210903
+Coordinate System = Cartesian 2D
+Subcell Divisions in 2D = 1 1
+Subcell Limits 1 = 0.0 16.0
+Subcell Limits 2 = 0.0 8.0
+Material Structure in 2D
+  1
+End
+Materials Interval = 1 1
+Boundary Definitions
+! type     out      int
+  3        -1        1        1
+  2        -2        1        1
+  4        -3        1        1
+  1        -4        1        1
+End
+Numbering = Horizontal
+Element Degree = 1
+Element Innernodes = False
+Triangles = True
+Element Ratios 1 = 1
+Element Ratios 2 = 1
+Element Divisions 1 = 80
+Element Divisions 2 = 40
