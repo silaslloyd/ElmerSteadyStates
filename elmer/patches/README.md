@@ -65,3 +65,18 @@ preconditioner's pressure block
   Use: elmer/stokes_block_bfbt.sif.in. Measured on Elmer's own matrices (the tiny lava case, exact velocity solves),
   outer GCR iterations, the 1/mu pressure mass -> BFBt: viscosity jump x 1e4 270 -> 67, uniform 74 -> 45, no-slip
   walls 198 -> 78.
+
+05-bfbt-hypre-k.patch (fem/src/BlockSolve.F90 after 04, fem/src/SolveHypre.c after 01): BFBt's K exact in parallel
+  Block BFBt Hypre K = Logical True: -K = sum_c B_c Bt_c - C formed in HYPRE from the globally assembled blocks, and
+  the K solves by Hypre's PCG (Block BFBt Tolerance / Max Iterations) with one BoomerAMG V-cycle as preconditioner
+  (the "block NN:" BoomerAMG keywords of the pressure block: Relax Type (default 6, symmetric: PCG), Coarsen Type
+  (10), Interpolation Type (6), Agg Num Levels, P Max Elmts, Max Levels, Num Sweeps, Strong Threshold (0.25)).
+  Why: Elmer's local block matrices are unassembled at the partition interfaces (the rows of shared dofs hold partial
+  sums; SolveHypre1 adds all local rows and Hypre sums them), and patch 04's partition-local products
+  sum_r B_r Bt_r miss the cross terms B_r Bt_s there: K wrong next to every interface. Measured (the coarse sticky
+  case, one step, outer GCR to 1e-6): 1 rank 45; assembled K 8 ranks 74, 64 ranks 84; matrix-free K 64 ranks 62.
+  Here each block goes to a Hypre IJ matrix with Elmer's continuous global numbering (ContinuousNumbering, as
+  SolveHypre), the products by hypre_ParCSRMatMat / hypre_ParCSRMatrixAdd (Hypre's internal API: _hypre_parcsr_mv.h),
+  built once per linear solve. The packed (owned) pressure vectors are Hypre's local vectors (order checked; a Fatal
+  error otherwise). The log: "BFBt: -K = B Bt - C in Hypre (n entries) ..." at Level 5; with Block BFBt Output > 0
+  every K solve's PCG iterations and residual. Without the keyword patch 04 behaves as before.

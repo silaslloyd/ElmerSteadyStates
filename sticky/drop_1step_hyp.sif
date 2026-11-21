@@ -1,0 +1,245 @@
+! HYPRE-K TEST (patch 05, ELMER_PREFIX=/SCRATCH/$USER/elmer/install4): as drop_1step_asm.sif with Block BFBt Hypre K. The outer gcr count
+! should now be the same on 1 rank and on many (serial: 45 on the coarse case).
+! BFBt PARALLEL TEST: drop.sif for ONE timestep, the K-solve CG residuals printed (Block BFBt Output 10). Run on 1, 8 and
+! 64 ranks: the outer gcr count should not grow with the ranks. Suspect: the assembled K = C - B Bt is built from each
+! rank's LOCAL B, but Elmer's parallel matrices are unassembled at the partition interfaces (the local rows of shared
+! nodes are partial sums), and sum_r B_r Bt_r is not (sum_r B_r)(sum_r Bt_r): K is wrong next to every interface.
+! STICKY-AIR LAVA, STEP 1 (branch test/lava-spreading): an isothermal lava drop on a 10 degree slope in a box of
+! "sticky air", on a FIXED mesh: no free-surface solver, no mesh motion, no precursor film. The lava is a fraction field
+! Lava (1 lava, 0 air) carried by the flow (AdvectionDiffusion, SUPG, limited to [0, 1]);
+! density and viscosity from it (sticky.lua). Stokes on the whole box with the BFBt block preconditioner (Elmer patch
+! 04: ELMER_PREFIX=/SCRATCH/$USER/elmer/install3). SI units: m, s, kg, Pa.
+!   box 16 m (x, down the slope) x 8 m x 1.2 m; the footprint 0.2 m triangles (box.grd), 30 even layers (4 cm)
+!   lava 2600 kg/m^3, 1e4 Pa s; air 1 kg/m^3, 1 Pa s; the drop 0.5 m x R 2.5 m at (4, 4) m
+!   walls free slip; bed no slip; the top open (no traction: air leaves / enters there)
+! Run: sticky/run.cmd. Expected: the drop runs down the slope at ~ rho g sin(10) h^2 / (3 mu) ~ 4 cm/s at first.
+
+Header
+  Mesh DB "." "box"
+End
+
+!---LUA BEGIN
+! assert(loadfile('sticky.lua'))()
+!---LUA END
+
+Simulation
+  Max Output Level = 4
+  Coordinate System = Cartesian 3D
+  Simulation Type = Transient
+  Timestepping Method = BDF
+  BDF Order = 1
+  Timestep Sizes = Real 0.1
+  Timestep Intervals = Integer 1
+  Output Intervals = Integer 20
+  Steady State Max Iterations = Integer 1
+  Extruded Mesh Levels = Integer 31
+  Extruded Min Coordinate = Real 0.0
+  Extruded Max Coordinate = Real 1.2
+  Post File = "drop.vtu"
+End
+
+Constants
+  Gravity(4) = Real 0.0 0.0 -1.0 9.81
+End
+
+Body 1
+  Name = "box"
+  Equation = 1
+  Material = 1
+  Initial Condition = 1
+  Body Force = 1
+End
+
+Initial Condition 1
+  Lava = Variable Coordinate 1, Coordinate 2, Coordinate 3
+    Real Lua "lava0(tx[0], tx[1], tx[2])"
+  Velocity 1 = Real 0.0
+  Velocity 2 = Real 0.0
+  Velocity 3 = Real 0.0
+  Pressure = Real 0.0
+End
+
+Body Force 1
+  ! gravity as a force per unit VOLUME, rho(f) g, rotated for the slope (down +x): IncompressibleNS takes the
+  ! Density as constant (per material), so the material's Density is 1 and the lava fraction enters here
+  Flow BodyForce 1 = Variable Lava
+    Real Lua "rho(tx[0]) * gx"
+  Flow BodyForce 2 = Real 0.0
+  FrontX = Variable Lava, Coordinate 1
+    Real Lua "frontx(tx[0], tx[1])"
+  LavaU = Variable Lava, Velocity 1
+    Real Lua "lavau(tx[0], tx[1])"
+  Lava Lower Limit = Real 0.0       ! the limiter of the lava advection (Solver 2)
+  Lava Upper Limit = Real 1.0
+  Flow BodyForce 3 = Variable Lava
+    Real Lua "rho(tx[0]) * gz"
+End
+
+Material 1
+  Name = "lava and air"
+  Density = Real 1.0              ! (constant: IncompressibleNS; the buoyancy rho(f) g is the body force)
+  Viscosity = Variable Lava
+    Real Lua "mu(tx[0])"
+  Viscosity At IP = Logical True
+  Lava Diffusivity = Real 0.0
+End
+
+Equation 1
+  Name = "flow and transport"
+  Active Solvers(3) = 1 2 3
+  Convection = Computed
+End
+
+Solver 1
+  Equation = "Stokes-Vec"
+  Procedure = "IncompressibleNSVec" "IncompressibleNSSolver"
+  Div-Curl Discretization = Logical False
+  Stokes Flow = Logical True
+  Flow Model = Stokes
+  Stabilization Method = String "Bubbles"
+  Element = "p:1 -tri b:1 -quad b:1 -prism b:4 -brick b:4"
+  Optimize Bandwidth = Logical True
+  ! the viscosity depends on the lava fraction (from the start of the step): linear in the velocity
+  Nonlinear System Min Iterations = 1
+  Nonlinear System Max Iterations = 1
+  Nonlinear System Convergence Tolerance = 1.0e-8
+  Steady State Convergence Tolerance = Real 1.0e-8
+  ! the block preconditioner with the BFBt pressure block (elmer/stokes_block_bfbt_agg.sif.in)
+  Linear System Solver = "Block"
+  Block Gauss-Seidel = Logical True
+  Block Matrix Reuse = Logical False
+  Block Scaling = Logical False
+  Block Preconditioner = Logical True
+  Block BFBt = Logical True                 ! ESS patch 04: the pressure block by stabilised BFBt (elmer/patches/04-bfbt.patch)
+  Block BFBt Tolerance = Real 1.0e-2        ! the K = C - B Bt solves (flexible CG, preconditioned by -K assembled, block 44 keywords)
+  Block BFBt Max Iterations = Integer 50
+  Block BFBt Output = Integer 10
+  Block BFBt Hypre K = Logical True          ! ESS patch 05: -K formed in Hypre from the assembled blocks (exact in parallel), PCG + AMG
+  Linear System Residual Output = 25
+  Outer: Linear System Solver = "Iterative"
+  Outer: Linear System Iterative Method = GCR
+  Outer: Linear System GCR Restart = 250
+  Outer: Linear System Residual Output = 1
+  Outer: Linear System Max Iterations = 500
+  Outer: Linear System Abort Not Converged = False
+  Outer: Linear System Convergence Tolerance = 1e-6
+  $blocktol = 0.01
+  block 11: Linear System Iterative = Logical True
+  block 11: Linear System Solver = "iterative"   ! REQUIRED: without it the block falls back to the solver's "Block" -> BlockSolve recursion (IterSolver depth 65, the >250 GB/node OOMs)
+  block 11: Linear System Use HYPRE = Logical True
+  block 11: Linear System Iterative Method = BoomerAMG
+  block 11: Linear System Max Iterations = 100
+  block 11: Linear System Convergence Tolerance = $blocktol
+  block 11: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
+  block 22: Linear System Iterative = Logical True
+  block 22: Linear System Solver = "iterative"   ! REQUIRED: without it the block falls back to the solver's "Block" -> BlockSolve recursion (IterSolver depth 65, the >250 GB/node OOMs)
+  block 22: Linear System Use HYPRE = Logical True
+  block 22: Linear System Iterative Method = BoomerAMG
+  block 22: Linear System Max Iterations = 100
+  block 22: Linear System Convergence Tolerance = $blocktol
+  block 22: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
+  block 33: Linear System Iterative = Logical True
+  block 33: Linear System Solver = "iterative"   ! REQUIRED: without it the block falls back to the solver's "Block" -> BlockSolve recursion (IterSolver depth 65, the >250 GB/node OOMs)
+  block 33: Linear System Use HYPRE = Logical True
+  block 33: Linear System Iterative Method = BoomerAMG
+  block 33: Linear System Max Iterations = 100
+  block 33: Linear System Convergence Tolerance = $blocktol
+  block 33: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
+  BoomerAMG Relax Type = Integer 3
+  BoomerAMG Coarsen Type = Integer 10        ! HMIS (was 0 = CLJP: OOM, 269 GB/node at the first solve, job 32075)
+  BoomerAMG Num Sweeps = Integer 1
+  BoomerAMG Max Levels = Integer 25
+  BoomerAMG Interpolation Type = Integer 6   ! ext+i (was 0 = classical); Hypre's default truncation (4/row) applies
+  BoomerAMG Smooth Type = Integer 6
+  BoomerAMG Cycle Type = Integer 1
+  BoomerAMG Strong Threshold = Real 0.5
+  block 44: Linear System Solver = "iterative"
+  block 44: Linear System Iterative = Logical True
+  block 44: Linear System Use HYPRE = Logical True
+  block 44: Linear System Iterative Method = BoomerAMG
+  block 44: Linear System Max Iterations = 1   ! ONE V-cycle on the assembled -K = B Bt - C: the preconditioner of the K solves inside BFBt
+  block 44: Linear System Convergence Tolerance = 1.0e-12
+  block 44: Linear System Abort Not Converged = Logical False
+  block 44: BoomerAMG Relax Type = Integer 6        ! symmetric hybrid Gauss-Seidel: the K solves are CG (type 3 is not symmetric)
+  block 44: BoomerAMG Strong Threshold = Real 0.25  ! K = B Bt - C: a wide (2-ring) stencil
+  block 44: BoomerAMG Agg Num Levels = Integer 1     ! aggressive coarsening on the first level (patch 01): a lighter K hierarchy
+  block 44: BoomerAMG P Max Elmts = Integer 4        ! interpolation entries per row (patch 01)
+End
+
+Solver 2
+  Equation = "Lava Advection"
+  Procedure = "AdvectionDiffusion" "AdvectionDiffusionSolver"
+  ! nodal advection (SUPG-stabilised), bounded to [0, 1] by Elmer's limiter (Body Force: Lava Lower / Upper Limit).
+  ! The interface smears over ~2-3 cells. (Elmer's FCT and ParticleAdvector crashed in parallel; AdvectionReaction DG
+  ! crashed setting its initial condition.)
+  Variable = Lava
+  Exported Variable 1 = FrontX       ! diagnostics (Body Force 1): x where the lava fraction > 1/2, else 0
+  Exported Variable 2 = LavaU        ! ... the downslope velocity inside the lava, else 0
+  Update Exported Variables = Logical True
+  Stabilize = Logical True
+  Bubbles = Logical False
+  Apply Limiter = Logical True
+  ! Elmer's limiter is SOFT: the nodes out of [0, 1] after a solve are fixed at the limit in the NEXT nonlinear
+  ! iteration, so it needs more than one (with 1 the over- and undershoots grew: 1.21 / -0.30 in 9 steps)
+  Linear System Solver = Iterative
+  Linear System Iterative Method = BiCGStab
+  Linear System Max Iterations = 1000
+  Linear System Preconditioning = ILU0
+  Linear System Convergence Tolerance = 1.0e-10
+  Linear System Abort Not Converged = Logical False
+  Nonlinear System Max Iterations = 4
+  Nonlinear System Convergence Tolerance = 1.0e-6
+  Steady State Convergence Tolerance = 1.0e-6
+End
+
+Solver 3
+  Exec Solver = After Timestep
+  Equation = "Lava Volume"
+  Procedure = "SaveData" "SaveScalars"
+  Filename = File "volume.dat"
+  Parallel Reduce = Logical True    ! one file: the sums / max / min over the ranks
+  Variable 1 = Lava
+  Operator 1 = int                  ! the lava volume (m^3)
+  Variable 2 = Lava
+  Operator 2 = max
+  Variable 3 = Lava
+  Operator 3 = min
+  Variable 4 = Velocity 1
+  Operator 4 = max
+  Variable 5 = FrontX
+  Operator 5 = max
+  Variable 6 = LavaU
+  Operator 6 = max
+End
+
+! the footprint's sides (box.grd: 1 x = 0, 2 x = L, 3 y = 0, 4 y = W), then the extrusion's bed (5) and top (6)
+Boundary Condition 1
+  Name = "wall x0"
+  Target Boundaries(1) = 1
+  Velocity 1 = Real 0.0
+End
+Boundary Condition 2
+  Name = "wall xL"
+  Target Boundaries(1) = 2
+  Velocity 1 = Real 0.0
+End
+Boundary Condition 3
+  Name = "wall y0"
+  Target Boundaries(1) = 3
+  Velocity 2 = Real 0.0
+End
+Boundary Condition 4
+  Name = "wall yW"
+  Target Boundaries(1) = 4
+  Velocity 2 = Real 0.0
+End
+Boundary Condition 5
+  Name = "bed"
+  Velocity 1 = Real 0.0
+  Velocity 2 = Real 0.0
+  Velocity 3 = Real 0.0
+End
+Boundary Condition 6
+  Name = "top (open)"
+  Lava = Real 0.0                   ! air where it flows in
+End

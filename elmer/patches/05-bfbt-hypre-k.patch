@@ -1,0 +1,393 @@
+diff --git a/fem/src/BlockSolve.F90 b/fem/src/BlockSolve.F90
+index 78d12ac..73a408e 100644
+--- a/fem/src/BlockSolve.F90
++++ b/fem/src/BlockSolve.F90
+@@ -31,6 +31,7 @@
+ MODULE BlockSolve
+ 
+  USE SParIterGlobals, ONLY : ParEnv, SetMatrixParEnv
++ USE SParIterSolve, ONLY : ContinuousNumbering     ! ESS patch 05 (BFBt, Hypre K): the global dof numbers for Hypre
+  USE SParIterComm, ONLY: SParNorm, SParDotProd
+  USE ParallelUtils, ONLY : ParallelReduction, ParallelAllReduceAnd, &
+      ParallelInitMatrix, ParallelBarrier, ParallelActive, &
+@@ -64,6 +65,31 @@ MODULE BlockSolve
+   TYPE(Matrix_t), POINTER :: SolverMatrix => Null(), SaveMatrix
+   ! ESS patch (BFBt): -K = B Bt - C assembled (partition-local products), the preconditioner of the K solves
+   TYPE(Matrix_t), POINTER, SAVE, PRIVATE :: BFBtKmat => Null()
++  ! ESS patch 05 (BFBt, Hypre K): -K = sum_c B_c Bt_c - C formed in Hypre from the globally assembled blocks (exact in
++  ! parallel), the K solves by Hypre's PCG + one BoomerAMG V-cycle (SolveHypre.c, ess_bfbt_*)
++  LOGICAL, SAVE, PRIVATE :: BFBtHypreBuilt = .FALSE.
++  INTERFACE
++    SUBROUTINE EssBFBtBegin( fcomm, plo, pup ) BIND(C,name="ess_bfbt_begin")
++      USE, INTRINSIC :: iso_c_binding
++      INTEGER(KIND=c_int) :: fcomm, plo, pup
++    END SUBROUTINE EssBFBtBegin
++    SUBROUTINE EssBFBtAddProd( np, brows, bcols, bvals, gp, nv, nvt, btrows, btcols, btvals, gv, vlo, vup ) &
++        BIND(C,name="ess_bfbt_addprod")
++      USE, INTRINSIC :: iso_c_binding
++      INTEGER(KIND=c_int) :: np, brows(*), bcols(*), gp(*), nv, nvt, btrows(*), btcols(*), gv(*), vlo, vup
++      REAL(KIND=c_double) :: bvals(*), btvals(*)
++    END SUBROUTINE EssBFBtAddProd
++    SUBROUTINE EssBFBtFinish( np, crows, ccols, cvals, gp, ipar, dpar, nnz ) BIND(C,name="ess_bfbt_finish")
++      USE, INTRINSIC :: iso_c_binding
++      INTEGER(KIND=c_int) :: np, crows(*), ccols(*), gp(*), ipar(*)
++      REAL(KIND=c_double) :: cvals(*), dpar(*), nnz
++    END SUBROUTINE EssBFBtFinish
++    SUBROUTINE EssBFBtSolve( n, b, x, its, res ) BIND(C,name="ess_bfbt_solve")
++      USE, INTRINSIC :: iso_c_binding
++      INTEGER(KIND=c_int) :: n, its
++      REAL(KIND=c_double) :: b(*), x(*), res
++    END SUBROUTINE EssBFBtSolve
++  END INTERFACE
+ 
+ CONTAINS
+ 
+@@ -3811,7 +3837,7 @@ CONTAINS
+     INTEGER(KIND=AddrInt) :: AddrFunc
+     EXTERNAL :: AddrFunc
+     ! ESS patch (BFBt): the pressure block by the stabilised BFBt approximation of the Schur complement
+-    LOGICAL :: DoBFBt, BFBtAsmK
++    LOGICAL :: DoBFBt, BFBtAsmK, BFBtHypre
+     INTEGER :: BFBtMaxIter, BFBtOut, BFBtCount, ntot, p0
+     REAL(KIND=dp) :: BFBtTol
+ 
+@@ -3922,6 +3948,9 @@ CONTAINS
+       ! the K solves' CG products with the assembled -K (one pressure-sized product instead of two monolithic ones;
+       ! exact in serial, approximate at the partition interfaces in parallel) instead of the exact matrix-free K
+       BFBtAsmK = ListGetLogical( Params,'Block BFBt Assembled K',Found )
++      ! ESS patch 05: "Block BFBt Hypre K = Logical True": K formed and solved in Hypre (exact in parallel); the
++      ! BoomerAMG keywords of the last block ("block NN: BoomerAMG ..."), Block BFBt Tolerance / Max Iterations for the PCG
++      BFBtHypre = ListGetLogical( Params,'Block BFBt Hypre K',Found )
+       ntot = offset(NoVar+1)
+       p0 = offset(NoVar)
+       BFBtCount = 0
+@@ -3929,7 +3958,11 @@ CONTAINS
+       IF( GotOrder ) THEN
+         IF( BlockOrder(NoVar) /= NoVar ) CALL Fatal('BlockMatrixPrec','Block BFBt: the pressure (last) block must be solved last')
+       END IF
+-      IF( TotMatrix % NoIters <= 1 .OR. .NOT. ASSOCIATED( BFBtKmat ) ) CALL BFBtBuildK()
++      IF( BFBtHypre ) THEN
++        IF( TotMatrix % NoIters <= 1 .OR. .NOT. BFBtHypreBuilt ) CALL BFBtBuildKHypre()
++      ELSE
++        IF( TotMatrix % NoIters <= 1 .OR. .NOT. ASSOCIATED( BFBtKmat ) ) CALL BFBtBuildK()
++      END IF
+     END IF
+ 
+     IF( BlockGS .OR. BlockSch ) THEN
+@@ -4477,6 +4510,10 @@ CONTAINS
+       REAL(KIND=dp) :: rz, rz2, alpha, beta, r0, rn
+       INTEGER :: it, m
+       m = SIZE(r)
++      IF( BFBtHypre ) THEN
++        CALL BFBtKinvHypre( r, x )
++        RETURN
++      END IF
+       ALLOCATE( res(m), zz(m), zold(m), pp(m), qq(m) )
+       x = 0.0_dp
+       res = -r
+@@ -4518,6 +4555,119 @@ CONTAINS
+       DEALLOCATE( res, zz, zold, pp, qq )
+     END SUBROUTINE BFBtKinv
+ 
++    ! ESS patch 05 ---------------------------------------------------------------------------------------------------
++    ! x = K^-1 r = (-K)^-1 (-r) by Hypre's PCG on the Hypre -K (BFBtBuildKHypre); r, x: the owned (packed) pressure dofs
++    SUBROUTINE BFBtKinvHypre( r, x )
++      REAL(KIND=dp), INTENT(IN) :: r(:)
++      REAL(KIND=dp), INTENT(OUT) :: x(:)
++      REAL(KIND=dp), ALLOCATABLE :: b(:)
++      REAL(KIND=dp) :: res
++      INTEGER :: m, its
++      m = SIZE(r)
++      ALLOCATE( b(MAX(m,1)) )
++      b(1:m) = -r
++      x = 0.0_dp
++      its = 0
++      res = 0.0_dp
++      CALL EssBFBtSolve( m, b, x, its, res )
++      BFBtCount = BFBtCount + its
++      IF( BFBtOut > 0 ) THEN
++        WRITE( Message,'(A,I0,A,ES12.4)') 'BFBt K solve (Hypre PCG): ', its, ' ', res
++        CALL Info('BlockMatrixPrec',Message,Level=4)
++      END IF
++      DEALLOCATE( b )
++    END SUBROUTINE BFBtKinvHypre
++
++    ! the 0-based global (continuous, Hypre) numbers g of the local rows of the diagonal block A, its owned range
++    ! [lo, hi]; the owned rows are numbered in their local order (as the packed vectors of ParallelShrinkPerm)
++    SUBROUTINE BFBtGlobalNumbers( A, g, lo, hi )
++      TYPE(Matrix_t), POINTER :: A
++      INTEGER, ALLOCATABLE :: g(:)
++      INTEGER :: lo, hi
++      INTEGER, ALLOCATABLE :: own(:), dum(:)
++      INTEGER :: n, i, nown, gst
++      TYPE(ParEnv_t), POINTER :: SaveEnv
++      IF( ALLOCATED( g ) ) DEALLOCATE( g )
++      IF( isParallel ) THEN
++        IF( .NOT. ASSOCIATED( A % ParallelInfo ) ) CALL Fatal('BlockMatrixPrec','BFBt Hypre K: a block without ParallelInfo')
++        n = SIZE( A % ParallelInfo % GlobalDOFs )
++        IF( n < A % NumberOfRows ) CALL Fatal('BlockMatrixPrec','BFBt Hypre K: ParallelInfo smaller than the block')
++        ALLOCATE( g(n), own(n), dum(n) )
++        g = 0
++        dum = 0
++        SaveEnv => ParEnv
++        IF( ASSOCIATED( A % ParMatrix ) ) CALL SetMatrixParEnv( A )
++        CALL ContinuousNumbering( A % ParallelInfo, dum, g, own, nOwn = nown, gStart = gst )
++        ParEnv => SaveEnv
++        g = g - 1
++        lo = gst
++        hi = gst + nown - 1
++        DEALLOCATE( own, dum )
++      ELSE
++        n = A % NumberOfRows
++        ALLOCATE( g(n) )
++        DO i = 1, n
++          g(i) = i - 1
++        END DO
++        lo = 0
++        hi = n - 1
++      END IF
++    END SUBROUTINE BFBtGlobalNumbers
++
++    ! -K = sum_c B_c Bt_c - C in Hypre (D = I: the scaled system), and its PCG + BoomerAMG set-up
++    SUBROUTINE BFBtBuildKHypre()
++      TYPE(Matrix_t), POINTER :: Cm, Bc, Btc, Ad
++      INTEGER, ALLOCATABLE :: gp(:), gv(:)
++      INTEGER, POINTER :: PPerm(:)
++      INTEGER :: c, k, np, plo, pup, vlo, vup, fcomm, ipar(8), nown
++      REAL(KIND=dp) :: dpar(2), nnz
++      LOGICAL :: Found
++      Cm => TotMatrix % Submatrix(NoVar,NoVar) % Mat
++      np = Cm % NumberOfRows
++      CALL BFBtGlobalNumbers( Cm, gp, plo, pup )
++      ! the packed pressure vector must be Hypre's local vector, in order
++      nown = offset(NoVar+1) - offset(NoVar)
++      IF( pup - plo + 1 /= nown ) CALL Fatal('BlockMatrixPrec','BFBt Hypre K: owned pressure dofs '&
++          //I2S(pup-plo+1)//' vs. packed '//I2S(nown))
++      IF( isParallel ) THEN
++        PPerm => TotMatrix % Submatrix(NoVar,NoVar) % ParPerm
++        DO k = 1, nown
++          IF( gp(PPerm(k)) /= plo + k - 1 ) CALL Fatal('BlockMatrixPrec','BFBt Hypre K: packed order differs from Hypre''s')
++        END DO
++      END IF
++      fcomm = ELMER_COMM_WORLD
++      CALL EssBFBtBegin( fcomm, plo, pup )
++      DO c = 1, NoVar-1
++        Bc => TotMatrix % Submatrix(NoVar,c) % Mat
++        Btc => TotMatrix % Submatrix(c,NoVar) % Mat
++        Ad => TotMatrix % Submatrix(c,c) % Mat
++        IF( .NOT. ASSOCIATED(Bc) .OR. .NOT. ASSOCIATED(Btc) ) CYCLE
++        CALL BFBtGlobalNumbers( Ad, gv, vlo, vup )
++        CALL EssBFBtAddProd( Bc % NumberOfRows, Bc % Rows, Bc % Cols, Bc % Values, gp, Ad % NumberOfRows, &
++            Btc % NumberOfRows, Btc % Rows, Btc % Cols, Btc % Values, gv, vlo, vup )
++      END DO
++      ! the PCG preconditioner: one BoomerAMG V-cycle with the last block's keywords
++      CALL ListPushNameSpace('block '//I2S(11*NoVar)//':')
++      ipar(1) = ListGetInteger( Params,'BoomerAMG Relax Type', Found, DefValue = 6 )
++      ipar(2) = ListGetInteger( Params,'BoomerAMG Coarsen Type', Found, DefValue = 10 )
++      ipar(3) = ListGetInteger( Params,'BoomerAMG Interpolation Type', Found, DefValue = 6 )
++      ipar(4) = ListGetInteger( Params,'BoomerAMG Agg Num Levels', Found, DefValue = 0 )
++      ipar(5) = ListGetInteger( Params,'BoomerAMG P Max Elmts', Found, DefValue = 0 )
++      ipar(6) = ListGetInteger( Params,'BoomerAMG Max Levels', Found, DefValue = 25 )
++      ipar(7) = BFBtMaxIter
++      ipar(8) = ListGetInteger( Params,'BoomerAMG Num Sweeps', Found, DefValue = 1 )
++      dpar(1) = ListGetCReal( Params,'BoomerAMG Strong Threshold', Found, DefValue = 0.25_dp )
++      dpar(2) = BFBtTol
++      CALL ListPopNameSpace()
++      CALL EssBFBtFinish( np, Cm % Rows, Cm % Cols, Cm % Values, gp, ipar, dpar, nnz )
++      BFBtHypreBuilt = .TRUE.
++      WRITE( Message,'(A,ES10.3,A,I0,A,I0,A,I0,A,ES9.2)') 'BFBt: -K = B Bt - C in Hypre (', nnz, &
++          ' entries); BoomerAMG relax ', ipar(1), ', coarsen ', ipar(2), ', interp ', ipar(3), ', threshold ', dpar(1)
++      CALL Info('BlockMatrixPrec',Message,Level=5)
++      DEALLOCATE( gp )
++      IF( ALLOCATED( gv ) ) DEALLOCATE( gv )
++    END SUBROUTINE BFBtBuildKHypre
++
+   END SUBROUTINE BlockMatrixPrec
+ 
+ 
+diff --git a/fem/src/SolveHypre.c b/fem/src/SolveHypre.c
+index b0d2300..f5c4464 100644
+--- a/fem/src/SolveHypre.c
++++ b/fem/src/SolveHypre.c
+@@ -1570,4 +1570,181 @@ void STDCALLBULL FC_FUNC(createhypreams,CREATEHYPREAMS)
+    if(myverb>5) fprintf( stdout, "SolveHypre: AMS preconditioner setup time: %g\n", realtime_()-st );
+ }
+ 
++/* ESS patch 05 (BFBt, Hypre K) -------------------------------------------------------------------------------------
++   The K solves of the BFBt pressure block (BlockSolve.F90, patch 04) with K formed in Hypre:
++     -K = sum_c B_c Bt_c - C
++   from the GLOBALLY assembled blocks. Elmer's local block matrices are unassembled at the partition interfaces (the
++   rows of shared dofs hold partial sums), so the partition-local products of patch 04 miss the cross terms there;
++   here each block goes to a Hypre IJ matrix (all local rows added: Hypre sums the partial rows, as SolveHypre1 does),
++   the products are Hypre's parallel ones (hypre_ParCSRMatMat), and -K x = b is solved by Hypre's PCG with one
++   BoomerAMG V-cycle as preconditioner. The vectors are the owned (packed) pressure dofs, in Hypre's local order. */
++#include "_hypre_parcsr_mv.h"
++
++typedef struct {
++  MPI_Comm comm;
++  int plo, pup, built;
++  hypre_ParCSRMatrix *K;
++  HYPRE_IJVector b, x;
++  HYPRE_ParVector par_b, par_x;
++  HYPRE_Solver amg, pcg;
++} EssBFBtContainer;
++
++static EssBFBtContainer EssBFBt = { 0 };
++
++static void EssBFBtFree(void)
++{
++  if (!EssBFBt.built) return;
++  HYPRE_ParCSRPCGDestroy(EssBFBt.pcg);
++  HYPRE_BoomerAMGDestroy(EssBFBt.amg);
++  HYPRE_IJVectorDestroy(EssBFBt.b);
++  HYPRE_IJVectorDestroy(EssBFBt.x);
++  if (EssBFBt.K) hypre_ParCSRMatrixDestroy(EssBFBt.K);
++  EssBFBt.K = NULL;
++  EssBFBt.built = 0;
++}
++
++/* an IJ matrix from a local Elmer CRS block (1-based rows/cols), rows -> global rg[], cols -> global cg[]; columns
++   beyond ncol (if any) are skipped. All local rows are added (partial rows of shared dofs: summed by Hypre). */
++static HYPRE_IJMatrix EssBFBtIJ(int rlo, int rup, int clo, int cup, int nrow, int ncol,
++                                int *rows, int *cols, double *vals, int *rg, int *cg)
++{
++  HYPRE_IJMatrix A;
++  int i, j, k, nnz, irow, csize = 256, *rcols;
++  double *rvals;
++  HYPRE_IJMatrixCreate(EssBFBt.comm, rlo, rup, clo, cup, &A);
++  HYPRE_IJMatrixSetObjectType(A, HYPRE_PARCSR);
++  HYPRE_IJMatrixInitialize(A);
++  rcols = (int *)malloc(csize * sizeof(int));
++  rvals = (double *)malloc(csize * sizeof(double));
++  for (i = 0; i < nrow; i++) {
++    nnz = rows[i+1] - rows[i];
++    if (nnz > csize) {
++      csize = nnz + csize;
++      rcols = (int *)realloc(rcols, csize * sizeof(int));
++      rvals = (double *)realloc(rvals, csize * sizeof(double));
++    }
++    for (k = 0, j = rows[i]; j < rows[i+1]; j++) {
++      if (cols[j-1] > ncol) continue;
++      rcols[k] = cg[cols[j-1]-1];
++      rvals[k++] = vals[j-1];
++    }
++    if (k == 0) continue;
++    irow = rg[i];
++    HYPRE_IJMatrixAddToValues(A, 1, &k, &irow, rcols, rvals);
++  }
++  free(rcols); free(rvals);
++  HYPRE_IJMatrixAssemble(A);
++  return A;
++}
++
++/* start a new K: the pressure range of this rank [plo, pup] (0-based global ids) */
++void STDCALLBULL FC_FUNC_(ess_bfbt_begin,ESS_BFBT_BEGIN)(int *fcomm, int *plo, int *pup)
++{
++  EssBFBtFree();
++  HYPRE_Init();
++  EssBFBt.comm = (*fcomm < 0) ? MPI_COMM_WORLD : MPI_Comm_f2c(*fcomm);
++  EssBFBt.plo = *plo;
++  EssBFBt.pup = *pup;
++  EssBFBt.K = NULL;
++}
++
++/* K += B_c Bt_c: B_c (np pressure rows x nv velocity cols), Bt_c (nvt velocity rows x np pressure cols) */
++void STDCALLBULL FC_FUNC_(ess_bfbt_addprod,ESS_BFBT_ADDPROD)(int *np, int *brows, int *bcols, double *bvals, int *gp,
++     int *nv, int *nvt, int *btrows, int *btcols, double *btvals, int *gv, int *vlo, int *vup)
++{
++  HYPRE_IJMatrix B, Bt;
++  hypre_ParCSRMatrix *pB, *pBt, *P, *S;
++  B = EssBFBtIJ(EssBFBt.plo, EssBFBt.pup, *vlo, *vup, *np, *nv, brows, bcols, bvals, gp, gv);
++  Bt = EssBFBtIJ(*vlo, *vup, EssBFBt.plo, EssBFBt.pup, *nvt, *np, btrows, btcols, btvals, gv, gp);
++  HYPRE_IJMatrixGetObject(B, (void **)&pB);
++  HYPRE_IJMatrixGetObject(Bt, (void **)&pBt);
++  P = hypre_ParCSRMatMat(pB, pBt);
++  if (EssBFBt.K == NULL) {
++    EssBFBt.K = P;
++  } else {
++    hypre_ParCSRMatrixAdd(1.0, EssBFBt.K, 1.0, P, &S);
++    hypre_ParCSRMatrixDestroy(EssBFBt.K);
++    hypre_ParCSRMatrixDestroy(P);
++    EssBFBt.K = S;
++  }
++  HYPRE_IJMatrixDestroy(B);
++  HYPRE_IJMatrixDestroy(Bt);
++}
++
++/* K -= C, then the PCG + BoomerAMG set-up. ipar: relax, coarsen, interp, agg levels, P max, max levels, PCG max
++   iterations, num sweeps; dpar: strong threshold, PCG tolerance. nnz: the global number of entries of -K. */
++void STDCALLBULL FC_FUNC_(ess_bfbt_finish,ESS_BFBT_FINISH)(int *np, int *crows, int *ccols, double *cvals, int *gp,
++     int *ipar, double *dpar, double *nnz)
++{
++  HYPRE_IJMatrix C;
++  hypre_ParCSRMatrix *pC, *S;
++  double lnnz;
++  C = EssBFBtIJ(EssBFBt.plo, EssBFBt.pup, EssBFBt.plo, EssBFBt.pup, *np, *np, crows, ccols, cvals, gp, gp);
++  HYPRE_IJMatrixGetObject(C, (void **)&pC);
++  if (EssBFBt.K == NULL) {
++    hypre_ParCSRMatrixAdd(0.0, pC, -1.0, pC, &S);
++  } else {
++    hypre_ParCSRMatrixAdd(1.0, EssBFBt.K, -1.0, pC, &S);
++    hypre_ParCSRMatrixDestroy(EssBFBt.K);
++  }
++  EssBFBt.K = S;
++  HYPRE_IJMatrixDestroy(C);
++  hypre_ParCSRMatrixReorder(EssBFBt.K);      /* the diagonal first in each row (BoomerAMG's smoothers need it) */
++  lnnz = (double)(hypre_CSRMatrixNumNonzeros(hypre_ParCSRMatrixDiag(EssBFBt.K))
++                + hypre_CSRMatrixNumNonzeros(hypre_ParCSRMatrixOffd(EssBFBt.K)));
++  MPI_Allreduce(&lnnz, nnz, 1, MPI_DOUBLE, MPI_SUM, EssBFBt.comm);
++
++  HYPRE_IJVectorCreate(EssBFBt.comm, EssBFBt.plo, EssBFBt.pup, &EssBFBt.b);
++  HYPRE_IJVectorSetObjectType(EssBFBt.b, HYPRE_PARCSR);
++  HYPRE_IJVectorInitialize(EssBFBt.b);
++  HYPRE_IJVectorAssemble(EssBFBt.b);
++  HYPRE_IJVectorGetObject(EssBFBt.b, (void **)&EssBFBt.par_b);
++  HYPRE_IJVectorCreate(EssBFBt.comm, EssBFBt.plo, EssBFBt.pup, &EssBFBt.x);
++  HYPRE_IJVectorSetObjectType(EssBFBt.x, HYPRE_PARCSR);
++  HYPRE_IJVectorInitialize(EssBFBt.x);
++  HYPRE_IJVectorAssemble(EssBFBt.x);
++  HYPRE_IJVectorGetObject(EssBFBt.x, (void **)&EssBFBt.par_x);
++
++  HYPRE_BoomerAMGCreate(&EssBFBt.amg);
++  HYPRE_BoomerAMGSetPrintLevel(EssBFBt.amg, 0);
++  HYPRE_BoomerAMGSetMaxIter(EssBFBt.amg, 1);
++  HYPRE_BoomerAMGSetTol(EssBFBt.amg, 0.0);
++  HYPRE_BoomerAMGSetRelaxType(EssBFBt.amg, ipar[0]);
++  HYPRE_BoomerAMGSetCoarsenType(EssBFBt.amg, ipar[1]);
++  HYPRE_BoomerAMGSetInterpType(EssBFBt.amg, ipar[2]);
++  if (ipar[3] > 0) HYPRE_BoomerAMGSetAggNumLevels(EssBFBt.amg, ipar[3]);
++  if (ipar[4] > 0) HYPRE_BoomerAMGSetPMaxElmts(EssBFBt.amg, ipar[4]);
++  HYPRE_BoomerAMGSetMaxLevels(EssBFBt.amg, ipar[5]);
++  HYPRE_BoomerAMGSetNumSweeps(EssBFBt.amg, ipar[7]);
++  HYPRE_BoomerAMGSetStrongThreshold(EssBFBt.amg, dpar[0]);
++
++  HYPRE_ParCSRPCGCreate(EssBFBt.comm, &EssBFBt.pcg);
++  HYPRE_ParCSRPCGSetMaxIter(EssBFBt.pcg, ipar[6]);
++  HYPRE_ParCSRPCGSetTol(EssBFBt.pcg, dpar[1]);
++  HYPRE_ParCSRPCGSetTwoNorm(EssBFBt.pcg, 1);
++  HYPRE_ParCSRPCGSetPrintLevel(EssBFBt.pcg, 0);
++  HYPRE_ParCSRPCGSetLogging(EssBFBt.pcg, 1);
++  HYPRE_ParCSRPCGSetPrecond(EssBFBt.pcg, (HYPRE_PtrToParSolverFcn)HYPRE_BoomerAMGSolve,
++                            (HYPRE_PtrToParSolverFcn)HYPRE_BoomerAMGSetup, EssBFBt.amg);
++  HYPRE_ParCSRPCGSetup(EssBFBt.pcg, (HYPRE_ParCSRMatrix)EssBFBt.K, EssBFBt.par_b, EssBFBt.par_x);
++  HYPRE_ClearAllErrors();
++  EssBFBt.built = 1;
++}
++
++/* x = (-K)^-1 b on the n owned (packed) pressure dofs; its, res: PCG iterations and final relative residual */
++void STDCALLBULL FC_FUNC_(ess_bfbt_solve,ESS_BFBT_SOLVE)(int *n, double *b, double *x, int *its, double *res)
++{
++  double *bd, *xd;
++  int i;
++  bd = hypre_VectorData(hypre_ParVectorLocalVector((hypre_ParVector *)EssBFBt.par_b));
++  xd = hypre_VectorData(hypre_ParVectorLocalVector((hypre_ParVector *)EssBFBt.par_x));
++  for (i = 0; i < *n; i++) { bd[i] = b[i]; xd[i] = 0.0; }
++  HYPRE_ParCSRPCGSolve(EssBFBt.pcg, (HYPRE_ParCSRMatrix)EssBFBt.K, EssBFBt.par_b, EssBFBt.par_x);
++  HYPRE_ParCSRPCGGetNumIterations(EssBFBt.pcg, its);
++  HYPRE_ParCSRPCGGetFinalRelativeResidualNorm(EssBFBt.pcg, res);
++  HYPRE_ClearAllErrors();          /* not converged within the max iterations: only a preconditioner step */
++  for (i = 0; i < *n; i++) x[i] = xd[i];
++}
++/* end ESS patch 05 ------------------------------------------------------------------------------------------------- */
++
+ #endif
