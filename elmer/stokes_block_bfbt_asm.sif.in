@@ -1,0 +1,73 @@
+# ASSEMBLED K PRODUCTS: as stokes_block_bfbt_sym.sif.in with Block BFBt Assembled K = True.
+# AMG TUNED FOR K: as stokes_block_bfbt.sif.in, block 44's BoomerAMG symmetric (Relax Type 6) with Strong Threshold 0.25.
+# Stokes block preconditioning with the BFBt pressure block (NEEDS an Elmer built with elmer/patches/04-bfbt.patch:
+# ELMER_PREFIX=/SCRATCH/$USER/elmer/install3). As stokes_block_amg_comp.sif.in (per-component Block Gauss-Seidel
+# u | v | w | p, BoomerAMG HMIS + ext+i per velocity component to 0.01, outer GCR(250) to 1e-6), but the pressure block
+# by S~^-1 = K^-1 (C - B A Bt) K^-1, K = C - B Bt (in Elmer's diagonally scaled system), instead of the 1/mu pressure
+# mass matrix (K^-1 by flexible CG, preconditioned by one BoomerAMG V-cycle on -K assembled). On Elmer's own matrices (tiny case, exact velocity solves) the outer GCR count: x 1e4 viscosity jump
+# 270 -> 67, uniform 74 -> 45, no-slip walls 198 -> 78. Block 44 (C, the bubbles' pressure block): one BoomerAMG
+# V-cycle, the preconditioner of BFBt's K solves.
+  Linear System Solver = "Block"
+  Block Gauss-Seidel = Logical True
+  Block Matrix Reuse = Logical False
+  Block Scaling = Logical False
+  Block Preconditioner = Logical True
+  Block BFBt = Logical True                 ! ESS patch 04: the pressure block by stabilised BFBt (elmer/patches/04-bfbt.patch)
+  Block BFBt Tolerance = Real 1.0e-2        ! the K = C - B Bt solves (flexible CG, preconditioned by -K assembled, block 44 keywords)
+  Block BFBt Max Iterations = Integer 50
+  Block BFBt Output = Integer 0
+  Block BFBt Assembled K = Logical True     ! the CG products with the assembled -K (cheap)
+  Linear System Residual Output = 25
+
+  Outer: Linear System Solver = "Iterative"
+  Outer: Linear System Iterative Method = GCR
+  Outer: Linear System GCR Restart = 250
+  Outer: Linear System Residual Output = 1
+  Outer: Linear System Max Iterations = 500
+  Outer: Linear System Abort Not Converged = False
+  Outer: Linear System Convergence Tolerance = 1e-6
+
+  $blocktol = 0.01
+
+  block 11: Linear System Iterative = Logical True
+  block 11: Linear System Solver = "iterative"   ! REQUIRED: without it the block falls back to the solver's "Block" -> BlockSolve recursion (IterSolver depth 65, the >250 GB/node OOMs)
+  block 11: Linear System Use HYPRE = Logical True
+  block 11: Linear System Iterative Method = BoomerAMG
+  block 11: Linear System Max Iterations = 100
+  block 11: Linear System Convergence Tolerance = $blocktol
+  block 11: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
+
+  block 22: Linear System Iterative = Logical True
+  block 22: Linear System Solver = "iterative"   ! REQUIRED: without it the block falls back to the solver's "Block" -> BlockSolve recursion (IterSolver depth 65, the >250 GB/node OOMs)
+  block 22: Linear System Use HYPRE = Logical True
+  block 22: Linear System Iterative Method = BoomerAMG
+  block 22: Linear System Max Iterations = 100
+  block 22: Linear System Convergence Tolerance = $blocktol
+  block 22: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
+
+  block 33: Linear System Iterative = Logical True
+  block 33: Linear System Solver = "iterative"   ! REQUIRED: without it the block falls back to the solver's "Block" -> BlockSolve recursion (IterSolver depth 65, the >250 GB/node OOMs)
+  block 33: Linear System Use HYPRE = Logical True
+  block 33: Linear System Iterative Method = BoomerAMG
+  block 33: Linear System Max Iterations = 100
+  block 33: Linear System Convergence Tolerance = $blocktol
+  block 33: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
+
+  BoomerAMG Relax Type = Integer 3
+  BoomerAMG Coarsen Type = Integer 10        ! HMIS (was 0 = CLJP: OOM, 269 GB/node at the first solve, job 32075)
+  BoomerAMG Num Sweeps = Integer 1
+  BoomerAMG Max Levels = Integer 25
+  BoomerAMG Interpolation Type = Integer 6   ! ext+i (was 0 = classical); Hypre's default truncation (4/row) applies
+  BoomerAMG Smooth Type = Integer 6
+  BoomerAMG Cycle Type = Integer 1
+  BoomerAMG Strong Threshold = Real 0.5
+
+  block 44: Linear System Solver = "iterative"
+  block 44: Linear System Iterative = Logical True
+  block 44: Linear System Use HYPRE = Logical True
+  block 44: Linear System Iterative Method = BoomerAMG
+  block 44: Linear System Max Iterations = 1   ! ONE V-cycle on the assembled -K = B Bt - C: the preconditioner of the K solves inside BFBt
+  block 44: Linear System Convergence Tolerance = 1.0e-12
+  block 44: Linear System Abort Not Converged = Logical False
+  block 44: BoomerAMG Relax Type = Integer 6        ! symmetric hybrid Gauss-Seidel: the K solves are CG (type 3 is not symmetric)
+  block 44: BoomerAMG Strong Threshold = Real 0.25  ! K = B Bt - C: a wide (2-ring) stencil

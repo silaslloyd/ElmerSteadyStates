@@ -59,6 +59,8 @@ preconditioner's pressure block
        Block BFBt Tolerance = Real (the K solves' relative residual; default 1e-2)
        Block BFBt Max Iterations = Integer (default 50)
        Block BFBt Output = Integer (every n-th CG iteration's residual; default 0: none)
+       Block BFBt Assembled K = Logical (the K solves' CG products with the assembled -K, one pressure-sized
+         product instead of two monolithic ones; exact in serial, approximate at partition interfaces; default False)
   The pressure block must be solved last (natural Block Order). Without the keyword Elmer behaves as unpatched.
   Use: elmer/stokes_block_bfbt.sif.in. Measured on Elmer's own matrices (the tiny lava case, exact velocity solves),
   outer GCR iterations, the 1/mu pressure mass -> BFBt: viscosity jump x 1e4 270 -> 67, uniform 74 -> 45, no-slip

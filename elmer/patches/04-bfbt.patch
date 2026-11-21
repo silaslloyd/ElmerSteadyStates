@@ -14,13 +14,13 @@
      INTEGER(KIND=AddrInt) :: AddrFunc
      EXTERNAL :: AddrFunc
 +    ! ESS patch (BFBt): the pressure block by the stabilised BFBt approximation of the Schur complement
-+    LOGICAL :: DoBFBt
++    LOGICAL :: DoBFBt, BFBtAsmK
 +    INTEGER :: BFBtMaxIter, BFBtOut, BFBtCount, ntot, p0
 +    REAL(KIND=dp) :: BFBtTol
  
      CALL Info('BlockMatrixPrec','Starting block matrix preconditioning',Level=8)
  
-@@ -3899,6 +3905,30 @@
+@@ -3899,6 +3905,33 @@
  
      BlockSch = ListCheckPrefix( Params,'Schur Operator' )
  
@@ -38,6 +38,9 @@
 +      BFBtMaxIter = ListGetInteger( Params,'Block BFBt Max Iterations',Found )
 +      IF(.NOT. Found) BFBtMaxIter = 50
 +      BFBtOut = ListGetInteger( Params,'Block BFBt Output',Found )
++      ! the K solves' CG products with the assembled -K (one pressure-sized product instead of two monolithic ones;
++      ! exact in serial, approximate at the partition interfaces in parallel) instead of the exact matrix-free K
++      BFBtAsmK = ListGetLogical( Params,'Block BFBt Assembled K',Found )
 +      ntot = offset(NoVar+1)
 +      p0 = offset(NoVar)
 +      BFBtCount = 0
@@ -51,7 +54,7 @@
      IF( BlockGS .OR. BlockSch ) THEN
        ALLOCATE( vtmp(n), rtmp(n), xtmp(n),STAT=istat)
        IF ( istat /= 0 ) CALL Fatal('BlockMatrixPrec','Memory allocation error for wrk space!')
-@@ -3921,6 +3951,16 @@
+@@ -3921,6 +3954,16 @@
           u(offset(i)+1:offset(i+1)) = v(offset(i)+1:offset(i+1)); cycle
        end if
  
@@ -68,7 +71,7 @@
        ! We do probably not want to compute the change within each iteration
        CALL ListAddLogical( Params,'Skip Advance Nonlinear iter',.TRUE.)
        CALL ListAddLogical( Params,'Skip Compute Nonlinear Change',.TRUE.)
-@@ -4240,8 +4280,206 @@
+@@ -4240,8 +4283,227 @@
        CALL Info('BlockMatrixPrec',Message,Level=10)
      END IF
  
@@ -139,6 +142,23 @@
 +      out = cy - s(p0+1:ntot)
 +      DEALLOCATE( w, s, cy )
 +    END SUBROUTINE BFBtMid
++
++    ! y = (-K) x with the assembled -K (packed vectors)
++    SUBROUTINE BFBtKasm( x, y )
++      REAL(KIND=dp), INTENT(IN) :: x(:)
++      REAL(KIND=dp), INTENT(OUT) :: y(:)
++      REAL(KIND=dp), ALLOCATABLE, TARGET :: xc(:), yc(:)
++      ALLOCATE( xc(SIZE(x)), yc(SIZE(y)) )
++      xc = x
++      yc = 0.0_dp
++      IF( isParallel ) THEN
++        CALL ParallelMatrixVector( BFBtKmat, xc, yc )
++      ELSE
++        CALL CRS_MatrixVectorMultiply( BFBtKmat, xc, yc )
++      END IF
++      y = yc
++      DEALLOCATE( xc, yc )
++    END SUBROUTINE BFBtKasm
 +
 +    ! The global dot product of packed vectors (each rank holds its own dofs)
 +    FUNCTION BFBtDot( a, b ) RESULT( d )
@@ -248,8 +268,12 @@
 +      zold = zz
 +      rz = BFBtDot( res, zz )
 +      DO it = 1, BFBtMaxIter
-+        CALL BFBtK( pp, qq )
-+        qq = -qq
++        IF( BFBtAsmK ) THEN
++          CALL BFBtKasm( pp, qq )      ! qq = (-K) pp, the assembled -K
++        ELSE
++          CALL BFBtK( pp, qq )
++          qq = -qq
++        END IF
 +        alpha = rz / BFBtDot( pp, qq )
 +        x = x + alpha * pp
 +        res = res - alpha * qq
