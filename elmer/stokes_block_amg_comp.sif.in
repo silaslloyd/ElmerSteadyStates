@@ -1,0 +1,63 @@
+# Stokes block preconditioning, ONE BLOCK PER VELOCITY COMPONENT (Block Structure 1 2 3 4: u | v | w | p), each
+# velocity component by Hypre BoomerAMG (scalar AMG), the pressure block (the 1/viscosity-weighted pressure mass matrix
+# IncompressibleNS assembles with Block Preconditioner = True) by IDR(s) + ILU. Use with [elmer] linear_stokes = "block"
+# and stokes_block_file = "elmer/stokes_block_amg_comp.sif.in" (or ESS_STOKES_BLOCK_FILE).
+# Why: the coupled-velocity variant (stokes_block_amg.sif.in: Block Structure 1 1 1 2, systems AMG with Num Functions 3
+# and HYPRE Block Diagonal) crashed ("double free or corruption") at the first Stokes solve on the 3D lava meshes
+# (256 ranks), while Elmer's own block test (SD_Step_stokes_vec_blockprec, per-component blocks) passed with BoomerAMG
+# in its velocity block on tethys; IDR(s) + ILU0 on the coupled velocity block was too weak (outer GCR ~8%/iteration).
+  Linear System Solver = "Block"
+  Block Gauss-Seidel = Logical True
+  Block Matrix Reuse = Logical False
+  Block Scaling = Logical False
+  Block Preconditioner = Logical True
+  Linear System Residual Output = 25
+
+  Outer: Linear System Solver = "Iterative"
+  Outer: Linear System Iterative Method = GCR
+  Outer: Linear System GCR Restart = 250
+  Outer: Linear System Residual Output = 1
+  Outer: Linear System Max Iterations = 500
+  Outer: Linear System Abort Not Converged = False
+  Outer: Linear System Convergence Tolerance = 1e-6
+
+  $blocktol = 0.01
+
+  block 11: Linear System Iterative = Logical True
+  block 11: Linear System Use HYPRE = Logical True
+  block 11: Linear System Iterative Method = BoomerAMG
+  block 11: Linear System Max Iterations = 100
+  block 11: Linear System Convergence Tolerance = $blocktol
+  block 11: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
+
+  block 22: Linear System Iterative = Logical True
+  block 22: Linear System Use HYPRE = Logical True
+  block 22: Linear System Iterative Method = BoomerAMG
+  block 22: Linear System Max Iterations = 100
+  block 22: Linear System Convergence Tolerance = $blocktol
+  block 22: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
+
+  block 33: Linear System Iterative = Logical True
+  block 33: Linear System Use HYPRE = Logical True
+  block 33: Linear System Iterative Method = BoomerAMG
+  block 33: Linear System Max Iterations = 100
+  block 33: Linear System Convergence Tolerance = $blocktol
+  block 33: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
+
+  BoomerAMG Relax Type = Integer 3
+  BoomerAMG Coarsen Type = Integer 0
+  BoomerAMG Num Sweeps = Integer 1
+  BoomerAMG Max Levels = Integer 25
+  BoomerAMG Interpolation Type = Integer 0
+  BoomerAMG Smooth Type = Integer 6
+  BoomerAMG Cycle Type = Integer 1
+  BoomerAMG Strong Threshold = Real 0.5
+
+  block 44: Linear System Convergence Tolerance = $blocktol
+  block 44: Linear System Solver = "iterative"
+  block 44: Linear System Scaling = false
+  block 44: Linear System Preconditioning = ilu
+  block 44: Linear System Residual Output = 1
+  block 44: Linear System Max Iterations = 500
+  block 44: Linear System Iterative Method = idrs
+  block 44: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
