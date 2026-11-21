@@ -1,6 +1,6 @@
 ! STICKY-AIR LAVA, STEP 1 (branch test/lava-spreading): an isothermal lava drop on a 10 degree slope in a box of
 ! "sticky air", on a FIXED mesh: no free-surface solver, no mesh motion, no precursor film. The lava is a fraction field
-! Lava (1 lava, 0 air) carried by the flow (AdvectionDiffusion with flux-corrected transport: conservative, bounded);
+! Lava (1 lava, 0 air) carried by the flow (ParticleAdvector: semi-Lagrangian, bounded, not exactly conservative);
 ! density and viscosity from it (sticky.lua). Stokes on the whole box with the BFBt block preconditioner (Elmer patch
 ! 04: ELMER_PREFIX=/SCRATCH/$USER/elmer/install3). SI units: m, s, kg, Pa.
 !   box 16 m (x, down the slope) x 8 m x 1.2 m; the footprint 0.2 m triangles (box.grd), 30 even layers (4 cm)
@@ -69,13 +69,11 @@ Material 1
   Viscosity = Variable Lava
     Real Lua "mu(tx[0])"
   Viscosity At IP = Logical True
-  Lava Diffusivity = Real 0.0
 End
 
 Equation 1
   Name = "flow and transport"
   Active Solvers(3) = 1 2 3
-  Convection = Computed
 End
 
 Solver 1
@@ -92,6 +90,7 @@ Solver 1
   Nonlinear System Max Iterations = 1
   Nonlinear System Convergence Tolerance = 1.0e-8
   Steady State Convergence Tolerance = Real 1.0e-8
+  Exported Variable 1 = Lava            ! the lava fraction (set by the initial condition, carried by Solver 2)
   ! the block preconditioner with the BFBt pressure block (elmer/stokes_block_bfbt_agg.sif.in)
   Linear System Solver = "Block"
   Block Gauss-Seidel = Logical True
@@ -155,22 +154,21 @@ Solver 1
 End
 
 Solver 2
-  Equation = "Lava Transport"
-  Procedure = "AdvectionDiffusion" "AdvectionDiffusionSolver"
-  Variable = Lava
-  ! flux-corrected transport: conservative and bounded (the fraction stays in [0, 1]), no stabilisation, no bubbles
-  Linear System FCT = Logical True
-  fct: Skip Compute Nonlinear Change = Logical True
-  Bubbles = Logical False
-  Stabilize = Logical False
-  Linear System Solver = Iterative
-  Linear System Iterative Method = BiCGStab
-  Linear System Preconditioning = ILU0
-  Linear System Max Iterations = 500
-  Linear System Convergence Tolerance = 1.0e-10
-  Linear System Abort Not Converged = Logical False
-  Nonlinear System Max Iterations = 1
-  Steady State Convergence Tolerance = 1.0e-6
+  Equation = "Lava Advection"
+  Procedure = "ParticleAdvector" "ParticleAdvector"
+  ! semi-Lagrangian: each step, from every node a particle traced BACKWARDS through the flow over the step; the node
+  ! takes the lava fraction where it started (no numerical diffusion; parallel). (Elmer's FCT transport crashed in
+  ! parallel, CRS_FCTLowOrder.) As Elmer's test ParticleAdvector3.
+  Reinitialize Particles = Logical True
+  Particle Dt Constant = Logical False
+  Simulation Timestep Sizes = Logical True
+  Max Timestep Intervals = Integer 100
+  Timestep Courant Number = Real 0.25
+  Velocity Gradient Correction = Logical True
+  Velocity Variable Name = String "Flow Solution"
+  Norm Variable Index = Integer 1
+  Variable 1 = String "Lava"
+  Result Variable 1 = String "Lava"
 End
 
 Solver 3
