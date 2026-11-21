@@ -80,3 +80,14 @@ preconditioner's pressure block
   built once per linear solve. The packed (owned) pressure vectors are Hypre's local vectors (order checked; a Fatal
   error otherwise). The log: "BFBt: -K = B Bt - C in Hypre (n entries) ..." at Level 5; with Block BFBt Output > 0
   every K solve's PCG iterations and residual. Without the keyword patch 04 behaves as before.
+
+06-bfbt-boundary.patch (after 05; BlockSolve.F90, SolveHypre.c): the boundary-adjusted BFBt (Elman & Tuminaro,
+ETNA 35, 2009, the boundary-adjusted least-squares commutator)
+  Block BFBt Boundary Weight = Real eps (> 0; the paper's 0.1; needs Block BFBt Hypre K):
+    S~^-1 = K^-1 (C - B A W Bt) K_W^-1,   K = C - B Bt,   K_W = C - B W Bt
+  W diagonal: 1, except eps at the velocity dofs of component c coupled by B to a pressure node on a boundary to
+  which c is TANGENTIAL (all boundary elements; the normal's dominant axis; flags summed over the partitions). The
+  plain BFBt's commutator is wrong in a layer along the boundaries and its iterations grow with refinement; measured
+  (the fine sticky geometry, one step, Hypre K): 20x4 cm 34, 10x2 cm 80, 5x1 cm no convergence (0.19 after 80);
+  Elmer's mass-matrix block 60, 70, ~38. K_W: a second Hypre matrix, PCG and BoomerAMG (same keywords). The log:
+  "BFBt: boundary weight eps on n of N velocity dofs" (Level 4). Without the keyword 05 behaves as before.

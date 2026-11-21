@@ -1,0 +1,394 @@
+diff --git a/fem/src/BlockSolve.F90 b/fem/src/BlockSolve.F90
+index 73a408e..46241ea 100644
+--- a/fem/src/BlockSolve.F90
++++ b/fem/src/BlockSolve.F90
+@@ -68,25 +68,27 @@ MODULE BlockSolve
+   ! ESS patch 05 (BFBt, Hypre K): -K = sum_c B_c Bt_c - C formed in Hypre from the globally assembled blocks (exact in
+   ! parallel), the K solves by Hypre's PCG + one BoomerAMG V-cycle (SolveHypre.c, ess_bfbt_*)
+   LOGICAL, SAVE, PRIVATE :: BFBtHypreBuilt = .FALSE.
++  ! ESS patch 06 (boundary-adjusted BFBt): the weights W of the packed velocity dofs (1, or the Boundary Weight)
++  REAL(KIND=dp), ALLOCATABLE, SAVE, PRIVATE :: BFBtWpack(:)
+   INTERFACE
+-    SUBROUTINE EssBFBtBegin( fcomm, plo, pup ) BIND(C,name="ess_bfbt_begin")
++    SUBROUTINE EssBFBtBegin( id, fcomm, plo, pup ) BIND(C,name="ess_bfbt_begin")
+       USE, INTRINSIC :: iso_c_binding
+-      INTEGER(KIND=c_int) :: fcomm, plo, pup
++      INTEGER(KIND=c_int) :: id, fcomm, plo, pup
+     END SUBROUTINE EssBFBtBegin
+-    SUBROUTINE EssBFBtAddProd( np, brows, bcols, bvals, gp, nv, nvt, btrows, btcols, btvals, gv, vlo, vup ) &
++    SUBROUTINE EssBFBtAddProd( id, np, brows, bcols, bvals, gp, nv, nvt, btrows, btcols, btvals, gv, vlo, vup ) &
+         BIND(C,name="ess_bfbt_addprod")
+       USE, INTRINSIC :: iso_c_binding
+-      INTEGER(KIND=c_int) :: np, brows(*), bcols(*), gp(*), nv, nvt, btrows(*), btcols(*), gv(*), vlo, vup
++      INTEGER(KIND=c_int) :: id, np, brows(*), bcols(*), gp(*), nv, nvt, btrows(*), btcols(*), gv(*), vlo, vup
+       REAL(KIND=c_double) :: bvals(*), btvals(*)
+     END SUBROUTINE EssBFBtAddProd
+-    SUBROUTINE EssBFBtFinish( np, crows, ccols, cvals, gp, ipar, dpar, nnz ) BIND(C,name="ess_bfbt_finish")
++    SUBROUTINE EssBFBtFinish( id, np, crows, ccols, cvals, gp, ipar, dpar, nnz ) BIND(C,name="ess_bfbt_finish")
+       USE, INTRINSIC :: iso_c_binding
+-      INTEGER(KIND=c_int) :: np, crows(*), ccols(*), gp(*), ipar(*)
++      INTEGER(KIND=c_int) :: id, np, crows(*), ccols(*), gp(*), ipar(*)
+       REAL(KIND=c_double) :: cvals(*), dpar(*), nnz
+     END SUBROUTINE EssBFBtFinish
+-    SUBROUTINE EssBFBtSolve( n, b, x, its, res ) BIND(C,name="ess_bfbt_solve")
++    SUBROUTINE EssBFBtSolve( id, n, b, x, its, res ) BIND(C,name="ess_bfbt_solve")
+       USE, INTRINSIC :: iso_c_binding
+-      INTEGER(KIND=c_int) :: n, its
++      INTEGER(KIND=c_int) :: id, n, its
+       REAL(KIND=c_double) :: b(*), x(*), res
+     END SUBROUTINE EssBFBtSolve
+   END INTERFACE
+@@ -3839,7 +3841,8 @@ CONTAINS
+     ! ESS patch (BFBt): the pressure block by the stabilised BFBt approximation of the Schur complement
+     LOGICAL :: DoBFBt, BFBtAsmK, BFBtHypre
+     INTEGER :: BFBtMaxIter, BFBtOut, BFBtCount, ntot, p0
+-    REAL(KIND=dp) :: BFBtTol
++    REAL(KIND=dp) :: BFBtTol, BFBtEps
++    LOGICAL :: BFBtAdj
+ 
+     CALL Info('BlockMatrixPrec','Starting block matrix preconditioning',Level=8)
+ 
+@@ -3951,6 +3954,12 @@ CONTAINS
+       ! ESS patch 05: "Block BFBt Hypre K = Logical True": K formed and solved in Hypre (exact in parallel); the
+       ! BoomerAMG keywords of the last block ("block NN: BoomerAMG ..."), Block BFBt Tolerance / Max Iterations for the PCG
+       BFBtHypre = ListGetLogical( Params,'Block BFBt Hypre K',Found )
++      ! ESS patch 06: "Block BFBt Boundary Weight = Real eps" (> 0; Elman & Tuminaro 2009 use 0.1): the boundary-
++      ! adjusted form S~^-1 = K^-1 (C - B A W Bt) K_W^-1, K = C - B Bt, K_W = C - B W Bt, W = 1 except eps for the
++      ! velocity components TANGENTIAL to a boundary at the dofs coupled (by B) to a pressure node on that boundary
++      BFBtEps = ListGetCReal( Params,'Block BFBt Boundary Weight',Found )
++      BFBtAdj = ( Found .AND. BFBtEps > 0.0_dp )
++      IF( BFBtAdj .AND. .NOT. BFBtHypre ) CALL Fatal('BlockMatrixPrec','Block BFBt Boundary Weight needs Block BFBt Hypre K')
+       ntot = offset(NoVar+1)
+       p0 = offset(NoVar)
+       BFBtCount = 0
+@@ -4331,9 +4340,15 @@ CONTAINS
+       REAL(KIND=dp), INTENT(OUT) :: z(:)
+       REAL(KIND=dp), ALLOCATABLE :: y(:), t(:)
+       ALLOCATE( y(SIZE(r)), t(SIZE(r)) )
+-      CALL BFBtKinv( r, y )
+-      CALL BFBtMid( y, t )
+-      CALL BFBtKinv( t, z )
++      IF( BFBtAdj ) THEN
++        CALL BFBtKinvHypre( r, y, 1 )     ! K_W^-1 (the right factor)
++        CALL BFBtMid( y, t )              ! (C - B A W Bt)
++        CALL BFBtKinvHypre( t, z, 0 )     ! K^-1
++      ELSE
++        CALL BFBtKinv( r, y )
++        CALL BFBtMid( y, t )
++        CALL BFBtKinv( t, z )
++      END IF
+       DEALLOCATE( y, t )
+     END SUBROUTINE BFBtApply
+ 
+@@ -4376,6 +4391,7 @@ CONTAINS
+       cy = s(p0+1:ntot)
+       w = 0.0_dp
+       w(1:p0) = s(1:p0)
++      IF( BFBtAdj ) w(1:p0) = BFBtWpack(1:p0) * w(1:p0)      ! patch 06: W Bt y
+       CALL BFBtMono( w, s )          ! s = [A Bt y ; B Bt y]
+       w = 0.0_dp
+       w(1:p0) = s(1:p0)
+@@ -4511,7 +4527,7 @@ CONTAINS
+       INTEGER :: it, m
+       m = SIZE(r)
+       IF( BFBtHypre ) THEN
+-        CALL BFBtKinvHypre( r, x )
++        CALL BFBtKinvHypre( r, x, 0 )
+         RETURN
+       END IF
+       ALLOCATE( res(m), zz(m), zold(m), pp(m), qq(m) )
+@@ -4557,9 +4573,10 @@ CONTAINS
+ 
+     ! ESS patch 05 ---------------------------------------------------------------------------------------------------
+     ! x = K^-1 r = (-K)^-1 (-r) by Hypre's PCG on the Hypre -K (BFBtBuildKHypre); r, x: the owned (packed) pressure dofs
+-    SUBROUTINE BFBtKinvHypre( r, x )
++    SUBROUTINE BFBtKinvHypre( r, x, id )
+       REAL(KIND=dp), INTENT(IN) :: r(:)
+       REAL(KIND=dp), INTENT(OUT) :: x(:)
++      INTEGER :: id
+       REAL(KIND=dp), ALLOCATABLE :: b(:)
+       REAL(KIND=dp) :: res
+       INTEGER :: m, its
+@@ -4569,10 +4586,10 @@ CONTAINS
+       x = 0.0_dp
+       its = 0
+       res = 0.0_dp
+-      CALL EssBFBtSolve( m, b, x, its, res )
++      CALL EssBFBtSolve( id, m, b, x, its, res )
+       BFBtCount = BFBtCount + its
+       IF( BFBtOut > 0 ) THEN
+-        WRITE( Message,'(A,I0,A,ES12.4)') 'BFBt K solve (Hypre PCG): ', its, ' ', res
++        WRITE( Message,'(A,I0,A,I0,A,ES12.4)') 'BFBt K solve (Hypre PCG, K', id, '): ', its, ' ', res
+         CALL Info('BlockMatrixPrec',Message,Level=4)
+       END IF
+       DEALLOCATE( b )
+@@ -4614,16 +4631,14 @@ CONTAINS
+       END IF
+     END SUBROUTINE BFBtGlobalNumbers
+ 
+-    ! -K = sum_c B_c Bt_c - C in Hypre (D = I: the scaled system), and its PCG + BoomerAMG set-up
++    ! -K = sum_c B_c Bt_c - C in Hypre (D = I: the scaled system), and its PCG + BoomerAMG set-up; with the boundary
++    ! adjustment (patch 06) also -K_W = sum_c B_c W_c Bt_c - C (id 1)
+     SUBROUTINE BFBtBuildKHypre()
+-      TYPE(Matrix_t), POINTER :: Cm, Bc, Btc, Ad
+-      INTEGER, ALLOCATABLE :: gp(:), gv(:)
++      TYPE(Matrix_t), POINTER :: Cm
++      INTEGER, ALLOCATABLE :: gp(:)
+       INTEGER, POINTER :: PPerm(:)
+-      INTEGER :: c, k, np, plo, pup, vlo, vup, fcomm, ipar(8), nown
+-      REAL(KIND=dp) :: dpar(2), nnz
+-      LOGICAL :: Found
++      INTEGER :: k, plo, pup, nown
+       Cm => TotMatrix % Submatrix(NoVar,NoVar) % Mat
+-      np = Cm % NumberOfRows
+       CALL BFBtGlobalNumbers( Cm, gp, plo, pup )
+       ! the packed pressure vector must be Hypre's local vector, in order
+       nown = offset(NoVar+1) - offset(NoVar)
+@@ -4635,16 +4650,65 @@ CONTAINS
+           IF( gp(PPerm(k)) /= plo + k - 1 ) CALL Fatal('BlockMatrixPrec','BFBt Hypre K: packed order differs from Hypre''s')
+         END DO
+       END IF
++      CALL BFBtBuildOneK( 0, gp, plo, pup )
++      IF( BFBtAdj ) CALL BFBtBuildOneK( 1, gp, plo, pup )
++      BFBtHypreBuilt = .TRUE.
++      DEALLOCATE( gp )
++    END SUBROUTINE BFBtBuildKHypre
++
++    SUBROUTINE BFBtBuildOneK( id, gp, plo, pup )
++      INTEGER :: id, plo, pup
++      INTEGER :: gp(:)
++      TYPE(Matrix_t), POINTER :: Cm, Bc, Btc, Ad
++      INTEGER, ALLOCATABLE :: gv(:)
++      REAL(KIND=dp), ALLOCATABLE :: wv(:), btw(:)
++      INTEGER :: c, i, j, np, vlo, vup, fcomm, ipar(8), nw, nwall
++      REAL(KIND=dp) :: dpar(2), nnz
++      LOGICAL :: Found
++      Cm => TotMatrix % Submatrix(NoVar,NoVar) % Mat
++      np = Cm % NumberOfRows
+       fcomm = ELMER_COMM_WORLD
+-      CALL EssBFBtBegin( fcomm, plo, pup )
++      CALL EssBFBtBegin( id, fcomm, plo, pup )
++      IF( id == 1 ) THEN
++        IF( ALLOCATED( BFBtWpack ) ) DEALLOCATE( BFBtWpack )
++        ALLOCATE( BFBtWpack(p0) )
++        BFBtWpack = 1.0_dp
++      END IF
++      nw = 0
++      nwall = 0
+       DO c = 1, NoVar-1
+         Bc => TotMatrix % Submatrix(NoVar,c) % Mat
+         Btc => TotMatrix % Submatrix(c,NoVar) % Mat
+         Ad => TotMatrix % Submatrix(c,c) % Mat
+         IF( .NOT. ASSOCIATED(Bc) .OR. .NOT. ASSOCIATED(Btc) ) CYCLE
+         CALL BFBtGlobalNumbers( Ad, gv, vlo, vup )
+-        CALL EssBFBtAddProd( Bc % NumberOfRows, Bc % Rows, Bc % Cols, Bc % Values, gp, Ad % NumberOfRows, &
+-            Btc % NumberOfRows, Btc % Rows, Btc % Cols, Btc % Values, gv, vlo, vup )
++        IF( id == 0 ) THEN
++          CALL EssBFBtAddProd( id, Bc % NumberOfRows, Bc % Rows, Bc % Cols, Bc % Values, gp, Ad % NumberOfRows, &
++              Btc % NumberOfRows, Btc % Rows, Btc % Cols, Btc % Values, gv, vlo, vup )
++        ELSE
++          ! W_c on the local velocity dofs of block c, then Bt_c's rows scaled by it (W Bt)
++          CALL BFBtWeights( c, Bc, Ad, wv )
++          ALLOCATE( btw(SIZE(Btc % Values)) )
++          DO i = 1, Btc % NumberOfRows
++            DO j = Btc % Rows(i), Btc % Rows(i+1)-1
++              btw(j) = Btc % Values(j) * wv(i)
++            END DO
++          END DO
++          CALL EssBFBtAddProd( id, Bc % NumberOfRows, Bc % Rows, Bc % Cols, Bc % Values, gp, Ad % NumberOfRows, &
++              Btc % NumberOfRows, Btc % Rows, Btc % Cols, btw, gv, vlo, vup )
++          DEALLOCATE( btw )
++          ! the packed velocity weights (for the middle factor's W Bt)
++          IF( isParallel ) THEN
++            DO i = 1, offset(c+1) - offset(c)
++              BFBtWpack(offset(c)+i) = wv( TotMatrix % Submatrix(c,c) % ParPerm(i) )
++            END DO
++          ELSE
++            BFBtWpack(offset(c)+1:offset(c+1)) = wv(1:offset(c+1)-offset(c))
++          END IF
++          nw = nw + COUNT( BFBtWpack(offset(c)+1:offset(c+1)) < 1.0_dp )
++          nwall = nwall + offset(c+1) - offset(c)
++          DEALLOCATE( wv )
++        END IF
+       END DO
+       ! the PCG preconditioner: one BoomerAMG V-cycle with the last block's keywords
+       CALL ListPushNameSpace('block '//I2S(11*NoVar)//':')
+@@ -4659,14 +4723,103 @@ CONTAINS
+       dpar(1) = ListGetCReal( Params,'BoomerAMG Strong Threshold', Found, DefValue = 0.25_dp )
+       dpar(2) = BFBtTol
+       CALL ListPopNameSpace()
+-      CALL EssBFBtFinish( np, Cm % Rows, Cm % Cols, Cm % Values, gp, ipar, dpar, nnz )
+-      BFBtHypreBuilt = .TRUE.
+-      WRITE( Message,'(A,ES10.3,A,I0,A,I0,A,I0,A,ES9.2)') 'BFBt: -K = B Bt - C in Hypre (', nnz, &
++      CALL EssBFBtFinish( id, np, Cm % Rows, Cm % Cols, Cm % Values, gp, ipar, dpar, nnz )
++      WRITE( Message,'(A,I0,A,ES10.3,A,I0,A,I0,A,I0,A,ES9.2)') 'BFBt: K', id, ' in Hypre (', nnz, &
+           ' entries); BoomerAMG relax ', ipar(1), ', coarsen ', ipar(2), ', interp ', ipar(3), ', threshold ', dpar(1)
+       CALL Info('BlockMatrixPrec',Message,Level=5)
+-      DEALLOCATE( gp )
++      IF( id == 1 ) THEN
++        IF( isParallel ) THEN
++          nw = NINT( ParallelReduction( REAL(nw,dp) ) )
++          nwall = NINT( ParallelReduction( REAL(nwall,dp) ) )
++        END IF
++        WRITE( Message,'(A,ES9.2,A,I0,A,I0,A)') 'BFBt: boundary weight ', BFBtEps, ' on ', nw, ' of ', nwall, &
++            ' velocity dofs'
++        CALL Info('BlockMatrixPrec',Message,Level=4)
++      END IF
+       IF( ALLOCATED( gv ) ) DEALLOCATE( gv )
+-    END SUBROUTINE BFBtBuildKHypre
++    END SUBROUTINE BFBtBuildOneK
++
++    ! W_c (patch 06, Elman & Tuminaro 2009): 1, except BFBtEps at the velocity dofs of component c coupled by B_c
++    ! (B_c(j,v) /= 0) to a pressure node j on a boundary to which component c is TANGENTIAL (the boundary's normal
++    ! not along axis c). The boundaries: all boundary elements of the mesh, the normal's dominant axis.
++    ! Consistent across partitions (the flags summed over the shared dofs).
++    SUBROUTINE BFBtWeights( c, Bc, Ad, wv )
++      INTEGER :: c
++      TYPE(Matrix_t), POINTER :: Bc, Ad
++      REAL(KIND=dp), ALLOCATABLE :: wv(:)
++      TYPE(Mesh_t), POINTER :: Mesh
++      TYPE(Element_t), POINTER :: Elm
++      INTEGER, POINTER :: PVPerm(:)
++      INTEGER, ALLOCATABLE :: pflag(:)
++      REAL(KIND=dp), ALLOCATABLE :: ind(:), pind(:)
++      REAL(KIND=dp) :: a(3), b(3), nrm(3)
++      INTEGER :: t, k, n1, n2, n3, ax, j, jj, nv, nn
++      IF( NoVar - 1 > 3 ) CALL Fatal('BlockMatrixPrec','BFBt boundary weight: the velocity blocks must be the components 1..3')
++      Mesh => Solver % Mesh
++      PVPerm => TotMatrix % SubVector(NoVar) % Var % Perm
++      ALLOCATE( pflag(Bc % NumberOfRows) )
++      pflag = 0
++      DO t = Mesh % NumberOfBulkElements + 1, Mesh % NumberOfBulkElements + Mesh % NumberOfBoundaryElements
++        Elm => Mesh % Elements(t)
++        nn = Elm % TYPE % NumberOfNodes
++        IF( nn < 3 ) CYCLE
++        n1 = Elm % NodeIndexes(1)
++        n2 = Elm % NodeIndexes(2)
++        n3 = Elm % NodeIndexes(3)
++        a = [ Mesh % Nodes % x(n2) - Mesh % Nodes % x(n1), Mesh % Nodes % y(n2) - Mesh % Nodes % y(n1), &
++              Mesh % Nodes % z(n2) - Mesh % Nodes % z(n1) ]
++        b = [ Mesh % Nodes % x(n3) - Mesh % Nodes % x(n1), Mesh % Nodes % y(n3) - Mesh % Nodes % y(n1), &
++              Mesh % Nodes % z(n3) - Mesh % Nodes % z(n1) ]
++        nrm = [ a(2)*b(3) - a(3)*b(2), a(3)*b(1) - a(1)*b(3), a(1)*b(2) - a(2)*b(1) ]
++        ax = MAXLOC( ABS(nrm), 1 )
++        IF( ax == c ) CYCLE                 ! component c is normal to this boundary: not adjusted
++        DO k = 1, nn
++          j = PVPerm( Elm % NodeIndexes(k) )
++          IF( j > 0 .AND. j <= SIZE(pflag) ) pflag(j) = 1
++        END DO
++      END DO
++      ! a shared pressure node on a boundary: flagged on every partition sharing it
++      IF( isParallel ) THEN
++        ALLOCATE( pind(SIZE(pflag)) )
++        pind = REAL( pflag, dp )
++        IF( BFBtCanSum( TotMatrix % Submatrix(NoVar,NoVar) % Mat ) ) THEN
++          CALL ParallelSumVector( TotMatrix % Submatrix(NoVar,NoVar) % Mat, pind )
++        ELSE
++          CALL Warn('BlockMatrixPrec','BFBt boundary weight: pressure flags not summed over partitions')
++        END IF
++        WHERE( pind > 0.0_dp ) pflag = 1
++        DEALLOCATE( pind )
++      END IF
++      nv = Ad % NumberOfRows
++      ALLOCATE( ind(nv), wv(nv) )
++      ind = 0.0_dp
++      DO j = 1, Bc % NumberOfRows
++        IF( pflag(j) == 0 ) CYCLE
++        DO jj = Bc % Rows(j), Bc % Rows(j+1)-1
++          IF( Bc % Values(jj) == 0.0_dp ) CYCLE
++          IF( Bc % Cols(jj) <= nv ) ind( Bc % Cols(jj) ) = 1.0_dp
++        END DO
++      END DO
++      IF( isParallel ) THEN
++        IF( BFBtCanSum( Ad ) ) THEN
++          CALL ParallelSumVector( Ad, ind )
++        ELSE
++          CALL Warn('BlockMatrixPrec','BFBt boundary weight: velocity flags not summed over partitions')
++        END IF
++      END IF
++      wv = 1.0_dp
++      WHERE( ind > 0.0_dp ) wv = BFBtEps
++      DEALLOCATE( pflag, ind )
++    END SUBROUTINE BFBtWeights
++
++    ! the parallel structures ParallelSumVector needs are there
++    FUNCTION BFBtCanSum( A ) RESULT( ok )
++      TYPE(Matrix_t), POINTER :: A
++      LOGICAL :: ok
++      ok = ASSOCIATED( A )
++      IF( ok ) ok = ASSOCIATED( A % ParallelInfo ) .AND. ASSOCIATED( A % ParMatrix )
++      IF( ok ) ok = ASSOCIATED( A % ParMatrix % SplittedMatrix )
++    END FUNCTION BFBtCanSum
+ 
+   END SUBROUTINE BlockMatrixPrec
+ 
+diff --git a/fem/src/SolveHypre.c b/fem/src/SolveHypre.c
+index f5c4464..6b160ed 100644
+--- a/fem/src/SolveHypre.c
++++ b/fem/src/SolveHypre.c
+@@ -1589,7 +1589,11 @@ typedef struct {
+   HYPRE_Solver amg, pcg;
+ } EssBFBtContainer;
+ 
+-static EssBFBtContainer EssBFBt = { 0 };
++/* two K's (patch 06): [0] K = C - B Bt, [1] K_W = C - B W Bt (the boundary-adjusted right factor) */
++static EssBFBtContainer EssBFBtAll[2];
++static EssBFBtContainer *EssBFBtP = &EssBFBtAll[0];
++#define EssBFBt (*EssBFBtP)
++static void EssBFBtSelect(int *id) { EssBFBtP = &EssBFBtAll[(*id == 1) ? 1 : 0]; }
+ 
+ static void EssBFBtFree(void)
+ {
+@@ -1638,8 +1642,9 @@ static HYPRE_IJMatrix EssBFBtIJ(int rlo, int rup, int clo, int cup, int nrow, in
+ }
+ 
+ /* start a new K: the pressure range of this rank [plo, pup] (0-based global ids) */
+-void STDCALLBULL FC_FUNC_(ess_bfbt_begin,ESS_BFBT_BEGIN)(int *fcomm, int *plo, int *pup)
++void STDCALLBULL FC_FUNC_(ess_bfbt_begin,ESS_BFBT_BEGIN)(int *id, int *fcomm, int *plo, int *pup)
+ {
++  EssBFBtSelect(id);
+   EssBFBtFree();
+   HYPRE_Init();
+   EssBFBt.comm = (*fcomm < 0) ? MPI_COMM_WORLD : MPI_Comm_f2c(*fcomm);
+@@ -1649,11 +1654,12 @@ void STDCALLBULL FC_FUNC_(ess_bfbt_begin,ESS_BFBT_BEGIN)(int *fcomm, int *plo, i
+ }
+ 
+ /* K += B_c Bt_c: B_c (np pressure rows x nv velocity cols), Bt_c (nvt velocity rows x np pressure cols) */
+-void STDCALLBULL FC_FUNC_(ess_bfbt_addprod,ESS_BFBT_ADDPROD)(int *np, int *brows, int *bcols, double *bvals, int *gp,
++void STDCALLBULL FC_FUNC_(ess_bfbt_addprod,ESS_BFBT_ADDPROD)(int *id, int *np, int *brows, int *bcols, double *bvals, int *gp,
+      int *nv, int *nvt, int *btrows, int *btcols, double *btvals, int *gv, int *vlo, int *vup)
+ {
+   HYPRE_IJMatrix B, Bt;
+   hypre_ParCSRMatrix *pB, *pBt, *P, *S;
++  EssBFBtSelect(id);
+   B = EssBFBtIJ(EssBFBt.plo, EssBFBt.pup, *vlo, *vup, *np, *nv, brows, bcols, bvals, gp, gv);
+   Bt = EssBFBtIJ(*vlo, *vup, EssBFBt.plo, EssBFBt.pup, *nvt, *np, btrows, btcols, btvals, gv, gp);
+   HYPRE_IJMatrixGetObject(B, (void **)&pB);
+@@ -1673,12 +1679,13 @@ void STDCALLBULL FC_FUNC_(ess_bfbt_addprod,ESS_BFBT_ADDPROD)(int *np, int *brows
+ 
+ /* K -= C, then the PCG + BoomerAMG set-up. ipar: relax, coarsen, interp, agg levels, P max, max levels, PCG max
+    iterations, num sweeps; dpar: strong threshold, PCG tolerance. nnz: the global number of entries of -K. */
+-void STDCALLBULL FC_FUNC_(ess_bfbt_finish,ESS_BFBT_FINISH)(int *np, int *crows, int *ccols, double *cvals, int *gp,
++void STDCALLBULL FC_FUNC_(ess_bfbt_finish,ESS_BFBT_FINISH)(int *id, int *np, int *crows, int *ccols, double *cvals, int *gp,
+      int *ipar, double *dpar, double *nnz)
+ {
+   HYPRE_IJMatrix C;
+   hypre_ParCSRMatrix *pC, *S;
+   double lnnz;
++  EssBFBtSelect(id);
+   C = EssBFBtIJ(EssBFBt.plo, EssBFBt.pup, EssBFBt.plo, EssBFBt.pup, *np, *np, crows, ccols, cvals, gp, gp);
+   HYPRE_IJMatrixGetObject(C, (void **)&pC);
+   if (EssBFBt.K == NULL) {
+@@ -1732,10 +1739,11 @@ void STDCALLBULL FC_FUNC_(ess_bfbt_finish,ESS_BFBT_FINISH)(int *np, int *crows,
+ }
+ 
+ /* x = (-K)^-1 b on the n owned (packed) pressure dofs; its, res: PCG iterations and final relative residual */
+-void STDCALLBULL FC_FUNC_(ess_bfbt_solve,ESS_BFBT_SOLVE)(int *n, double *b, double *x, int *its, double *res)
++void STDCALLBULL FC_FUNC_(ess_bfbt_solve,ESS_BFBT_SOLVE)(int *id, int *n, double *b, double *x, int *its, double *res)
+ {
+   double *bd, *xd;
+   int i;
++  EssBFBtSelect(id);
+   bd = hypre_VectorData(hypre_ParVectorLocalVector((hypre_ParVector *)EssBFBt.par_b));
+   xd = hypre_VectorData(hypre_ParVectorLocalVector((hypre_ParVector *)EssBFBt.par_x));
+   for (i = 0; i < *n; i++) { bd[i] = b[i]; xd[i] = 0.0; }
