@@ -29,6 +29,11 @@ slip_len = 0.02
 local slip_env = os and os.getenv and tonumber(os.getenv("STICKY_SLIP"))
 if slip_env then slip_len = slip_env; print("sticky.lua: slip length = " .. slip_len .. " m (STICKY_SLIP)") end
 function beta(f) return mu(f) / slip_len end
+-- contact-line slip: (nearly) no slip under the lava and the air (slip length slip_bed), slip only where the bed is in the
+-- lava/air transition (0 < f < 1: the contact zone, a cell or two at the front), with the slip length slip_len there:
+-- beta = mu(f) / (slip_bed + 4 f (1 - f) slip_len)
+slip_bed = 1.0e-3
+function beta_cl(f) f = clamp01(f); return mu(f) / (slip_bed + 4.0 * f * (1.0 - f) * slip_len) end
 
 gx = g * math.sin(slope)            -- the body force per unit mass, the slope down +x
 gz = -g * math.cos(slope)
