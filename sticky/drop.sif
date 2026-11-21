@@ -1,6 +1,6 @@
 ! STICKY-AIR LAVA, STEP 1 (branch test/lava-spreading): an isothermal lava drop on a 10 degree slope in a box of
 ! "sticky air", on a FIXED mesh: no free-surface solver, no mesh motion, no precursor film. The lava is a fraction field
-! Lava (1 lava, 0 air) carried by the flow (AdvectionReaction, DG upwind: conservative, limited to [0, 1]);
+! Lava (1 lava, 0 air) carried by the flow (AdvectionDiffusion, SUPG, limited to [0, 1]);
 ! density and viscosity from it (sticky.lua). Stokes on the whole box with the BFBt block preconditioner (Elmer patch
 ! 04: ELMER_PREFIX=/SCRATCH/$USER/elmer/install3). SI units: m, s, kg, Pa.
 !   box 16 m (x, down the slope) x 8 m x 1.2 m; the footprint 0.2 m triangles (box.grd), 30 even layers (4 cm)
@@ -47,8 +47,6 @@ End
 Initial Condition 1
   Lava = Variable Coordinate 1, Coordinate 2, Coordinate 3
     Real Lua "lava0(tx[0], tx[1], tx[2])"
-  Lava_nodal = Variable Coordinate 1, Coordinate 2, Coordinate 3
-    Real Lua "lava0(tx[0], tx[1], tx[2])"
   Velocity 1 = Real 0.0
   Velocity 2 = Real 0.0
   Velocity 3 = Real 0.0
@@ -58,28 +56,28 @@ End
 Body Force 1
   ! gravity as a force per unit VOLUME, rho(f) g, rotated for the slope (down +x): IncompressibleNS takes the
   ! Density as constant (per material), so the material's Density is 1 and the lava fraction enters here
-  Flow BodyForce 1 = Variable Lava_nodal
+  Flow BodyForce 1 = Variable Lava
     Real Lua "rho(tx[0]) * gx"
   Flow BodyForce 2 = Real 0.0
-  Flow BodyForce 3 = Variable Lava_nodal
+  Lava Lower Limit = Real 0.0       ! the limiter of the lava advection (Solver 2)
+  Lava Upper Limit = Real 1.0
+  Flow BodyForce 3 = Variable Lava
     Real Lua "rho(tx[0]) * gz"
 End
 
 Material 1
   Name = "lava and air"
   Density = Real 1.0              ! (constant: IncompressibleNS; the buoyancy rho(f) g is the body force)
-  Viscosity = Variable Lava_nodal
+  Viscosity = Variable Lava
     Real Lua "mu(tx[0])"
   Viscosity At IP = Logical True
-  Lava Lower Limit = Real 0.0
-  Lava Upper Limit = Real 1.0
+  Lava Diffusivity = Real 0.0
 End
 
 Equation 1
   Name = "flow and transport"
   Active Solvers(3) = 1 2 3
   Convection = Computed
-  Flow Solution Name = String "Flow Solution"
 End
 
 Solver 1
@@ -160,19 +158,19 @@ End
 
 Solver 2
   Equation = "Lava Advection"
-  Procedure = File "AdvectionReaction" "AdvectionReactionSolver"
-  ! DG upwind: d(Lava)/dt + div(u Lava) = 0, conservative, limited to [0, 1] (Material: Lava Lower / Upper Limit); its
-  ! nodal average Lava_nodal sets the material properties. Elmer/Ice uses this solver in parallel (damage); Elmer's FCT
-  ! (CRS_FCTLowOrder) and ParticleAdvector (ChangeParticlePartition) both crashed in parallel here.
-  Variable = -nooutput "Lava"
-  Discontinuous Galerkin = Logical True
-  Calculate Nodal Average = Logical True
-  Limit Solution = Logical True
+  Procedure = "AdvectionDiffusion" "AdvectionDiffusionSolver"
+  ! nodal advection (SUPG-stabilised), bounded to [0, 1] by Elmer's limiter (Body Force: Lava Lower / Upper Limit).
+  ! The interface smears over ~2-3 cells. (Elmer's FCT and ParticleAdvector crashed in parallel; AdvectionReaction DG
+  ! crashed setting its initial condition.)
+  Variable = Lava
+  Stabilize = Logical True
+  Bubbles = Logical False
+  Apply Limiter = Logical True
   Linear System Solver = Iterative
   Linear System Iterative Method = BiCGStab
   Linear System Max Iterations = 1000
   Linear System Preconditioning = ILU0
-  Linear System Convergence Tolerance = 1.0e-8
+  Linear System Convergence Tolerance = 1.0e-10
   Linear System Abort Not Converged = Logical False
   Nonlinear System Max Iterations = 1
   Steady State Convergence Tolerance = 1.0e-6
@@ -183,11 +181,11 @@ Solver 3
   Equation = "Lava Volume"
   Procedure = "SaveData" "SaveScalars"
   Filename = File "volume.dat"
-  Variable 1 = Lava_nodal
+  Variable 1 = Lava
   Operator 1 = volume int
-  Variable 2 = Lava_nodal
+  Variable 2 = Lava
   Operator 2 = max
-  Variable 3 = Lava_nodal
+  Variable 3 = Lava
   Operator 3 = min
   Variable 4 = Velocity 1
   Operator 4 = max
