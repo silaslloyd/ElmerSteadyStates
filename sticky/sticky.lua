@@ -23,6 +23,13 @@ end
 function rho(f) f = clamp01(f); return rho_a + f * (rho_l - rho_a) end
 function mu(f)  f = clamp01(f); return mu_a + f * (mu_l - mu_a) end
 
+-- Navier slip at the bed (the bed BC: Slip Coefficient 1/2 = beta(f)): basal shear stress = beta * slip velocity, beta =
+-- mu(f) / slip_len, the slip length the same under lava and air. STICKY_SLIP (m) overrides slip_len.
+slip_len = 0.02
+local slip_env = os and os.getenv and tonumber(os.getenv("STICKY_SLIP"))
+if slip_env then slip_len = slip_env; print("sticky.lua: slip length = " .. slip_len .. " m (STICKY_SLIP)") end
+function beta(f) return mu(f) / slip_len end
+
 gx = g * math.sin(slope)            -- the body force per unit mass, the slope down +x
 gz = -g * math.cos(slope)
 
