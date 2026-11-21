@@ -78,6 +78,7 @@ def main():
     args, fit = take(args, "--fit", conv=int, default=10)
     args, minp = take(args, "--min-points", conv=int, default=6)
     args, margin = take(args, "--margin-km", default=5.0)
+    args, tbfit = take(args, "--tb-fit-km", default=150.0)
     args, last = take(args, "--last", conv=int, default=0)
     args, out = take(args, "--out", conv=str)
     args, comp = take(args, "--compare", conv=str, default=[], many=True)
@@ -146,28 +147,28 @@ def main():
           f"curve {zt:.1f} m (slope {s_t:.3f} m/km, the newest point's cold surface above its head)")
     print("Zs: " + "  ".join(f"{xx:.0f} km {np.interp(xx, x, z):.0f} m" for xx in (0, 100, 200, 300, 400, 500, 600, 700, 800)))
     # the basal temperature (T - 273.15 K, grounded): the same pointwise extrapolation where it has a usable history;
-    # beyond, the newest point's profile by the distance above its head (shifted to the new head), blended over the
-    # bridge from the extrapolated end; melting from the head on
+    # melting from the head on
     xn_t, Tn = tbp[-1]
     TZ = np.array([np.where(xg <= h - margin, np.interp(xg, xu, Tu), np.nan) for (_, h, _, _, _), (xu, Tu) in zip(prof, tbp)])
     te, tr = extrap_hist(TZ, fit, minp, (head_t - heads[-1]) / dh)
     okt = np.isfinite(te)
     mt = int(np.flatnonzero(okt)[-1]) if okt.any() else -1
-    sh = head_t - hn
     xtb = np.r_[xg, head_t, xs_n[warm]]
-    tsh = np.interp(xtb - sh, xn_t, Tn)
-    if mt >= 0:
-        x_te = xg[mt]
-        uu = np.clip((xtb - x_te) / (head_t - x_te), 0.0, 1.0)
-        tb = np.where(xtb <= x_te, np.interp(xtb, xg[:mt + 1], te[:mt + 1]),
-                      tsh + (te[mt] - np.interp(x_te - sh, xn_t, Tn)) * (1.0 - uu))
-    else:
-        x_te = 0.0
-        tb = tsh
+    # beyond: the states' cold beds lie on ONE curve in absolute x (they differ only near the divide); the newest
+    # point's up to its head - margin, then that curve continued to the new head: T = -A exp(-x / L) fitted over its
+    # last --tb-fit-km (150) cold km
+    x_te = xg[mt] if mt >= 0 else 0.0
+    x_c = hn - margin
+    fw = (xn_t >= x_c - tbfit) & (xn_t <= x_c) & (Tn < -1e-6)
+    sl, ic = np.polyfit(xn_t[fw], np.log(-Tn[fw]), 1)
+    Lc = -1.0 / sl
+    env = np.where(xtb <= x_c, np.interp(xtb, xn_t, Tn), -np.exp(ic + sl * xtb))
+    tb = np.where(xtb <= x_te, np.interp(xtb, xg[:mt + 1], te[:mt + 1]) if mt >= 0 else env, env)
     tb = np.where(xtb >= head_t, 0.0, np.minimum(tb, 0.0))
     print(f"basal temperature: extrapolated pointwise to {x_te:.0f} km" + (f" (gain ratios {np.nanmin(tr):.3f} .. "
-          f"{np.nanmax(tr):.3f})" if mt >= 0 else " (no usable history)") + f", beyond the newest point's profile "
-          f"shifted by {sh:+.1f} km (its head to the new one)")
+          f"{np.nanmax(tr):.3f})" if mt >= 0 else " (no usable history)") + f"; to {x_c:.0f} km the newest point's (the common curve), "
+          f"beyond it continued as -A exp(-x / L), L = {Lc:.0f} km (fitted over {x_c - tbfit:.0f} .. {x_c:.0f} km): "
+          f"{-np.exp(ic + sl * head_t):+.3f} K at the new head")
     print("T_b - 273.15: " + "  ".join(f"{xx:.0f} km {np.interp(xx, xtb, tb):+.3f}" for xx in
                                        (0, 100, 200, 300, 400, 500, 600, 700, 800, 850, 880, 890)))
     out = out or os.path.join(os.path.dirname(os.path.normpath(args[0])), f"extrap_head{int(round(head_t)):04d}")
