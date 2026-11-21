@@ -1,5 +1,5 @@
 # DIAGNOSTIC: stokes_block_amg_comp.sif.in with ACCURATE inner solves (all blocks to 1e-6: BoomerAMG up to 500 cycles,
-# IDR(s) + ILU up to 2000 on the pressure block). With the velocity and the pressure-mass solves (near) exact, the outer
+# the pressure block by MUMPS, direct). With the velocity and the pressure-mass solves (near) exact, the outer
 # GCR count measures only the preconditioner's structure: the 1/mu pressure mass matrix as the Schur approximation (and
 # so the element's stability) and the u | v | w splitting. 2D prototype (P1 + condensed bubble, Elmer's scaling): ~50.
   Linear System Solver = "Block"
@@ -52,11 +52,5 @@
   BoomerAMG Cycle Type = Integer 1
   BoomerAMG Strong Threshold = Real 0.5
 
-  block 44: Linear System Convergence Tolerance = $blocktol
-  block 44: Linear System Solver = "iterative"
-  block 44: Linear System Scaling = false
-  block 44: Linear System Preconditioning = ilu
-  block 44: Linear System Residual Output = 50
-  block 44: Linear System Max Iterations = 2000
-  block 44: Linear System Iterative Method = idrs
-  block 44: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
+  block 44: Linear System Solver = "Direct"   ! exact pressure-mass solve (IDR(s) + ILU0 to 1e-6 diverged: NaNs into Hypre)
+  block 44: Linear System Direct Method = "MUMPS"
