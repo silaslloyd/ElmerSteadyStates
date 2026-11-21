@@ -10,8 +10,8 @@ flowline mesh is one element wide: the nodes at the smallest y are used.
                                   [--contour] [--no-clip] [--rock]
                                   [--out FILE.html]
 
-Above the plot: u max (the speed's upper colour limit, typed in), u min (the lower limit on the log scale) and a "log u"
-toggle (log10 |u|, floored at 1e-3 m/yr). Buttons switch between the temperature and the velocities u (along the flow; colours up to the fastest grounded
+Above the plot: a "colour field" toggle (off: the surface lines alone, no temperature / velocity colours), u max (the
+speed's upper colour limit, typed in), u min (the lower limit on the log scale) and a "log u" toggle (log10 |u|, floored at 1e-3 m/yr). Buttons switch between the temperature and the velocities u (along the flow; colours up to the fastest grounded
 ice, --umax to set them) and w (vertical, symmetric about 0), from the state's diagnostics Velocity 1 / Velocity 3.
 
 A heatmap of the mesh's own columns (averaged along x only when there are more than --nx, default 2000) x --nz levels (the page stays fast); --contour: filled contours
@@ -21,7 +21,7 @@ instead (smoother, much slower in the browser).
 
 Several states (e.g. the fully temperate steady state and the bed sweep's points/state_*.npz): one page, a slider at
 the bottom chooses the state (the sweep points ordered by d, from the longest temperate patch down; the patch head
-as a dashed green line), the buttons the field; the colours are the same for every state. Default --nz 100 then
+in the title), the buttons the field; the colours are the same for every state. Default --nz 100 then
 (the page holds every state); the page: the first state's name + _sections.html.
 """
 import os
@@ -89,7 +89,7 @@ def iter_tag(path):
 
 
 def build(go, path, a):
-    """one state's traces: the fields (temperature, u, w: heatmaps) and the lines (Zs, Zb, bed, the patch head);
+    """one state's traces: the fields (temperature, u, w: heatmaps) and the lines (Zs, Zb, bed);
     returns (fields, lines, field names, field ranges)"""
     xwin, nz, nx, contour, noclip, tsurf, rock = a["xwin"], a["nz"], a["nx"], a["contour"], a["noclip"], a["tsurf"], a["rock"]
     layout, fields, diag, frozen, title, _ = load(path, 0)
@@ -201,14 +201,7 @@ def build(go, path, a):
             x_, z_ = x_[m], z_[m]
         lines.append(go.Scatter(x=x_, y=z_, mode="lines", name=nm, line=dict(color=col, width=1.6, dash=dash),
                                 hovertemplate=f"x %{{x:.1f}} km<br>{nm} %{{y:.0f}} m<extra></extra>"))
-    # a sweep point: the head of the temperate patch (cold bed upstream of it), a dashed green line
-    d, xgl_m = state_meta(path)
-    if d is not None and xgl_m is not None and pzs is not None:
-        xh = (xgl_m - d) / 1e3
-        zb_h, zs_h = float(np.interp(xh, *pzb)), float(np.interp(xh, *pzs))
-        lines.append(go.Scatter(x=[xh, xh], y=[zb_h - 300, zs_h + 300], mode="lines", name="cold | temperate bed",
-                                line=dict(color="#2ca02c", width=2, dash="dash"),
-                                hovertemplate=f"patch head x {xh:.2f} km<extra></extra>"))
+    d, xgl_m = state_meta(path)                 # a sweep point: d, the temperate patch's length (the title)
     lab = (f"d = {d / 1e3:.1f} km (temperate from {(xgl_m - d) / 1e3:.1f} km){iter_tag(path)}"
            if d is not None and xgl_m is not None else os.path.basename(path))
     return ftr, lines, names, ranges, f"{lab}, {title}", ulog_lo
@@ -303,25 +296,28 @@ def main():
     js = """
 var gd = document.getElementById('{plot_id}');
 var NF = %d, NFT = %d, UJ = %d, PER = %s, TITLES = %s, cur = {s: 0, f: 0};
-var LOG = false;
+var LOG = false, FIELD = true;       // FIELD: the colour field (temperature / u / w) shown; off: the surface lines only
 function show() {
   var v = [], t = (cur.f === UJ && LOG) ? NF : cur.f;      // u with "log u" on: the log trace
   for (var s = 0; s < PER.length; s++)
-    for (var j = 0; j < PER[s]; j++) v.push(s === cur.s && (j >= NFT || j === t));
+    for (var j = 0; j < PER[s]; j++) v.push(s === cur.s && (j >= NFT || (FIELD && j === t)));
   Plotly.restyle(gd, {visible: v});
   Plotly.relayout(gd, {'title.text': TITLES[cur.s][cur.f] + ((cur.f === UJ && LOG) ? ' (log scale)' : '')});
 }
 gd.on('plotly_buttonclicked', function (e) { cur.f = e.active; show(); });
 gd.on('plotly_sliderchange', function (e) { cur.s = parseInt(e.step.value); show(); });
-if (UJ >= 0) {              // the speed's colour limits and the log toggle, above the plot
+var box = document.createElement('div');      // above the plot: the field toggle (+ the speed's limits)
+box.style.cssText = 'font: 13px sans-serif; margin: 6px 0 0 80px;';
+box.innerHTML = '<label><input id="ess_field" type="checkbox" checked> colour field</label> &nbsp; ';
+gd.parentNode.insertBefore(box, gd);
+document.getElementById('ess_field').addEventListener('change', function () {
+  FIELD = document.getElementById('ess_field').checked; show(); });
+if (UJ >= 0) {              // the speed's colour limits and the log toggle
   var lin = [], lg = [], o = 0;
   for (var s = 0; s < PER.length; s++) { lin.push(o + UJ); lg.push(o + NF); o += PER[s]; }
-  var box = document.createElement('div');
-  box.style.cssText = 'font: 13px sans-serif; margin: 6px 0 0 80px;';
-  box.innerHTML = 'u max (m/yr) <input id="ess_umax" type="number" step="any" style="width: 7em" value="%s"> ' +
+  box.insertAdjacentHTML('beforeend', 'u max (m/yr) <input id="ess_umax" type="number" step="any" style="width: 7em" value="%s"> ' +
     '&nbsp; u min, log scale (m/yr) <input id="ess_umin" type="number" step="any" style="width: 7em" value="%s"> ' +
-    '&nbsp; <label><input id="ess_ulog" type="checkbox"> log u</label>';
-  gd.parentNode.insertBefore(box, gd);
+    '&nbsp; <label><input id="ess_ulog" type="checkbox"> log u</label>');
   var apply = function () {
     var hi = parseFloat(document.getElementById('ess_umax').value), lo = parseFloat(document.getElementById('ess_umin').value);
     LOG = document.getElementById('ess_ulog').checked;
