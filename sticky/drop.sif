@@ -54,16 +54,18 @@ Initial Condition 1
 End
 
 Body Force 1
-  ! gravity per unit mass, rotated for the slope (down +x)
-  Flow BodyForce 1 = Real #gx
+  ! gravity as a force per unit VOLUME, rho(f) g, rotated for the slope (down +x): IncompressibleNS takes the
+  ! Density as constant (per material), so the material's Density is 1 and the lava fraction enters here
+  Flow BodyForce 1 = Variable Lava
+    Real Lua "rho(tx[0]) * gx"
   Flow BodyForce 2 = Real 0.0
-  Flow BodyForce 3 = Real #gz
+  Flow BodyForce 3 = Variable Lava
+    Real Lua "rho(tx[0]) * gz"
 End
 
 Material 1
   Name = "lava and air"
-  Density = Variable Lava
-    Real Lua "rho(tx[0])"
+  Density = Real 1.0              ! (constant: IncompressibleNS; the buoyancy rho(f) g is the body force)
   Viscosity = Variable Lava
     Real Lua "mu(tx[0])"
   Viscosity At IP = Logical True
