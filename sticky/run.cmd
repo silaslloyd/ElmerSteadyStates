@@ -16,10 +16,12 @@ export ELMER_LIB=$ELMER_PREFIX/share/elmersolver/lib ELMER_SOLVER_HOME=$ELMER_PR
 export LD_LIBRARY_PATH=$ELMER_PREFIX/lib:$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/share/elmersolver/lib:$LD_LIBRARY_PATH
 N=${SLURM_NTASKS:-1}
 R=sticky/run_${SLURM_JOB_ID:-local}
-mkdir -p $R && cp sticky/drop.sif sticky/sticky.lua sticky/box.grd $R/ && cd $R
-ElmerGrid 1 2 box.grd -autoclean > grid.log 2>&1
-[ "$N" -gt 1 ] && ElmerGrid 2 2 box -metiskway $N -nooverwrite >> grid.log 2>&1
-echo drop.sif > ELMERSOLVER_STARTINFO
+SIF=${SIF:-drop.sif} GRD=${GRD:-box.grd}       # the fine version: SIF=drop_fine.sif GRD=box_fine.grd
+MESH=$(basename $GRD .grd)
+mkdir -p $R && cp sticky/$SIF sticky/sticky.lua sticky/$GRD $R/ && cd $R
+ElmerGrid 1 2 $GRD -autoclean > grid.log 2>&1
+[ "$N" -gt 1 ] && ElmerGrid 2 2 $MESH -metiskway $N -nooverwrite >> grid.log 2>&1
+echo $SIF > ELMERSOLVER_STARTINFO
 echo "$(date +%T) ElmerSolver on $N ranks in $R ($(command -v ElmerSolver))"
-if [ "$N" -gt 1 ]; then mpirun -np $N --bind-to none ElmerSolver drop.sif > elmer.log 2>&1 ; else ElmerSolver drop.sif > elmer.log 2>&1 ; fi
+if [ "$N" -gt 1 ]; then mpirun -np $N --bind-to none ElmerSolver $SIF > elmer.log 2>&1 ; else ElmerSolver $SIF > elmer.log 2>&1 ; fi
 echo "$(date +%T) done: $(tail -1 volume.dat 2>/dev/null)"
