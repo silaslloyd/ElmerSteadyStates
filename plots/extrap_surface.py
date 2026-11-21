@@ -128,6 +128,9 @@ def main():
     fig.add_trace(go.Scatter(x=x, y=z, mode="lines", name=f"the start (degree {deg}, joined)",
                              line=dict(width=3, color="black")))
     for p in comp:
+        if not os.path.exists(p):
+            print(f"--compare {p}: not found, skipped")
+            continue
         s = load_state(p)
         xs, zs = column_profile(s, "zs")
         fig.add_trace(go.Scatter(x=xs / 1e3, y=zs, mode="lines", name=os.path.basename(p),
