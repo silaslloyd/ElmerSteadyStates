@@ -8,7 +8,7 @@
 # test speed-ups on the same points: from the converged point FROM_STATE (d = D_KM km; PREV_STATE the point before it,
 # for the secant predictor), segments in work/flowline_rect_coarse/<OUT_ROOT>/ (default sweep_branch) with meshes
 # tagged <TAG_PREFIX> (default b), PREDICTOR (default secant), on SLURM_NTASKS ranks (default 64: 128 ran each model run ~1.6x slower, 7.2 vs 4.5 min).
-# The Newton fix of adb19f8 (the forcing term capped at eta_max) is in the code.
+# The Newton forcing term capped at eta_max near the target (ESS_NEWTON_CAP_ETA=1, set here; CAP_ETA=0 to leave it off).
 #   sbatch jobs/flowline_sweep_branch.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
@@ -21,6 +21,7 @@ export ELMER_LIB=$ELMER_PREFIX/share/elmersolver/lib ELMER_SOLVER_HOME=$ELMER_PR
 export LD_LIBRARY_PATH=$ELMER_PREFIX/lib:$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/share/elmersolver/lib:$LD_LIBRARY_PATH
 export LIBRARY_PATH=$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}
 export ESS_MPIRUN="mpirun -np {n} --bind-to none"
+export ESS_NEWTON_CAP_ETA=${CAP_ETA:-1}
 unset ESS_SLIDING ESS_HEAT_LIMITER ESS_SEA_SPRING_DT ESS_STRAIN_HEAT_POSITIVE ESS_NO_CONVECTION
 W=work/flowline_rect_coarse
 FROM_STATE=${FROM_STATE:-$W/sweep_refined/seg_m0495/points/state_05192.npz}

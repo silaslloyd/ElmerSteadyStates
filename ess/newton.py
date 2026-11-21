@@ -87,9 +87,13 @@ def newton_krylov(prob: FixedPointProblem, y0, p, opt: NewtonOptions = NewtonOpt
                 eta_new = max(eta_new, 0.9 * eta ** 2)
             eta = eta_new
         eta = float(np.clip(eta, opt.eta_min, opt.eta_max))
-        # no need to solve beyond the target, but never looser than eta_max: near the target 0.5 tol / rms(F) reached
-        # 0.2-0.26, GMRES stopped at 3-9 its, and Newton crept at ~20% per iteration (sweep 31889, d = 506.7 km)
-        eta = min(max(eta, 0.5 * opt.tol / max(nf, 1e-300)), opt.eta_max)
+        # no need to solve beyond the target. ESS_NEWTON_CAP_ETA=1: never looser than eta_max either (near the target
+        # 0.5 tol / rms(F) reached 0.2-0.26 and Newton crept at ~20% per iteration, sweep 31889 d = 506.7 km; but there
+        # GMRES needed 9 products for 0.2: F's noise floor may be near, and a tighter eta only runs GMRES into its
+        # stagnation stop. A test (branch sweep) before it is the default.)
+        eta = max(eta, 0.5 * opt.tol / max(nf, 1e-300))
+        if os.environ.get("ESS_NEWTON_CAP_ETA") == "1":
+            eta = min(eta, opt.eta_max)
 
         def Jv(v):
             return prob.dF(y, p, F, v, tag=f"{label}_jv")
