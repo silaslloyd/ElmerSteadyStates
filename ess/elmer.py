@@ -821,7 +821,10 @@ End
             "__LS_HEAT__": self._linear_block(self.linear_heat, "heat"),
             "__LS_STRAIN__": self._linear_block(self.linear_heat, "strain"),
             # "Bubbles": ElmerStreams' P1 + bubbles (Stabilization Method = Bubbles with its Element line)
-            "__STOKES_STAB__": ('"Bubbles"\n  Element = "p:1 -tri b:1 -quad b:3 -wedge b:1 -brick b:4"'
+            # ESS_WEDGE_BUBBLES (TESTING, default 1): the bubbles per wedge (Elmer's hierarchical wedge bubbles: b:2 adds
+            # the next one in the vertical, b:3 ... ); the solver test of the 1/mu pressure mass as the Schur approximation
+            "__STOKES_STAB__": ('"Bubbles"\n  Element = "p:1 -tri b:1 -quad b:3 -wedge b:'
+                                + str(int(os.environ.get("ESS_WEDGE_BUBBLES") or 1)) + ' -brick b:4"'
                                 if self.stokes_element == "Bubbles" else f'"{self.stokes_element}"'),
             # strain heating (ElmerStreams: on): DeformationalHeatSolver + volumetric heat source
             "__STRAIN_EXEC__": '"Always"' if self.strain_heat and not self.stokes_only else '"Never"',
