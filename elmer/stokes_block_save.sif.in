@@ -1,0 +1,69 @@
+# EXPORT: stokes_block_amg_comp.sif.in (unchanged solver) + Elmer's linear-system dump, for the prototype on Elmer's own
+# matrices: the monolithic Stokes system at DefaultSolve (stokes_a.dat: i j value, 1-based, BEFORE scaling;
+# stokes_b.dat; stokes_perm.dat: node -> row), and the pressure block's preconditioning matrix (the 1/mu pressure mass of
+# the 'schur' child solver) as block 44 solves it (schur_a.dat: after Elmer's diagonal scaling of the monolithic system).
+# In the run directory (ESS_KEEP_RUNS=1). Serial runs only (in parallel: one file per rank, local numbering).
+  Linear System Save = Logical True
+  Linear System Save Perm = Logical True
+  Linear System Save Prefix = String "stokes"
+  block 44: Linear System Save = Logical True
+  block 44: Linear System Save Slot = String "linear solve"
+  block 44: Linear System Save Prefix = String "schur"
+  Linear System Solver = "Block"
+  Block Gauss-Seidel = Logical True
+  Block Matrix Reuse = Logical False
+  Block Scaling = Logical False
+  Block Preconditioner = Logical True
+  Linear System Residual Output = 25
+
+  Outer: Linear System Solver = "Iterative"
+  Outer: Linear System Iterative Method = GCR
+  Outer: Linear System GCR Restart = 250
+  Outer: Linear System Residual Output = 1
+  Outer: Linear System Max Iterations = 500
+  Outer: Linear System Abort Not Converged = False
+  Outer: Linear System Convergence Tolerance = 1e-6
+
+  $blocktol = 0.01
+
+  block 11: Linear System Iterative = Logical True
+  block 11: Linear System Solver = "iterative"   ! REQUIRED: without it the block falls back to the solver's "Block" -> BlockSolve recursion (IterSolver depth 65, the >250 GB/node OOMs)
+  block 11: Linear System Use HYPRE = Logical True
+  block 11: Linear System Iterative Method = BoomerAMG
+  block 11: Linear System Max Iterations = 100
+  block 11: Linear System Convergence Tolerance = $blocktol
+  block 11: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
+
+  block 22: Linear System Iterative = Logical True
+  block 22: Linear System Solver = "iterative"   ! REQUIRED: without it the block falls back to the solver's "Block" -> BlockSolve recursion (IterSolver depth 65, the >250 GB/node OOMs)
+  block 22: Linear System Use HYPRE = Logical True
+  block 22: Linear System Iterative Method = BoomerAMG
+  block 22: Linear System Max Iterations = 100
+  block 22: Linear System Convergence Tolerance = $blocktol
+  block 22: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
+
+  block 33: Linear System Iterative = Logical True
+  block 33: Linear System Solver = "iterative"   ! REQUIRED: without it the block falls back to the solver's "Block" -> BlockSolve recursion (IterSolver depth 65, the >250 GB/node OOMs)
+  block 33: Linear System Use HYPRE = Logical True
+  block 33: Linear System Iterative Method = BoomerAMG
+  block 33: Linear System Max Iterations = 100
+  block 33: Linear System Convergence Tolerance = $blocktol
+  block 33: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
+
+  BoomerAMG Relax Type = Integer 3
+  BoomerAMG Coarsen Type = Integer 10        ! HMIS (was 0 = CLJP: OOM, 269 GB/node at the first solve, job 32075)
+  BoomerAMG Num Sweeps = Integer 1
+  BoomerAMG Max Levels = Integer 25
+  BoomerAMG Interpolation Type = Integer 6   ! ext+i (was 0 = classical); Hypre's default truncation (4/row) applies
+  BoomerAMG Smooth Type = Integer 6
+  BoomerAMG Cycle Type = Integer 1
+  BoomerAMG Strong Threshold = Real 0.5
+
+  block 44: Linear System Convergence Tolerance = $blocktol
+  block 44: Linear System Solver = "iterative"
+  block 44: Linear System Scaling = false
+  block 44: Linear System Preconditioning = ilu
+  block 44: Linear System Residual Output = 1
+  block 44: Linear System Max Iterations = 500
+  block 44: Linear System Iterative Method = idrs
+  block 44: Linear System Abort Not Converged = Logical False   ! ESS: an inner solve is only a preconditioner step
