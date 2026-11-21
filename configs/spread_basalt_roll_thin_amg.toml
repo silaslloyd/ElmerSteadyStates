@@ -14,7 +14,7 @@
 # in the front's frame the surface rolls under at the nose (the caterpillar). 60 m x 20 m box, the drop at (10, 10) m.
 
 [paths]
-work_dir = "work/spread_basalt_roll_thin_amg"
+work_dir = "work/roll_amg"            # short: Elmer reads at most 128 characters of the mesh path
 case_dir = "{work}/case"
 
 [case]
