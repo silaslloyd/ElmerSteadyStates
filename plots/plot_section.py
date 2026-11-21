@@ -17,6 +17,10 @@ ice, --umax to set them) and w (vertical, symmetric about 0), from the state's d
 A heatmap of the mesh's own columns (averaged along x only when there are more than --nx, default 2000) x --nz levels (the page stays fast); --contour: filled contours
 instead (smoother, much slower in the browser).
 
+--sia [--sia-file F.npz]: a dimensionless SIA steady profile (default plots/data/sia_profile.npz: x, bed, h) drawn over
+every state in three scalings (grounding-line thickness + bed slope; grounding-line position + bed slope; the nominal
+scales), dashed, each a legend entry (click to hide).
+
 --rock: the bedrock's temperature too (down to the bottom of the 10 zscale rock), not only the ice.
 
 Several states (e.g. the fully temperate steady state and the bed sweep's points/state_*.npz): one page, a slider at
@@ -207,6 +211,57 @@ def build(go, path, a):
     return ftr, lines, names, ranges, f"{lab}, {title}", ulog_lo
 
 
+RHO_I, RHO_W = 920.0, 1003.27            # case/parameters.lua
+
+
+def sia_overlay(go, lines0, path):
+    """a dimensionless SIA steady profile (plots/data/sia_profile.npz: x, bed, h = thickness; the run's
+    nondimensionalisation, bed slope 0.05) drawn over the sweep in three scalings; each a legend group (click to hide):
+      - "GL fit": z scale from the thickness at the grounding line (the profile's flotation point h rho_i / rho_w = -bed
+        matched to the run's grounding-line thickness), x scale from the bed slope (the profile's 0.05 Z/X = the run's);
+      - "GL position": x scale from the grounding line's position, z scale from the bed slope;
+      - "nominal": case/parameters.lua's xscale / zscale (340 km, 1069 m).
+    Each: x from the divide, the bed shifted vertically onto the run's bed (least squares over the grounded run bed)."""
+    zz = np.load(path)
+    xd, bd, hd = zz["x"], zz["bed"], zz["h"]
+    fl = hd * RHO_I / RHO_W < -bd
+    i = int(np.argmax(fl)) if fl.any() else len(xd) - 1     # the profile's flotation point
+    xd, bd, hd = xd[:i + 1], bd[:i + 1], hd[:i + 1]
+    slope_d = float(np.polyfit(xd, bd, 1)[0])                  # -0.05
+    L = {t.name: (np.asarray(t.x, float), np.asarray(t.y, float)) for t in lines0}
+    (xs_, zs_), (xb_, zb_), (xr_, br_) = L["Zs (surface)"], L["Zb (ice base)"], L["bed"]
+    fl_r = zb_ - np.interp(xb_, xr_, br_) > 1.0
+    xgl = float(xb_[np.argmax(fl_r)]) if fl_r.any() else float(xb_[-1])          # km
+    xg_last = float(xb_[np.argmax(fl_r) - 1]) if fl_r.any() else xgl
+    Hgl = float(np.interp(xg_last, xs_, zs_) - np.interp(xg_last, xb_, zb_))
+    m = xr_ <= xgl - 10.0
+    s_run = float(np.polyfit(xr_[m] * 1e3, br_[m], 1)[0])                         # m / m
+    Zn, Xn = 1068.8073, 340063.85                                                 # case/parameters.lua
+    fits = {}
+    Z = Hgl / float(hd[-1]); fits["GL fit"] = (Z * slope_d / s_run, Z)
+    X = xgl * 1e3 / float(xd[-1]); fits["GL position"] = (X, s_run * X / slope_d)
+    fits["nominal"] = (Xn, Zn)
+    print(f"SIA profile: run grounding line {xgl:.1f} km, thickness there {Hgl:.0f} m, bed slope {s_run:.3e}; "
+          f"profile flotation at x = {xd[-1]:.4f}, h = {hd[-1]:.4f}")
+    out = []
+    for (name, (X, Z)), col in zip(fits.items(), ("#16a085", "#e67e22", "#7f8c8d")):
+        xk = xd * X / 1e3
+        bz = bd * Z
+        mm, bm = xr_[m], br_[m]
+        ok = (mm >= xk[0]) & (mm <= xk[-1])
+        shift = float(np.mean(bm[ok] - np.interp(mm[ok], xk, bz))) if ok.any() else 0.0
+        print(f"  {name}: x scale {X / 1e3:.1f} km, z scale {Z:.0f} m (nominal {Xn / 1e3:.1f} km, {Zn:.0f} m); "
+              f"grounding line at {xk[-1]:.1f} km, its thickness {hd[-1] * Z:.0f} m; bed shifted {shift:+.0f} m")
+        lab = f"SIA {name} ({X / 1e3:.0f} km, {Z:.0f} m)"
+        out.append(go.Scatter(x=xk, y=bz + shift + hd * Z, mode="lines", name=lab, legendgroup=name,
+                              line=dict(color=col, width=2.0, dash="dash"),
+                              hovertemplate=f"x %{{x:.1f}} km<br>SIA surface ({name}) %{{y:.0f}} m<extra></extra>"))
+        out.append(go.Scatter(x=xk, y=bz + shift, mode="lines", name=f"SIA bed ({name})", legendgroup=name,
+                              showlegend=False, line=dict(color=col, width=1.2, dash="dot"),
+                              hovertemplate=f"x %{{x:.1f}} km<br>SIA bed ({name}) %{{y:.0f}} m<extra></extra>"))
+    return out
+
+
 def main():
     args = sys.argv[1:]
     args, xwin = opt(args, "--x", n=2)
@@ -222,6 +277,11 @@ def main():
     args, out = opt(args, "--out", conv=str)
     rock = "--rock" in args
     args = [a for a in args if a != "--rock"]
+    args, sia_file = opt(args, "--sia-file", conv=str)
+    sia = "--sia" in args or sia_file is not None
+    args = [a for a in args if a != "--sia"]
+    if sia and sia_file is None:
+        sia_file = os.path.join(HERE, "data", "sia_profile.npz")
     if not args:
         raise SystemExit(__doc__)
     import plotly.graph_objects as go
@@ -270,7 +330,9 @@ def main():
             t.update(visible=(k == 0))
         traces += ftr + lines
         per.append(len(ftr) + len(lines))
-    fig = go.Figure(traces)
+    extra = sia_overlay(go, built[0][1], sia_file) if sia else []
+    nstate = len(traces)
+    fig = go.Figure(traces + extra)
     # the axes fixed over all the states (no rescaling when the slider moves)
     xs = np.concatenate([np.asarray(t.x, float) for t in traces if t.x is not None])
     ys = np.concatenate([np.asarray(t.y, float) for t in traces if t.y is not None])
@@ -301,7 +363,8 @@ function show() {
   var v = [], t = (cur.f === UJ && LOG) ? NF : cur.f;      // u with "log u" on: the log trace
   for (var s = 0; s < PER.length; s++)
     for (var j = 0; j < PER[s]; j++) v.push(s === cur.s && (j >= NFT || (FIELD && j === t)));
-  Plotly.restyle(gd, {visible: v});
+  var idx = []; for (var i = 0; i < v.length; i++) idx.push(i);   // the states' traces only (overlays keep their own)
+  Plotly.restyle(gd, {visible: v}, idx);
   Plotly.relayout(gd, {'title.text': TITLES[cur.s][cur.f] + ((cur.f === UJ && LOG) ? ' (log scale)' : '')});
 }
 gd.on('plotly_buttonclicked', function (e) { cur.f = e.active; show(); });
