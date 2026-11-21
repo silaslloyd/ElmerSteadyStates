@@ -821,10 +821,16 @@ End
             "__LS_HEAT__": self._linear_block(self.linear_heat, "heat"),
             "__LS_STRAIN__": self._linear_block(self.linear_heat, "strain"),
             # "Bubbles": ElmerStreams' P1 + bubbles (Stabilization Method = Bubbles with its Element line)
-            # ESS_WEDGE_BUBBLES (TESTING, default 1): the bubbles per wedge (Elmer's hierarchical wedge bubbles: b:2 adds
-            # the next one in the vertical, b:3 ... ); the solver test of the 1/mu pressure mass as the Schur approximation
-            "__STOKES_STAB__": ('"Bubbles"\n  Element = "p:1 -tri b:1 -quad b:3 -wedge b:'
-                                + str(int(os.environ.get("ESS_WEDGE_BUBBLES") or 1)) + ' -brick b:4"'
+            # NOTE: Elmer's element families are tri, quad, tetra, pyramid, PRISM, brick (MeshBasics.F90): "-wedge" is
+            # not one, so "-wedge b:1" applies b:1 to EVERY family (the boundary triangles and quads too, overriding
+            # "-quad b:3"); the wedges get their one bubble by that. Kept as it was for the runs so far.
+            # ESS_WEDGE_BUBBLES=n (TESTING): n bubbles on the prisms (wedges) only, the boundary elements as before (b:1):
+            # "p:1 -tri b:1 -quad b:1 -prism b:n -brick b:4". IncompressibleNS's own default for the bubble element is
+            # -prism b:4 (serendipity; one prism bubble is a degree-5 function varying in the vertical only).
+            "__STOKES_STAB__": (('"Bubbles"\n  Element = "p:1 -tri b:1 -quad b:3 -wedge b:1 -brick b:4"'
+                                 if not os.environ.get("ESS_WEDGE_BUBBLES") else
+                                 '"Bubbles"\n  Element = "p:1 -tri b:1 -quad b:1 -prism b:'
+                                 + str(int(os.environ["ESS_WEDGE_BUBBLES"])) + ' -brick b:4"')
                                 if self.stokes_element == "Bubbles" else f'"{self.stokes_element}"'),
             # strain heating (ElmerStreams: on): DeformationalHeatSolver + volumetric heat source
             "__STRAIN_EXEC__": '"Always"' if self.strain_heat and not self.stokes_only else '"Never"',
