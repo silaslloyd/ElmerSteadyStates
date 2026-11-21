@@ -1257,6 +1257,19 @@ End
         template's [[0, 1], [1, 0.25]]: finer towards the surface); [case] layer_viscosity_factor > 1: the viscosity a
         function of the height too (SpreadViscosity(T, z): the stiff base layer)"""
         c = getattr(self, "spread_case", {})
+        if os.environ.get("ESS_SPREAD_WALLS") == "slip":
+            # (TESTING) free-slip side walls: only the normal velocity zero (x on x0/xL, y on y0/yW), the tangential
+            # free. No-slip walls (the default) fix every velocity dof on the wall nodes; their pressure nodes are then
+            # held only weakly (thin top layers), the 1/mu pressure mass a poor Schur approximation there (~600 modes
+            # with S/M ~ 1e-3 on the tiny case, 98% on the wall columns), ~200 outer block iterations even with exact
+            # velocity solves.
+            for nm, keep in (("wall x0", 1), ("wall xL", 1), ("wall y0", 2), ("wall yW", 2)):
+                m = re.search(f'  Name = "{nm}"\n  Target Boundaries\\(1\\) = (\\d+)\n  Velocity 1 = 0.0\n'
+                              '  Velocity 2 = 0.0\n  Velocity 3 = 0.0\nEnd', text)
+                if not m:
+                    raise ValueError(f"ESS_SPREAD_WALLS=slip: the template's '{nm}' block changed")
+                text = text.replace(m.group(0), f'  Name = "{nm}"\n  Target Boundaries(1) = {m.group(1)}\n'
+                                    f'  Velocity {keep} = 0.0   ! ESS_SPREAD_WALLS=slip: free slip\nEnd')
         lv, dens = c.get("extrude_levels"), c.get("extrude_density")
         if lv is not None or dens is not None:
             a = "  Extruded Mesh Levels = Integer 21\n"
