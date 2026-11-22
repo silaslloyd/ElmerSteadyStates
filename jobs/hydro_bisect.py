@@ -107,6 +107,7 @@ def main():
     ap.add_argument("--wait-min", type=float, default=15.0)
     ap.add_argument("--wait-max-h", type=float, default=12.0)
     ap.add_argument("--gl-rounds", type=int, default=6)
+    ap.add_argument("--list", action="store_true", help="print the points' sheet status and the bracket, then stop")
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10")
     a = ap.parse_args()
     cfg = load_config(a.config)
@@ -128,12 +129,15 @@ def main():
             if stat[d1] == "ok" and stat[d2] == "dry" and d2 - d1 <= a.max_gap_km:
                 br = (d1, d2)
                 break
-        if br:
+        if br or a.list:
             break
         if time.time() - t0 > a.wait_max_h * 3600:
             raise SystemExit("no ok -> dry switch between neighbouring converged points: stopping")
         log(f"no ok -> dry switch between neighbours (gap <= {a.max_gap_km:g} km) yet: waiting {a.wait_min:g} min")
         time.sleep(a.wait_min * 60)
+    if a.list:
+        log(f"bracket: {br}" if br else "no ok -> dry switch between neighbours")
+        return
     d_ok, d_dry = br
     s = load_state(pts[d_ok])
     xgl = gl_position(s.frozen, s.diag) / 1e3
