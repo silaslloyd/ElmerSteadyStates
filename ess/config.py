@@ -123,7 +123,10 @@ def map_spec(cfg, section="map") -> MapSpec:
 
 
 def newton_options(cfg) -> NewtonOptions:
-    return _opts(NewtonOptions, dict(cfg.get("newton", {})))
+    d = dict(cfg.get("newton", {}))
+    if os.environ.get("ESS_NEWTON_TOL"):        # a job's override of [newton] tol (e.g. the refined sweep: 5e-5, its
+        d["tol"] = float(os.environ["ESS_NEWTON_TOL"])   # points stall at ~4.5e-5 on the deep bedrock-heat mode)
+    return _opts(NewtonOptions, d)
 
 
 def continuation_options(cfg) -> ContinuationOptions:

@@ -26,8 +26,11 @@ export LD_LIBRARY_PATH=$ELMER_PREFIX/lib:$ELMER_PREFIX/lib/elmersolver:$ELMER_PR
 export LIBRARY_PATH=$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}
 export ESS_MPIRUN="mpirun -np {n} --bind-to none"
 unset ESS_SLIDING ESS_HEAT_LIMITER ESS_SEA_SPRING_DT ESS_STRAIN_HEAT_POSITIVE ESS_NO_CONVECTION
+# the Newton tolerance ([newton] tol 1e-5 in the config): 5e-5 here, the points stall at ~4.5e-5 on the deep
+# bedrock-heat mode (d = 481.7 km, 31889); NEWTON_TOL= to set another
+export ESS_NEWTON_TOL=${NEWTON_TOL:-5e-5}
 FROM_SWEEP=${FROM_SWEEP:-work/flowline_rect_coarse/sweep_p268.15_down}
-echo "$(date +%T) refined sweep from the last converged point of $FROM_SWEEP: segments of ${SPAN:-50} km, band ${FINE:-250} m"
+echo "$(date +%T) refined sweep from the last converged point of $FROM_SWEEP: segments of ${SPAN:-50} km, band ${FINE:-250} m, Newton tol $ESS_NEWTON_TOL"
 python3 -u jobs/sweep_refined.py configs/flowline_rect_coarse.toml --from-sweep $FROM_SWEEP --d-end-km ${D_END:-0} \
     --span-km ${SPAN:-50} --pad-km ${PAD:-10} --fine ${FINE:-250} --step-frac ${STEP_FRAC:-0.2} \
     --step-min-km ${STEP_MIN:-1} --step-max-km ${STEP_MAX:-25} --predictor ${PREDICTOR:-none}
