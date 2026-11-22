@@ -132,6 +132,13 @@ def main():
                                      showlegend=show, line=dict(color=c, width=1.5),
                                      hovertemplate=f"{r['lab']}<br>x %{{x:.2f}} km<br>{key} %{{y:.4g}}<extra></extra>"),
                           row=row_, col=1)
+        fin = np.isfinite(r["h"]) & sel
+        if r["st"] == "ok" and fin.any():        # the sheet ends at the patch head: a wall down to h = 0 there
+            k = int(np.flatnonzero(fin)[np.argmin(r["x"][fin])])
+            fig.add_trace(go.Scatter(x=[r["x"][k], r["x"][k]], y=[r["h"][k], 0.0], mode="lines", legendgroup=r["lab"],
+                                     showlegend=False, line=dict(color=c, width=1.5),
+                                     hovertemplate=f"{r['lab']}: head at x %{{x:.2f}} km, h %{{y:.4g}} m<extra></extra>"),
+                          row=3, col=1)
         if r["st"] == "dry":
             hd = r["h"][np.isfinite(r["h"])]
             fig.add_trace(go.Scatter(x=[r["xdry"]], y=[hd[0] if hd.size else hp["hr"]], mode="markers", legendgroup=r["lab"],
