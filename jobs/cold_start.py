@@ -77,7 +77,9 @@ def main():
     ap.add_argument("--from-state")
     ap.add_argument("--tc", type=float, default=258.15)
     ap.add_argument("--tend", type=float, default=268.15)
-    ap.add_argument("--spin", type=int, default=5)
+    ap.add_argument("--spin", type=int, default=50, help="spin-up chunks at most (2000 yr each with the [map])")
+    ap.add_argument("--spin-tol", type=float, default=1e-2, help="the spin-up stops when the rms change per chunk is below")
+    ap.add_argument("--spin-more", type=int, default=0, help="this many more spin-up chunks from the existing spin.npz")
     ap.add_argument("--heat-dt", type=float, default=1e4)
     ap.add_argument("--heat-steps", type=int, default=30)
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10")
@@ -114,9 +116,19 @@ def main():
     log(f"from {os.path.relpath(src_name, ROOT)} (on the mesh {mdir}); cold surface {tc} K, warming to {a.tend:g} K; into {cdir}")
     spin, fz, heat = (os.path.join(cdir, f) for f in ("spin.npz", "frozen.npz", "heat.npz"))
     cold = os.path.join(cdir, f"cold_p{tc}.npz")
-    if not os.path.exists(spin):
-        run([py, "-u", "-m", "ess", "run", a.config, "--state", src, "--p", tc, "--stokes-only", "--bed", "cold",
-             "--chunks", str(a.spin), "--out", spin], env=frozen)
+    more = a.spin_more if os.path.exists(spin) else 0
+    if not os.path.exists(spin) or more:
+        st_in = spin if os.path.exists(spin) else src
+        n = more or a.spin
+        tmp = os.path.join(cdir, "spin_tmp.npz")
+        log(f"spin-up: up to {n} chunks from {os.path.basename(st_in)}, stopping when the rms change per chunk < "
+            f"{a.spin_tol:g}")
+        run([py, "-u", "-m", "ess", "run", a.config, "--state", st_in, "--p", tc, "--stokes-only", "--bed", "cold",
+             "--chunks", str(n), "--until-tol", f"{a.spin_tol:g}", "--out", tmp], env=frozen)
+        os.replace(tmp, spin)
+        for f in (fz, heat, cold):              # anything built on the old spin-up is stale
+            if os.path.exists(f):
+                os.replace(f, f + ".old")
     bed_report(spin)
     if a.stop_after <= 1:
         return

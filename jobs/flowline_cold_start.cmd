@@ -7,8 +7,9 @@
 # The subtemperate all-cold-bed steady state at 268.15 K reached from a frozen-bed sheet by warming the surface
 # (jobs/cold_start.py): frozen-bed spin-up and Newton at TC (default 258.15), the steady heat there, full Newton,
 # continuation in Tsurf up to TEND (default 268.15), Newton at TEND. Output work/flowline_rect_coarse/cold/,
-# work/flowline_rect_coarse/branch_cold/. FROM=state.npz (default the coarse sweep's last point), SPIN (chunks,
-# default 5), STOP_AFTER (1-6). Resubmitting resumes.
+# work/flowline_rect_coarse/branch_cold/. FROM=state.npz (default the coarse sweep's last point), SPIN (chunks at most,
+# default 50 = 100 kyr), SPIN_TOL (stop below this rms change per chunk, default 1e-2), SPIN_MORE=N (N more chunks from
+# the existing spin.npz; the later steps' outputs then renamed .old), STOP_AFTER (1-6). Resubmitting resumes.
 #   sbatch jobs/flowline_cold_start.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
@@ -25,5 +26,5 @@ unset ESS_SLIDING ESS_HEAT_LIMITER ESS_SEA_SPRING_DT ESS_STRAIN_HEAT_POSITIVE ES
 export ESS_NEWTON_TOL=${NEWTON_TOL:-5e-5}
 echo "$(date +%T) cold start ${FROM:+from $FROM}, Newton tol $ESS_NEWTON_TOL"
 python3 -u jobs/cold_start.py configs/flowline_rect_coarse.toml ${FROM:+--from-state $FROM} --tc ${TC:-258.15} \
-    --tend ${TEND:-268.15} --spin ${SPIN:-5} --stop-after ${STOP_AFTER:-6}
+    --tend ${TEND:-268.15} --spin ${SPIN:-50} --spin-tol ${SPIN_TOL:-1e-2} --spin-more ${SPIN_MORE:-0} --stop-after ${STOP_AFTER:-6}
 echo "$(date +%T) done"
