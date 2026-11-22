@@ -6,8 +6,8 @@ by warming the surface, as the start of a patch sweep UP from the grounding line
        (default the coarse sweep's last converged point), the shelf break as every sweep segment's
                                                                                -> <work>/cold/start.npz
     1. spin-up, mechanics only, bed frozen (ESS_SLIDING=frozen: no sliding where grounded; the contact grounding line
-       moves every step), at the cold surface temperature TC (default 258.15 K): --spin chunks of the [map]
-       (default 5 x 2000 yr) from SRC                                          -> <work>/cold/spin.npz
+       moves every step), at the cold surface temperature TC (default 258.15 K), from SRC, in runs of --spin-batch chunks of the [map]
+       (10 x 2000 yr) until the rms change per chunk < --spin-tol (1e-2)    -> <work>/cold/spin.npz, spin.done
     2. Newton on the geometry, mechanics only, bed frozen (ess newton --stokes-only; the grounding line by contact
        between solves)                                                         -> <work>/cold/frozen.npz
     3. the steady temperature on that geometry at TC (ess run --heat-only, --heat-steps x --heat-dt yr, the bed still
@@ -25,7 +25,7 @@ by warming the surface, as the start of a patch sweep UP from the grounding line
 Then (not here) the patch sweep up from it: ess sweep CONFIG --state <work>/cold/cold_p268.15.npz --d-start-km 0
 --d-end-km D. Every step is skipped when its output exists (resubmitting resumes; the continuation resumes itself).
 
-    python3 jobs/cold_start.py CONFIG [--from-state SRC] [--tc 258.15] [--tend 268.15] [--spin 5]
+    python3 jobs/cold_start.py CONFIG [--from-state SRC] [--tc 258.15] [--tend 268.15] [--spin-batch 10] [--spin-tol 1e-2]
                                [--heat-dt 1e4] [--heat-steps 30] [--stop-after N]
 """
 import argparse
@@ -77,9 +77,8 @@ def main():
     ap.add_argument("--from-state")
     ap.add_argument("--tc", type=float, default=258.15)
     ap.add_argument("--tend", type=float, default=268.15)
-    ap.add_argument("--spin", type=int, default=50, help="spin-up chunks at most (2000 yr each with the [map])")
+    ap.add_argument("--spin-batch", type=int, default=10, help="spin-up chunks per run (2000 yr each with the [map])")
     ap.add_argument("--spin-tol", type=float, default=1e-2, help="the spin-up stops when the rms change per chunk is below")
-    ap.add_argument("--spin-more", type=int, default=0, help="this many more spin-up chunks from the existing spin.npz")
     ap.add_argument("--heat-dt", type=float, default=1e4)
     ap.add_argument("--heat-steps", type=int, default=30)
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10")
@@ -116,19 +115,42 @@ def main():
     log(f"from {os.path.relpath(src_name, ROOT)} (on the mesh {mdir}); cold surface {tc} K, warming to {a.tend:g} K; into {cdir}")
     spin, fz, heat = (os.path.join(cdir, f) for f in ("spin.npz", "frozen.npz", "heat.npz"))
     cold = os.path.join(cdir, f"cold_p{tc}.npz")
-    more = a.spin_more if os.path.exists(spin) else 0
-    if not os.path.exists(spin) or more:
-        st_in = spin if os.path.exists(spin) else src
-        n = more or a.spin
-        tmp = os.path.join(cdir, "spin_tmp.npz")
-        log(f"spin-up: up to {n} chunks from {os.path.basename(st_in)}, stopping when the rms change per chunk < "
-            f"{a.spin_tol:g}")
-        run([py, "-u", "-m", "ess", "run", a.config, "--state", st_in, "--p", tc, "--stokes-only", "--bed", "cold",
-             "--chunks", str(n), "--until-tol", f"{a.spin_tol:g}", "--out", tmp], env=frozen)
-        os.replace(tmp, spin)
-        for f in (fz, heat, cold):              # anything built on the old spin-up is stale
+    # the spin-up runs until the rms change per chunk < --spin-tol (no resubmitting by hand): batches of --spin-batch
+    # chunks, each from the last saved spin.npz (a job ended by its time limit resumes from there); spin.done once
+    # converged. Later steps' outputs made before it converged are stale (renamed .old).
+    done_f = os.path.join(cdir, "spin.done")
+    if not os.path.exists(done_f):
+        for f in (fz, heat, cold):
             if os.path.exists(f):
                 os.replace(f, f + ".old")
+        tmp = os.path.join(cdir, "spin_tmp.npz")
+        total = 0
+        while True:
+            st_in = spin if os.path.exists(spin) else src
+            log(f"spin-up: {a.spin_batch} chunks from {os.path.basename(st_in)}, stopping once the rms change per "
+                f"chunk < {a.spin_tol:g}")
+            log("$ ess run ... (frozen bed, mechanics only)")
+            pr = subprocess.Popen([py, "-u", "-m", "ess", "run", a.config, "--state", st_in, "--p", tc, "--stokes-only",
+                                   "--bed", "cold", "--chunks", str(a.spin_batch), "--until-tol", f"{a.spin_tol:g}",
+                                   "--out", tmp], cwd=ROOT, env=frozen, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, text=True)
+            ok, last = False, None
+            for line in pr.stdout:
+                print(line, end="", flush=True)
+                m = re.search(r"rms change ([0-9.eE+-]+)", line)
+                if m:
+                    last = float(m.group(1))
+                if "rms change" in line and "<" in line and "over one chunk" in line:
+                    ok = True
+            if pr.wait() != 0:
+                raise SystemExit(f"spin-up run failed (exit {pr.returncode})")
+            os.replace(tmp, spin)
+            total += a.spin_batch
+            if ok or (last is not None and last < a.spin_tol):
+                open(done_f, "w").write(f"rms change {last}\n")
+                log(f"spin-up converged: rms change per chunk {last:.3e} < {a.spin_tol:g}")
+                break
+            log(f"spin-up: rms change per chunk still {last:.3e} after this batch; going on")
     bed_report(spin)
     if a.stop_after <= 1:
         return
