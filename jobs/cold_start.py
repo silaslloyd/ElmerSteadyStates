@@ -5,10 +5,10 @@ by warming the surface, as the start of a patch sweep UP from the grounding line
     0. its own mesh (<work>/cold_mesh, config <work>/refined/cold.toml: the base resolution), SRC carried onto it
        (default the coarse sweep's last converged point), the shelf break as every sweep segment's
                                                                                -> <work>/cold/start.npz
-    1. spin-up, mechanics only, bed frozen (ESS_SLIDING=frozen: no sliding where grounded; the contact grounding line
-       moves every step), at the cold surface temperature TC (default 258.15 K), from SRC, in runs of --spin-batch chunks of the [map]
+    1. spin-up, mechanics only, bed frozen (ESS_SLIDING=frozen: no sliding where grounded), the grounding line HELD
+       (the frozen sheet advanced and tore its geometry with the contact one, job 32216), at the cold surface temperature TC (default 258.15 K), from SRC, in runs of --spin-batch chunks of the [map]
        (10 x 2000 yr) until the rms change per chunk < --spin-tol (1e-2)    -> <work>/cold/spin.npz, spin.done
-    2. Newton on the geometry, mechanics only, bed frozen (ess newton --stokes-only; the grounding line by contact
+    2. (only with --frozen-newton) Newton on the geometry, mechanics only, bed frozen (ess newton --stokes-only; the grounding line by contact
        between solves)                                                         -> <work>/cold/frozen.npz
     3. the steady temperature on that geometry at TC (ess run --heat-only, --heat-steps x --heat-dt yr, the bed still
        frozen: no friction heat, the cold branch), the whole grounded bed COLD (--bed cold: the model's flux
@@ -82,6 +82,9 @@ def main():
     ap.add_argument("--heat-dt", type=float, default=1e4)
     ap.add_argument("--heat-steps", type=int, default=30)
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10")
+    ap.add_argument("--frozen-newton", action="store_true",
+                    help="step 2, the frozen-bed Newton with the contact grounding line (off: the frozen sheet may have "
+                         "no steady grounding line in the domain; the full Newton of step 4 moves it)")
     ap.add_argument("--stop-after", type=int, default=6, help="stop after this step (1-6)")
     a = ap.parse_args()
     cfg = load_config(a.config)
@@ -119,7 +122,12 @@ def main():
     # chunks, each from the last saved spin.npz (a job ended by its time limit resumes from there); spin.done once
     # converged. Later steps' outputs made before it converged are stale (renamed .old).
     done_f = os.path.join(cdir, "spin.done")
+    held = os.path.join(cdir, "spin.gl_frozen")      # the spin-up holds the grounding line (since 2026-11-22 10:35)
+    if os.path.exists(spin) and not os.path.exists(held) and not os.path.exists(done_f):
+        os.replace(spin, spin + ".old_contact")     # an earlier spin-up with the contact grounding line: start again
+        log("an earlier spin-up with a moving grounding line set aside (spin.npz.old_contact); starting from SRC")
     if not os.path.exists(done_f):
+        open(held, "w").write("grounding line held in the spin-up\n")
         for f in (fz, heat, cold):
             if os.path.exists(f):
                 os.replace(f, f + ".old")
@@ -131,7 +139,7 @@ def main():
                 f"chunk < {a.spin_tol:g}")
             log("$ ess run ... (frozen bed, mechanics only)")
             pr = subprocess.Popen([py, "-u", "-m", "ess", "run", a.config, "--state", st_in, "--p", tc, "--stokes-only",
-                                   "--bed", "cold", "--chunks", str(a.spin_batch), "--until-tol", f"{a.spin_tol:g}",
+                                   "--bed", "cold", "--gl", "frozen", "--chunks", str(a.spin_batch), "--until-tol", f"{a.spin_tol:g}",
                                    "--out", tmp], cwd=ROOT, env=frozen, stdout=subprocess.PIPE,
                                   stderr=subprocess.STDOUT, text=True)
             ok, last = False, None
@@ -154,17 +162,22 @@ def main():
     bed_report(spin)
     if a.stop_after <= 1:
         return
-    if not os.path.exists(fz):
+    heat_in = spin                          # default: no frozen-bed Newton (the frozen sheet may have no steady
+    if a.frozen_newton and not os.path.exists(fz):   # grounding line in the domain); --frozen-newton: step 2 as before
         rc = run([py, "-u", "-m", "ess", "newton", a.config, "--state", spin, "--p", tc, "--stokes-only", "--out", fz],
                  env=frozen, check=False)
+        if rc == 0 or os.path.exists(fz):
+            heat_in = fz
         if rc != 0:
             log("the frozen-bed Newton did not converge: going on from its last state (the heat solve and the full "
                 "Newton follow)")
+    elif a.frozen_newton and os.path.exists(fz):
+        heat_in = fz
     if a.stop_after <= 2:
         return
     if not os.path.exists(heat):
         env = dict(frozen, ESS_SEA_SPRING_DT=os.environ.get("ESS_SEA_SPRING_DT", "50"))
-        run([py, "-u", "-m", "ess", "run", a.config, "--state", fz, "--p", tc, "--heat-only", "--dt", f"{a.heat_dt:g}",
+        run([py, "-u", "-m", "ess", "run", a.config, "--state", heat_in, "--p", tc, "--heat-only", "--dt", f"{a.heat_dt:g}",
              "--steps", str(a.heat_steps), "--gl", "frozen", "--no-remask", "--bed", "cold", "--out", heat], env=env)
     bed_report(heat)
     if a.stop_after <= 3:
