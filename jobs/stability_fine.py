@@ -56,6 +56,7 @@ def main():
     ap.add_argument("--ct-fine", type=float, default=250.0, help="m at the cold/temperate transition (the head)")
     ap.add_argument("--ct-pad-km", type=float, default=10.0, help="--ct-fine over head +- this (graded over 10 km)")
     ap.add_argument("--m", type=int, default=30)
+    ap.add_argument("--tag-suffix", default="", help="appended to the mesh/output tag (a copy on another rank count)")
     ap.add_argument("--gl-rounds", type=int, default=6)
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10")
     a = ap.parse_args()
@@ -73,7 +74,7 @@ def main():
     s0 = load_state(src)
     xgl = gl_position(s0.frozen, s0.diag) / 1e3
     head = xgl - d
-    tag = f"L{int(round(head)):04d}"
+    tag = f"L{int(round(head)):04d}{a.tag_suffix}"     # (a suffix: a second copy, e.g. on another rank count)
     log(f"source {os.path.relpath(src, ROOT)}: d = {d:g} km, head {head:.2f} km, grounding line {xgl:.2f} km")
     x0 = a.fine_from_km
     hp = a.ct_pad_km                    # the cold/temperate transition (the patch head): --ct-fine over head +- hp
