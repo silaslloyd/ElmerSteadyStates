@@ -145,6 +145,10 @@ def main():
                          "warm region stayed warm, the friction heating feeding it)")
     ap.add_argument("--gl-rounds", type=int, default=6)
     ap.add_argument("--no-newton", action="store_true")
+    ap.add_argument("--no-surface-tb", action="store_true",
+                    help="with --surface: ignore its basal temperature (the T_SIA bed in the heat solve; the e<head> run)")
+    ap.add_argument("--map-steps", type=int,
+                    help="Newton's map: this many [map] dt steps (a shorter horizon); the Newton output in sweep<sfx>_map<N>")
     ap.add_argument("--surface", help="the grounded surface from plots/extrap_surface.py's FILE.npz (x, zs, head_km: the cold part extrapolated from the sweep's points, the temperate part the newest point's) instead of the SIA's; the patch head from it; outputs *e")
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10")
     a = ap.parse_args()
@@ -167,7 +171,7 @@ def main():
         xt = float(ext["head_km"]) * 1e3
     head = xt / 1e3
     d = round((xgl / 1e3 - head) * 10) / 10
-    ext_tb = ext is not None and "tb" in ext.files
+    ext_tb = ext is not None and "tb" in ext.files and not a.no_surface_tb
     tag = f"{('t' if ext_tb else 'e') if ext is not None else 's'}{int(round(head)):04d}"     # its own mesh folder: runs side by side
     log(f"from {os.path.relpath(srcf, ROOT)} (grounding line {xgl / 1e3:.2f} km); SIA temperate fit: x scale "
         f"{X / 1e3:.1f} km, z scale {Z:.0f} m, translated {cz:+.0f} m (rms surface misfit {rms:.1f} m over the "
@@ -177,7 +181,7 @@ def main():
     cfgf = os.path.join(work, "refined", f"{tag}.toml")
     mdir = os.path.join(work, tag)
     os.makedirs(os.path.dirname(cfgf), exist_ok=True)
-    write_config(a.config, cfgf, pts, "{work}/" + tag)
+    write_config(a.config, cfgf, pts, "{work}/" + tag, None, a.map_steps)
     log(f"mesh: band {a.fine:g} m over {head - a.pad_km:.1f} .. {head + a.pad_km:.1f} km; res_points {pts}")
     py = sys.executable
     st0, st1, st2 = (os.path.join(mdir, f) for f in ("state0.npz", "start0.npz", "start.npz"))
@@ -263,7 +267,8 @@ def main():
         return
     # 5. Newton with the contact rounds at that d
     run([py, "-u", "-m", "ess", "sweep", cfgf, "--state", st4, "--d-start-km", f"{d:g}", "--d-end-km", f"{d:g}",
-         "--gl-rounds", str(a.gl_rounds), "--out", os.path.join(sdir, f"sweep{sfx}")])
+         "--gl-rounds", str(a.gl_rounds),
+         "--out", os.path.join(sdir, f"sweep{sfx}" + (f"_map{a.map_steps}" if a.map_steps else ""))])
     log("done")
 
 

@@ -9,6 +9,8 @@
 # cold/temperate transition (the patch head), the state transferred, the grounded surface set to the SIA's, steady heat
 # on that geometry (ess run --heat-only, HEAT_STEPS x HEAT_DT yr), then Newton with the contact grounding-line rounds.
 # SURFACE=FILE.npz (plots/extrap_surface.py): the extrapolated surface instead of the SIA's (mesh e<head>, outputs *_cbe).
+# MAP_STEPS=N (Newton's map N x 50 yr; output sweep<sfx>_map<N>), NEWTON_TOL, SURFACE_TB=0 (ignore the surface file's
+# basal temperature: the T_SIA bed, the e<head> run).
 # Output work/flowline_rect_coarse/sia/s<head>/ (start_sia.npz, start_heat.npz, sweep/). NO_NEWTON=1: stop after the
 # heat solve. Resubmitting resumes.
 #   sbatch jobs/flowline_sia_start.cmd
@@ -25,6 +27,8 @@ export LIBRARY_PATH=$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/lib${LIBRARY_PAT
 export ESS_MPIRUN="mpirun -np {n} --bind-to none"
 unset ESS_SLIDING ESS_HEAT_LIMITER ESS_SEA_SPRING_DT ESS_STRAIN_HEAT_POSITIVE ESS_NO_CONVECTION
 echo "$(date +%T) sia start ${FROM:+from $FROM}"
+[ -n "$NEWTON_TOL" ] && export ESS_NEWTON_TOL=$NEWTON_TOL
+echo "$(date +%T) Newton tol ${ESS_NEWTON_TOL:-config}, map steps ${MAP_STEPS:-config}"
 python3 -u jobs/sia_start.py configs/flowline_rect_coarse.toml ${FROM:+--from-state $FROM} \
-    --heat-dt ${HEAT_DT:-1e4} --heat-steps ${HEAT_STEPS:-30} $([ "${COLD_START:-1}" = 0 ] && echo --no-cold-start) $([ "${BED_SIA:-1}" = 0 ] && echo --no-bed-sia) $([ "${NO_NEWTON:-0}" = 1 ] && echo --no-newton) ${SURFACE:+--surface $SURFACE}
+    --heat-dt ${HEAT_DT:-1e4} --heat-steps ${HEAT_STEPS:-30} $([ "${COLD_START:-1}" = 0 ] && echo --no-cold-start) $([ "${BED_SIA:-1}" = 0 ] && echo --no-bed-sia) $([ "${NO_NEWTON:-0}" = 1 ] && echo --no-newton) ${SURFACE:+--surface $SURFACE} ${MAP_STEPS:+--map-steps $MAP_STEPS} $([ "${SURFACE_TB:-1}" = 0 ] && echo --no-surface-tb)
 echo "$(date +%T) done"
