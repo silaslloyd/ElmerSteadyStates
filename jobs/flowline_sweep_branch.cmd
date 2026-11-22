@@ -29,7 +29,6 @@ export ESS_NEWTON_CAP_ETA=${CAP_ETA:-1}
 export ESS_NEWTON_TOL=${NEWTON_TOL:-5e-5}       # as the main sweep's resubmission
 export ESS_NEWTON_RELAX=${RELAX:-0}             # LUA=NAME=VALUE: a [lua] assignment in every segment's config (e.g. LUA=dT=0.3: the subtemperate sliding's width
 # gamma, 0.15 K in the base parameters); LUA_RAMP=dT=0.2,0.25: Newton at those values first, at the start's d.
-# MAP_STEPS=N: Newton's map N x [map] dt instead of [map] n_steps (a shorter horizon: an unstable mode grows less per map).
 # RELAX=k: plain map steps after a failed/short line search (ess/newton.py)
 unset ESS_SLIDING ESS_HEAT_LIMITER ESS_SEA_SPRING_DT ESS_STRAIN_HEAT_POSITIVE ESS_NO_CONVECTION
 W=work/flowline_rect_coarse
