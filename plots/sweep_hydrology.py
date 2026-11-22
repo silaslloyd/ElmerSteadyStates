@@ -13,7 +13,7 @@ Status: ok; dry (h reaches 0 before the head: the patch cannot carry its water u
 
     python3 plots/sweep_hydrology.py STATE.npz [STATE2.npz ...] [--config configs/flowline_rect_coarse.toml]
                                      [--D0 1e7] [--N0 1] [--hr 0.1] [--eps 0.001] [--k0 1.3333] [--h-max 1000]
-                                     [--dx 250] [--x XMIN XMAX] [--verbose] [--out FILE.html]
+                                     [--dx 250] [--x XMIN XMAX] [--h-log] [--verbose] [--out FILE.html]
 
 Parameters: Marine_Term's (elmer/ess_hydro.lua), the config's [hydrology] overriding, the options overriding both.
 Default page: the first state's name + _hydro.html. Panels: melt rate, flux q, sheet thickness h (log), N.
@@ -48,6 +48,8 @@ def main():
         if v is not None:
             over[k] = v
     args, dx = opt(args, "--dx", default=250.0)
+    hlog = "--h-log" in args                      # the sheet thickness axis log at first (default linear; buttons switch)
+    args = [a for a in args if a != "--h-log"]
     verbose = "--verbose" in args                 # how each integration ended, and the first bins' terms
     args = [a for a in args if a != "--verbose"]
     args, xwin = opt(args, "--x", n=2)
@@ -122,7 +124,7 @@ def main():
     cols = sample_colorscale("Plasma", [0.05 + 0.85 * k / max(len(res) - 1, 1) for k in range(len(res))])
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03,
                         subplot_titles=("melt rate m (m/yr; < 0 refreezing)", "water flux q = int m dx from the patch head (m^2/yr)",
-                                        "sheet thickness h (m, log), h = hr at the grounding line; x: dry", "effective pressure N (MPa)"))
+                                        "sheet thickness h (m), h = hr at the grounding line; x: dry", "effective pressure N (MPa)"))
     for r, c in zip(res, cols):
         sel = np.ones(len(r["x"]), bool) if not xwin else (r["x"] >= xwin[0]) & (r["x"] <= xwin[1])
         for row_, key, show in ((1, "m", True), (2, "q", False), (3, "h", False), (4, "N", False)):
@@ -137,7 +139,10 @@ def main():
                                      hovertemplate=f"{r['lab']}: dry at x %{{x:.2f}} km<extra></extra>"), row=3, col=1)
     fig.add_hline(y=0, line=dict(color="grey", width=0.8), row=1, col=1)
     fig.add_hline(y=0, line=dict(color="grey", width=0.8), row=2, col=1)
-    fig.update_yaxes(type="log", row=3, col=1)
+    fig.update_yaxes(type="log" if hlog else "linear", row=3, col=1)
+    fig.update_layout(updatemenus=[dict(type="buttons", direction="right", x=1.0, xanchor="right", y=0.49, yanchor="bottom",
+                                        buttons=[dict(label="h linear", method="relayout", args=[{"yaxis3.type": "linear"}]),
+                                                 dict(label="h log", method="relayout", args=[{"yaxis3.type": "log"}])])])
     fig.update_xaxes(title_text="x (km)", row=4, col=1)
     if xwin:
         fig.update_xaxes(range=xwin)
