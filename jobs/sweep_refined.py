@@ -223,12 +223,14 @@ def main():
             cur = got[1]
         src, prev, ramp_start = cur, None, (tag, cur)
         log(f"ramp done: {rk} = {lua.get(rk)} at d = {d0:g} km ({os.path.relpath(src, ROOT)})")
-    while d0 > a.d_end_km + 1e-6:
+    sgn = -1.0 if a.d_end_km < d0 else 1.0       # either direction: d down (the head inland) or up (towards the GL)
+    while (a.d_end_km - d0) * sgn > 1e-6:
         s = load_state(src)
         xgl = gl_position(s.frozen, s.diag) / 1e3
         h0 = xgl - d0
         tag = f"{a.tag_prefix}{int(round(h0)):04d}"
-        d1 = max(d0 - a.span_km, a.d_end_km)
+        d1 = max(d0 - a.span_km, a.d_end_km) if sgn < 0 else min(d0 + a.span_km, a.d_end_km)
+        hlo, hhi = min(h0, xgl - d1), max(h0, xgl - d1)      # the heads this segment covers
         seg = os.path.join(seg_root, f"seg_{tag}")
         got, allc = last_converged(seg)
         if got is not None and abs(got[0] - d1) < 1e-6:
@@ -236,10 +238,10 @@ def main():
             prev = allc[-2][1] if len(allc) > 1 else src
             d0, src = got
             continue
-        pts = banded_points(base, h0 - a.pad_km, h0 + (d0 - d1) + a.pad_km, a.fine, a.grade_km, front_km)
+        pts = banded_points(base, hlo - a.pad_km, hhi + a.pad_km, a.fine, a.grade_km, front_km)
         log(f"segment {tag}: from {os.path.relpath(src, ROOT)} (d {d0:g} km, grounding line {xgl:.2f} km, head "
-            f"{h0:.2f} km) to d {d1:g} km (head {xgl - d1:.2f} km); band {a.fine:g} m over {h0 - a.pad_km:.1f} .. "
-            f"{h0 + d0 - d1 + a.pad_km:.1f} km; res_points {pts}")
+            f"{h0:.2f} km) to d {d1:g} km (head {xgl - d1:.2f} km); band {a.fine:g} m over {hlo - a.pad_km:.1f} .. "
+            f"{hhi + a.pad_km:.1f} km; res_points {pts}")
         cfgf = os.path.join(work, "refined", f"{tag}.toml")
         mdir = os.path.join(work, tag)
         if a.dry_run:
