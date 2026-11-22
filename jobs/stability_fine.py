@@ -53,6 +53,8 @@ def main():
     ap.add_argument("--fine", type=float, default=500.0)
     ap.add_argument("--fine-from-km", type=float, default=150.0)
     ap.add_argument("--gl-fine", type=float, default=250.0)
+    ap.add_argument("--ct-fine", type=float, default=250.0, help="m at the cold/temperate transition (the head)")
+    ap.add_argument("--ct-pad-km", type=float, default=10.0, help="--ct-fine over head +- this (graded over 10 km)")
     ap.add_argument("--m", type=int, default=30)
     ap.add_argument("--gl-rounds", type=int, default=6)
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10")
@@ -74,12 +76,15 @@ def main():
     tag = f"L{int(round(head)):04d}"
     log(f"source {os.path.relpath(src, ROOT)}: d = {d:g} km, head {head:.2f} km, grounding line {xgl:.2f} km")
     x0 = a.fine_from_km
-    pts = [[0.0, 2000.0], [x0 - 10.0, 2000.0], [x0, a.fine], [1005.0, a.fine], [1015.0, a.gl_fine],
+    hp = a.ct_pad_km                    # the cold/temperate transition (the patch head): --ct-fine over head +- hp
+    pts = [[0.0, 2000.0], [x0 - 10.0, 2000.0], [x0, a.fine], [head - hp - 10.0, a.fine], [head - hp, a.ct_fine],
+           [head + hp, a.ct_fine], [head + hp + 10.0, a.fine], [1005.0, a.fine], [1015.0, a.gl_fine],
            [1065.0, a.gl_fine], [1080.0, 1000.0], [float(cfg["case"]["res_points"][-1][0]), 1000.0]]
     cfgf = os.path.join(work, "refined", f"{tag}.toml")
     os.makedirs(os.path.dirname(cfgf), exist_ok=True)
     write_config(a.config, cfgf, pts, "{work}/" + tag)
-    log(f"mesh {tag}: {a.fine:g} m over {x0:g} .. 1005 km, {a.gl_fine:g} m over 1015 .. 1065 km; res_points {pts}")
+    log(f"mesh {tag}: {a.fine:g} m over {x0:g} .. 1005 km, {a.ct_fine:g} m over the head {head - hp:.1f} .. "
+        f"{head + hp:.1f} km, {a.gl_fine:g} m over 1015 .. 1065 km; res_points {pts}")
     mdir = os.path.join(work, tag)
     py = sys.executable
     st0, st1, st2 = (os.path.join(mdir, f) for f in ("state0.npz", "start0.npz", "start.npz"))

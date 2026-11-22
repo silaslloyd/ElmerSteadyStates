@@ -22,7 +22,7 @@ export LIBRARY_PATH=$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/lib${LIBRARY_PAT
 export ESS_MPIRUN="mpirun -np {n} --bind-to none"
 unset ESS_SLIDING ESS_HEAT_LIMITER ESS_SEA_SPRING_DT ESS_STRAIN_HEAT_POSITIVE ESS_NO_CONVECTION
 export ESS_NEWTON_TOL=${NEWTON_TOL:-5e-5}
-echo "$(date +%T) stability on a fine mesh: ${FINE:-500} m from ${FINE_FROM:-150} km, m = ${M:-30}${FROM_STATE:+, from $FROM_STATE (d $D_KM)}"
+echo "$(date +%T) stability on a fine mesh: ${FINE:-500} m from ${FINE_FROM:-150} km, ${CT_FINE:-250} m at the head, m = ${M:-30}${FROM_STATE:+, from $FROM_STATE (d $D_KM)}"
 python3 -u jobs/stability_fine.py configs/flowline_rect_coarse.toml --fine ${FINE:-500} --fine-from-km ${FINE_FROM:-150} \
-    --m ${M:-30} ${FROM_STATE:+--from-state $FROM_STATE --d-km $D_KM}
+    --ct-fine ${CT_FINE:-250} --m ${M:-30} ${FROM_STATE:+--from-state $FROM_STATE --d-km $D_KM}
 echo "$(date +%T) done"
