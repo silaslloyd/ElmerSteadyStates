@@ -8,6 +8,7 @@
 # test speed-ups on the same points: from the converged point FROM_STATE (d = D_KM km; PREV_STATE the point before it,
 # for the secant predictor), segments in work/flowline_rect_coarse/<OUT_ROOT>/ (default sweep_branch) with meshes
 # tagged <TAG_PREFIX> (default b), PREDICTOR (default secant), on SLURM_NTASKS ranks (default 64: 128 ran each model run ~1.6x slower, 7.2 vs 4.5 min).
+# RELAX=k: Newton's relaxation fallback (ESS_NEWTON_RELAX). NEWTON_TOL (default 5e-5).
 # The Newton forcing term capped at eta_max near the target (ESS_NEWTON_CAP_ETA=1, set here; CAP_ETA=0 to leave it off).
 #   sbatch jobs/flowline_sweep_branch.cmd
 set -e
@@ -22,12 +23,14 @@ export LD_LIBRARY_PATH=$ELMER_PREFIX/lib:$ELMER_PREFIX/lib/elmersolver:$ELMER_PR
 export LIBRARY_PATH=$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}
 export ESS_MPIRUN="mpirun -np {n} --bind-to none"
 export ESS_NEWTON_CAP_ETA=${CAP_ETA:-1}
+export ESS_NEWTON_TOL=${NEWTON_TOL:-5e-5}       # as the main sweep's resubmission
+export ESS_NEWTON_RELAX=${RELAX:-0}             # RELAX=k: plain map steps after a failed/short line search (ess/newton.py)
 unset ESS_SLIDING ESS_HEAT_LIMITER ESS_SEA_SPRING_DT ESS_STRAIN_HEAT_POSITIVE ESS_NO_CONVECTION
 W=work/flowline_rect_coarse
 FROM_STATE=${FROM_STATE:-$W/sweep_refined/seg_m0495/points/state_05192.npz}
 PREV_STATE=${PREV_STATE:-$W/sweep_refined/seg_m0495/points/state_05317.npz}
 D_KM=${D_KM:-519.2}
-echo "$(date +%T) branch sweep from $FROM_STATE (d $D_KM km, prev $PREV_STATE) on ${SLURM_NTASKS:-?} ranks, predictor ${PREDICTOR:-secant}"
+echo "$(date +%T) branch sweep from $FROM_STATE (d $D_KM km, prev $PREV_STATE) on ${SLURM_NTASKS:-?} ranks, predictor ${PREDICTOR:-secant}, eta cap $ESS_NEWTON_CAP_ETA, tol $ESS_NEWTON_TOL, relax $ESS_NEWTON_RELAX"
 python3 -u jobs/sweep_refined.py configs/flowline_rect_coarse.toml --from-state $FROM_STATE --d-km $D_KM \
     --prev-state $PREV_STATE --out-root ${OUT_ROOT:-sweep_branch} --tag-prefix ${TAG_PREFIX:-b} --d-end-km ${D_END:-0} \
     --span-km ${SPAN:-50} --pad-km ${PAD:-10} --fine ${FINE:-250} --step-frac ${STEP_FRAC:-0.2} \

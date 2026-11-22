@@ -78,6 +78,12 @@ def newton_krylov(prob: FixedPointProblem, y0, p, opt: NewtonOptions = NewtonOpt
     log.info(f"{label}: it 0  rms(F) = {nf:.3e}  (rate {nf / prob.spec.horizon:.3e} per unit time)  p = {p:.6g}")
     log.info(f"{label}: residual {describe_step(prob, F)}")
     nf_prev, eta = None, opt.eta_max
+    # ESS_NEWTON_RELAX=k (default off): after a failed line search, or an accepted step with lambda < ESS_NEWTON_RELAX_LAM
+    # (default 0.25), up to k plain map steps, each kept only while rms(F) falls; the line search then stops after
+    # ESS_NEWTON_RELAX_LS halvings (default 3) instead of [newton] linesearch
+    relax_k = int(os.environ.get("ESS_NEWTON_RELAX", "0") or 0)
+    relax_lam = float(os.environ.get("ESS_NEWTON_RELAX_LAM", "0.25"))
+    relax_ls = int(os.environ.get("ESS_NEWTON_RELAX_LS", "3"))
     for it in range(1, opt.maxit + 1):
         if nf <= opt.tol:
             return NewtonResult(y, F, True, it - 1, hist, giters)
@@ -110,7 +116,7 @@ def newton_krylov(prob: FixedPointProblem, y0, p, opt: NewtonOptions = NewtonOpt
             log.info(f"{label}: step capped (max |dy| {dmax:.3g} -> {opt.max_step})")
 
         lam, accepted = 1.0, False
-        for _ in range(opt.linesearch + 1):
+        for _ in range((min(opt.linesearch, relax_ls) if relax_k else opt.linesearch) + 1):
             yt = y + lam * d
             try:
                 Ft = prob.F(yt, p, tag=f"{label}_F", want_diag=True)
@@ -123,13 +129,42 @@ def newton_krylov(prob: FixedPointProblem, y0, p, opt: NewtonOptions = NewtonOpt
                 break
             log.info(f"{label}: lambda = {lam:g} rejected (rms F {nt:.3e})")
             lam *= 0.5
-        if not accepted:
+        if accepted:
+            y, F, nf_prev, nf = yt, Ft, nf, nt
+            hist.append(nf)
+            log.info(f"{label}: it {it}  rms(F) = {nf:.3e}  lambda = {lam:g}  max|dy| = {lam * np.max(np.abs(d)):.3g}  "
+                     f"model runs so far {prob.nfev}")
+        if relax_k and (not accepted or lam < relax_lam):
+            # RELAXATION (ESS_NEWTON_RELAX=k): Newton's linear model fails on the stiff modes (the subtemperate
+            # sliding's 0.15 K scale); plain map steps y <- Phi(y) = y + F let them decay. Each kept only if rms(F)
+            # falls: a fast-growing mode raises it at once, and the relaxation stops (one map run lost).
+            nr = 0
+            for j in range(relax_k):
+                yr = y + F
+                try:
+                    Fr = prob.F(yr, p, tag=f"{label}_relax", want_diag=True)
+                    nrr = rms(Fr)
+                except ModelFailure as e:
+                    log.warning(f"{label}: relaxation step {j + 1} failed: {e}")
+                    break
+                if nrr >= nf:
+                    log.info(f"{label}: relaxation step {j + 1}: rms(F) {nf:.3e} -> {nrr:.3e}: rises, discarded")
+                    break
+                log.info(f"{label}: relaxation step {j + 1}: rms(F) {nf:.3e} -> {nrr:.3e} (x {nrr / nf:.3f}), kept")
+                y, F, nf = yr, Fr, nrr
+                nr += 1
+            if nr:
+                nf_prev = None                       # Eisenstat-Walker restarts from eta_max
+                hist.append(nf)
+                log.info(f"{label}: it {it}  rms(F) = {nf:.3e}  after {nr} relaxation step(s)  model runs so far "
+                         f"{prob.nfev}")
+                eta = opt.eta_max
+            elif not accepted:
+                log.warning(f"{label}: line search failed, relaxation did not help")
+                return NewtonResult(y, F, False, it, hist, giters)
+        elif not accepted:
             log.warning(f"{label}: line search failed")
             return NewtonResult(y, F, False, it, hist, giters)
-        y, F, nf_prev, nf = yt, Ft, nf, nt
-        hist.append(nf)
-        log.info(f"{label}: it {it}  rms(F) = {nf:.3e}  lambda = {lam:g}  max|dy| = {lam * np.max(np.abs(d)):.3g}  "
-                 f"model runs so far {prob.nfev}")
         if checkpoint:
             np.savez(checkpoint, y=y, p=p, it=it)
     return NewtonResult(y, F, nf <= opt.tol, opt.maxit, hist, giters)
