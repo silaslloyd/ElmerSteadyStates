@@ -56,6 +56,8 @@ def main():
     ap.add_argument("--ct-fine", type=float, default=250.0, help="m at the cold/temperate transition (the head)")
     ap.add_argument("--ct-pad-km", type=float, default=10.0, help="--ct-fine over head +- this (graded over 10 km)")
     ap.add_argument("--m", type=int, default=30)
+    ap.add_argument("--map-steps", type=int, help="Newton's map for the re-convergence: this many [map] dt steps (the "
+                    "stability analysis uses [stability_map] either way)")
     ap.add_argument("--tag-suffix", default="", help="appended to the mesh/output tag (a copy on another rank count)")
     ap.add_argument("--gl-rounds", type=int, default=6)
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10")
@@ -83,7 +85,7 @@ def main():
            [1065.0, a.gl_fine], [1080.0, 1000.0], [float(cfg["case"]["res_points"][-1][0]), 1000.0]]
     cfgf = os.path.join(work, "refined", f"{tag}.toml")
     os.makedirs(os.path.dirname(cfgf), exist_ok=True)
-    write_config(a.config, cfgf, pts, "{work}/" + tag)
+    write_config(a.config, cfgf, pts, "{work}/" + tag, None, a.map_steps)
     log(f"mesh {tag}: {a.fine:g} m over {x0:g} .. 1005 km, {a.ct_fine:g} m over the head {head - hp:.1f} .. "
         f"{head + hp:.1f} km, {a.gl_fine:g} m over 1015 .. 1065 km; res_points {pts}")
     mdir = os.path.join(work, tag)
