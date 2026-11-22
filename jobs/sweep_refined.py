@@ -80,8 +80,14 @@ def banded_points(base, a, b, fine, grade, front_km):
     return [[round(x, 3), round(h, 1)] for x, h in pts]
 
 
-def write_config(base_path, out_path, pts, case_dir):
+def write_config(base_path, out_path, pts, case_dir, lua=None):
     text = open(base_path).read()
+    for k, v in (lua or {}).items():            # [lua] assignments (e.g. dT, the subtemperate sliding's width, K)
+        text, n = re.subn(rf"^{re.escape(k)}\s*=.*$", f"{k} = {v}", text, count=1, flags=re.M)
+        if n == 0:
+            text, n = re.subn(r"^\[lua\]\s*$", lambda m: f"[lua]\n{k} = {v}", text, count=1, flags=re.M)
+            if n != 1:
+                text += f"\n[lua]\n{k} = {v}\n"
     rp = "res_points = [" + ", ".join(f"[{x:g}, {h:g}]" for x, h in pts) + "]   # sweep_refined.py: the margin band"
     text, n = re.subn(r"^res_points\s*=.*$", lambda m: rp, text, count=1, flags=re.M)
     if n != 1:
@@ -140,7 +146,14 @@ def main():
                          "prefix keeps a branch's meshes apart from the main sweep's")
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10",
                     help="jobs/shelf_break.py's arguments (as jobs/flowline_coarse_newton.cmd)")
+    ap.add_argument("--lua", action="append", default=[], metavar="NAME=VALUE",
+                    help="a [lua] assignment in every segment's config (e.g. dT=0.3: the subtemperate sliding's width "
+                         "gamma in K, 0.15 in the base parameters)")
+    ap.add_argument("--lua-ramp", metavar="NAME=V1,V2,..",
+                    help="before the first segment, at the start's d: Newton at each value in turn (the last the --lua "
+                         "one), each from the one before (e.g. dT=0.2,0.25 then --lua dT=0.3)")
     a = ap.parse_args()
+    lua = dict(s.split("=", 1) for s in a.lua)
     cfg = load_config(a.config)
     work = cfg["_work"]
     c = cfg["case"]
@@ -162,6 +175,45 @@ def main():
     seg_root = os.path.join(work, a.out_root)
     os.makedirs(seg_root, exist_ok=True)
     py = sys.executable
+    ramp_start = None                            # (mesh tag, state): the first segment starts from the ramp's end
+    if a.lua_ramp and lua:
+        rk, rv = a.lua_ramp.split("=", 1)
+        s = load_state(src)
+        xgl = gl_position(s.frozen, s.diag) / 1e3
+        h0 = xgl - d0
+        tag = f"{a.tag_prefix}{int(round(h0)):04d}"
+        d1 = max(d0 - a.span_km, a.d_end_km)
+        pts = banded_points(base, h0 - a.pad_km, h0 + (d0 - d1) + a.pad_km, a.fine, a.grade_km, front_km)
+        mdir = os.path.join(work, tag)
+        st0, st1, st2 = (os.path.join(mdir, f) for f in ("state0.npz", "start0.npz", "start.npz"))
+        cfgs = []
+        for v in rv.split(",") + [lua.get(rk)]:
+            cf = os.path.join(work, "refined", f"{tag}_{rk}{v}.toml")
+            write_config(a.config, cf, pts, "{work}/" + tag, {**lua, rk: v})
+            cfgs.append((v, cf))
+        if not os.path.exists(st0):
+            run([py, "-u", "-m", "ess", "setup", cfgs[0][1]])
+            run([py, "-u", "-m", "ess", "init", cfgs[0][1], "--out", st0])
+        if not os.path.exists(st1):
+            run([py, "-u", "-m", "ess", "transfer", cfgs[0][1], "--state", st0, "--from", src, "--out", st1])
+        if not os.path.exists(st2):
+            run([py, "jobs/shelf_break.py", st1, st2] + a.shelf_break.split() + ["--force"])
+        cur = st2
+        for v, cf in cfgs:
+            rdir = os.path.join(seg_root, f"ramp_{rk}{v}")
+            got, _ = last_converged(rdir)
+            if got is None:
+                log(f"ramp: {rk} = {v} at d = {d0:g} km")
+                run([py, "-u", "-m", "ess", "sweep", cf, "--state", cur, "--d-start-km", f"{d0:g}", "--d-end-km",
+                     f"{d0:g}", "--gl-rounds", str(a.gl_rounds), "--out", rdir]
+                    + (["--maxit", str(a.maxit)] if a.maxit else []))
+                got, _ = last_converged(rdir)
+                if got is None:
+                    log(f"ramp: {rk} = {v} did not converge: stopping")
+                    sys.exit(1)
+            cur = got[1]
+        src, prev, ramp_start = cur, None, (tag, cur)
+        log(f"ramp done: {rk} = {lua.get(rk)} at d = {d0:g} km ({os.path.relpath(src, ROOT)})")
     while d0 > a.d_end_km + 1e-6:
         s = load_state(src)
         xgl = gl_position(s.frozen, s.diag) / 1e3
@@ -184,7 +236,7 @@ def main():
         if a.dry_run:
             d0, src = d1, src            # (the segments' meshes only: the next head assumed at h0 + span)
             continue
-        write_config(a.config, cfgf, pts, "{work}/" + tag)
+        write_config(a.config, cfgf, pts, "{work}/" + tag, lua)
         st0, st1, st2 = (os.path.join(mdir, f) for f in ("state0.npz", "start0.npz", "start.npz"))
         if not os.path.exists(st0):
             run([py, "-u", "-m", "ess", "setup", cfgf])
@@ -193,7 +245,8 @@ def main():
             run([py, "-u", "-m", "ess", "transfer", cfgf, "--state", st0, "--from", src, "--out", st1])
         if not os.path.exists(st2):
             run([py, "jobs/shelf_break.py", st1, st2] + a.shelf_break.split() + ["--force"])
-        cmd = [py, "-u", "-m", "ess", "sweep", cfgf, "--state", st2, "--d-start-km", f"{d0:g}", "--d-end-km",
+        st_in = ramp_start[1] if ramp_start and ramp_start[0] == tag else st2
+        cmd = [py, "-u", "-m", "ess", "sweep", cfgf, "--state", st_in, "--d-start-km", f"{d0:g}", "--d-end-km",
                f"{d1:g}", "--step-frac", f"{a.step_frac:g}", "--step-min-km", f"{a.step_min_km:g}", "--step-max-km",
                f"{a.step_max_km:g}", "--gl-rounds", str(a.gl_rounds), "--out", seg]
         if a.maxit:
