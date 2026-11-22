@@ -80,8 +80,14 @@ def banded_points(base, a, b, fine, grade, front_km):
     return [[round(x, 3), round(h, 1)] for x, h in pts]
 
 
-def write_config(base_path, out_path, pts, case_dir, lua=None):
+def write_config(base_path, out_path, pts, case_dir, lua=None, map_steps=None):
     text = open(base_path).read()
+    if map_steps:                                # Newton's map: n_steps x dt (the horizon), [map] only
+        m = re.search(r"^\[map\]\s*$(.*?)(?=^\[|\Z)", text, flags=re.M | re.S)
+        body, n = re.subn(r"^n_steps\s*=.*$", f"n_steps = {int(map_steps)}", m.group(1), count=1, flags=re.M)
+        if n != 1:
+            raise SystemExit("write_config: no n_steps in [map]")
+        text = text[:m.start(1)] + body + text[m.end(1):]
     for k, v in (lua or {}).items():            # [lua] assignments (e.g. dT, the subtemperate sliding's width, K)
         text, n = re.subn(rf"^{re.escape(k)}\s*=.*$", f"{k} = {v}", text, count=1, flags=re.M)
         if n == 0:
@@ -152,6 +158,9 @@ def main():
     ap.add_argument("--lua-ramp", metavar="NAME=V1,V2,..",
                     help="before the first segment, at the start's d: Newton at each value in turn (the last the --lua "
                          "one), each from the one before (e.g. dT=0.2,0.25 then --lua dT=0.3)")
+    ap.add_argument("--map-steps", type=int,
+                    help="Newton's map: this many steps of [map] dt (the horizon n_steps x dt; the steady states are "
+                         "the same, an unstable mode's growth over the map is not)")
     a = ap.parse_args()
     lua = dict(s.split("=", 1) for s in a.lua)
     cfg = load_config(a.config)
@@ -189,7 +198,7 @@ def main():
         cfgs = []
         for v in rv.split(",") + [lua.get(rk)]:
             cf = os.path.join(work, "refined", f"{tag}_{rk}{v}.toml")
-            write_config(a.config, cf, pts, "{work}/" + tag, {**lua, rk: v})
+            write_config(a.config, cf, pts, "{work}/" + tag, {**lua, rk: v}, a.map_steps)
             cfgs.append((v, cf))
         if not os.path.exists(st0):
             run([py, "-u", "-m", "ess", "setup", cfgs[0][1]])
@@ -236,7 +245,7 @@ def main():
         if a.dry_run:
             d0, src = d1, src            # (the segments' meshes only: the next head assumed at h0 + span)
             continue
-        write_config(a.config, cfgf, pts, "{work}/" + tag, lua)
+        write_config(a.config, cfgf, pts, "{work}/" + tag, lua, a.map_steps)
         st0, st1, st2 = (os.path.join(mdir, f) for f in ("state0.npz", "start0.npz", "start.npz"))
         if not os.path.exists(st0):
             run([py, "-u", "-m", "ess", "setup", cfgf])
