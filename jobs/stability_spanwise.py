@@ -9,7 +9,8 @@ free-slip side walls instead (cos(n pi y / W), wavelength 2 W / n).
        mesh STRUCTURED across the flow (mesh_across = "structured": --ny rows of width/ny, every node line across at
        one x, as ess/spanwise.py needs), periodic sides (METIS with periodic partners together), res_points --fine-x m from --fine-from-km to 1005 km, --head-fine m over the head
        +- 10 km, 250 m over the grounding line band; Newton's map --map-steps; with --solver iterative (default) the
-       Stokes solve P1 + bubbles with GCR + ILU1 (ESS_STOKES_PREC overrides), heat Krylov + ILU (a direct MUMPS solve grows much faster than the node count in 3D);
+       Stokes P1 + bubbles (ess init: a cheap inexact solve; Newton and stability: GCR + --stokes-prec ILU0 to
+       --stokes-tol 1e-8), heat Krylov + ILU to 1e-10 (a direct MUMPS solve grows much faster than the node count in 3D);
     2. ess setup / init, the state carried across (by x columns: y-uniform), the shelf break;
     3. Newton at the source's d (the contact grounding-line rounds): a y-uniform steady state stays one, only the
        remeshing to correct                                         -> <work>/stability_spanwise/S<head>/sweep/
@@ -42,9 +43,9 @@ def log(msg):
     print(f"{time.strftime('%H:%M:%S')} stability-spanwise: {msg}", flush=True)
 
 
-def run(cmd):
-    log("$ " + " ".join(cmd))
-    if subprocess.run(cmd, cwd=ROOT).returncode != 0:
+def run(cmd, env=None):
+    log("$ " + " ".join(cmd) + (f"   [{' '.join(f'{k}={v}' for k, v in env.items())}]" if env else ""))
+    if subprocess.run(cmd, cwd=ROOT, env=dict(os.environ, **env) if env else None).returncode != 0:
         raise SystemExit("step failed")
 
 
@@ -74,6 +75,8 @@ def main():
     ap.add_argument("--m", type=int, default=30)
     ap.add_argument("--solver", choices=("iterative", "direct"), default="iterative")
     ap.add_argument("--gl-rounds", type=int, default=6)
+    ap.add_argument("--stokes-prec", default="ILU0", help="iterative Stokes preconditioner of the Newton/stability runs")
+    ap.add_argument("--stokes-tol", type=float, default=1e-8, help="their Stokes tolerance (heat stays at 1e-10)")
     ap.add_argument("--stop-after", choices=("mesh", "newton"))
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10")
     a = ap.parse_args()
@@ -100,13 +103,15 @@ def main():
     if not a.walls:
         text = set_key(text, "case", "partitioner", '"metisper"')
     if a.solver == "iterative":
-        # P1 + bubbles, GCR + ILU1. On the 100 km x 50 row strip at 256 ranks (~290 footprint nodes per partition, even)
-        # P2/P1 + ILU4, bubbles + ILU8 and bubbles + ILU4 all overflowed Elmer's ILU in the first Stokes solve ("Number
-        # of nonzeros larger than HUGE(Integer)"); the scaling sweep's ILU4 runs were land strips (jobs/scaling_sweep.sh),
-        # its marine runs GCR + ILU0. MUMPS ran out of workspace at this size. Another level: ESS_STOKES_PREC=ILU2 etc.
-        # Newton re-converges the state for this discretisation.
-        for k, v in (("linear_stokes", '"iterative"'), ("linear_heat", '"iterative"'), ("iterative_tol", "1e-10"),
-                     ("stokes_element", '"Bubbles"'), ("stokes_preconditioner", '"ILU1"')):
+        # P1 + bubbles. `ess init` (whose velocity is not used): the cheap inexact Stokes solve (elmer/stokes_cheap.sif.in,
+        # GCR + Jacobi, 20 iterations), as the 3D strip configs: on the 100 km x 50 row strip at 256 ranks P2/P1 + ILU4,
+        # bubbles + ILU8 and + ILU4 overflowed Elmer's ILU, and GCR + ILU1 made no progress at all from the initial
+        # conditions (relative residual 1.0 through 5000 iterations). The Newton and stability runs: GCR + --stokes-prec
+        # (ILU0, as the marine strip runs of jobs/scaling_sweep.sh) to --stokes-tol, set through ESS_LINEAR_STOKES /
+        # ESS_STOKES_PREC for those steps only.
+        for k, v in (("linear_stokes", '"block"'), ("stokes_block_file", '"elmer/stokes_cheap.sif.in"'),
+                     ("linear_heat", '"iterative"'), ("iterative_tol", "1e-10"), ("stokes_element", '"Bubbles"'),
+                     ("stokes_iterative_tol", f"{a.stokes_tol:g}")):
             text = set_key(text, "elmer", k, v)
     open(cfgf, "w").write(text)
     lam = [a.width_km * (2.0 if a.walls else 1.0) / n for n in (1, 2, 3, 4)]
@@ -114,6 +119,8 @@ def main():
         f"({a.width_km * 1e3 / a.ny:g} m across, {'free-slip walls' if a.walls else 'periodic sides'}: wavelengths "
         f"{', '.join(f'{v:.4g}' for v in lam)} ... km), {f:g} m along over {x0:g} .. 1005 km, {hf:g} m at the head, "
         f"{a.solver} solves; config {cfgf}")
+    renv = ({"ESS_LINEAR_STOKES": "iterative", "ESS_STOKES_PREC": a.stokes_prec}
+            if a.solver == "iterative" else None)
     mdir = os.path.join(work, tag)
     py = sys.executable
     st0, st1, st2 = (os.path.join(mdir, n) for n in ("state0.npz", "start0.npz", "start.npz"))
@@ -131,7 +138,7 @@ def main():
     got, _ = last_converged(sdir)
     if got is None:
         run([py, "-u", "-m", "ess", "sweep", cfgf, "--state", st2, "--d-start-km", f"{d:g}", "--d-end-km", f"{d:g}",
-             "--gl-rounds", str(a.gl_rounds), "--out", sdir])
+             "--gl-rounds", str(a.gl_rounds), "--out", sdir], renv)
         got, _ = last_converged(sdir)
         if got is None:
             raise SystemExit("Newton did not converge on the wide strip")
@@ -141,7 +148,7 @@ def main():
     named = os.path.join(work, "stability_spanwise", tag, f"{tag}_d{int(round(d * 10)):05d}.npz")
     if not os.path.exists(named):
         shutil.copyfile(got[1], named)
-    run([py, "-u", "-m", "ess", "stability", cfgf, "--state", named, "--m", str(a.m), "--spanwise"])
+    run([py, "-u", "-m", "ess", "stability", cfgf, "--state", named, "--m", str(a.m), "--spanwise"], renv)
     log("done")
 
 
