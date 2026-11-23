@@ -729,7 +729,7 @@ End
                 "__GL_SLIDING__": sliding + """
   Grounding Line Moves = Logical True
   Grounding Line Definition = String "Discontinuous"
-  Test Contact Tolerance = Real 1.0E-3"""}
+  Test Contact Tolerance = Real """ + os.environ.get("ESS_CONTACT_TOL", "1.0E-3")}   # env: tests (Elmer/Ice's contact test only runs below it)
 
     def _write_vars(self, names) -> str:
         return "\n".join(f'  State Variable {i + 1} = String "{n}"' for i, n in enumerate(names))
