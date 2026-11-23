@@ -334,7 +334,7 @@ def structured_y_geo(points, L, ny):
         out.append(f"Point({i + 1}) = {{{x!r}, 0, 0, {r!r}}};")
     for i in range(1, n):
         out.append(f"Line({i}) = {{{i}, {i + 1}}};")
-    out += [f"Extrude {{0, W, 0}} {{ Curve{{1:{n - 1}}}; Layers{{NY}}; }};",     # one call: shared lateral lines
+    out += [f"ex[] = Extrude {{0, W, 0}} {{ Curve{{1:{n - 1}}}; Layers{{NY}}; }};",     # one call: shared lateral lines
             f"Physical Surface(21) = {{Surface In BoundingBox{{{-e}, {-e}, {-e}, L + {e}, W + {e}, {e}}}}};",
             f"Physical Curve(22) = {{Curve In BoundingBox{{{-e}, {-e}, {-e}, {e}, W + {e}, {e}}}}};",
             f"Physical Curve(23) = {{Curve In BoundingBox{{L - {e}, {-e}, {-e}, L + {e}, W + {e}, {e}}}}};",
