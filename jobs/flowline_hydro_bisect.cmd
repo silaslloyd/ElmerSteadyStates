@@ -1,13 +1,14 @@
 #!/bin/bash
 #SBATCH --output=./slurms/flowline_hydro_bisect_%j.out
-#SBATCH --job-name=flhydbis
+#SBATCH --job-name=flbisect
 #SBATCH --ntasks=64
 #SBATCH --time=3-00:00:00
 #
 # The boundary of hydrologically compatible steady states (the steady sheet reaches the patch head without running
 # dry), by bisection in d between neighbouring converged sweep points (jobs/hydro_bisect.py); waits until the sweeps
 # have such a pair. 500-yr Newton map (MAP_STEPS, default 10), tol NEWTON_TOL (default 1.25e-5), ROOTS (default the
-# horizon sweep and the sweeps from head 700). Resubmitting resumes.
+# horizon sweep and the sweeps from head 700), CRITERION (hydro: the sheet ok / dry, default; thermal: no cold bed node
+# above T0 / some). Resubmitting resumes.
 #   sbatch jobs/flowline_hydro_bisect.cmd
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
@@ -25,5 +26,5 @@ export ESS_NEWTON_TOL=${NEWTON_TOL:-1.25e-5}
 W=work/flowline_rect_coarse
 ROOTS=${ROOTS:-"$W/sweep_h500 $W/sweep_h500_700down $W/sweep_h500_700up $W/sia/t0700/sweep_cbet_map10"}
 echo "$(date +%T) hydrology bisection over $ROOTS, map ${MAP_STEPS:-10} steps, tol $ESS_NEWTON_TOL"
-python3 -u jobs/hydro_bisect.py configs/flowline_rect_coarse.toml $ROOTS --map-steps ${MAP_STEPS:-10}
+python3 -u jobs/hydro_bisect.py configs/flowline_rect_coarse.toml $ROOTS --map-steps ${MAP_STEPS:-10} --criterion ${CRITERION:-hydro}
 echo "$(date +%T) done"

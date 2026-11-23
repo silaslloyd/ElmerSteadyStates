@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.join(ROOT, "jobs"))
 from sweep_refined import banded_points, last_converged, write_config  # noqa: E402
 from ess.case import eval_lua_parameters  # noqa: E402
 from ess.config import load_config  # noqa: E402
-from ess.spectrum import _bed, cs_sheet_params, gl_position, patch_hydrology_cs  # noqa: E402
+from ess.spectrum import _bed, basal_temperature, cs_sheet_params, gl_position, patch_hydrology_cs  # noqa: E402
 from ess.statefile import find_name, load_state  # noqa: E402
 
 
@@ -94,6 +94,31 @@ class Sheet:
         return r
 
 
+class Thermal:
+    """thermal consistency of a converged state (as the sweep's n_cold_above_Tm): "ok" when no grounded bed node held
+    cold is above T0 + tol_T, else "hot" (the bed above the head wants to be temperate: the patch too short)"""
+
+    def __init__(self, tol_T=0.0):
+        self.tol_T = tol_T
+        self.cache = {}
+
+    def __call__(self, path):
+        if path in self.cache:
+            return self.cache[path]
+        s = load_state(path)
+        g, xpos, grounded = _bed(s.frozen, s.diag)
+        ct = s.frozen[find_name(s.frozen, "ColdTempMask")]
+        ctv = dict(zip(ct[0].tolist(), ct[1]))
+        cold = grounded & np.array([ctv.get(k, -1.0) < 0 for k in g.tolist()])
+        Tb = basal_temperature(s.layout, s.x, g)
+        hot = cold & (Tb > 273.15 + self.tol_T)
+        row = dict(n_cold_above_Tm=int(hot.sum()), Tb_cold_max=float(np.nanmax(Tb[cold])) if cold.any() else np.nan,
+                   x_hot_km=float(xpos[hot].min() / 1e3) if hot.any() else np.nan)
+        r = ("hot" if hot.any() else "ok", row)
+        self.cache[path] = r
+        return r
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("config")
@@ -107,6 +132,8 @@ def main():
     ap.add_argument("--wait-min", type=float, default=15.0)
     ap.add_argument("--wait-max-h", type=float, default=12.0)
     ap.add_argument("--gl-rounds", type=int, default=6)
+    ap.add_argument("--criterion", choices=("hydro", "thermal"), default="hydro",
+                    help="hydro: the sheet ok / dry; thermal: no cold bed node above T0 (ok) / some (hot)")
     ap.add_argument("--list", action="store_true", help="print the points' sheet status and the bracket, then stop")
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10")
     a = ap.parse_args()
@@ -114,7 +141,8 @@ def main():
     work = cfg["_work"]
     base = cfg["case"]["res_points"]
     front_km = float(cfg["case"].get("front_km", base[-1][0]))
-    sheet = Sheet(cfg)
+    sheet = Sheet(cfg) if a.criterion == "hydro" else Thermal()
+    bad = "dry" if a.criterion == "hydro" else "hot"
     # 1. the bracket from the sweeps' converged points (wait for the sweeps if there is none yet)
     t0 = time.time()
     while True:
@@ -123,34 +151,35 @@ def main():
             pts.update(points(r))
         ds = sorted(pts)
         stat = {d: sheet(pts[d])[0] for d in ds}
-        log("sheet status of the converged points: " + ", ".join(f"{d:g} {stat[d]}" for d in ds))
+        log(f"{a.criterion} status of the converged points: " + ", ".join(f"{d:g} {stat[d]}" for d in ds))
         br = None
-        for d1, d2 in zip(ds, ds[1:]):
-            if stat[d1] == "ok" and stat[d2] == "dry" and d2 - d1 <= a.max_gap_km:
-                br = (d1, d2)
+        for d1, d2 in zip(ds, ds[1:]):              # neighbours, one ok and one bad (either order in d)
+            if {stat[d1], stat[d2]} == {"ok", bad} and d2 - d1 <= a.max_gap_km:
+                br = (d1, d2) if stat[d1] == "ok" else (d2, d1)
                 break
         if br or a.list:
             break
         if time.time() - t0 > a.wait_max_h * 3600:
-            raise SystemExit("no ok -> dry switch between neighbouring converged points: stopping")
-        log(f"no ok -> dry switch between neighbours (gap <= {a.max_gap_km:g} km) yet: waiting {a.wait_min:g} min")
+            raise SystemExit(f"no ok / {bad} switch between neighbouring converged points: stopping")
+        log(f"no ok / {bad} switch between neighbours (gap <= {a.max_gap_km:g} km) yet: waiting {a.wait_min:g} min")
         time.sleep(a.wait_min * 60)
     if a.list:
-        log(f"bracket: {br}" if br else "no ok -> dry switch between neighbours")
+        log(f"bracket: {br}" if br else f"no ok / {bad} switch between neighbours")
         return
-    d_ok, d_dry = br
+    d_ok, d_dry = br                                   # (d_dry: the bad end, dry or hot)
     s = load_state(pts[d_ok])
     xgl = gl_position(s.frozen, s.diag) / 1e3
-    hlo, hhi = xgl - d_dry, xgl - d_ok
-    tag = f"z{int(round(hhi)):04d}"
-    log(f"bracket: d {d_ok:g} km ok (head {hhi:.2f} km) .. d {d_dry:g} km dry (head {hlo:.2f} km); mesh {tag}")
+    hlo, hhi = xgl - max(d_ok, d_dry), xgl - min(d_ok, d_dry)
+    tag = f"{'z' if a.criterion == 'hydro' else 'y'}{int(round(hhi)):04d}"
+    log(f"bracket: d {d_ok:g} km ok (head {xgl - d_ok:.2f} km) .. d {d_dry:g} km {bad} (head {xgl - d_dry:.2f} km); "
+        f"mesh {tag}")
     # 2. the bracket's mesh, both ends on it
     pts_m = banded_points(base, hlo - a.pad_km, hhi + a.pad_km, a.fine, a.grade_km, front_km)
     cfgf = os.path.join(work, "refined", f"{tag}.toml")
     os.makedirs(os.path.dirname(cfgf), exist_ok=True)
     write_config(a.config, cfgf, pts_m, "{work}/" + tag, None, a.map_steps)
     mdir = os.path.join(work, tag)
-    bdir = os.path.join(work, "hydro_bisect", tag)
+    bdir = os.path.join(work, "hydro_bisect" if a.criterion == "hydro" else "thermal_bisect", tag)
     os.makedirs(bdir, exist_ok=True)
     py = sys.executable
     st0 = os.path.join(mdir, "state0.npz")
@@ -173,12 +202,15 @@ def main():
         st, row = sheet(got[1])
         rows[d] = (st, row, got[1])
         with open(csvf, "w") as f:
-            f.write("d_km,head_km,status,h_head_m,h_min_m,q_gl_m2yr,state\n")
+            keys = ("h_head", "h_min", "q_gl") if a.criterion == "hydro" else ("n_cold_above_Tm", "Tb_cold_max", "x_hot_km")
+            f.write("d_km,head_km,status," + ",".join(keys) + ",state\n")
             for dd in sorted(rows):
                 s_, r_, p_ = rows[dd]
-                f.write(f"{dd:g},{xgl - dd:.2f},{s_},{r_.get('h_head', '')},{r_.get('h_min', '')},"
-                        f"{r_.get('q_gl', '')},{os.path.relpath(p_, ROOT)}\n")
-        log(f"d {d:g} km (head {xgl - d:.2f} km): converged, sheet {st}")
+                f.write(f"{dd:g},{xgl - dd:.2f},{s_}," + ",".join(str(r_.get(k, '')) for k in keys)
+                        + f",{os.path.relpath(p_, ROOT)}\n")
+        log(f"d {d:g} km (head {xgl - d:.2f} km): converged, {a.criterion} {st}"
+            + (f" ({row['n_cold_above_Tm']} cold nodes above T0, warmest {row['Tb_cold_max'] - 273.15:+.3f} K)"
+               if a.criterion == "thermal" else ""))
         return got[1]
 
     ends = {}
@@ -194,8 +226,8 @@ def main():
         if p is None:
             raise SystemExit(f"d {d:g} km did not re-converge on the bracket's mesh")
         ends[d] = p
-    lo, hi = d_ok, d_dry
-    if rows[lo][0] != "ok" or rows[hi][0] != "dry":
+    lo, hi = min(d_ok, d_dry), max(d_ok, d_dry)
+    if {rows[lo][0], rows[hi][0]} != {"ok", bad}:
         log(f"on the bracket's mesh the ends are {rows[lo][0]} / {rows[hi][0]}: the switch moved; bisecting what is "
             "there anyway" if rows[lo][0] != rows[hi][0] else "no switch on the bracket's mesh: stopping")
         if rows[lo][0] == rows[hi][0]:
@@ -217,7 +249,7 @@ def main():
             hi, ends[hi] = mid, p
         log(f"bracket now d {lo:g} ({rows[lo][0]}, head {xgl - lo:.2f} km) .. {hi:g} km ({rows[hi][0]}, head "
             f"{xgl - hi:.2f} km)")
-    log(f"done: the sheet switches between d {lo:g} km (head {xgl - lo:.2f} km, {rows[lo][0]}: "
+    log(f"done: the {a.criterion} status switches between d {lo:g} km (head {xgl - lo:.2f} km, {rows[lo][0]}: "
         f"{os.path.relpath(ends[lo], ROOT)}) and d {hi:g} km (head {xgl - hi:.2f} km, {rows[hi][0]}: "
         f"{os.path.relpath(ends[hi], ROOT)}); every point in {os.path.relpath(csvf, ROOT)}")
 
