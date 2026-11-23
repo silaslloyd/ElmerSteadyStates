@@ -5,7 +5,7 @@ modes only (the across-flow mean, n = 0 = the flowline modes, projected out); ea
 delta_hat(x, z) cos/sin(2 pi n y / W), its dominant n and wavelength W / n reported (ess/spanwise.py). --walls:
 free-slip side walls instead (cos(n pi y / W), wavelength 2 W / n).
 
-    1. config <work>/refined/S<head>.toml: the base config with [case] width = --width-km, y_elements = --ny, the
+    1. config <work>/refined/Z<head>.toml: the base config with [case] width = --width-km, y_elements = --ny, the
        mesh STRUCTURED across the flow (mesh_across = "structured": --ny rows of width/ny, every node line across at
        one x, as ess/spanwise.py needs), the calving front --shelf-km (15) beyond the grounding line (the steady
        unbuttressed shelf beyond carries no information the front's sea pressure does not), periodic sides (METIS with periodic partners together), res_points --fine-x m from --fine-from-km to 1005 km, --head-fine m over the head
@@ -14,9 +14,9 @@ free-slip side walls instead (cos(n pi y / W), wavelength 2 W / n).
        --stokes-tol 1e-8), heat Krylov + ILU to 1e-10 (a direct MUMPS solve grows much faster than the node count in 3D);
     2. ess setup / init, the state carried across (by x columns: y-uniform), the shelf break;
     3. Newton at the source's d (the contact grounding-line rounds): a y-uniform steady state stays one, only the
-       remeshing to correct                                         -> <work>/stability_spanwise/S<head>/sweep/
+       remeshing to correct                                         -> <work>/stability_spanwise/Z<head>/sweep/
     4. ess stability --spanwise (the physical map [stability_map], Arnoldi --m)
-                                                                    -> <work>/stability/S<head>_d<d>_spanwise/
+                                                                    -> <work>/stability/Z<head>_d<d>_spanwise/
 --stop-after mesh|newton: stop there (e.g. to time one map run on the wide strip first). Resumes.
 
     python3 jobs/stability_spanwise.py CONFIG --from-state S.npz --d-km D [--width-km 100] [--ny 50] [--walls]
@@ -89,8 +89,10 @@ def main():
     xgl = gl_position(s0.frozen, s0.diag) / 1e3
     d = a.d_km
     head = xgl - d
-    tag = (f"S{int(round(head)):04d}_w{a.width_km:g}n{a.ny}" + ("walls" if a.walls else "")
-           + (f"s{a.shelf_km:g}" if a.shelf_km > 0 else "")
+    # short (Elmer reads at most 128 characters of the mesh path): Z<head>, then only what differs from the defaults
+    tag = (f"Z{int(round(head)):04d}" + ("" if a.width_km == 100.0 else f"w{a.width_km:g}")
+           + ("" if a.ny == 50 else f"n{a.ny}") + ("W" if a.walls else "")
+           + ("" if a.shelf_km == 15.0 else f"s{a.shelf_km:g}")
            + ("" if a.fine_x == 1000.0 else f"x{a.fine_x:g}")).replace(".", "p")
     x0, f, hf = a.fine_from_km, a.fine_x, a.head_fine
     # the shelf cut: the calving front --shelf-km beyond the grounding line (sea pressure there, as at the full
