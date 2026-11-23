@@ -73,11 +73,16 @@ class ElmerModel(Model):
         # With one iteration the base never leaves the bed and the grounding line cannot retreat (it still
         # advances: grounding is geometric). ElmerStreams Marine_Term: Nonlinear System Max Iterations = 2.
         self.contact_stokes_iters = int(e.get("contact_stokes_iterations", 2))
+        # DEFAULT "elmerstreams" (was "elmerice" until Nov 2026): Elmer/Ice's stock SlidCoef_Contact only tests for
+        # ungrounding when relChange < Test Contact Tolerance, and with the linear Stokes problem of the flowline runs
+        # that test may stay silent (cause not confirmed): the 50 kyr temperate spin-up of the extended strip stopped at a grounding line of
+        # 1039.25 km whose last grounded column was thinner than flotation (H/H_f 0.989, N/ref 0.52 against 0.93 and
+        # H/H_f 1.000 with the ElmerStreams test, which retreated). ElmerStreams' test runs after the first iteration.
         # the contact sliding function without periodic sides: "elmerice" (Elmer/Ice's SlidCoef_Contact: the
         # ungrounding test only once Stokes has converged to Test Contact Tolerance) or "elmerstreams" (ElmerStreams'
         # contact.f90, here elmer/ContactPeriodic.F90 with Periodic Contact = False: the test after the first
         # iteration; needs PeriodicGL.so). Either tests from the second Stokes iteration of a step only.
-        self.contact_function = str(os.environ.get("ESS_CONTACT_FUNCTION") or e.get("contact_function", "elmerice"))   # env: tests
+        self.contact_function = str(os.environ.get("ESS_CONTACT_FUNCTION") or e.get("contact_function", "elmerstreams"))   # env: tests
         # [elmer] sea_level_param = true: sea level is the Lua parameter ess_sl (m, default 0; e.g. --lua ess_sl=50)
         # in the constants (hydrostatic loads of the contact) and every material (sea pressure), not a fixed 0
         self.sea_level_param = bool(e.get("sea_level_param", False)) or os.environ.get("ESS_SEA_LEVEL_PARAM") == "1"
