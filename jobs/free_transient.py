@@ -63,7 +63,10 @@ def summary(path):
     bz = next(b for b in s.layout.blocks if b.name.lower() == "zs")
     xs = _on(*s.diag[find_name(s.diag, "coordinate 1")], bz.gids)
     zdiv = float(s.x[zs[bz.name]][np.argmin(xs)])
-    tf = float(np.mean(ct[grounded] > 0)) if grounded.any() else np.nan
+    # the temperate share of the grounded bed by LENGTH (node counts are skewed by the graded mesh)
+    xg_, oo = xpos[grounded], np.argsort(xpos[grounded])
+    xs_, ts_ = xg_[oo], (ct[grounded] > 0)[oo].astype(float)
+    tf = float(np.sum(np.diff(xs_) * 0.5 * (ts_[1:] + ts_[:-1])) / (xs_[-1] - xs_[0])) if len(xs_) > 1 else np.nan
     t = float(s.meta.get("time", np.nan))
     return t, xg / 1e3, head / 1e3, zdiv, tf
 
