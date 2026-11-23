@@ -77,7 +77,7 @@ class ElmerModel(Model):
         # ungrounding test only once Stokes has converged to Test Contact Tolerance) or "elmerstreams" (ElmerStreams'
         # contact.f90, here elmer/ContactPeriodic.F90 with Periodic Contact = False: the test after the first
         # iteration; needs PeriodicGL.so). Either tests from the second Stokes iteration of a step only.
-        self.contact_function = str(e.get("contact_function", "elmerice"))
+        self.contact_function = str(os.environ.get("ESS_CONTACT_FUNCTION") or e.get("contact_function", "elmerice"))   # env: tests
         # [elmer] sea_level_param = true: sea level is the Lua parameter ess_sl (m, default 0; e.g. --lua ess_sl=50)
         # in the constants (hydrostatic loads of the contact) and every material (sea pressure), not a fixed 0
         self.sea_level_param = bool(e.get("sea_level_param", False)) or os.environ.get("ESS_SEA_LEVEL_PARAM") == "1"
