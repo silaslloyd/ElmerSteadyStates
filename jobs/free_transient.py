@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """A FREE transient from a converged steady state, run the ElmerStreams way: the grounding line by contact every
-step, the cold/temperate mask moved by melting / refreezing after every chunk (ess run --remask), heat and strain
-heating solved, the bedrock's real heat capacity, dt 5 yr. Does the state stay where Newton put it? In particular:
+step, ElmerStreams' thermal chain every step ([elmer] thermal = "elmerstreams": the cold/temperate mask by
+ColdTempMaskSolver, temperate -> cold only where the water sheet is gone; the sheet solved; friction heating from the
+loads), heat and strain heating solved, the bedrock's real heat capacity, dt 5 yr. (--thermal frozen: the mask moved
+only between chunks by ess/masks.py's heat-load test instead: it froze whole patches at once, 2026-11-23.) Does the state stay where Newton put it? In particular:
 does the grounding line (1039.25 km on the whole sweep branch) stay, or does it go towards where the ElmerStreams
 flowline run settles (714 km)?
 
@@ -28,6 +30,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "jobs"))
 from sweep_refined import write_config  # noqa: E402
+from stability_spanwise import set_key  # noqa: E402
 from ess.config import load_config  # noqa: E402
 from ess.masks import _on  # noqa: E402
 from ess.spectrum import _bed, gl_position  # noqa: E402
@@ -84,6 +87,14 @@ def main():
                     "ElmerStreams' flowline domain)")
     ap.add_argument("--no-shelf-break", action="store_true", help="the bed as the tables give it (ElmerStreams')")
     ap.add_argument("--tag", help="the run's name (default F<head>)")
+    ap.add_argument("--thermal", choices=("elmerstreams", "frozen"), default="elmerstreams",
+                    help="elmerstreams (default): ElmerStreams' thermal chain in Elmer, every step: ColdTempMaskSolver "
+                         "(temperate -> cold only where the water sheet is gone, cold -> temperate above melting), the "
+                         "water sheet solved, friction heating from the loads; frozen: the mask held in each chunk "
+                         "and moved between chunks by ess/masks.py (temperate -> cold wherever the heat loads freeze: "
+                         "NOT ElmerStreams' rule)")
+    ap.add_argument("--sheet", choices=("cs", "elmerstreams"), default="cs",
+                    help="the water sheet solver with --thermal elmerstreams (cs: SheetSolverhwCS)")
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10")
     a = ap.parse_args()
     cfg = load_config(a.config)
@@ -91,7 +102,7 @@ def main():
     s0 = load_state(a.from_state)
     xgl = gl_position(s0.frozen, s0.diag) / 1e3
     t0, _, head0, _, _ = summary(a.from_state)
-    tag = a.tag or f"F{int(round(head0)):04d}"
+    tag = (a.tag or f"F{int(round(head0)):04d}") + ("e" if a.thermal == "elmerstreams" else "")
     odir = os.path.join(work, "free_transient", tag)
     out = os.path.join(odir, "run.npz")
     if a.report:
@@ -108,8 +119,18 @@ def main():
     cfgf = os.path.join(work, "refined", f"{tag}.toml")
     os.makedirs(os.path.dirname(cfgf), exist_ok=True)
     write_config(a.config, cfgf, pts, "{work}/" + tag, None, None)
+    import re
+    txt = open(cfgf).read()
+    if a.thermal == "elmerstreams":             # ElmerStreams' cold/temperate rule and water sheet, every step
+        for k, v in (("thermal", '"elmerstreams"'), ("friction_heat", '"loads"'), ("strain_heat", "true"),
+                     ("sheet_solver", f'"{a.sheet}"')):
+            txt = set_key(txt, "elmer", k, v)
+        txt, k = re.subn(r'^frozen\s*=\s*\[(.*?)\]', lambda m: m.group(0) if "Water Sheet" in m.group(1) else
+                         f'frozen = [{m.group(1)}, "Water Sheet Thickness"]', txt, count=1, flags=re.M)
+        if k != 1:
+            raise SystemExit(f"{cfgf}: no [state] frozen line")
+    open(cfgf, "w").write(txt)
     if a.front_km:
-        import re
         txt = open(cfgf).read()
         txt, k = re.subn(r"^front_km\s*=.*$", f"front_km = {front:g}", txt, count=1, flags=re.M)
         if k != 1:
@@ -137,7 +158,8 @@ def main():
         toff = summary(out)[0]
         toff = 0.0 if not np.isfinite(toff) else toff
         log(f"continuing from {out} at t = {toff:g} yr (chunk offset {off})")
-    run([py, "-u", "-m", "ess", "run", cfgf, "--state", start, "--gl", "contact", "--remask", "--dt", f"{a.dt:g}",
+    run([py, "-u", "-m", "ess", "run", cfgf, "--state", start, "--gl", "contact",
+         "--no-remask" if a.thermal == "elmerstreams" else "--remask", "--dt", f"{a.dt:g}",
          "--steps", str(a.steps), "--chunks", "100000", "--save-every", str(a.save_every), "--chunk-offset", str(off),
          "--time-offset", f"{toff:g}", "--out", out])
 
