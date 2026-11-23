@@ -35,6 +35,8 @@ def main():
     z = np.load(args[0])
     lay = StateLayout.from_npz(z)
     mu, sigma, V, conv = z["mu"], z["sigma"], z["vectors"], z["converged"]
+    sbe = z["sigma_be"] if "sigma_be" in z.files else None
+    res = z["residual"] if "residual" in z.files else None
     rec = lambda pre: {k[len(pre):]: (z[k], z[k.replace("gids", "vals")]) for k in z.files if k.startswith(pre)}
     diag, frozen = rec("diag_gids::"), rec("frozen_gids::")
     look = lambda d, name: next(v for k, v in d.items() if k.lower() == name)
@@ -101,7 +103,11 @@ def main():
         sg = sigma[i]
         ef = (f"grows x e in {1 / sg.real:,.0f} yr" if sg.real > 0 else f"decays x 1/e in {-1 / sg.real:,.0f} yr")
         osc = f", period {2 * np.pi / abs(sg.imag):,.0f} yr" if abs(sg.imag) > 1e-12 else ""
-        titles.append(f"mode {i}: |mu| {abs(mu[i]):.6f} over {T:g} yr, {ef}{osc}"
+        m_ = complex(mu[i])
+        mus = f"{m_.real:.6f}" + (f" {'+' if m_.imag >= 0 else '-'} {abs(m_.imag):.6f}i" if abs(m_.imag) > 0 else "")
+        titles.append(f"mode {i}: mu = {mus} (|mu| {abs(m_):.6f} over {T:g} yr)<br>sigma {sg.real:+.3e}/yr"
+                      + (f" (BE-corrected {complex(sbe[i]).real:+.3e})" if sbe is not None else "")
+                      + f", {ef}{osc}" + (f", residual {float(res[i]):.1e}" if res is not None else "")
                       + ("" if conv[i] else " (NOT converged)")
                       + {"re": " [real part]", "im": " [imaginary part: a quarter period on]", "": ""}[part])
         labels.append(f"{i}{' ' + part if part else ''}")
@@ -119,7 +125,7 @@ def main():
         for k in idx[i]:
             vis[k] = True
         steps.append(dict(method="update", label=labels[i], args=[{"visible": vis}, {"title": titles[i]}]))
-    fig.update_layout(title=titles[0], template="plotly_white", height=850,
+    fig.update_layout(title=titles[0], template="plotly_white", height=850, margin=dict(t=120),
                       sliders=[dict(active=0, currentvalue=dict(prefix="mode "), steps=steps, pad=dict(t=40))])
     fig.update_yaxes(title_text="z (m)", row=1, col=1)
     fig.update_yaxes(title_text="part", row=2, col=1)
