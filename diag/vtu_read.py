@@ -36,13 +36,15 @@ def _b64_inline(text, hdr, compressed):
     for joined in (False, True):
         try:
             if joined:
-                buf = base64.b64decode(text)
-                out = _decode_blocks(buf, hdr, compressed)
-                return out
+                if not compressed:                          # bound the string by the payload length in its first integer
+                    k = -(-hdr // 3) * 4
+                    n = int(np.frombuffer(base64.b64decode(text[:k])[:hdr], "u%d" % hdr)[0])
+                    text = text[:-(-(hdr + n) // 3) * 4]
+                return _decode_blocks(base64.b64decode(text), hdr, compressed)
             if not compressed:
                 k = -(-hdr // 3) * 4
                 n = int(np.frombuffer(base64.b64decode(text[:k]), "u%d" % hdr)[0])
-                out = base64.b64decode(text[k:])
+                out = base64.b64decode(text[k:k + -(-n // 3) * 4])
                 if len(out) < n:
                     raise ValueError("short")
                 return out[:n]
@@ -51,7 +53,7 @@ def _b64_inline(text, hdr, compressed):
             kh = -(-(3 + nb) * hdr // 3) * 4
             head = base64.b64decode(text[:kh])
             sizes = np.frombuffer(head[3 * hdr:(3 + nb) * hdr], "u%d" % hdr).astype(int)
-            data = base64.b64decode(text[kh:])
+            data = base64.b64decode(text[kh:kh + -(-int(sizes.sum()) // 3) * 4])
             pos, out = 0, []
             for sz in sizes:
                 out.append(zlib.decompress(data[pos:pos + sz]))
@@ -69,7 +71,7 @@ def read_vtu(path):
     m = re.search(rb"<AppendedData[^>]*encoding=\"(\w+)\"[^>]*>\s*_", raw)
     if m:
         app = (m.group(1).decode(), raw[m.end():raw.rindex(b"</AppendedData>")])
-        xml = raw[:m.start()] + b"</AppendedData></VTKFile>"
+        xml = raw[:m.start()] + b"</VTKFile>"
     else:
         xml = raw
     root = ET.fromstring(xml)
