@@ -2,8 +2,8 @@
 """The eigenmodes of a flowline `ess stability` result (stability.npz) as pictures: for each mode, its temperature part
 over the section (ice, and with --rock the bedrock), and its Zs and Zb parts along x; a slider picks the mode. The
 title gives |mu|, the e-folding time and, for complex modes, the period. Eigenvectors have arbitrary scale and sign:
-each mode is shown normalised (its largest temperature component 1, Zs/Zb by their own largest); a complex mode as two
-slider entries, its real part and its imaginary part (the mode a quarter period later; --imag: the imaginary first).
+each mode is shown normalised (its largest temperature component 1, Zs/Zb by their own largest). A complex mode: its
+real part and its imaginary part (the oscillation a quarter period later) in two panels at once, on one scale.
 
     python3 plots/plot_modes_2d.py work/<case>/stability/<name>/stability.npz [--modes 8] [--rock] [--imag]
                                    [--nz 80] [--nx 600] [--x XMIN XMAX] [--out FILE.html]
@@ -70,39 +70,47 @@ def main():
     from plotly.subplots import make_subplots
     n = min(nm, V.shape[1])
     T = float(z["dt"]) * int(z["n_steps"])
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.06,
-                        subplot_titles=("temperature part (normalised)", "Zs and Zb parts (normalised)"))
-    titles, per, labels = [], [], []
-    entries = []                                 # (mode, part): a complex mode both its real and imaginary parts
+    # a complex mode: its real part (the oscillation at one phase) and its imaginary part (a quarter period later)
+    # side by side, both scaled by the same factor (the largest |v|), so their sizes compare; a real mode: the real
+    # panel only, the imaginary panel empty
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.38, 0.38, 0.24], vertical_spacing=0.05,
+                        subplot_titles=("temperature part: REAL", "temperature part: IMAGINARY (a quarter period on)",
+                                        "Zs and Zb parts: real solid, imaginary dashed"))
+    titles, per = [], []
     for i in range(n):
-        cplx = np.any(V[:, i].imag) and np.any(V[:, i].real)
-        entries += [(i, "im"), (i, "re")] if (cplx and imag) else [(i, "re"), (i, "im")] if cplx else [(i, "")]
-    for e, (i, part) in enumerate(entries):
-        v = V[:, i].imag if part == "im" else V[:, i].real
-        if not np.any(v):
-            v = V[:, i].imag
-        vT = v[sl[bT.name]] / bT.scale
+        vc = V[:, i].astype(complex)
+        if imag:
+            vc = -1j * vc                        # --imag: the imaginary part in the top panel
+        cplx = bool(np.any(vc.imag)) and abs(complex(mu[i]).imag) > 0
+        vT = vc[sl[bT.name]] / bT.scale
         a = np.nanmax(np.abs(vT[keepT])) or 1.0
-        xg, zg, G = binned(xT[keepT], zT[keepT], vT[keepT] / a, nz, nx)
-        tr = [go.Heatmap(x=xg, y=zg, z=G, colorscale="RdBu_r", zmin=-1, zmax=1, zsmooth=False, visible=(e == 0),
-                         colorbar=dict(title="T part", len=0.65, y=0.67), hoverongaps=False,
-                         hovertemplate="x %{x:.1f} km<br>z %{y:.0f} m<br>%{z:.3f}<extra></extra>")]
-        lines = []
+        tr = []
+        for row, comp in ((1, vT.real), (2, vT.imag)):
+            if row == 2 and not cplx:
+                continue
+            xg, zg, G = binned(xT[keepT], zT[keepT], comp[keepT] / a, nz, nx)
+            tr.append((row, go.Heatmap(x=xg, y=zg, z=G, colorscale="RdBu_r", zmin=-1, zmax=1, zsmooth=False,
+                                       visible=(i == 0), showscale=(row == 1),
+                                       colorbar=dict(title="T part", len=0.75, y=0.62), hoverongaps=False,
+                                       hovertemplate="x %{x:.1f} km<br>z %{y:.0f} m<br>%{z:.3f}<extra></extra>")))
         for name, col in (("zs", "black"), ("zb", "#8e44ad")):
-            p = prof(name, v)
+            p = prof(name, vc)
             if p is None:
                 continue
             xs, vv = p
             if xwin:
                 m = (xs >= xwin[0]) & (xs <= xwin[1])
                 xs, vv = xs[m], vv[m]
-            s = np.nanmax(np.abs(vv)) or 1.0
-            lines.append(go.Scatter(x=xs, y=vv / s, mode="lines", name=name.capitalize(), visible=(e == 0),
-                                    line=dict(color=col, width=1.5), showlegend=(e == 0)))
-        per.append((tr, lines))
+            s_ = np.nanmax(np.abs(vv)) or 1.0
+            tr.append((3, go.Scatter(x=xs, y=vv.real / s_, mode="lines", name=f"{name.capitalize()} real",
+                                     visible=(i == 0), line=dict(color=col, width=1.5), showlegend=(i == 0))))
+            if cplx:
+                tr.append((3, go.Scatter(x=xs, y=vv.imag / s_, mode="lines", name=f"{name.capitalize()} imag",
+                                         visible=(i == 0), line=dict(color=col, width=1.5, dash="dash"),
+                                         showlegend=(i == 0))))
+        per.append(tr)
         sg = sigma[i]
-        ef = (f"grows x e in {1 / sg.real:,.0f} yr" if sg.real > 0 else f"decays x 1/e in {-1 / sg.real:,.0f} yr")
-        osc = f", period {2 * np.pi / abs(sg.imag):,.0f} yr" if abs(sg.imag) > 1e-12 else ""
+        osc = f", period {2 * np.pi / abs(sg.imag) / 1e3:,.2f} kyr" if abs(sg.imag) > 1e-12 else ""
         m_ = complex(mu[i])
         mus = f"{m_.real:.6f}" + (f" {'+' if m_.imag >= 0 else '-'} {abs(m_.imag):.6f}i" if abs(m_.imag) > 0 else "")
         tsc = lambda r: (f"<b style='color:#d62728'>GROWING x e in {1 / r / 1e3:,.1f} kyr</b>" if r > 0 else
@@ -111,28 +119,25 @@ def main():
                       + f"<br>sigma {sg.real:+.3e}/yr"
                       + (f"; BE-corrected {complex(sbe[i]).real:+.3e}/yr: {tsc(complex(sbe[i]).real)}" if sbe is not None else "")
                       + (f", residual {float(res[i]):.1e}" if res is not None else "")
-                      + ("" if conv[i] else " (NOT converged)")
-                      + {"re": " [real part]", "im": " [imaginary part: a quarter period on]", "": ""}[part])
-        labels.append(f"{i}{' ' + part if part else ''}")
+                      + ("" if conv[i] else " (NOT converged)"))
     idx = []
-    for tr, lines in per:
+    for tr in per:
         k0 = len(fig.data)
-        for t in tr:
-            fig.add_trace(t, row=1, col=1)
-        for t in lines:
-            fig.add_trace(t, row=2, col=1)
+        for row, t in tr:
+            fig.add_trace(t, row=row, col=1)
         idx.append(list(range(k0, len(fig.data))))
     steps = []
-    for i in range(len(entries)):
+    for i in range(n):
         vis = [False] * len(fig.data)
         for k in idx[i]:
             vis[k] = True
-        steps.append(dict(method="update", label=labels[i], args=[{"visible": vis}, {"title": titles[i]}]))
-    fig.update_layout(title=titles[0], template="plotly_white", height=850, margin=dict(t=120),
+        steps.append(dict(method="update", label=f"{i}", args=[{"visible": vis}, {"title": titles[i]}]))
+    fig.update_layout(title=titles[0], template="plotly_white", height=1100, margin=dict(t=120),
                       sliders=[dict(active=0, currentvalue=dict(prefix="mode "), steps=steps, pad=dict(t=40))])
     fig.update_yaxes(title_text="z (m)", row=1, col=1)
-    fig.update_yaxes(title_text="part", row=2, col=1)
-    fig.update_xaxes(title_text="x (km)", row=2, col=1)
+    fig.update_yaxes(title_text="z (m)", row=2, col=1)
+    fig.update_yaxes(title_text="part", row=3, col=1)
+    fig.update_xaxes(title_text="x (km)", row=3, col=1)
     out = out or os.path.join(os.path.dirname(args[0]), "modes.html")
     fig.write_html(out, include_plotlyjs="cdn")
     print(f"-> {out}")
