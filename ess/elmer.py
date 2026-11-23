@@ -261,8 +261,8 @@ class ElmerModel(Model):
             raise ValueError(f"[elmer] fs_ssa_shelf must be frozen or ssa, not {self.fs_ssa_shelf!r}")
         # iterative Stokes ([elmer] linear_stokes = "iterative"): tolerance (default iterative_tol) and whether to
         # stop when GCR does not converge (default yes; ElmerStreams' linsys/gcr.sif: 1e-8 and no)
-        self.stokes_iterative_tol = e.get("stokes_iterative_tol")
-        self.stokes_abort = bool(e.get("stokes_abort_not_converged", True))
+        self.stokes_iterative_tol = os.environ.get("ESS_STOKES_TOL") or e.get("stokes_iterative_tol")   # env: tests
+        self.stokes_abort = (os.environ["ESS_STOKES_ABORT"].lower() in ("1", "true", "yes")) if os.environ.get("ESS_STOKES_ABORT") else bool(e.get("stokes_abort_not_converged", True))   # env: tests
         # [lua]: extra global assignments, appended to parameters.lua (they override ess_utils.lua
         # defaults such as ess_Hs / ess_Hmin, which is loaded first)
         self.lua_overrides = {k: repr(float(v)) for k, v in cfg.get("lua", {}).items()}
