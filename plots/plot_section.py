@@ -34,7 +34,8 @@ the state is a valid steady state, grey when not; the title says in green "stead
 
 Several states (e.g. the fully temperate steady state and the bed sweep's points/state_*.npz): one page, a slider at
 the bottom chooses the state (the sweep points ordered by d, from the longest temperate patch down; the patch head
-in the title), the buttons the field; the colours are the same for every state. Default --nz 100 then
+in the title), or the red pointer under the x axis: it sits at the state's patch head, and dragged along x it picks the
+state whose head is nearest, the buttons the field; the colours are the same for every state. Default --nz 100 then
 (the page holds every state); the page: the first state's name + _sections.html.
 """
 import os
@@ -532,6 +533,70 @@ if (UJ >= 0) {              // the speed's colour limits and the log toggle
   ['ess_umax', 'ess_umin', 'ess_ulog'].forEach(function (id) { document.getElementById(id).addEventListener('change', apply); });
 }
 """ % (nf, nf + (1 if uj >= 0 else 0), uj, json.dumps(per), json.dumps(titles), f"{umax0:.4g}", f"{umin0:.3g}")
+    # a pointer under the x axis at the current state's patch head, draggable: dropped anywhere along x it picks the
+    # state whose head is nearest (the slider follows, and the pointer follows the slider)
+    heads = []
+    for p_ in paths:
+        d_, xg_ = state_meta(p_)
+        heads.append(None if d_ is None or xg_ is None else round((xg_ - d_) / 1e3, 3))
+    if len(paths) > 1 and sum(h is not None for h in heads) > 1:
+        js += """
+var HEADS = %s;
+(function () {
+  gd.style.position = 'relative';
+  var ptr = document.createElement('div');
+  ptr.title = 'drag along x: the state with the nearest patch head';
+  ptr.style.cssText = 'position:absolute; width:0; height:0; cursor:ew-resize; z-index:10; ' +
+    'border-left:9px solid transparent; border-right:9px solid transparent; border-bottom:14px solid #d62728;';
+  var lab = document.createElement('div');
+  lab.style.cssText = 'position:absolute; z-index:10; font:bold 11px sans-serif; color:#d62728; white-space:nowrap; ' +
+    'pointer-events:none; background:rgba(255,255,255,0.8);';
+  gd.appendChild(ptr); gd.appendChild(lab);
+  function xa() { return gd._fullLayout.xaxis; }
+  function ybot() { var sz = gd._fullLayout._size; return sz.t + sz.h; }
+  function place(x) {
+    if (x === null || x === undefined) { ptr.style.display = lab.style.display = 'none'; return; }
+    var px = xa()._offset + xa().l2p(x);
+    ptr.style.display = lab.style.display = '';
+    ptr.style.left = (px - 9) + 'px'; ptr.style.top = (ybot() + 1) + 'px';     // tip on the x axis
+    lab.style.left = (px + 11) + 'px'; lab.style.top = (ybot() + 3) + 'px';
+    lab.textContent = 'head ' + x.toFixed(1) + ' km';
+  }
+  function nearest(x) {
+    var best = -1, bd = Infinity;
+    for (var k = 0; k < HEADS.length; k++)
+      if (HEADS[k] !== null && Math.abs(HEADS[k] - x) < bd) { bd = Math.abs(HEADS[k] - x); best = k; }
+    return best;
+  }
+  function pick(k) {
+    if (k < 0 || k === cur.s) { place(HEADS[cur.s]); return; }
+    cur.s = k; show();
+    Plotly.relayout(gd, {'sliders[0].active': k});
+    place(HEADS[k]);
+  }
+  var drag = false;
+  ptr.addEventListener('mousedown', function (e) { drag = true; e.preventDefault(); });
+  document.addEventListener('mousemove', function (e) {
+    if (!drag) return;
+    var r = gd.getBoundingClientRect(), x = xa().p2l(e.clientX - r.left - xa()._offset);
+    place(x); var k = nearest(x); if (k >= 0 && k !== cur.s) { cur.s = k; show(); }
+  });
+  document.addEventListener('mouseup', function () {
+    if (!drag) return; drag = false; Plotly.relayout(gd, {'sliders[0].active': cur.s}); place(HEADS[cur.s]); });
+  ptr.addEventListener('touchstart', function (e) { drag = true; e.preventDefault(); }, {passive: false});
+  document.addEventListener('touchmove', function (e) {
+    if (!drag) return;
+    var r = gd.getBoundingClientRect(), x = xa().p2l(e.touches[0].clientX - r.left - xa()._offset);
+    place(x); var k = nearest(x); if (k >= 0 && k !== cur.s) { cur.s = k; show(); }
+  }, {passive: true});
+  document.addEventListener('touchend', function () {
+    if (!drag) return; drag = false; Plotly.relayout(gd, {'sliders[0].active': cur.s}); place(HEADS[cur.s]); });
+  gd.on('plotly_sliderchange', function (e) { place(HEADS[parseInt(e.step.value)]); });
+  gd.on('plotly_relayout', function () { place(HEADS[cur.s]); });
+  window.addEventListener('resize', function () { setTimeout(function () { place(HEADS[cur.s]); }, 100); });
+  place(HEADS[cur.s]);
+})();
+""" % json.dumps(heads)
     out = out or (os.path.splitext(paths[0])[0] + ("_section.html" if len(paths) == 1 else "_sections.html"))
     fig.write_html(out, include_plotlyjs="cdn", post_script=js)
     print(f"-> {out} ({len(paths)} state(s), {os.path.getsize(out) / 1e6:.1f} MB)")
