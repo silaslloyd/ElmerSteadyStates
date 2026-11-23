@@ -132,6 +132,31 @@ def main():
     if gl is not None:
         i = int(np.argmin(np.abs(xs - gl / 1e3)))
         print(f"  at the grounding line: q_gl = {qx[i]:.1f} m^2/yr, a x_gl = {ref[i]:.1f}: ratio {r[i]:.4f}")
+        schoof(gl, qx[i], acc)
+
+
+def schoof(gl, q_gl, acc):
+    """Schoof (2007) grounding-line flux for these parameters: Newtonian ice (n = 1, A = 1/(2 eta)), linear sliding
+    (m = 1) with C = fcoeff (a temperate bed at the grounding line): q = [A (rho_i g)^2 (1 - rho_i/rho_w) / (4 C)]^(1/2)
+    h^(5/2), h the flotation thickness on the bed table (case/marine_ics/bed_dim.xy, linear beyond its end); and the
+    roots of q(h_f(x)) = a x on that bed."""
+    from ess.case import eval_lua_parameters
+    root = os.path.dirname(HERE)
+    P = eval_lua_parameters(os.path.join(root, "case", "parameters_fine2x.lua"))
+    A, C, rg, r = 1 / (2 * P["viscosity"]), P["fcoeff"], P["rhoi"] * P["gravity"], P["rhoi"] / P["rhow"]
+    K = (A * rg ** 2 * (1 - r) / (4 * C)) ** 0.5
+    b = np.loadtxt(os.path.join(root, "case", "marine_ics", "bed_dim.xy"))
+    s_ = (b[-1, 1] - b[0, 1]) / b[-1, 0]
+    bed = lambda x: np.where(x > b[-1, 0], b[0, 1] + s_ * x, np.interp(x, b[:, 0], b[:, 1]))
+    hf = -bed(gl) / r
+    qs = K * hf ** 2.5
+    print(f"  Schoof: q = {K:.4g} h^2.5; flotation thickness at the grounding line {hf:.1f} m (bed table): Schoof's q "
+          f"{qs:.0f} m^2/yr; the model's / Schoof's = {q_gl / qs:.3f}")
+    xx = np.linspace(50e3, 1200e3, 230001)
+    F = K * (-bed(xx) / r) ** 2.5 - acc * xx
+    for j in np.where(np.diff(np.sign(F)))[0]:
+        print(f"  Schoof's steady grounding line on this bed: {xx[j] / 1e3:.1f} km "
+              f"({'stable' if F[j + 1] > F[j] else 'unstable'})")
 
 
 if __name__ == "__main__":
