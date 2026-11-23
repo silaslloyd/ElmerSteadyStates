@@ -223,6 +223,10 @@ def transfer(src: SavedState, dst: SavedState, x_end_m: float | None = None, edg
         return gd, xdst, vs[o][near]
     gd, _, ct = nearest("ColdTempMask")
     msg = f"temperate bed nodes {int((ct > 0).sum())} of {len(gd)}"
+    has = lambda f, nm: any(k.lower() == nm for k in f)
+    if has(src.frozen, "water sheet thickness") and has(dst.frozen, "water sheet thickness"):
+        _, _, hw = nearest("Water Sheet Thickness")    # the water sheet too (thermal = elmerstreams runs)
+        msg += f"; water sheet carried ({hw.min():.3g} .. {hw.max():.3g} m)"
 
     if _has(dst, "Zb") and _has(src, "Zb"):   # marine: the ice base and the grounded mask
         gg, xg, gm = nearest("GroundedMask")

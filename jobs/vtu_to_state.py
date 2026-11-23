@@ -79,6 +79,10 @@ def main():
     frozen = {"ColdTempMask": (g[base], ct), "GroundedMask": (g[base], gm)}
     if kbed:
         frozen["bedrock"] = (g[base], F[kbed][base])
+    khw = field(F, "water sheet thickness")
+    if khw:                                       # the run's own water sheet (carried by ess transfer as the masks)
+        frozen["Water Sheet Thickness"] = (g[base], F[khw][base])
+        print(f"water sheet from {khw!r}: {F[khw][base].min():.3g} .. {F[khw][base].max():.3g} m on the base")
     diag = {f"coordinate {c + 1}": (g, P[:, c]) for c in range(3)}
     xb = P[base, 0]
     xgl = xb[gm > -0.5].max() / 1e3 if (gm > -0.5).any() else np.nan
