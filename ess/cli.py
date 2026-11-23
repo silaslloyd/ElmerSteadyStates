@@ -674,8 +674,8 @@ def cmd_run(args):
     y = prob.scale(saved.x)
     on, _ = _masks_auto(cfg, model)
     remask = on if args.remask is None else args.remask
-    if remask and getattr(model, "thermal", "frozen") == "nowater" and not args.stokes_only:
-        log.info("run: thermal = nowater: Elmer moves the cold/temperate mask; no remask between chunks")
+    if remask and getattr(model, "thermal", "frozen") in ("nowater", "elmerstreams") and not args.stokes_only:
+        log.info(f"run: thermal = {model.thermal}: Elmer moves the cold/temperate mask; no remask between chunks")
         remask = False
     if args.bed and remask:
         log.info("run: --bed: no remask of the cold/temperate mask (the grounding line still moves with --gl contact)")
