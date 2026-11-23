@@ -131,7 +131,7 @@ def main():
         vis = [False] * len(fig.data)
         for k in idx[i]:
             vis[k] = True
-        steps.append(dict(method="update", label=f"{i}", args=[{"visible": vis}, {"title": titles[i]}]))
+        steps.append(dict(method="update", label=f"{i}", args=[{"visible": vis}, {"title.text": titles[i]}]))
     fig.update_layout(title=titles[0], template="plotly_white", height=1100, margin=dict(t=120),
                       sliders=[dict(active=0, currentvalue=dict(prefix="mode "), steps=steps, pad=dict(t=40))])
     fig.update_yaxes(title_text="z (m)", row=1, col=1)
