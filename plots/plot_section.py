@@ -25,6 +25,9 @@ first (the others hidden until clicked): the "temperate fit", x scale from the g
 geometry scaled vertically and translated, both by least squares on the surface over the profile's temperate range. Fitted to the last state (the sweep's newest
 point); --sia-first: to the first.
 
+--overlay PROFILE.npz (repeatable): another model's upper and lower surface (plots/vtu_profile.py, e.g. the last step
+of an ElmerStreams run) over every state, dashed / dotted, one legend entry (click it to hide or show).
+
 --rock: the bedrock's temperature too (down to the bottom of the 10 zscale rock), not only the ice.
 
 --hydro [--config CFG]: a second panel below, on the same x: the steady CS water sheet's thickness (as
@@ -387,6 +390,10 @@ def main():
     rock = "--rock" in args
     args = [a for a in args if a != "--rock"]
     args, sia_file = opt(args, "--sia-file", conv=str)
+    overlays = []                               # --overlay PROFILE.npz (repeatable): plots/vtu_profile.py profiles
+    while "--overlay" in args:
+        args, o_ = opt(args, "--overlay", conv=str)
+        overlays.append(o_)
     sia = "--sia" in args or sia_file is not None
     sia_first = "--sia-first" in args
     sia_all = "--sia-all" in args
@@ -460,6 +467,17 @@ def main():
     extra = sia_overlay(go, built[0 if sia_first else -1][1], sia_file) if sia else []
     if not sia_all:             # only the temperate fit (and its transition marker); --sia-all: the four other scalings too
         extra = [t_ for t_ in extra if t_.legendgroup == "tfit"] or extra
+    cols = ["#e67e22", "#16a085", "#c0392b", "#2c3e50"]
+    for k_, f_ in enumerate(overlays):         # another model's profile: Zs and Zb, one legend entry (click: hide)
+        with np.load(f_) as zo:
+            nm_ = str(zo["name"]) if "name" in zo.files else os.path.basename(f_)
+            c_ = cols[k_ % len(cols)]
+            for key_, dash_, show_ in (("zs", "dash", True), ("zb", "dot", False)):
+                extra.append(go.Scatter(x=zo["x_km"], y=zo[key_], mode="lines", name=nm_, legendgroup=f"ov{k_}",
+                                        showlegend=show_, line=dict(color=c_, width=2, dash=dash_),
+                                        hovertemplate=f"{nm_} {key_.capitalize()}<br>x %{{x:.1f}} km<br>"
+                                                      "z %{y:.0f} m<extra></extra>"))
+        print(f"overlay {nm_}: {f_}")
     nstate = len(traces)
     fig = go.Figure(traces + extra)
     # the axes fixed over all the states (no rescaling when the slider moves)
