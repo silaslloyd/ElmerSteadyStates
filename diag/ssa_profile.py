@@ -115,6 +115,8 @@ def main():
     ap.add_argument("--bed", default=None, help="bed table x(m) b(m); default case/marine_ics/bed_dim.xy")
     ap.add_argument("--bed-smooth-km", type=float, default=0.5, help="moving average of the bed (its slope enters the balance); other widths are tried if the solver fails")
     ap.add_argument("--friction", type=float, default=1.0, help="multiplier on fcoeff (default 1: the model's C)")
+    ap.add_argument("--gl-km", type=float, default=None, help="fix the grounding line here (km); default with --state: the model's")
+    ap.add_argument("--free-gl", action="store_true", help="solve for the grounding line too (flotation + Schoof) instead of fixing it")
     ap.add_argument("--x0", type=float, default=1e-3, help="first point as a fraction of x_g")
     ap.add_argument("--out", default="ssa_profile")
     args = ap.parse_args()
@@ -146,6 +148,10 @@ def main():
     else:
         bt = np.loadtxt(args.bed or os.path.join(repo, "case", "marine_ics", "bed_dim.xy"))
         xb, bb = bt[:, 0], bt[:, 1]
+    fixed = None                                                   # the grounding line is given (the model's), not solved for
+    if not args.free_gl:
+        fixed = args.gl_km * 1e3 if args.gl_km else (model["gl"] if model is not None and model["gl"] else None)
+
     def attempt(width, x0):
         xbs, bbs = smooth(xb, bb, 500.0, width * 1e3)
         bed = lambda x: np.interp(x, xbs, bbs)
@@ -159,7 +165,9 @@ def main():
         x_schoof = float(xs[i[0]]) if len(i) else float("nan")
 
         # --- first guess
-        if model is not None and model["gl"]:
+        if fixed:
+            xg0 = fixed
+        elif model is not None and model["gl"]:
             xg0 = model["gl"]
         else:
             xg0 = x_schoof if np.isfinite(x_schoof) else 686e3
@@ -176,8 +184,8 @@ def main():
         HS = 1000.0
         NS = 0.5 * rg * (1 - r) * HS**2                                # scale of the longitudinal force N = 4 eta H u_x
 
-        def rhs(xi_, y, p):
-            xg = p[0]
+        def rhs(xi_, y, p=None):
+            xg = fixed if fixed else p[0]
             x = xi_ * xg
             H = y[0] * HS
             N = y[1] * NS
@@ -185,13 +193,18 @@ def main():
             Nx = C * a * x / H + rg * H * (Hx + bed_x(x))              # force balance
             return np.vstack([xg * Hx / HS, xg * Nx / NS])
 
-        def bc(ya, yb, p):
-            xg = p[0]
+        def bc(ya, yb, p=None):
+            xg = fixed if fixed else p[0]
             xa = x0 * xg
             Ha, Na = ya[0] * HS, ya[1] * NS
             ua = a * xa / Ha
             Hxa = -bed_x(xa) - C * ua / (rg * Ha)                      # sliding balance (s_x = -C u / rho g H) at the divide
             hf = -bed(xg) / r
+            if fixed:                                                  # x_g given: Schoof's stress condition with H_g free
+                return np.array([
+                    (Na - 4 * eta * (a - ua * Hxa)) / NS,
+                    (yb[1] * NS - 0.5 * rg * (1 - r) * (yb[0] * HS) ** 2) / NS,
+                ])
             return np.array([
                 (Na - 4 * eta * (a - ua * Hxa)) / NS,
                 (yb[0] * HS - hf) / HS,                                # flotation
@@ -202,7 +215,7 @@ def main():
         N0 = 4 * eta * (a - u0 * np.gradient(H0, xx))
         N0[-1] = 0.5 * rg * (1 - r) * H0[-1] ** 2
         y0 = np.vstack([H0 / HS, N0 / NS])
-        sol = solve_bvp(rhs, bc, xi, y0, p=[xg0], tol=1e-6, max_nodes=200000)
+        sol = solve_bvp(rhs, bc, xi, y0, p=None if fixed else [xg0], tol=1e-6, max_nodes=200000)
         return sol, bed, xbs, bbs, x_schoof, HS
 
     sol = None
@@ -217,7 +230,7 @@ def main():
     print("Schoof flux condition a x_g = K h_f^(5/2):  x_g = %.2f km, h_g = %.1f m" % (
         x_schoof / 1e3, -bed(x_schoof) / r if np.isfinite(x_schoof) else float("nan")))
 
-    xg = float(sol.p[0])
+    xg = fixed if fixed else float(sol.p[0])
     xf = np.linspace(x0, 1.0, 4000)
     Y = sol.sol(xf)
     x = xf * xg
@@ -226,9 +239,15 @@ def main():
     s = H + b
     u = a * x / H
     print("\nSSA steady state with the model's mechanical parameters:")
-    print("  grounding line x_g = %.2f km   (Schoof flux condition: %.2f km)" % (xg / 1e3, x_schoof / 1e3))
+    if fixed:
+        print("  grounding line FIXED at x_g = %.2f km (Schoof stress condition there, H_g free)" % (xg / 1e3))
+    else:
+        print("  grounding line x_g = %.2f km   (Schoof flux condition: %.2f km)" % (xg / 1e3, x_schoof / 1e3))
     print("  thickness at the GL = %.1f m (flotation %.1f m)   surface %.1f m" % (H[-1], -bed(xg) / r, s[-1]))
     print("  divide: H = %.1f m, surface = %.1f m" % (H[0], s[0]))
+    Kc = math.sqrt(1 / (2 * eta) * rg**2 * (1 - r) / (4 * C))
+    print("  flux a x_g / Schoof capacity K H_g^(5/2) = %.3f   (1 = the flux condition holds)" % (a * xg / (Kc * H[-1] ** 2.5)))
+    print("  H_g / flotation thickness = %.3f   (1 = the flotation condition holds)" % (H[-1] / (-bed(xg) / r)))
     print("  GL velocity u_g = %.1f m/yr, flux q_g = %.4g m^2/yr" % (u[-1], a * xg))
     if model is not None:
         zm = np.interp(x, *model["zs"])
@@ -240,6 +259,8 @@ def main():
                   % (model["gl"] / 1e3, xg / 1e3, (model["gl"] - xg) / 1e3))
         print("  surface Zs_model - s_SSA: mean %.1f m, rms %.1f m, max |.| %.1f m  (SSA relief %.0f m)"
               % (d[inner].mean(), np.sqrt(np.mean(d[inner] ** 2)), np.abs(d[inner]).max(), s.max() - s.min()))
+        print("  thickness at the GL: model (Zs - bed) %.1f m, SSA %.1f m, flotation %.1f m"
+              % (np.interp(xg, *model["zs"]) - bed(xg), H[-1], -bed(xg) / r))
         print("  divide thickness: model %.1f m, SSA %.1f m"
               % (np.interp(0.0, *model["zs"]) - bed(0.0), H[0]))
 
