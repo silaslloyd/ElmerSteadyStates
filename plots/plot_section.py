@@ -388,7 +388,8 @@ def main():
     args, sia_file = opt(args, "--sia-file", conv=str)
     sia = "--sia" in args or sia_file is not None
     sia_first = "--sia-first" in args
-    args = [a for a in args if a not in ("--sia", "--sia-first")]
+    sia_all = "--sia-all" in args
+    args = [a for a in args if a not in ("--sia", "--sia-first", "--sia-all")]
     if sia and sia_file is None:
         sia_file = os.path.join(HERE, "data", "sia_profile.npz")
     if not args:
@@ -456,6 +457,8 @@ def main():
         per.append(len(ftr) + len(lines))
     # fitted to the LAST state (the sweep's newest point, the shortest patch); --sia-first: to the first
     extra = sia_overlay(go, built[0 if sia_first else -1][1], sia_file) if sia else []
+    if not sia_all:             # only the temperate fit (and its transition marker); --sia-all: the four other scalings too
+        extra = [t_ for t_ in extra if t_.legendgroup == "tfit"] or extra
     nstate = len(traces)
     fig = go.Figure(traces + extra)
     # the axes fixed over all the states (no rescaling when the slider moves)
