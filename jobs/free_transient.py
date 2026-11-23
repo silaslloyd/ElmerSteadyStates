@@ -80,6 +80,10 @@ def main():
     ap.add_argument("--save-every", type=int, default=5)
     ap.add_argument("--fine-from-km", type=float)
     ap.add_argument("--report", action="store_true")
+    ap.add_argument("--front-km", type=float, help="the calving front here instead of the config's (e.g. 816.15: "
+                    "ElmerStreams' flowline domain)")
+    ap.add_argument("--no-shelf-break", action="store_true", help="the bed as the tables give it (ElmerStreams')")
+    ap.add_argument("--tag", help="the run's name (default F<head>)")
     ap.add_argument("--shelf-break", default="--strip-divide-r-km 1520.8 --r-break-km 450 --factor 30 --width-km 10")
     a = ap.parse_args()
     cfg = load_config(a.config)
@@ -87,7 +91,7 @@ def main():
     s0 = load_state(a.from_state)
     xgl = gl_position(s0.frozen, s0.diag) / 1e3
     t0, _, head0, _, _ = summary(a.from_state)
-    tag = f"F{int(round(head0)):04d}"
+    tag = a.tag or f"F{int(round(head0)):04d}"
     odir = os.path.join(work, "free_transient", tag)
     out = os.path.join(odir, "run.npz")
     if a.report:
@@ -98,13 +102,21 @@ def main():
             print(f"{os.path.relpath(f, work)[-34:]:>34s} {t:10.0f} {g:9.2f} {h:10.2f} {z:10.1f} {tf:9.1%}")
         return
     x0 = a.fine_from_km if a.fine_from_km is not None else head0 - 20.0
-    pts = [[0.0, 2000.0], [x0 - 60.0, 2000.0], [x0, 250.0], [1065.0, 250.0], [1080.0, 1000.0],
-           [float(cfg["case"]["res_points"][-1][0]), 1000.0]]
+    front = a.front_km or float(cfg["case"].get("front_km", cfg["case"]["res_points"][-1][0]))
+    pts = ([[0.0, 2000.0], [x0 - 60.0, 2000.0], [x0, 250.0], [1065.0, 250.0], [1080.0, 1000.0], [front, 1000.0]]
+           if front > 1085.0 else [[0.0, 2000.0], [x0 - 60.0, 2000.0], [x0, 250.0], [front, 250.0]])
     cfgf = os.path.join(work, "refined", f"{tag}.toml")
     os.makedirs(os.path.dirname(cfgf), exist_ok=True)
     write_config(a.config, cfgf, pts, "{work}/" + tag, None, None)
+    if a.front_km:
+        import re
+        txt = open(cfgf).read()
+        txt, k = re.subn(r"^front_km\s*=.*$", f"front_km = {front:g}", txt, count=1, flags=re.M)
+        if k != 1:
+            raise SystemExit(f"{cfgf}: no front_km line")
+        open(cfgf, "w").write(txt)
     log(f"source {a.from_state}: grounding line {xgl:.2f} km, patch head {head0:.2f} km; mesh 250 m from {x0:g} to "
-        f"1065 km; dt {a.dt:g} yr x {a.steps} steps per chunk; config {cfgf}")
+        f"{min(front, 1065.0):g} km, front {front:g} km{', no shelf break' if a.no_shelf_break else ''}; dt {a.dt:g} yr x {a.steps} steps per chunk; config {cfgf}")
     mdir = os.path.join(work, tag)
     py = sys.executable
     st0, st1, st2 = (os.path.join(mdir, n) for n in ("state0.npz", "start0.npz", "start.npz"))
@@ -113,7 +125,9 @@ def main():
         run([py, "-u", "-m", "ess", "init", cfgf, "--out", st0])
     if not os.path.exists(st1):
         run([py, "-u", "-m", "ess", "transfer", cfgf, "--state", st0, "--from", a.from_state, "--out", st1])
-    if not os.path.exists(st2):
+    if a.no_shelf_break:
+        st2 = st1
+    elif not os.path.exists(st2):
         run([py, "jobs/shelf_break.py", st1, st2] + a.shelf_break.split() + ["--force"])
     os.makedirs(odir, exist_ok=True)
     start, off, toff = st2, 0, 0.0
