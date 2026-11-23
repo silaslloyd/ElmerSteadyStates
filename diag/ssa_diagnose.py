@@ -273,6 +273,13 @@ def main():
     zbg = np.interp(xgl, x[np.isfinite(bed)], bed[np.isfinite(bed)]) if np.isfinite(bed).any() else float("nan")
     hf = -zbg / r
     print("   H at the last grounded column %.1f m,  flotation thickness %.1f m  (ratio %.3f)" % (Hgl, hf, Hgl / hf))
+    sel_b = grounded & (x > xgl - 4e3)
+    if sel_b.sum() >= 3:
+        sl_b = np.polyfit(x[sel_b], zb[sel_b], 1)[0]
+        sel_s = grounded & (x > xgl - 4e3)
+        sl_s = np.polyfit(x[sel_s], s[sel_s], 1)[0]
+        print("   over the last 4 km of grounded ice: bed slope db/dx = %+.2e (+ = rises seaward), surface slope ds/dx = %+.2e, "
+              "bed depth at the GL %.1f m" % (sl_b, sl_s, zb[grounded][np.argmax(x[grounded])]))
     print("   a x_gl / (K H_g^(5/2)) = %.3f   (full SSA: 1.045;  Schoof's asymptotics: 1)" % (a * xgl / (K * Hgl ** 2.5)))
 
     # ---------------- D. the floating shelf: a free 1D shelf has N = 1/2 rho g (1 - r) H^2 at EVERY x
