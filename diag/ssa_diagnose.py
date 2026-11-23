@@ -282,6 +282,21 @@ def main():
               "bed depth at the GL %.1f m" % (sl_b, sl_s, zb[grounded][np.argmax(x[grounded])]))
     print("   a x_gl / (K H_g^(5/2)) = %.3f   (full SSA: 1.045;  Schoof's asymptotics: 1)" % (a * xgl / (K * Hgl ** 2.5)))
 
+    # ---------------- per-column table around the grounding line (no smoothing): where does the force balance leak?
+    il = int(np.where(grounded)[0].max())
+    lo_i, hi_i = max(il - 10, 1), min(il + 7, len(x) - 2)
+    sxc = np.gradient(s, x)
+    Nc = 4 * eta * H * np.gradient(um, x)
+    Nxc = np.gradient(Nc, x)
+    refc = 0.5 * rg * (1 - r) * H**2
+    print("\nGRID  per-column values around the grounding line (centered differences, no smoothing; kPa = 1e-3 MPa)")
+    print("GRID %8s %7s %5s %8s %8s %8s %9s %9s %9s %9s" % ("x-xgl m", "H m", "gm", "u_b", "u_m", "N/ref", "drive", "C u_b", "dN/dx", "resid"))
+    for i in range(lo_i, hi_i + 1):
+        D_i = -rg * H[i] * sxc[i]
+        print("GRID %8.0f %7.1f %5.0f %8.2f %8.2f %8.3f %9.3f %9.3f %9.3f %9.3f" % (
+            x[i] - xgl, H[i], gm[i], ub[i], um[i], Nc[i] / refc[i], D_i * 1e3, C * ub[i] * 1e3, Nxc[i] * 1e3,
+            (Nxc[i] - C * ub[i] + D_i) * 1e3))
+
     # ---------------- D. the floating shelf: a free 1D shelf has N = 1/2 rho g (1 - r) H^2 at EVERY x
     X3 = N3 = ref3 = None
     fl = (gm < -0.5) & (x > xgl)
