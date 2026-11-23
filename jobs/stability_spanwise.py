@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """LATERAL (spanwise) stability of a converged flowline steady state: the state extruded across a wide 3D strip
-(free-slip side walls, y-uniform), re-converged there, then `ess stability --spanwise`: Arnoldi on the across-flow
+(periodic sides, y-uniform), re-converged there, then `ess stability --spanwise`: Arnoldi on the across-flow
 modes only (the across-flow mean, n = 0 = the flowline modes, projected out); each mode
-delta_hat(x, z) cos(n pi y / W), its dominant n and wavelength 2 W / n reported (ess/spanwise.py).
+delta_hat(x, z) cos/sin(2 pi n y / W), its dominant n and wavelength W / n reported (ess/spanwise.py). --walls:
+free-slip side walls instead (cos(n pi y / W), wavelength 2 W / n).
 
-    1. config <work>/refined/S<head>.toml: the base config with [case] width = --width-km, y_elements = --ny (free-slip
-       walls, no periodic sides), res_points --fine-x m from --fine-from-km to 1005 km, --head-fine m over the head
+    1. config <work>/refined/S<head>.toml: the base config with [case] width = --width-km, y_elements = --ny, the
+       mesh STRUCTURED across the flow (mesh_across = "structured": --ny rows of width/ny, every node line across at
+       one x, as ess/spanwise.py needs), periodic sides (METIS with periodic partners together), res_points --fine-x m from --fine-from-km to 1005 km, --head-fine m over the head
        +- 10 km, 250 m over the grounding line band; Newton's map --map-steps; with --solver iterative (default) the
        Stokes and heat solves Krylov + ILU (a direct MUMPS solve grows much faster than the node count in 3D);
     2. ess setup / init, the state carried across (by x columns: y-uniform), the shelf break;
@@ -15,7 +17,7 @@ delta_hat(x, z) cos(n pi y / W), its dominant n and wavelength 2 W / n reported 
                                                                     -> <work>/stability/S<head>_d<d>_spanwise/
 --stop-after mesh|newton: stop there (e.g. to time one map run on the wide strip first). Resumes.
 
-    python3 jobs/stability_spanwise.py CONFIG --from-state S.npz --d-km D [--width-km 20] [--ny 20]
+    python3 jobs/stability_spanwise.py CONFIG --from-state S.npz --d-km D [--width-km 100] [--ny 50] [--walls]
             [--fine-x 1000] [--fine-from-km 150] [--head-fine 250] [--map-steps 10] [--m 30]
             [--solver iterative|direct] [--stop-after mesh|newton]
 """
@@ -62,8 +64,9 @@ def main():
     ap.add_argument("config")
     ap.add_argument("--from-state", required=True)
     ap.add_argument("--d-km", type=float, required=True)
-    ap.add_argument("--width-km", type=float, default=20.0)
-    ap.add_argument("--ny", type=int, default=20)
+    ap.add_argument("--width-km", type=float, default=100.0)
+    ap.add_argument("--ny", type=int, default=50)
+    ap.add_argument("--walls", action="store_true", help="free-slip side walls instead of periodic sides")
     ap.add_argument("--fine-x", type=float, default=1000.0)
     ap.add_argument("--fine-from-km", type=float, default=150.0)
     ap.add_argument("--head-fine", type=float, default=250.0)
@@ -80,7 +83,8 @@ def main():
     xgl = gl_position(s0.frozen, s0.diag) / 1e3
     d = a.d_km
     head = xgl - d
-    tag = f"S{int(round(head)):04d}"
+    tag = (f"S{int(round(head)):04d}_w{a.width_km:g}n{a.ny}" + ("walls" if a.walls else "")
+           + ("" if a.fine_x == 1000.0 else f"x{a.fine_x:g}")).replace(".", "p")
     x0, f, hf = a.fine_from_km, a.fine_x, a.head_fine
     pts = [[0.0, 2000.0], [x0 - 10.0, 2000.0], [x0, f], [head - 20.0, f], [head - 10.0, hf], [head + 10.0, hf],
            [head + 20.0, f], [1005.0, f], [1015.0, 250.0], [1065.0, 250.0], [1080.0, 1000.0],
@@ -91,16 +95,20 @@ def main():
     text = open(cfgf).read()
     text = set_key(text, "case", "width", f"{a.width_km * 1e3:.1f}")
     text = set_key(text, "case", "y_elements", str(a.ny))
-    text = set_key(text, "case", "periodic_sides", "false")
+    text = set_key(text, "case", "periodic_sides", "false" if a.walls else "true")
+    text = set_key(text, "case", "mesh_across", '"structured"')
+    if not a.walls:
+        text = set_key(text, "case", "partitioner", '"metisper"')
     if a.solver == "iterative":
         for k, v in (("linear_stokes", '"iterative"'), ("linear_heat", '"iterative"'), ("iterative_tol", "1e-10"),
                      ("stokes_preconditioner", '"ILU4"')):
             text = set_key(text, "elmer", k, v)
     open(cfgf, "w").write(text)
-    log(f"source {a.from_state}: d {d:g} km, head {head:.2f} km; strip {a.width_km:g} km x {a.ny} elements "
-        f"({a.width_km * 1e3 / a.ny:g} m across: wavelengths 2W/n = {2 * a.width_km:g}, {a.width_km:g}, "
-        f"{2 * a.width_km / 3:.1f} ... km), {f:g} m along over {x0:g} .. 1005 km, {hf:g} m at the head, {a.solver} "
-        f"solves; config {cfgf}")
+    lam = [a.width_km * (2.0 if a.walls else 1.0) / n for n in (1, 2, 3, 4)]
+    log(f"source {a.from_state}: d {d:g} km, head {head:.2f} km; strip {a.width_km:g} km x {a.ny} rows "
+        f"({a.width_km * 1e3 / a.ny:g} m across, {'free-slip walls' if a.walls else 'periodic sides'}: wavelengths "
+        f"{', '.join(f'{v:.4g}' for v in lam)} ... km), {f:g} m along over {x0:g} .. 1005 km, {hf:g} m at the head, "
+        f"{a.solver} solves; config {cfgf}")
     mdir = os.path.join(work, tag)
     py = sys.executable
     st0, st1, st2 = (os.path.join(mdir, n) for n in ("state0.npz", "start0.npz", "start.npz"))

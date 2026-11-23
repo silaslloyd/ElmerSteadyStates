@@ -5,7 +5,7 @@
 #SBATCH --time=3-00:00:00
 #
 # Lateral (spanwise) stability of a converged flowline steady state on a wide 3D strip (jobs/stability_spanwise.py):
-# FROM_STATE + D_KM, WIDTH_KM (20), NY (20 elements across), FINE_X (1000 m along the subtemperate region), M (30),
+# FROM_STATE + D_KM, WIDTH_KM (100), NY (50 rows across, structured), WALLS=1 (free-slip walls; default periodic sides), FINE_X (1000 m along the subtemperate region), M (30),
 # SOLVER (iterative), STOP_AFTER (mesh | newton: e.g. to time the wide strip first). Several nodes:
 # sbatch --nodes=2 --ntasks=128. Resubmitting resumes.
 #   FROM_STATE=... D_KM=339.2 sbatch jobs/flowline_stability_spanwise.cmd
@@ -23,8 +23,8 @@ export ESS_MPIRUN="mpirun -np {n} --bind-to none"
 unset ESS_SLIDING ESS_HEAT_LIMITER ESS_SEA_SPRING_DT ESS_STRAIN_HEAT_POSITIVE ESS_NO_CONVECTION
 export ESS_NEWTON_TOL=${NEWTON_TOL:-1.25e-5}
 : "${FROM_STATE:?FROM_STATE}" "${D_KM:?D_KM}"
-echo "$(date +%T) spanwise stability of $FROM_STATE (d $D_KM km): ${WIDTH_KM:-20} km x ${NY:-20}, ${SLURM_NTASKS:-?} ranks"
+echo "$(date +%T) spanwise stability of $FROM_STATE (d $D_KM km): ${WIDTH_KM:-100} km x ${NY:-50}, ${SLURM_NTASKS:-?} ranks"
 python3 -u jobs/stability_spanwise.py configs/flowline_rect_coarse.toml --from-state $FROM_STATE --d-km $D_KM \
-    --width-km ${WIDTH_KM:-20} --ny ${NY:-20} --fine-x ${FINE_X:-1000} --map-steps ${MAP_STEPS:-10} --m ${M:-30} \
+    --width-km ${WIDTH_KM:-100} --ny ${NY:-50} ${WALLS:+--walls} --fine-x ${FINE_X:-1000} --map-steps ${MAP_STEPS:-10} --m ${M:-30} \
     --solver ${SOLVER:-iterative} ${STOP_AFTER:+--stop-after $STOP_AFTER}
 echo "$(date +%T) done"

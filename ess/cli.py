@@ -1410,11 +1410,13 @@ def cmd_stability(args):
     span = None
     if args.spanwise:
         from .spanwise import Spanwise
-        span = Spanwise(saved.layout, saved.diag)
+        span = Spanwise(saved.layout, saved.diag, periodic=bool(cfg["case"].get("periodic_sides", False)))
         sdir += "_spanwise"
         os.makedirs(sdir, exist_ok=True)
-        log.info(f"stability: spanwise modes on a strip of width {span.W / 1e3:g} km, {span.ny} nodes across "
-                 f"(n = 1..{span.ny - 1}, wavelengths {2 * span.W / 1e3:g}..{2 * span.W / (span.ny - 1) / 1e3:.3g} km); "
+        log.info(f"stability: spanwise modes on a strip of width {span.W / 1e3:g} km "
+                 f"({'periodic sides' if span.periodic else 'free-slip walls'}), {span.ny} nodes across "
+                 f"(n = 1..{span.nmax}, wavelengths {span.wavenumber(1)[1] / 1e3:g}..{span.wavenumber(span.nmax)[1] / 1e3:.3g} km"
+                 f"{'; each n a cos/sin pair' if span.periodic else ''}); "
                  f"the across-flow mean (n = 0, the 2D modes) is projected out")
     st = stability(prob, y, saved.p, spec, opt, checkpoint=os.path.join(sdir, "arnoldi.npz"),
                    project=span.project if span else None)
@@ -1423,8 +1425,7 @@ def cmd_stability(args):
     if span:
         spec_n = np.array([span.spectrum(st.vectors[:, i]) for i in range(st.vectors.shape[1])])
         n_dom = spec_n[:, 1:].argmax(axis=1) + 1
-        k = n_dom * np.pi / span.W
-        lam = 2 * span.W / n_dom
+        k, lam = span.wavenumber(n_dom)
         for i in range(len(st.mu)):
             log.info(f"  mode {i}: |mu| {abs(st.mu[i]):.6f}  sigma {st.sigma[i].real:+.4e}/yr  dominant n = {n_dom[i]} "
                      f"(k_y {k[i] * 1e3:.4g}/km, wavelength {lam[i] / 1e3:.4g} km, {spec_n[i, n_dom[i]]:.0%} of the energy)"
