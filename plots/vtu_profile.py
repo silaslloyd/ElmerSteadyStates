@@ -85,7 +85,14 @@ def read_vtu(path):
             v = decode(da).astype(float)
             nc = int(da.get("NumberOfComponents", "1"))
             fields[da.get("Name")] = v.reshape(-1, nc) if nc > 1 else v
-    return {"points": pts, "fields": fields}
+    meta = {}                                   # FieldData (e.g. Elmer's TimeValue)
+    for fd in root.iter("FieldData"):
+        for da in fd.findall("DataArray"):
+            try:
+                meta[da.get("Name")] = decode(da).astype(float)
+            except Exception:
+                pass
+    return {"points": pts, "fields": fields, "meta": meta}
 
 
 def step_of(path):
