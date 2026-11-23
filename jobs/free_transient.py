@@ -34,7 +34,38 @@ from stability_spanwise import set_key  # noqa: E402
 from ess.config import load_config  # noqa: E402
 from ess.masks import _on  # noqa: E402
 from ess.spectrum import _bed, gl_position  # noqa: E402
-from ess.statefile import find_name, load_state  # noqa: E402
+from ess.statefile import find_name, load_state, save_state  # noqa: E402
+
+
+def with_steady_sheet(src, out, cfg):
+    """src with the steady CS water sheet of its patch (ess/spectrum.py patch_hydrology_cs: the sheet our hydrology
+    check computes, with the CS sheet's N = N0 hr / h) as its frozen Water Sheet Thickness: on the patch the sheet,
+    hr under floating ice, 1e-4 m (ColdTempMaskSolver's cold value) on cold bed and where the sheet runs dry.
+    Returns the sheet's status (ok | dry | ...)."""
+    from ess.case import eval_lua_parameters
+    from ess.spectrum import cs_sheet_params, patch_hydrology_cs
+    s = load_state(src)
+    hp = cs_sheet_params(cfg)
+    P = eval_lua_parameters(os.path.join(ROOT, cfg.get("case", {}).get("parameters") or "case/parameters_fine2x.lua"))
+    g, xpos, grounded = _bed(s.frozen, s.diag)
+    ct = _on(*s.frozen[find_name(s.frozen, "ColdTempMask")], g)
+    temp = grounded & (ct > 0)
+    xg = float(xpos[grounded].max())
+    d = xg - float(xpos[temp].min()) if temp.any() else 0.0
+    ok, st, row, hyd = patch_hydrology_cs(s.diag, s.layout, s.x, s.frozen, xg, d, dict(hp), rhoi=P["rhoi"],
+                                          Lw=P["Lw"], rhow=P["rhow"], gravity=P["gravity"], dx_bin=250.0)
+    if "Water Sheet Thickness" not in hyd:
+        raise SystemExit(f"no steady sheet for {src}: {st} {row}")
+    gh, hv = hyd["Water Sheet Thickness"]
+    h = _on(gh, hv, g)
+    h = np.where(~grounded, hp["hr"], np.where(np.isfinite(h) & (h > 1e-4), h, 1e-4))
+    o = np.argsort(g)
+    frozen = dict(s.frozen)
+    frozen["Water Sheet Thickness"] = (g[o], h[o])
+    save_state(out, s.layout, s.x, s.p, frozen, s.diag, **{k: v for k, v in s.meta.items()})
+    log(f"the steady CS sheet of the patch ({d / 1e3:.1f} km, status {st}): h {np.nanmin(h[temp]):.3g} .. "
+        f"{np.nanmax(h[temp]):.3g} m on it -> {out}")
+    return st
 
 
 def log(msg):
@@ -102,7 +133,9 @@ def main():
     s0 = load_state(a.from_state)
     xgl = gl_position(s0.frozen, s0.diag) / 1e3
     t0, _, head0, _, _ = summary(a.from_state)
-    tag = (a.tag or f"F{int(round(head0)):04d}") + ("e" if a.thermal == "elmerstreams" else "")
+    has_sheet0 = any(k.lower() == "water sheet thickness" for k in s0.frozen)
+    tag = ((a.tag or f"F{int(round(head0)):04d}") + ("e" if a.thermal == "elmerstreams" else "")
+           + ("s" if a.thermal == "elmerstreams" and not has_sheet0 else ""))   # s: started from the steady sheet
     odir = os.path.join(work, "free_transient", tag)
     out = os.path.join(odir, "run.npz")
     if a.report:
@@ -145,8 +178,15 @@ def main():
     if not os.path.exists(st0):
         run([py, "-u", "-m", "ess", "setup", cfgf])
         run([py, "-u", "-m", "ess", "init", cfgf, "--out", st0])
+    src = a.from_state
+    has_sheet = any(k.lower() == "water sheet thickness" for k in s0.frozen)
+    if a.thermal == "elmerstreams" and not has_sheet:   # start from the steady sheet the state was judged by
+        src = os.path.join(mdir, "source_with_sheet.npz")
+        if not os.path.exists(src):
+            os.makedirs(mdir, exist_ok=True)
+            with_steady_sheet(a.from_state, src, cfg)
     if not os.path.exists(st1):
-        run([py, "-u", "-m", "ess", "transfer", cfgf, "--state", st0, "--from", a.from_state, "--out", st1])
+        run([py, "-u", "-m", "ess", "transfer", cfgf, "--state", st0, "--from", src, "--out", st1])
     if a.no_shelf_break:
         st2 = st1
     elif not os.path.exists(st2):
