@@ -2,8 +2,8 @@
 """The eigenmodes of a flowline `ess stability` result (stability.npz) as pictures: for each mode, its temperature part
 over the section (ice, and with --rock the bedrock), and its Zs and Zb parts along x; a slider picks the mode. The
 title gives |mu|, the e-folding time and, for complex modes, the period. Eigenvectors have arbitrary scale and sign:
-each mode is shown normalised (its largest temperature component 1, Zs/Zb by their own largest), the real part (--imag:
-the imaginary part).
+each mode is shown normalised (its largest temperature component 1, Zs/Zb by their own largest); a complex mode as two
+slider entries, its real part and its imaginary part (the mode a quarter period later; --imag: the imaginary first).
 
     python3 plots/plot_modes_2d.py work/<case>/stability/<name>/stability.npz [--modes 8] [--rock] [--imag]
                                    [--nz 80] [--nx 600] [--x XMIN XMAX] [--out FILE.html]
@@ -70,16 +70,19 @@ def main():
     T = float(z["dt"]) * int(z["n_steps"])
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.06,
                         subplot_titles=("temperature part (normalised)", "Zs and Zb parts (normalised)"))
-    titles, per = [], []
+    titles, per, labels = [], [], []
+    entries = []                                 # (mode, part): a complex mode both its real and imaginary parts
     for i in range(n):
-        v = V[:, i]
-        v = v.imag if imag else v.real
+        cplx = np.any(V[:, i].imag) and np.any(V[:, i].real)
+        entries += [(i, "im"), (i, "re")] if (cplx and imag) else [(i, "re"), (i, "im")] if cplx else [(i, "")]
+    for e, (i, part) in enumerate(entries):
+        v = V[:, i].imag if part == "im" else V[:, i].real
         if not np.any(v):
-            v = V[:, i].imag if not imag else V[:, i].real
+            v = V[:, i].imag
         vT = v[sl[bT.name]] / bT.scale
         a = np.nanmax(np.abs(vT[keepT])) or 1.0
         xg, zg, G = binned(xT[keepT], zT[keepT], vT[keepT] / a, nz, nx)
-        tr = [go.Heatmap(x=xg, y=zg, z=G, colorscale="RdBu_r", zmin=-1, zmax=1, zsmooth=False, visible=(i == 0),
+        tr = [go.Heatmap(x=xg, y=zg, z=G, colorscale="RdBu_r", zmin=-1, zmax=1, zsmooth=False, visible=(e == 0),
                          colorbar=dict(title="T part", len=0.65, y=0.67), hoverongaps=False,
                          hovertemplate="x %{x:.1f} km<br>z %{y:.0f} m<br>%{z:.3f}<extra></extra>")]
         lines = []
@@ -92,14 +95,16 @@ def main():
                 m = (xs >= xwin[0]) & (xs <= xwin[1])
                 xs, vv = xs[m], vv[m]
             s = np.nanmax(np.abs(vv)) or 1.0
-            lines.append(go.Scatter(x=xs, y=vv / s, mode="lines", name=name.capitalize(), visible=(i == 0),
-                                    line=dict(color=col, width=1.5), showlegend=(i == 0)))
+            lines.append(go.Scatter(x=xs, y=vv / s, mode="lines", name=name.capitalize(), visible=(e == 0),
+                                    line=dict(color=col, width=1.5), showlegend=(e == 0)))
         per.append((tr, lines))
         sg = sigma[i]
         ef = (f"grows x e in {1 / sg.real:,.0f} yr" if sg.real > 0 else f"decays x 1/e in {-1 / sg.real:,.0f} yr")
         osc = f", period {2 * np.pi / abs(sg.imag):,.0f} yr" if abs(sg.imag) > 1e-12 else ""
         titles.append(f"mode {i}: |mu| {abs(mu[i]):.6f} over {T:g} yr, {ef}{osc}"
-                      + ("" if conv[i] else " (NOT converged)") + (" [imag part]" if imag else ""))
+                      + ("" if conv[i] else " (NOT converged)")
+                      + {"re": " [real part]", "im": " [imaginary part: a quarter period on]", "": ""}[part])
+        labels.append(f"{i}{' ' + part if part else ''}")
     idx = []
     for tr, lines in per:
         k0 = len(fig.data)
@@ -109,11 +114,11 @@ def main():
             fig.add_trace(t, row=2, col=1)
         idx.append(list(range(k0, len(fig.data))))
     steps = []
-    for i in range(n):
+    for i in range(len(entries)):
         vis = [False] * len(fig.data)
         for k in idx[i]:
             vis[k] = True
-        steps.append(dict(method="update", label=f"{i}", args=[{"visible": vis}, {"title": titles[i]}]))
+        steps.append(dict(method="update", label=labels[i], args=[{"visible": vis}, {"title": titles[i]}]))
     fig.update_layout(title=titles[0], template="plotly_white", height=850,
                       sliders=[dict(active=0, currentvalue=dict(prefix="mode "), steps=steps, pad=dict(t=40))])
     fig.update_yaxes(title_text="z (m)", row=1, col=1)
