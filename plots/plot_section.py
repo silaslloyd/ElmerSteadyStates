@@ -27,6 +27,11 @@ point); --sia-first: to the first.
 
 --rock: the bedrock's temperature too (down to the bottom of the 10 zscale rock), not only the ice.
 
+--hydro [--config CFG]: a second panel below, on the same x: the steady CS water sheet's thickness (as
+plots/sweep_hydrology.py: integrated upstream from the grounding line; at a valid head a wall down to 0), blue when
+the state is a valid steady state, grey when not; the title says in green "steady state", or in red why not:
+"refreezing" (the sheet runs dry before the head) and/or "thawing" (a grounded bed node held cold is above T0).
+
 Several states (e.g. the fully temperate steady state and the bed sweep's points/state_*.npz): one page, a slider at
 the bottom chooses the state (the sweep points ordered by d, from the longest temperate patch down; the patch head
 in the title), the buttons the field; the colours are the same for every state. Default --nz 100 then
@@ -316,6 +321,51 @@ def sia_overlay(go, lines0, path):
     return out
 
 
+def steady_check(paths, cfgf):
+    """per state: the steady CS sheet's thickness along x (the hydrology of plots/sweep_hydrology.py) and the state's
+    validity: the sheet reaches the patch head (else 'refreezing': it runs dry, the head would refreeze) and no
+    grounded bed node held cold is above T0 (else 'thawing'). Returns {path: (x km, h m, sheet status, valid, label)}"""
+    sys.path.insert(0, os.path.join(os.path.dirname(HERE), "jobs"))
+    from hydro_bisect import Sheet, Thermal
+    from ess.config import load_config
+    from ess.spectrum import _bed, patch_hydrology_cs
+    from ess.statefile import load_state
+    cfg = load_config(cfgf)
+    sheet, therm = Sheet(cfg), Thermal()
+    out = {}
+    for p_ in paths:
+        try:
+            s = load_state(p_)
+            g, xpos, grounded = _bed(s.frozen, s.diag)
+            ct = s.frozen[find_name(s.frozen, "ColdTempMask")]
+            ctv = dict(zip(ct[0].tolist(), ct[1]))
+            temp = np.array([ctv.get(k, -1.0) > 0 for k in g.tolist()])
+            if not (grounded & temp).any():
+                out[p_] = (np.array([]), np.array([]), "no patch", False, "no temperate patch")
+                continue
+            xg = float(xpos[grounded].max())
+            d = xg - float(xpos[grounded & temp].min())
+            ok, st, row, hyd = patch_hydrology_cs(s.diag, s.layout, s.x, s.frozen, xg, d, dict(sheet.hp),
+                                                  rhoi=sheet.P["rhoi"], Lw=sheet.P["Lw"], rhow=sheet.P["rhow"],
+                                                  gravity=sheet.P["gravity"], dx_bin=250.0)
+            if st == "no-diag":
+                out[p_] = (np.array([]), np.array([]), st, False, "no diagnostics")
+                continue
+            gh, hv = hyd["Water Sheet Thickness"]
+            idx = {k: i for i, k in enumerate(g.tolist())}
+            xs = xpos[[idx[k] for k in gh.tolist()]] / 1e3
+            fin = np.isfinite(hv)
+            ux = np.unique(np.round(xs[fin], 3))
+            uh = np.array([np.mean(hv[fin][np.round(xs[fin], 3) == u]) for u in ux])
+            hot = therm(p_)[0] == "hot"
+            why = ([] if st == "ok" else ["refreezing" if st == "dry" else st]) + (["thawing"] if hot else [])
+            out[p_] = (ux, uh, st, not why, " and ".join(why) if why else "steady state")
+        except Exception as e:                       # noqa: BLE001
+            print(f"{p_}: no hydrology ({e})")
+            out[p_] = (np.array([]), np.array([]), "n/a", False, "not checked")
+    return out
+
+
 def main():
     args = sys.argv[1:]
     args, xwin = opt(args, "--x", n=2)
@@ -329,6 +379,10 @@ def main():
     args, tsurf = opt(args, "--tsurf")
     args, umax = opt(args, "--umax")
     args, out = opt(args, "--out", conv=str)
+    args, cfgf = opt(args, "--config", conv=str, default=os.path.join(os.path.dirname(HERE), "configs",
+                                                                       "flowline_rect_coarse.toml"))
+    hydro = "--hydro" in args                   # a second panel: the steady water sheet; validity in the title
+    args = [a for a in args if a != "--hydro"]
     rock = "--rock" in args
     args = [a for a in args if a != "--rock"]
     args, sia_file = opt(args, "--sia-file", conv=str)
@@ -368,6 +422,21 @@ def main():
             if a["contour"]:
                 b[0][j].update(contours=dict(start=lo, end=hi, size=(hi - lo) / 30))
         print(f"{names[j]}: colours {lo:.4g} .. {hi:.4g} (all states)")
+    status = {}
+    if hydro:                   # the water sheet panel (axis y2): blue when the state is valid, grey when not
+        chk = steady_check(paths, cfgf)
+        for k, p_ in enumerate(paths):
+            ux, uh, st, valid, label = chk[p_]
+            col = "#1f77b4" if valid else "#b0b0b0"
+            ln = built[k][1]
+            ln.append(go.Scatter(x=ux, y=uh, yaxis="y2", mode="lines", line=dict(color=col, width=2),
+                                 name="water sheet h", showlegend=False,
+                                 hovertemplate="x %{x:.2f} km<br>h %{y:.4g} m<extra></extra>"))
+            if st == "ok" and ux.size:             # the water wall at the patch head
+                ln.append(go.Scatter(x=[ux[0], ux[0]], y=[uh[0], 0.0], yaxis="y2", mode="lines",
+                                     line=dict(color=col, width=2), showlegend=False, hoverinfo="skip"))
+            status[p_] = (valid, label)
+            print(f"{os.path.basename(p_)}: sheet {st}, {label}")
     uj = names.index("u") if "u" in names else -1
     umax0 = max(b[3][uj][1] for b in built) if uj >= 0 else 1.0
     umin0 = 10 ** min(b[5] for b in built) if uj >= 0 else 1e-3
@@ -391,11 +460,13 @@ def main():
     fig = go.Figure(traces + extra)
     # the axes fixed over all the states (no rescaling when the slider moves)
     xs = np.concatenate([np.asarray(t.x, float) for t in traces if t.x is not None])
-    ys = np.concatenate([np.asarray(t.y, float) for t in traces if t.y is not None])
+    ys = np.concatenate([np.asarray(t.y, float) for t in traces if t.y is not None and t.yaxis != "y2"])
     xs, ys = xs[np.isfinite(xs)], ys[np.isfinite(ys)]
     pad = 0.03 * (ys.max() - ys.min())
     xr, yr = [float(xs.min()), float(xs.max())], [float(ys.min() - pad), float(ys.max() + pad)]
-    titles =[[f"{nm}: {b[4]}" for nm in names] for b in built]
+    tag = lambda p_: ("" if p_ not in status else
+                      f" &nbsp; <span style='color:{'green' if status[p_][0] else 'red'}'><b>{status[p_][1]}</b></span>")
+    titles = [[f"{nm}: {b[4]}{tag(p_)}" for nm in names] for b, p_ in zip(built, paths)]
     buttons = [dict(label=nm, method="skip", args=[None]) for nm in names]
     sliders = []
     if len(built) > 1:
@@ -404,11 +475,18 @@ def main():
                                     method="skip", args=[None], value=str(k)) for k, p_ in enumerate(paths)])]
     fig.update_layout(title=titles[0][0], template="plotly_white",
                       xaxis=dict(title="x (km)", range=xr, autorange=False),
-                      yaxis=dict(title="z (m)", range=yr, autorange=False),
+                      yaxis=dict(title="z (m)", range=yr, autorange=False,
+                                 domain=[0.34, 1.0] if hydro else [0.0, 1.0]),
                       updatemenus=[dict(type="buttons", direction="right", buttons=buttons, x=0.0, y=1.06,
                                         xanchor="left", yanchor="bottom", showactive=True, active=0)],
                       sliders=sliders,
                       legend=dict(x=0.01, y=0.01, xanchor="left", yanchor="bottom", bgcolor="rgba(255,255,255,0.7)"))
+    if hydro:
+        hs = [float(np.nanmax(t.y)) for t in traces if t.yaxis == "y2" and t.y is not None and len(t.y)]
+        fig.update_layout(yaxis2=dict(title="water sheet h (m)", domain=[0.0, 0.26], anchor="x",
+                                      range=[0.0, 1.05 * max(hs) if hs else 1.0], autorange=False),
+                          xaxis=dict(anchor="y2"), height=1000,
+                          legend=dict(x=0.01, y=0.35, xanchor="left", yanchor="bottom"))
     import json
     # the buttons (field) and the slider (state) together: a small script keeps both choices and sets the visibility
     js = """
