@@ -114,6 +114,10 @@ def main():
     ap.add_argument("--save-every", type=int, default=5)
     ap.add_argument("--fine-from-km", type=float)
     ap.add_argument("--report", action="store_true")
+    ap.add_argument("--fine-res", type=float, default=250.0,
+                    help="element size (m) in a band around the source grounding line (default 250 = no extra band)")
+    ap.add_argument("--fine-half-km", type=float, default=10.0,
+                    help="half width (km) of the --fine-res band around the source grounding line")
     ap.add_argument("--front-km", type=float, help="the calving front here instead of the config's (e.g. 816.15: "
                     "ElmerStreams' flowline domain)")
     ap.add_argument("--no-shelf-break", action="store_true", help="the bed as the tables give it (ElmerStreams')")
@@ -149,6 +153,13 @@ def main():
     front = a.front_km or float(cfg["case"].get("front_km", cfg["case"]["res_points"][-1][0]))
     pts = ([[0.0, 2000.0], [x0 - 60.0, 2000.0], [x0, 250.0], [1065.0, 250.0], [1080.0, 1000.0], [front, 1000.0]]
            if front > 1085.0 else [[0.0, 2000.0], [x0 - 60.0, 2000.0], [x0, 250.0], [front, 250.0]])
+    if a.fine_res < 250.0:                      # a finer band around the source grounding line, ramped over 5 km
+        lo, hi = xgl - a.fine_half_km, xgl + a.fine_half_km
+        if not (x0 + 5.0 < lo - 5.0 and hi + 5.0 < min(front, 1065.0)):
+            raise SystemExit(f"--fine-res band {lo:g}..{hi:g} km does not fit between {x0:g} and {min(front, 1065.0):g} km")
+        k = next(i for i, p_ in enumerate(pts) if p_[0] >= hi + 5.0 or p_[0] > x0)
+        pts[k:k] = [[lo - 5.0, 250.0], [lo, a.fine_res], [hi, a.fine_res], [hi + 5.0, 250.0]]
+        log(f"fine band: {a.fine_res:g} m from {lo:g} to {hi:g} km around the grounding line {xgl:.2f} km")
     cfgf = os.path.join(work, "refined", f"{tag}.toml")
     os.makedirs(os.path.dirname(cfgf), exist_ok=True)
     write_config(a.config, cfgf, pts, "{work}/" + tag, None, None)
