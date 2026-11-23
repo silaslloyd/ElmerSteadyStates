@@ -125,9 +125,62 @@ def load_columns(path, repo):
     return R, temperate, s.p
 
 
+def load_columns_vtu(folder, tag):
+    """The same per-column rows from an Elmer .vtu output (partitioned): ice nodes of a column are those from the base
+    node (|groundedmask| = 1 there, 0 on every other node; zb is non-zero only there) up to the top node; rock nodes
+    below have no velocity. Dedupes the nodes shared between partitions. The plane y = min(y) is used."""
+    import glob
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from vtu_read import read_many
+    fs = sorted(glob.glob(os.path.join(folder, f"*np*_t{tag}*.vtu"))) or sorted(glob.glob(os.path.join(folder, f"*t{tag}*.vtu")))
+    if not fs:
+        sys.exit(f"no .vtu files for tag {tag!r} in {folder}")
+    P, pt = read_many(fs)
+    need = ("velocity", "groundedmask", "bedrock")
+    for k in need:
+        if k not in pt:
+            sys.exit(f"the .vtu files have no point field {k!r}: {sorted(pt)}")
+    on = np.isclose(P[:, 1], P[:, 1].min())
+    P, gm_n, bed_n, vel = P[on], pt["groundedmask"][on], pt["bedrock"][on], pt["velocity"][on]
+    ctm_n = pt["coldtempmask"][on] if "coldtempmask" in pt else np.zeros(len(P))
+    T_n = pt["temperature"][on] if "temperature" in pt else np.zeros(len(P))
+    _, keep = np.unique(np.round(P[:, [0, 2]], 2), axis=0, return_index=True)
+    P, gm_n, bed_n, vel, ctm_n, T_n = P[keep], gm_n[keep], bed_n[keep], vel[keep], ctm_n[keep], T_n[keep]
+    xk = np.round(P[:, 0], 1)
+    rows, nfall, temp_g, p = [], 0, [], np.nan
+    for xi in np.unique(xk):
+        c = np.where(xk == xi)[0]
+        c = c[np.argsort(P[c, 2])]
+        z = P[c, 2]
+        base = np.where(np.abs(gm_n[c]) > 0.5)[0]
+        if len(base):
+            ib = base[0]
+        else:                                           # no marked base node: the lowest node that moves
+            mv = np.where(np.abs(vel[c, 0]) > 0)[0]
+            if not len(mv):
+                continue
+            ib, nfall = mv[0], nfall + 1
+        zz, uu = z[ib:], vel[c, 0][ib:]
+        H = zz[-1] - zz[0]
+        if H < 1.0 or len(zz) < 2:
+            continue
+        q = _trapz(uu, zz)
+        gmv = 1.0 if gm_n[c][ib] > -0.5 else -1.0
+        rows.append((xi, H, zz[-1], zz[0], float(np.median(bed_n[c])), q / H, uu[0], uu[-1], q, gmv))
+        if gmv > 0:
+            temp_g.append(ctm_n[c][ib] > 0)
+        if not np.isfinite(p):
+            p = float(T_n[c][-1])
+    if nfall:
+        print(f"note: {nfall} columns had no node with |groundedmask| = 1; used the lowest moving node as the base")
+    return np.array(rows), (float(np.mean(temp_g)) if temp_g else None), p
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("state")
+    ap.add_argument("state", nargs="?", default=None)
+    ap.add_argument("--vtu", help="folder with a partitioned Elmer .vtu output instead of an .npz state")
+    ap.add_argument("--tag", default="", help="with --vtu: the time-step tag in the file names (e.g. 0369)")
     ap.add_argument("--repo", default=".")
     ap.add_argument("--params", default=None)
     ap.add_argument("--smooth-km", type=float, default=5.0, help="moving average along x before differentiating")
@@ -145,7 +198,13 @@ def main():
     K = math.sqrt(1 / (2 * eta) * rg**2 * (1 - r) / (4 * C))
     print("parameters:", pf, "\neta = %.5g, fcoeff = %.5g, a = %.5g, rho_i/rho_w = %.4f" % (eta, C, a, r))
 
-    R, temperate, p = load_columns(args.state, repo)
+    if args.vtu:
+        R, temperate, p = load_columns_vtu(args.vtu, args.tag)
+        args.state = f"{args.vtu} (t{args.tag}, .vtu)"
+    elif args.state:
+        R, temperate, p = load_columns(args.state, repo)
+    else:
+        sys.exit("give a state .npz or --vtu FOLDER --tag TAG")
     x, H, s, zb, bed, um, ub, us, q, gm = R.T
     grounded = gm > -0.5
     xgl = x[grounded].max()
