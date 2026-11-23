@@ -200,6 +200,27 @@ def main():
     print("   H at the last grounded column %.1f m,  flotation thickness %.1f m  (ratio %.3f)" % (Hgl, hf, Hgl / hf))
     print("   a x_gl / (K H_g^(5/2)) = %.3f   (full SSA: 1.045;  Schoof's asymptotics: 1)" % (a * xgl / (K * Hgl ** 2.5)))
 
+    # ---------------- D. the floating shelf: a free 1D shelf has N = 1/2 rho g (1 - r) H^2 at EVERY x
+    X3 = N3 = ref3 = None
+    fl = (gm < -0.5) & (x > xgl)
+    if fl.sum() > 5:
+        o3 = np.argsort(x[fl])
+        xf, Hf_, Uf_ = x[fl][o3], H[fl][o3], um[fl][o3]
+        X3, H3 = smooth_uniform(xf, Hf_, 250.0, args.gl_smooth_km * 1e3)
+        _, U3 = smooth_uniform(xf, Uf_, 250.0, args.gl_smooth_km * 1e3)
+        N3 = 4 * eta * H3 * np.gradient(U3, X3)
+        ref3 = 0.5 * rg * (1 - r) * H3**2
+        print("\nD. floating shelf (%d columns, %.1f .. %.1f km):  N / (1/2 rho g (1 - r) H^2)   (a free shelf: 1 everywhere)"
+              % (fl.sum(), xf[0] / 1e3, xf[-1] / 1e3))
+        for dkm in (1, 2, 5, 10, 20, 40, 60):
+            if xgl + dkm * 1e3 <= X3[-1]:
+                j = np.argmin(np.abs(X3 - (xgl + dkm * 1e3)))
+                print("   %3d km seaward of the GL: %.3f   (H %.0f m, u %.0f m/yr)" % (dkm, N3[j] / ref3[j], H3[j], U3[j]))
+        j = len(X3) - 3
+        print("   near the front (x = %.1f km): %.3f   (H %.0f m, u %.0f m/yr)" % (X3[j] / 1e3, N3[j] / ref3[j], H3[j], U3[j]))
+    else:
+        print("\nD. no floating columns found in this state")
+
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -224,7 +245,10 @@ def main():
     ax[1, 1].plot(xg_ / 1e3, N2 / Nref2, "k")
     ax[1, 1].axhline(1, color="gray", ls=":")
     ax[1, 1].set_ylim(0, 3)
-    ax[1, 1].set_xlim(max(xgl / 1e3 - 60, 0), xgl / 1e3 + 2)
+    if X3 is not None:
+        ax[1, 1].plot(X3 / 1e3, N3 / ref3, "b", label="shelf")
+        ax[1, 1].legend()
+    ax[1, 1].set_xlim(max(xgl / 1e3 - 60, 0), (X3[-1] / 1e3 + 2) if X3 is not None else xgl / 1e3 + 2)
     ax[1, 1].set_ylabel("N / (1/2 rho g (1-r) H^2)")
     ax[1, 1].set_xlabel("x (km)")
     ax[1, 1].set_title("C. Schoof's stress condition")
