@@ -106,7 +106,7 @@ def main():
         m_ = complex(mu[i])
         mus = f"{m_.real:.6f}" + (f" {'+' if m_.imag >= 0 else '-'} {abs(m_.imag):.6f}i" if abs(m_.imag) > 0 else "")
         tsc = lambda r: (f"<b style='color:#d62728'>GROWING x e in {1 / r / 1e3:,.1f} kyr</b>" if r > 0 else
-                         f"<b>decaying x 1/e in {-1 / r / 1e3:,.1f} kyr</b>")
+                         f"<b>decaying x 1/e in {-1 / r / 1e3:,.1f} kyr</b>" if r < 0 else "<b>neutral</b>")
         titles.append(f"mode {i}: mu = {mus} (|mu| {abs(m_):.6f} over {T:g} yr): {tsc(sg.real)}{osc}"
                       + f"<br>sigma {sg.real:+.3e}/yr"
                       + (f"; BE-corrected {complex(sbe[i]).real:+.3e}/yr: {tsc(complex(sbe[i]).real)}" if sbe is not None else "")
