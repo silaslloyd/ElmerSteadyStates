@@ -105,9 +105,12 @@ def main():
         osc = f", period {2 * np.pi / abs(sg.imag):,.0f} yr" if abs(sg.imag) > 1e-12 else ""
         m_ = complex(mu[i])
         mus = f"{m_.real:.6f}" + (f" {'+' if m_.imag >= 0 else '-'} {abs(m_.imag):.6f}i" if abs(m_.imag) > 0 else "")
-        titles.append(f"mode {i}: mu = {mus} (|mu| {abs(m_):.6f} over {T:g} yr)<br>sigma {sg.real:+.3e}/yr"
-                      + (f" (BE-corrected {complex(sbe[i]).real:+.3e})" if sbe is not None else "")
-                      + f", {ef}{osc}" + (f", residual {float(res[i]):.1e}" if res is not None else "")
+        tsc = lambda r: (f"<b style='color:#d62728'>GROWING x e in {1 / r / 1e3:,.1f} kyr</b>" if r > 0 else
+                         f"<b>decaying x 1/e in {-1 / r / 1e3:,.1f} kyr</b>")
+        titles.append(f"mode {i}: mu = {mus} (|mu| {abs(m_):.6f} over {T:g} yr): {tsc(sg.real)}{osc}"
+                      + f"<br>sigma {sg.real:+.3e}/yr"
+                      + (f"; BE-corrected {complex(sbe[i]).real:+.3e}/yr: {tsc(complex(sbe[i]).real)}" if sbe is not None else "")
+                      + (f", residual {float(res[i]):.1e}" if res is not None else "")
                       + ("" if conv[i] else " (NOT converged)")
                       + {"re": " [real part]", "im": " [imaginary part: a quarter period on]", "": ""}[part])
         labels.append(f"{i}{' ' + part if part else ''}")
