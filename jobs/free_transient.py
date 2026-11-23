@@ -122,7 +122,8 @@ def main():
     import re
     txt = open(cfgf).read()
     if a.thermal == "elmerstreams":             # ElmerStreams' cold/temperate rule and water sheet, every step
-        for k, v in (("thermal", '"elmerstreams"'), ("friction_heat", '"loads"'), ("strain_heat", "true"),
+        for k, v in (("thermal", '"elmerstreams"'), ("gl_mode", '"contact"'), ("friction_heat", '"loads"'),
+                     ("strain_heat", "true"),
                      ("sheet_solver", f'"{a.sheet}"')):
             txt = set_key(txt, "elmer", k, v)
         txt, k = re.subn(r'^frozen\s*=\s*\[(.*?)\]', lambda m: m.group(0) if "Water Sheet" in m.group(1) else
