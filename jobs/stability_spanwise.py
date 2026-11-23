@@ -7,7 +7,8 @@ free-slip side walls instead (cos(n pi y / W), wavelength 2 W / n).
 
     1. config <work>/refined/S<head>.toml: the base config with [case] width = --width-km, y_elements = --ny, the
        mesh STRUCTURED across the flow (mesh_across = "structured": --ny rows of width/ny, every node line across at
-       one x, as ess/spanwise.py needs), periodic sides (METIS with periodic partners together), res_points --fine-x m from --fine-from-km to 1005 km, --head-fine m over the head
+       one x, as ess/spanwise.py needs), the calving front --shelf-km (15) beyond the grounding line (the steady
+       unbuttressed shelf beyond carries no information the front's sea pressure does not), periodic sides (METIS with periodic partners together), res_points --fine-x m from --fine-from-km to 1005 km, --head-fine m over the head
        +- 10 km, 250 m over the grounding line band; Newton's map --map-steps; with --solver iterative (default) the
        Stokes P1 + bubbles (ess init: a cheap inexact solve; Newton and stability: GCR + --stokes-prec ILU0 to
        --stokes-tol 1e-8), heat Krylov + ILU to 1e-10 (a direct MUMPS solve grows much faster than the node count in 3D);
@@ -75,6 +76,8 @@ def main():
     ap.add_argument("--m", type=int, default=30)
     ap.add_argument("--solver", choices=("iterative", "direct"), default="iterative")
     ap.add_argument("--gl-rounds", type=int, default=6)
+    ap.add_argument("--shelf-km", type=float, default=15.0,
+                    help="the calving front this far beyond the source's grounding line (0: the config's front)")
     ap.add_argument("--stokes-prec", default="ILU0", help="iterative Stokes preconditioner of the Newton/stability runs")
     ap.add_argument("--stokes-tol", type=float, default=1e-8, help="their Stokes tolerance (heat stays at 1e-10)")
     ap.add_argument("--stop-after", choices=("mesh", "newton"))
@@ -87,11 +90,23 @@ def main():
     d = a.d_km
     head = xgl - d
     tag = (f"S{int(round(head)):04d}_w{a.width_km:g}n{a.ny}" + ("walls" if a.walls else "")
+           + (f"s{a.shelf_km:g}" if a.shelf_km > 0 else "")
            + ("" if a.fine_x == 1000.0 else f"x{a.fine_x:g}")).replace(".", "p")
     x0, f, hf = a.fine_from_km, a.fine_x, a.head_fine
+    # the shelf cut: the calving front --shelf-km beyond the grounding line (sea pressure there, as at the full
+    # domain's front). A steady unbuttressed shelf (laterally uniform, no friction, periodic sides or free-slip walls)
+    # passes the same depth-integrated force through every cross-section, so the front's sea pressure at the cut gives
+    # the force the rest of the shelf would; only a boundary layer of a few ice thicknesses next to the cut differs.
+    # The full floating shelf in full Stokes made GCR + ILU stall (relative residual 1.0: with periodic sides nothing
+    # holds the floating ice across the flow); the SSA-shelf runs had only a 10 km floating strip in Stokes.
+    front = float(cfg["case"].get("front_km", cfg["case"]["res_points"][-1][0]))
+    if a.shelf_km > 0:
+        front = min(front, round(xgl + a.shelf_km, 1))
+    if front <= 1015.0 + 1.0:
+        raise SystemExit(f"the front at {front:g} km leaves no room for the 250 m grounding-line band from 1015 km")
     pts = [[0.0, 2000.0], [x0 - 10.0, 2000.0], [x0, f], [head - 20.0, f], [head - 10.0, hf], [head + 10.0, hf],
-           [head + 20.0, f], [1005.0, f], [1015.0, 250.0], [1065.0, 250.0], [1080.0, 1000.0],
-           [float(cfg["case"]["res_points"][-1][0]), 1000.0]]
+           [head + 20.0, f], [1005.0, f], [1015.0, 250.0]]
+    pts += ([[1065.0, 250.0], [1080.0, 1000.0], [front, 1000.0]] if front > 1085.0 else [[front, 250.0]])
     cfgf = os.path.join(work, "refined", f"{tag}.toml")
     os.makedirs(os.path.dirname(cfgf), exist_ok=True)
     write_config(a.config, cfgf, pts, "{work}/" + tag, None, a.map_steps)
@@ -100,6 +115,7 @@ def main():
     text = set_key(text, "case", "y_elements", str(a.ny))
     text = set_key(text, "case", "periodic_sides", "false" if a.walls else "true")
     text = set_key(text, "case", "mesh_across", '"structured"')
+    text = set_key(text, "case", "front_km", f"{front:g}")
     if not a.walls:
         text = set_key(text, "case", "partitioner", '"metisper"')
     if a.solver == "iterative":
@@ -115,6 +131,7 @@ def main():
             text = set_key(text, "elmer", k, v)
     open(cfgf, "w").write(text)
     lam = [a.width_km * (2.0 if a.walls else 1.0) / n for n in (1, 2, 3, 4)]
+    log(f"shelf cut: the calving front at {front:g} km, {front - xgl:.1f} km beyond the grounding line ({xgl:.2f} km)")
     log(f"source {a.from_state}: d {d:g} km, head {head:.2f} km; strip {a.width_km:g} km x {a.ny} rows "
         f"({a.width_km * 1e3 / a.ny:g} m across, {'free-slip walls' if a.walls else 'periodic sides'}: wavelengths "
         f"{', '.join(f'{v:.4g}' for v in lam)} ... km), {f:g} m along over {x0:g} .. 1005 km, {hf:g} m at the head, "
