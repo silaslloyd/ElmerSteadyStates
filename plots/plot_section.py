@@ -34,8 +34,8 @@ the state is a valid steady state, grey when not; the title says in green "stead
 
 Several states (e.g. the fully temperate steady state and the bed sweep's points/state_*.npz): one page, a slider at
 the bottom chooses the state (the sweep points ordered by d, from the longest temperate patch down; the patch head
-in the title), or the red pointer under the x axis: it sits at the state's patch head, and dragged along x it picks the
-state whose head is nearest, the buttons the field; the colours are the same for every state. Default --nz 100 then
+in the title); for sweep points instead of a slider a red pointer at the bottom of the section panel: it sits at the
+state's patch head, and dragged along x it picks the state whose head is nearest, the buttons the field; the colours are the same for every state. Default --nz 100 then
 (the page holds every state); the page: the first state's name + _sections.html.
 """
 import os
@@ -473,7 +473,8 @@ def main():
     titles = [[f"{nm}: {b[4]}{tag(p_)}" for nm in names] for b, p_ in zip(built, paths)]
     buttons = [dict(label=nm, method="skip", args=[None]) for nm in names]
     sliders = []
-    if len(built) > 1:
+    if len(built) > 1 and not any(state_meta(p_)[0] is not None and state_meta(p_)[1] is not None for p_ in paths):
+        # (states with a sweep d: the draggable head pointer below chooses instead)
         sliders = [dict(active=0, currentvalue=dict(prefix="state: ", font=dict(size=13)), pad=dict(t=50),
                         steps=[dict(label=(f"{meta[p_] / 1e3:.1f} km{iter_tag(p_).replace(', Newton it ', ' it ')}" if meta[p_] is not None else os.path.basename(p_)),
                                     method="skip", args=[None], value=str(k)) for k, p_ in enumerate(paths)])]
@@ -533,8 +534,8 @@ if (UJ >= 0) {              // the speed's colour limits and the log toggle
   ['ess_umax', 'ess_umin', 'ess_ulog'].forEach(function (id) { document.getElementById(id).addEventListener('change', apply); });
 }
 """ % (nf, nf + (1 if uj >= 0 else 0), uj, json.dumps(per), json.dumps(titles), f"{umax0:.4g}", f"{umin0:.3g}")
-    # a pointer under the x axis at the current state's patch head, draggable: dropped anywhere along x it picks the
-    # state whose head is nearest (the slider follows, and the pointer follows the slider)
+    # a pointer at the bottom of the section panel at the current state's patch head, draggable: moved along x it picks
+    # the state whose head is nearest (instead of a slider)
     heads = []
     for p_ in paths:
         d_, xg_ = state_meta(p_)
@@ -553,7 +554,7 @@ var HEADS = %s;
     'pointer-events:none; background:rgba(255,255,255,0.8);';
   gd.appendChild(ptr); gd.appendChild(lab);
   function xa() { return gd._fullLayout.xaxis; }
-  function ybot() { var sz = gd._fullLayout._size; return sz.t + sz.h; }
+  function ybot() { var ya = gd._fullLayout.yaxis; return ya._offset + ya._length; }   // the section panel's bottom
   function place(x) {
     if (x === null || x === undefined) { ptr.style.display = lab.style.display = 'none'; return; }
     var px = xa()._offset + xa().l2p(x);
@@ -571,7 +572,6 @@ var HEADS = %s;
   function pick(k) {
     if (k < 0 || k === cur.s) { place(HEADS[cur.s]); return; }
     cur.s = k; show();
-    Plotly.relayout(gd, {'sliders[0].active': k});
     place(HEADS[k]);
   }
   var drag = false;
@@ -581,16 +581,14 @@ var HEADS = %s;
     var r = gd.getBoundingClientRect(), x = xa().p2l(e.clientX - r.left - xa()._offset);
     place(x); var k = nearest(x); if (k >= 0 && k !== cur.s) { cur.s = k; show(); }
   });
-  document.addEventListener('mouseup', function () {
-    if (!drag) return; drag = false; Plotly.relayout(gd, {'sliders[0].active': cur.s}); place(HEADS[cur.s]); });
+  document.addEventListener('mouseup', function () { if (!drag) return; drag = false; place(HEADS[cur.s]); });
   ptr.addEventListener('touchstart', function (e) { drag = true; e.preventDefault(); }, {passive: false});
   document.addEventListener('touchmove', function (e) {
     if (!drag) return;
     var r = gd.getBoundingClientRect(), x = xa().p2l(e.touches[0].clientX - r.left - xa()._offset);
     place(x); var k = nearest(x); if (k >= 0 && k !== cur.s) { cur.s = k; show(); }
   }, {passive: true});
-  document.addEventListener('touchend', function () {
-    if (!drag) return; drag = false; Plotly.relayout(gd, {'sliders[0].active': cur.s}); place(HEADS[cur.s]); });
+  document.addEventListener('touchend', function () { if (!drag) return; drag = false; place(HEADS[cur.s]); });
   gd.on('plotly_sliderchange', function (e) { place(HEADS[parseInt(e.step.value)]); });
   gd.on('plotly_relayout', function () { place(HEADS[cur.s]); });
   window.addEventListener('resize', function () { setTimeout(function () { place(HEADS[cur.s]); }, 100); });
