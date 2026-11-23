@@ -9,7 +9,7 @@ free-slip side walls instead (cos(n pi y / W), wavelength 2 W / n).
        mesh STRUCTURED across the flow (mesh_across = "structured": --ny rows of width/ny, every node line across at
        one x, as ess/spanwise.py needs), periodic sides (METIS with periodic partners together), res_points --fine-x m from --fine-from-km to 1005 km, --head-fine m over the head
        +- 10 km, 250 m over the grounding line band; Newton's map --map-steps; with --solver iterative (default) the
-       Stokes solve P1 + bubbles with GCR + ILU8 (as ElmerStreams 3D), heat Krylov + ILU (a direct MUMPS solve grows much faster than the node count in 3D);
+       Stokes solve P1 + bubbles with GCR + ILU4 (as the 3D strip runs), heat Krylov + ILU (a direct MUMPS solve grows much faster than the node count in 3D);
     2. ess setup / init, the state carried across (by x columns: y-uniform), the shelf break;
     3. Newton at the source's d (the contact grounding-line rounds): a y-uniform steady state stays one, only the
        remeshing to correct                                         -> <work>/stability_spanwise/S<head>/sweep/
@@ -100,11 +100,13 @@ def main():
     if not a.walls:
         text = set_key(text, "case", "partitioner", '"metisper"')
     if a.solver == "iterative":
-        # as the ElmerStreams 3D runs (configs/coarse.toml): P1 + bubbles, GCR + ILU8. P2/P1 with ILU4 overflowed
-        # Elmer's ILU ("Number of nonzeros larger than HUGE(Integer)", 100 km x 50 rows, 256 ranks); MUMPS ran out of
-        # workspace at this size. The Newton re-convergence makes the state a steady state of this discretisation.
+        # P1 + bubbles, GCR + ILU4 (as the 3D strip runs, configs/coarse.toml and jobs/scaling_sweep.sh). On the 100 km
+        # x 50 row strip at 256 ranks (~260 columns per rank) P2/P1 + ILU4 and bubbles + ILU8 overflowed Elmer's ILU
+        # ("Number of nonzeros larger than HUGE(Integer)"); bubbles + ILU4 kept 2-3 GCR iterations and fitted at 288
+        # ranks on the 84k-column strip (~290 columns per rank), overflowed at 144 (~580): keep <= ~290 columns per
+        # rank. MUMPS ran out of workspace at this size. Newton re-converges the state for this discretisation.
         for k, v in (("linear_stokes", '"iterative"'), ("linear_heat", '"iterative"'), ("iterative_tol", "1e-10"),
-                     ("stokes_element", '"Bubbles"'), ("stokes_preconditioner", '"ILU8"')):
+                     ("stokes_element", '"Bubbles"'), ("stokes_preconditioner", '"ILU4"')):
             text = set_key(text, "elmer", k, v)
     open(cfgf, "w").write(text)
     lam = [a.width_km * (2.0 if a.walls else 1.0) / n for n in (1, 2, 3, 4)]
