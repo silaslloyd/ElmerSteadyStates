@@ -61,6 +61,16 @@ def smooth_uniform(x, v, dx, width):
     return xu, vu
 
 
+def n_exact(x, s, zb, us, ub, a, eta, dx, width):
+    """depth-integrated resistive stress N = 4 eta int u_x dz = 4 eta (q_x - u_s s_x + u_b zb_x), q_x = a (steady),
+    exact for incompressible plane strain (sigma'_zz = -sigma'_xx); no plug-flow assumption"""
+    X, S = smooth_uniform(x, s, dx, width)
+    _, ZB = smooth_uniform(x, zb, dx, width)
+    _, US = smooth_uniform(x, us, dx, width)
+    _, UB = smooth_uniform(x, ub, dx, width)
+    return X, 4 * eta * (a - US * np.gradient(S, X) + UB * np.gradient(ZB, X))
+
+
 def load_columns(path, repo):
     sys.path.insert(0, repo)
     from ess.masks import _on
@@ -188,6 +198,12 @@ def main():
     for dkm in (0.5, 1, 2, 5, 10, 20):
         j = np.argmin(np.abs(xg_ - (xgl - dkm * 1e3)))
         print("   %4.1f km upstream of the GL: %.3f" % (dkm, N2[j] / Nref2[j]))
+    xe_, Ne_ = n_exact(xx, s[grounded], zb[grounded], us[grounded], ub[grounded], a, eta, 250.0, args.gl_smooth_km * 1e3)
+    He_ = np.interp(xe_, xx, H[grounded])
+    print("   the same with the EXACT depth-integrated stress N = 4 eta (a - u_s s_x + u_b zb_x)  (no plug-flow assumption):")
+    for dkm in (0.25, 0.5, 1, 2, 5, 10, 20):
+        j = np.argmin(np.abs(xe_ - (xgl - dkm * 1e3)))
+        print("   %5.2f km upstream of the GL: %.3f" % (dkm, Ne_[j] / (0.5 * rg * (1 - r) * He_[j] ** 2)))
     xs_, Hs_, Us_ = x[grounded], H[grounded], um[grounded]
     o = np.argsort(xs_)
     xs_, Hs_, Us_ = xs_[o], Hs_[o], Us_[o]
@@ -216,6 +232,13 @@ def main():
             if xgl + dkm * 1e3 <= X3[-1]:
                 j = np.argmin(np.abs(X3 - (xgl + dkm * 1e3)))
                 print("   %3d km seaward of the GL: %.3f   (H %.0f m, u %.0f m/yr)" % (dkm, N3[j] / ref3[j], H3[j], U3[j]))
+        xe3, Ne3 = n_exact(xf, s[fl][o3], zb[fl][o3], us[fl][o3], ub[fl][o3], a, eta, 250.0, args.gl_smooth_km * 1e3)
+        He3 = np.interp(xe3, xf, Hf_)
+        print("   EXACT depth-integrated stress on the shelf:")
+        for dkm in (0.25, 0.5, 1, 2, 5, 20, 60):
+            if xgl + dkm * 1e3 <= xe3[-1]:
+                j = np.argmin(np.abs(xe3 - (xgl + dkm * 1e3)))
+                print("   %5.2f km seaward of the GL: %.3f" % (dkm, Ne3[j] / (0.5 * rg * (1 - r) * He3[j] ** 2)))
         j = len(X3) - 3
         print("   near the front (x = %.1f km): %.3f   (H %.0f m, u %.0f m/yr)" % (X3[j] / 1e3, N3[j] / ref3[j], H3[j], U3[j]))
     else:
