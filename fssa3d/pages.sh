@@ -12,6 +12,11 @@ W=${W:-work/flowline_gl_3d_t}
 J_FULL=${J_FULL:-32332}; J_NONE=${J_NONE:-32333}; J_ADAPTED=${J_ADAPTED:-32334}
 J_CF=${J_CONTROL_FULL:-32335}; J_CA=${J_CONTROL_ADAPTED:-32336}
 X0=${X0:-700}; X1=${X1:-840}
+# the mesh toggle ("mesh on / mesh off" above the plot): the real elements from MESHDIR (the case's footprint directory,
+# default: the one under $W), else Delaunay triangles of the nodes
+MESHDIR=${MESHDIR:-$(ls -d $W/*/footprint 2>/dev/null | head -1)}
+MESHARG="--mesh-toggle"; [ -d "$MESHDIR" ] && MESHARG="--mesh-toggle --mesh-dir $MESHDIR"
+echo "mesh toggle: ${MESHDIR:-Delaunay of the nodes}"
 
 # frames of a job: the finished run's own file (fssa_<TAG>_frames.npz) when it exists, else packed from the run directory
 frames() {   # JOB TAGPATTERN -> prints the file
@@ -32,7 +37,7 @@ echo "frames: full $FULL | none $NONE | adapted $ADA | control_full $CF | contro
 
 page() {     # DIPFILE CONTROLFILE NAME
     [ -s "$1" ] && [ -s "$2" ] || { echo "skip $3: missing $1 or $2"; return; }
-    python3 plots/plot_state_3d.py "$1" --compare "$2" --x $X0 $X1 --tile 1 --no-temp --no-temperate --no-show \
+    python3 plots/plot_state_3d.py "$1" --compare "$2" --x $X0 $X1 --tile 1 --no-temp --no-temperate $MESHARG --no-show \
         && cp "${1%.npz}_3d.html" "$W/$3.html" && echo "wrote $W/$3.html"
 }
 page "$FULL" "$CF" full_vs_control
