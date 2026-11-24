@@ -12,6 +12,8 @@
 #   YEARS=200 AMP=100 sbatch fssa3d/run.cmd
 #   DTS="2 10 50" SCHEMES="explicit implicit" FSSAS="full none" sbatch fssa3d/run.cmd
 #
+# MODE=marine (default: a grounding line and a Stokes shelf, fssa3d/make_marine.py) or MODE=slab (make_case.py)
+#
 # then: python3 fssa3d/analyse.py     (table + fssa3d/fssa3d.png)
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
@@ -24,8 +26,10 @@ if [ -n "$ELMER_PREFIX" ]; then
     export ELMER_LIB=$ELMER_PREFIX/share/elmersolver/lib ELMER_SOLVER_HOME=$ELMER_PREFIX/share/elmersolver
     export LD_LIBRARY_PATH=$ELMER_PREFIX/lib:$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/share/elmersolver/lib:$LD_LIBRARY_PATH
 fi
+MODE=${MODE:-marine}
+if [ "$MODE" = marine ]; then SCRIPT=fssa3d/make_marine.py; PFX=mar_; bash periodic_test/run_gl_ess.cmd build; else SCRIPT=fssa3d/make_case.py; PFX=; fi
 YEARS=${YEARS:-100}
-AMP=${AMP:-50}
+if [ "$MODE" = marine ]; then AMP=${AMP:-0}; else AMP=${AMP:-50}; fi
 DTS=${DTS:-"1 5 10 20 50"}
 SCHEMES=${SCHEMES:-"explicit implicit"}
 FSSAS=${FSSAS:-"full none"}
@@ -35,7 +39,8 @@ N=${SLURM_NTASKS:-16}
 export OMP_NUM_THREADS=1
 JOBS=()
 for s in $SCHEMES; do for f in $FSSAS; do for dt in $DTS; do
-    JOBS+=("--tag ${s:0:3}_${f}_dt${dt} --scheme $s --fssa $f --dt $dt --years $YEARS --amp $AMP --iters $ITERS $EXTRA")
+    JOBS+=("--tag ${PFX}${s:0:3}_${f}_dt${dt} --scheme $s --fssa $f --dt $dt --years $YEARS --amp ${AMP} --iters $ITERS $EXTRA")
 done; done; done
-printf '%s\n' "${JOBS[@]}" | xargs -P "$N" -I{} sh -c 'python3 fssa3d/make_case.py {} --run || true'
+export SCRIPT
+printf '%s\n' "${JOBS[@]}" | xargs -P "$N" -I{} sh -c 'python3 "$SCRIPT" {} --run || true'
 python3 fssa3d/analyse.py || true

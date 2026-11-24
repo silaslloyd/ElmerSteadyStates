@@ -40,6 +40,20 @@ def load(d, H):
     return out
 
 
+def gl_x(path, yfrac):
+    """grounding line x (km): the largest x with GroundedMask >= 0 along the footprint line nearest y = yfrac W"""
+    v = read_vtu(path)
+    p, f = v["points"], v["fields"]
+    k = next((n for n in f if n.lower() == "groundedmask"), None)
+    if k is None:
+        return float("nan")
+    m = np.asarray(f[k]).reshape(len(p), -1)[:, 0]
+    y0 = yfrac * (p[:, 1].max() - p[:, 1].min()) + p[:, 1].min()
+    row = np.abs(p[:, 1] - y0) < 1e-3 * max(1.0, np.ptp(p[:, 1])) + np.abs(p[:, 1] - y0).min()
+    g = row & (m >= 0)
+    return float(p[g, 0].max() / 1e3) if g.any() else float("nan")
+
+
 def rough(x, y, z):
     """rms second difference of Zs along x and y on the structured footprint (grid-scale noise)"""
     xs, ys = np.unique(np.round(x, 3)), np.unique(np.round(y, 3))
@@ -54,7 +68,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs", default=os.path.join(HERE, "runs"))
     ap.add_argument("--ref", default=None)
-    ap.add_argument("--H", type=float, default=1000.0)
+    ap.add_argument("--H", type=float, default=1000.0, help="slab thickness (only for the slab runs' amplitude)")
     ap.add_argument("--out", default=os.path.join(HERE, "fssa3d.png"))
     a = ap.parse_args()
     tags = sorted(os.path.basename(d) for d in glob.glob(os.path.join(a.runs, "*")) if os.path.isdir(d))
@@ -62,7 +76,7 @@ def main():
     runs = {t: r for t, r in runs.items() if r}
     if not runs:
         sys.exit("no surface VTUs found under " + a.runs)
-    ref = a.ref or min((t for t in runs if t.startswith("exp_full")), default=None,
+    ref = a.ref or min((t for t in runs if "exp_full" in t), default=None,
                        key=lambda t: float(t.split("dt")[-1]) if "dt" in t else 1e9) or sorted(runs)[0]
     print("reference:", ref)
     rx, ry, rz = runs[ref][-1][1:]
@@ -71,14 +85,23 @@ def main():
     print(f"{'run':24s} {'steps':>5s} {'max Zs-H (m) first':>20s} {'last':>9s} {'rough (m)':>10s} {'rms vs ref (m)':>15s} {'log':>6s}")
     hist = {}
     for t, r in runs.items():
-        amp = [float(np.nanmax(np.abs(z - a.H))) for _, _, _, z in r]
+        z0 = r[0][3]
+        marine = t.startswith("mar_")
+        amp = [float(np.nanmax(np.abs(z - (z0 if marine else a.H)))) for _, _, _, z in r]
         hist[t] = amp
         i, x, y, z = r[-1]
         o = np.lexsort(key(x, y))
         err = float(np.sqrt(np.mean((z[o] - rz[order_r]) ** 2))) if len(z) == len(rz) else float("nan")
         log = os.path.join(a.runs, t, "elmer.log")
         ok = "ok" if os.path.exists(log) and "ELMER SOLVER FINISHED" in open(log, errors="ignore").read() else "NOT FIN"
-        print(f"{t:24s} {len(r):5d} {amp[0]:20.2f} {amp[-1]:9.2f} {rough(x, y, z):10.3f} {err:15.3f} {ok:>6s}")
+        bf = sorted(glob.glob(os.path.join(a.runs, t, "base*.vtu")))
+        gl = ""
+        if bf:
+            try:
+                gl = f"  GL x (km) first/last: centre {gl_x(bf[0], .5):.2f} {gl_x(bf[-1], .5):.2f}, wall {gl_x(bf[0], 0):.2f} {gl_x(bf[-1], 0):.2f}"
+            except Exception as e:
+                gl = f"  GL: {e}"
+        print(f"{t:24s} {len(r):5d} {amp[0]:20.2f} {amp[-1]:9.2f} {rough(x, y, z):10.3f} {err:15.3f} {ok:>6s}{gl}")
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -87,7 +110,7 @@ def main():
         for t, h in sorted(hist.items()):
             ax.semilogy(range(len(h)), np.maximum(h, 1e-6), "-o" if t == ref else "-", ms=3, label=t)
         ax.set_xlabel("output index")
-        ax.set_ylabel("max |Zs - H| (m)")
+        ax.set_ylabel("max |Zs - ref state| (m): slab = H, marine = first output")
         ax.legend(fontsize=6, ncol=2)
         fig.savefig(a.out, dpi=150, bbox_inches="tight")
         print("->", a.out)
