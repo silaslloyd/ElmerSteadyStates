@@ -12,11 +12,18 @@ W=${W:-work/flowline_gl_3d_t}
 J_FULL=${J_FULL:-32332}; J_NONE=${J_NONE:-32333}; J_ADAPTED=${J_ADAPTED:-32334}
 J_CF=${J_CONTROL_FULL:-32335}; J_CA=${J_CONTROL_ADAPTED:-32336}
 X0=${X0:-700}; X1=${X1:-840}
-# the mesh toggle ("mesh on / mesh off" above the plot): the real elements from MESHDIR (the case's footprint directory,
-# default: the one under $W), else Delaunay triangles of the nodes
-MESHDIR=${MESHDIR:-$(ls -d $W/*/footprint 2>/dev/null | head -1)}
-MESHARG="--mesh-toggle"; [ -d "$MESHDIR" ] && MESHARG="--mesh-toggle --mesh-dir $MESHDIR"
-echo "mesh toggle: ${MESHDIR:-Delaunay of the nodes}"
+# the mesh toggle ("mesh on / mesh off" above the plot): the real elements of the run's mesh, the footprint directory of the
+# config's paths.case_dir (as jobs/flowline_fssa.cmd finds it); CFG as the sweep's. MESHDIR=<dir> to give another.
+CFG=${CFG:-configs/flowline_gl_3d_t.toml}
+CASEDIR=$(python3 -c "import os; from ess.config import load_config as L; print(os.path.relpath(L('$CFG')['paths']['case_dir']))" 2>/dev/null)
+MESHDIR=${MESHDIR:-$CASEDIR/footprint}
+MESHARG="--mesh-toggle"
+if [ -f "$MESHDIR/mesh.header" ]; then
+    echo "mesh: $MESHDIR  ($(head -1 $MESHDIR/mesh.header | awk '{print $1" nodes, "$2" elements"}'); the frames have 18965 surface nodes in the sweep's runs)"
+    MESHARG="--mesh-toggle --mesh-dir $MESHDIR"
+else
+    echo "no mesh.header in '$MESHDIR': the toggle draws Delaunay triangles of the nodes instead"
+fi
 
 # frames of a job: the finished run's own file (fssa_<TAG>_frames.npz) when it exists, else packed from the run directory
 frames() {   # JOB TAGPATTERN -> prints the file
