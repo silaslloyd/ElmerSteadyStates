@@ -1,0 +1,27 @@
+// Flowline footprint to the END of the domain (L), the free-margin set-up ([case] x_end unset), Ny elements across:
+// a 3D strip (free-slip walls) refined around the initial ice margin (0.8 L) as case/flowline.geo.in, with the
+// ice-free part beyond it (the margin is free to move). Values are filled in by `ess setup` from parameters.lua.
+// The physical-group order (inflow, front, side1, side2) gives Elmer boundaries 1-4, which the extruded mesh and
+// steady_template.sif rely on. All groups are selected by position (bounding boxes), as case/flowline_cut.geo.in.
+L = {L};
+W = {Wmesh};
+Ny = {YElements};
+resb = {BoundaryRes};
+resm = {MarginRes};
+Point(1) = {0, 0, 0, resb};
+Point(2) = {L*0.8*(1-1/16), 0, 0, resm/2};
+Point(3) = {L*0.8, 0, 0, resm/2};
+Point(4) = {L*0.8*(1+1/16), 0, 0, resm};
+Point(5) = {L, 0, 0, resb};
+Line(1) = {1, 2};
+Line(2) = {2, 3};
+Line(3) = {3, 4};
+Line(4) = {4, 5};
+Extrude {0, W, 0} { Curve{1}; Curve{2}; Curve{3}; Curve{4}; Layers{Ny}; Recombine; }
+Coherence;
+e = 1.0;   // m, bounding-box tolerance
+Physical Surface(21) = Surface{:};
+Physical Curve(22) = Curve In BoundingBox{-e, -e, -e, e, W + e, e};                // inflow, x = 0
+Physical Curve(23) = Curve In BoundingBox{L - e, -e, -e, L + e, W + e, e};         // front, x = L
+Physical Curve(24) = Curve In BoundingBox{-e, -e, -e, L + e, e, e};                // side1, y = 0
+Physical Curve(25) = Curve In BoundingBox{-e, W - e, -e, L + e, W + e, e};         // side2, y = W
