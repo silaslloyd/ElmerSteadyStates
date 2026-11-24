@@ -7,7 +7,7 @@
    builds the 3D mesh and extrudes the flowline state laterally (`ess transfer`) -> `work/flowline_gl_3d/start_flowline.npz`.
 2. `bash fssa3d/sweep.sh` (DT, YEARS, DIP, NT, VARIANTS): one job each of `jobs/flowline_fssa.cmd`, Stokes-only, temperate
    sliding, friction dip `1 - DIP exp(-((y - W/2)/2 km)^2)` ([case] slide_ydip), for FSSA full /
-   none (and adapted), explicit and coupled (implicit) free surfaces, plus dip-free controls.
+   none (explicit solver organisation) and adapted (the implicit construction: coupled loop with the adapted FSSA), plus dip-free controls (full, adapted).
 3. `python3 fssa3d/ess_compare.py`: grounding line (centre vs wall), surface / base change from the start, cross-flow
    surface relief and grid-scale roughness per run, and each run against its control.
 

@@ -8,8 +8,9 @@
 #   DT=50 YEARS=2000 DIP=0.5 bash fssa3d/sweep.sh
 #   VARIANTS="full none" bash fssa3d/sweep.sh  # a subset
 #
-# Variant names: full | none | adapted (normal and transposed dropped) (explicit free surface); <name>+c = the same with the
-# free surface in the coupled loop (FS_COUPLED=1, COUPLED_ITERS=3). Results: work/flowline_gl_3d/fssa_<TAG>.npz,
+# Variants: full (FSSA, explicit solver organisation: Stokes, then the free surfaces after the step), none (the same
+# without stabilisation), adapted (the implicit construction: the adapted FSSA of Ahlkrona, Henry & Loefgren, with the
+# mesh mapping and both free surfaces in the coupled loop, COUPLED_ITERS = 3; always coupled). Controls: no dip.
 # python3 fssa3d/ess_compare.py.
 cd "$(dirname "$0")/.."
 CFG=${CFG:-configs/flowline_gl_3d.toml}
@@ -17,11 +18,11 @@ WORK=$(python3 -c "import os; from ess.config import load_config as L; print(os.
 START=${START:-$WORK/start_flowline.npz}
 [ -f "$START" ] || { echo "no $START: run fssa3d/prep.cmd first"; exit 1; }
 DT=${DT:-10}; YEARS=${YEARS:-1000}; DIP=${DIP:-0.5}; NT=${NT:-64}; TIME=${TIME:-12:00:00}
-VARIANTS=${VARIANTS:-"full none full+c adapted+c"}
-for v in $VARIANTS $([ "$CONTROL" = 0 ] || echo control_full control_full+c); do
+VARIANTS=${VARIANTS:-"full none adapted"}
+for v in $VARIANTS $([ "$CONTROL" = 0 ] || echo control_full control_adapted); do
     d=$DIP; f=${v%+c}; c=0
     case $v in control_*) d=0; f=${f#control_};; esac
-    [[ $v == *+c ]] && c=1
+    [[ $v == *+c || $f == adapted ]] && c=1     # the implicit construction: adapted FSSA in the coupled loop
     TAG=dip${d}_dt${DT}_${f}$([ $c = 1 ] && echo _coupled3)
     [[ $v == control_* ]] && TAG=control_dt${DT}_${f}$([ $c = 1 ] && echo _coupled3)
     echo "submit $TAG"
