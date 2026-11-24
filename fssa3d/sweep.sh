@@ -14,12 +14,15 @@
 # python3 fssa3d/ess_compare.py.
 cd "$(dirname "$0")/.."
 CFG=${CFG:-configs/flowline_gl_3d.toml}
-WORK=$(python3 -c "import os; from ess.config import load_config as L; print(os.path.relpath(L('$CFG')['_work']))")
+WORK=$(python3 -c "import os; from ess.config import load_config as L; print(os.path.relpath(L('$CFG')['_work']))" 2>/dev/null)
+# no config yet (the prep, DEP, has not written it): the start state must be given, else the jobs would fall back to
+# the Marine_Term initial geometry (fssa_start.npz), not the converged state
+[ -n "$WORK" ] || [ -n "$START" ] || { echo "$CFG does not exist yet: give START=<work dir>/start_flowline.npz"; exit 1; }
 START=${START:-$WORK/start_flowline.npz}
 [ -n "$DEP" ] || [ -f "$START" ] || { echo "no $START: run fssa3d/prep.cmd first (or DEP=<prep job id>)"; exit 1; }
 DEPARG=${DEP:+--dependency=afterok:$DEP}     # DEP: start after that job (the prep) finished OK
 DT=${DT:-10}; YEARS=${YEARS:-1000}; DIP=${DIP:-0.5}; NT=${NT:-64}; NODES=${NODES:-1}; TIME=${TIME:-12:00:00}
-VARIANTS=${VARIANTS:-"full none adapted"}
+VARIANTS=${VARIANTS-"full none adapted"}      # VARIANTS="" with the controls only
 for v in $VARIANTS $([ "$CONTROL" = 0 ] || echo control_full control_adapted); do
     d=$DIP; f=${v%+c}; c=0
     case $v in control_*) d=0; f=${f#control_};; esac
