@@ -19,7 +19,9 @@ squeue -u "$USER" -h -o "%i|%j|%T|%M|%N|%r" | while IFS='|' read -r id name stat
     [ "$N" -gt 0 ] && [ -z "$(grep -E 'chunk|newton|BRANCH|step' "$f" | tail -1)" ] && tail -n 2 "$f" | cut -c1-230 | sed 's/^/  /'
     case "$name" in
     f3d-*)  # the 3D free-surface runs: the Elmer log of the newest run directory
-        lg=$(ls -t work/*/runs/*/elmer.log 2>/dev/null | head -1)
+        # the run directory carries the job label (fssa_<jobid>); else the newest log of the 3D work dirs only
+        lg=$(ls -t work/*/runs/*fssa_"$id"*/elmer.log 2>/dev/null | head -1)
+        [ -z "$lg" ] && lg=$(ls -t work/flowline_gl_3d*/runs/*/elmer.log 2>/dev/null | head -1)
         if [ -n "$lg" ]; then
             echo "  elmer log: $lg"
             grep "MAIN: Time" "$lg" | tail -1 | sed 's/^/  /'
