@@ -11,6 +11,7 @@
 #   SRC_CFG=work/flowline_gl_fine/refined/pipe1.toml SRC_STATE=<the converged flowline state .npz> \
 #       sbatch fssa3d/prep.cmd
 #
+# CFG3 / WORK3 (default configs/flowline_gl_3d.toml, work/flowline_gl_3d): another name keeps an earlier 3D set-up untouched.
 # Writes configs/flowline_gl_3d.toml (fssa3d/make_config.py: WIDTH 20 km, Y_ELEMENTS 20, MIN_RES 500 m), builds the mesh
 # for this job's ranks (the sweep jobs must use the same --ntasks) and work/flowline_gl_3d/start_flowline.npz.
 set -e
@@ -29,7 +30,16 @@ if [ -n "$ELMER_PREFIX" ]; then
     export LIBRARY_PATH=$ELMER_PREFIX/lib/elmersolver:$ELMER_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}
 fi
 CFG3=${CFG3:-configs/flowline_gl_3d.toml}
-python3 fssa3d/make_config.py "$SRC_CFG" "$CFG3" --width ${WIDTH:-20000} --y-elements ${Y_ELEMENTS:-20} \
+# SHELF_KM (default 50): the shelf cut to this length past the state's grounding line (0: keep the flowline's)
+FRONT_ARG=""
+if [ "${SHELF_KM:-50}" != 0 ]; then
+    FRONT=$(python3 -c "
+import sys; sys.path.insert(0, '.')
+from ess.statefile import load_state; from ess.spectrum import gl_position
+s = load_state('$SRC_STATE'); print(round(gl_position(s.frozen, s.diag) / 1e3 + ${SHELF_KM:-50}))")
+    FRONT_ARG="--front-km $FRONT"; echo "shelf cut to ${SHELF_KM:-50} km: front at $FRONT km"
+fi
+python3 fssa3d/make_config.py "$SRC_CFG" "$CFG3" $FRONT_ARG --width ${WIDTH:-20000} --y-elements ${Y_ELEMENTS:-20} \
     --min-res ${MIN_RES:-500} --dip 0.0 --dip-width ${DIP_WIDTH:-2} --work ${WORK3:-work/flowline_gl_3d}
 WORK=$(python3 -c "import os; from ess.config import load_config as L; print(os.path.relpath(L('$CFG3')['_work']))")
 N=${SLURM_NTASKS:-64}
