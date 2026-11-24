@@ -27,7 +27,7 @@ for v in $VARIANTS $([ "$CONTROL" = 0 ] || echo control_full control_adapted); d
     TAG=dip${d}_dt${DT}_${f}$([ $c = 1 ] && echo _coupled3)
     [[ $v == control_* ]] && TAG=control_dt${DT}_${f}$([ $c = 1 ] && echo _coupled3)
     echo "submit $TAG"
-    CFG=$CFG START=$START DT=$DT YEARS=$YEARS FSSA=$f FS_COUPLED=$c COUPLED_ITERS=3 TAG=$TAG \
+    CFG=$CFG START=$START DT=$DT YEARS=$YEARS FSSA=$f FS_COUPLED=$c COUPLED_ITERS=$([ $c = 1 ] && echo 3 || echo 1) TAG=$TAG \
     ESS_SLIDING=temperate ESS_SLIDE_YDIP=$d ESS_SLIDE_YDIP_WIDTH=${DIP_WIDTH:-2} \
         sbatch $DEPARG --nodes=$NODES --ntasks=$NT --time=$TIME --job-name="f3d-$TAG" jobs/flowline_fssa.cmd
 done
