@@ -129,6 +129,10 @@ def main():
             if low.any():
                 ok = False
                 print(f"PROBLEM: {low.sum()} floating bases within 1 m of the new bed or below it")
+                xj, rj = x[j], r[j]
+                for q in np.where(low)[0][:12]:
+                    print(f"    x {xj[q] / 1e3:9.3f} km (r {rj[q] / 1e3:8.2f} km): base {zb[q]:9.2f} m, old bed {bed[j][q]:9.2f} m, "
+                          f"new bed {new[j][q]:9.2f} m, grounded mask {gm[j][q]:.0f}")
             else:
                 gap = (zb - new[j])[ch[j] & ~on]
                 print(f"  {on[ch[j]].sum()} bases on the bed moved with it; the floating ones stay above it "
