@@ -1,7 +1,7 @@
 # "Flowline of the extended strip, fine at the corrected grounding line": configs/flowline_rect_coarse.toml with the 250 m band
 # moved from 1015-1065 km (the old, stock-contact grounding line, 1039 km) to 665-795 km (the corrected temperate state,
 # ~732 km; the pipeline's first run on the 2 km mesh put the grounding line in 2 km columns, too coarse for the stress
-# boundary layer). 2 km to 600 km, 250 m from 665 to 795 km, 1 km from 860 km on (shelf). Own work_dir, so the coarse
+# boundary layer). 2 km to 600 km, 250 m from 665 to 780 km, graded to 1 km at 820 km and 2 km at 880 km, 2 km over the rest of the shelf to the front. Own work_dir, so the coarse
 # run's files are untouched. jobs/flowline_pipeline.cmd with CONFIG=configs/flowline_gl_fine.toml.
 #
 # "Flowline of the extended strip, coarse": configs/flowline_rect_ext.toml on a coarser mesh, for Newton and the bed
@@ -21,7 +21,7 @@ case_dir = "{work}/case"                # mesh and initial conditions, written b
 geometry = "marine"                     # ice shelf, sea pressure, frozen grounded mask (steady_template_marine.sif)
 marine_ics = "case/marine_ics"          # ElmerStreams Marine_Term Initialisation/Dimensional_ICs tables
 parameters = "case/parameters_fine2x.lua"      # physical parameters (as the 3D strip's)
-res_points = [[0, 2000], [600, 2000], [665, 250], [795, 250], [860, 1000], [1116, 1000]]   # 250 m over 665-795 km: the grounding line of the corrected (ElmerStreams contact) temperate state is near 732 km
+res_points = [[0, 2000], [600, 2000], [665, 250], [780, 250], [820, 1000], [880, 2000], [1116, 2000]]   # 250 m over 665-780 km (the grounding line of the corrected state is near 732 km); the shelf graded to 2 km by 880 km
 front_km = 1116.0                       # the calving front, as the 3D strip
 width = 500.0                           # m across: a flowline (free-slip walls); 3 node lines across at 250 m
 y_elements = 1
