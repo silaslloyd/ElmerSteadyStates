@@ -14,7 +14,7 @@ squeue -u "$USER" -h -o "%i|%j|%T|%M|%N|%r" | while IFS='|' read -r id name stat
     [ -z "$f" ] && f=$(ls -t slurms/*"$id"*.out 2>/dev/null | head -1)
     if [ -z "$f" ]; then echo "  (no slurm output file found)"; continue; fi
     echo "  file: $f  (last written $(date -r "$f" +%H:%M:%S))"
-    grep -E "BRANCH [^ ]+: .*(batch|drift|rms|grounding)|S[0-9][a-z]?[: ].*(rms|done|stop|converged)|chunk [0-9]+/|contact grounding line|newton: it|rms\(F\)|stage|FSSA|step [0-9]+" "$f" \
+    grep -E "HOLD: |BRANCH [^ ]+: .*(batch|drift|rms|grounding)|S[0-9][a-z]?[: ].*(rms|done|stop|converged)|chunk [0-9]+/|contact grounding line|newton: it|rms\(F\)|stage|FSSA|step [0-9]+" "$f" \
         | cut -c1-230 | tail -n "$N" | sed 's/^/  /'
     [ "$N" -gt 0 ] && [ -z "$(grep -E 'chunk|newton|BRANCH|step' "$f" | tail -1)" ] && tail -n 2 "$f" | cut -c1-230 | sed 's/^/  /'
     case "$name" in
@@ -31,5 +31,5 @@ squeue -u "$USER" -h -o "%i|%j|%T|%M|%N|%r" | while IFS='|' read -r id name stat
     esac
 done
 echo
-echo "=== recent grounding line moves in the 125 m branch ==="
-grep -h "BRANCH r125" slurms/gl_branch_*.out 2>/dev/null | tail -3 | cut -c1-230
+echo "=== grounding line: the 125 m branch and the 250 m hold runs ==="
+grep -h "BRANCH r125\|HOLD:" slurms/gl_branch_*.out slurms/gl_hold_*.out 2>/dev/null | grep -v "res_points" | tail -8 | cut -c1-230
