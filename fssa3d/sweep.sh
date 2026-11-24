@@ -16,7 +16,8 @@ cd "$(dirname "$0")/.."
 CFG=${CFG:-configs/flowline_gl_3d.toml}
 WORK=$(python3 -c "import os; from ess.config import load_config as L; print(os.path.relpath(L('$CFG')['_work']))")
 START=${START:-$WORK/start_flowline.npz}
-[ -f "$START" ] || { echo "no $START: run fssa3d/prep.cmd first"; exit 1; }
+[ -n "$DEP" ] || [ -f "$START" ] || { echo "no $START: run fssa3d/prep.cmd first (or DEP=<prep job id>)"; exit 1; }
+DEPARG=${DEP:+--dependency=afterok:$DEP}     # DEP: start after that job (the prep) finished OK
 DT=${DT:-10}; YEARS=${YEARS:-1000}; DIP=${DIP:-0.5}; NT=${NT:-64}; TIME=${TIME:-12:00:00}
 VARIANTS=${VARIANTS:-"full none adapted"}
 for v in $VARIANTS $([ "$CONTROL" = 0 ] || echo control_full control_adapted); do
@@ -28,5 +29,5 @@ for v in $VARIANTS $([ "$CONTROL" = 0 ] || echo control_full control_adapted); d
     echo "submit $TAG"
     CFG=$CFG START=$START DT=$DT YEARS=$YEARS FSSA=$f FS_COUPLED=$c COUPLED_ITERS=3 TAG=$TAG \
     ESS_SLIDING=temperate ESS_SLIDE_YDIP=$d ESS_SLIDE_YDIP_WIDTH=${DIP_WIDTH:-2} \
-        sbatch --ntasks=$NT --time=$TIME --job-name="f3d-$TAG" jobs/flowline_fssa.cmd
+        sbatch $DEPARG --ntasks=$NT --time=$TIME --job-name="f3d-$TAG" jobs/flowline_fssa.cmd
 done
