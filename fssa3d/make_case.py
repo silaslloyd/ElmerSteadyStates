@@ -26,6 +26,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.abspath(os.path.join(HERE, ".."))
 sys.path.insert(0, os.path.join(HERE, "..", "periodic_test"))
 from make_mesh import write_footprint   # noqa: E402
 
@@ -161,7 +162,7 @@ End
 
 Solver 2
   Equation = "Stokes-Vec"
-  Procedure = "IncompressibleNSVec" "IncompressibleNSSolver"
+  Procedure = "{nsproc}" "IncompressibleNSSolver"
   Div-Curl Discretization = Logical False
   Stokes Flow = Logical True
   Flow Model = Stokes
@@ -252,7 +253,7 @@ Boundary Condition 6
   Top Surface = Equals Zs
   Save Surface = Logical True
   FSSA Theta = Real {theta}
-  FSSA Flag = String "full"
+  FSSA Flag = String "{fssaflag}"
   FSSA Accumulation = Real 0.0
 End
 """
@@ -286,6 +287,10 @@ def build(a):
     with open(os.path.join(d, "params.lua"), "w") as f:
         f.write(PARAMS.format(sina=a.sina, eta=a.eta, cslip=a.cslip, dip=a.dip, dipw=a.dip_width * 1e3, L=a.L,
                               W=a.W, H=a.H, amp=a.amp, rad=a.radius * 1e3))
+    if a.fssa == "adapted":
+        a.scheme = "implicit"      # the adapted FSSA is the implicit construction (coupled loop, from the 2nd iteration on)
+    elif a.scheme == "implicit":
+        sys.exit("--scheme implicit needs --fssa adapted (the implicit construction); full / none are explicit")
     implicit = a.scheme == "implicit"
     steps = int(round(a.years / a.dt))
     out_every = max(1, int(round(a.out_years / a.dt)))
@@ -296,7 +301,8 @@ def build(a):
         iters=a.iters if implicit else 1, nz1=a.nz + 1, H=float(a.H), L=float(a.L), W=float(a.W),
         loopmap=" 4" if implicit else "", nice=3 if implicit else 2, nfs=1, fsactive="3",
         fsexec="Always" if implicit else "After Timestep", sstol=a.sstol, direct=DIRECT, pvars=pvars,
-        theta=1.0 if a.fssa == "full" else 0.0, out_every=out_every,
+        theta=0.0 if a.fssa == "none" else 1.0, fssaflag="adapted" if a.fssa == "adapted" else "full",
+        nsproc=(os.path.join(REPO_DIR, "elmer", "ESSIncompressibleNS") if a.fssa == "adapted" else "IncompressibleNSVec"), out_every=out_every,
         loopsolver=LOOPMAP if implicit else "", nout=5 if implicit else 4)
     with open(os.path.join(d, "case.sif"), "w") as f:
         f.write(sif)
@@ -309,7 +315,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tag", required=True)
     ap.add_argument("--scheme", choices=["explicit", "implicit"], default="explicit")
-    ap.add_argument("--fssa", choices=["full", "none"], default="full")
+    ap.add_argument("--fssa", choices=["full", "none", "adapted"], default="full")
     ap.add_argument("--dt", type=float, default=10.0, help="years")
     ap.add_argument("--years", type=float, default=100.0)
     ap.add_argument("--out-years", type=float, default=10.0, help="surface VTU interval")

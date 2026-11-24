@@ -28,6 +28,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = os.path.abspath(os.path.join(HERE, ".."))
 REPO = os.path.abspath(os.path.join(HERE, ".."))
 sys.path.insert(0, os.path.join(REPO, "periodic_test"))
 from make_mesh import write_footprint   # noqa: E402
@@ -236,7 +237,7 @@ End
 
 Solver 4
   Equation = "Stokes-Vec"
-  Procedure = "IncompressibleNSVec" "IncompressibleNSSolver"
+  Procedure = "{nsproc}" "IncompressibleNSSolver"
   Div-Curl Discretization = Logical False
   Stokes Flow = Logical True
   Flow Model = Stokes
@@ -396,7 +397,7 @@ Boundary Condition 5
     Real Lua "slip(tx[0])"
   Weertman Linear Velocity = Real 1.0E-3
   FSSA Theta = Real {theta}
-  FSSA Flag = String "full"
+  FSSA Flag = String "{fssaflag}"
   FSSA Accumulation = Real 0.0
 End
 
@@ -408,7 +409,7 @@ Boundary Condition 6
   Save Surface = Logical True
   ComputeNormal = Logical True
   FSSA Theta = Real {theta}
-  FSSA Flag = String "full"
+  FSSA Flag = String "{fssaflag}"
   FSSA Accumulation = Real #acc
 End
 """
@@ -443,6 +444,10 @@ def build(a):
         f.write(PARAMS.format(eta=a.eta, cslip=a.cslip, dip=a.dip, dipw=a.dip_width * 1e3, L=a.L, W=a.W,
                               b0=a.b0, bslope=a.bslope, H0=a.H0, Hslope=a.hslope, amp=a.amp, rad=a.radius * 1e3,
                               acc=a.acc))
+    if a.fssa == "adapted":
+        a.scheme = "implicit"      # the adapted FSSA is the implicit construction (coupled loop, from the 2nd iteration on)
+    elif a.scheme == "implicit":
+        sys.exit("--scheme implicit needs --fssa adapted (the implicit construction); full / none are explicit")
     implicit = a.scheme == "implicit"
     steps = int(round(a.years / a.dt))
     out_every = max(1, int(round(a.out_years / a.dt)))
@@ -450,7 +455,8 @@ def build(a):
         desc=f"marine, {a.scheme} free surfaces, FSSA {a.fssa}, dt {a.dt} a, {steps} steps", steps=steps, dt=a.dt,
         iters=a.iters if implicit else 1, nz1=a.nz + 1, nice=4 if implicit else 3,
         iceactive="1 2 4 8" if implicit else "1 2 4", fsexec="Always" if implicit else "After Timestep",
-        sstol=a.sstol, direct=DIRECT, theta=1.0 if a.fssa == "full" else 0.0, out_every=out_every,
+        sstol=a.sstol, direct=DIRECT, theta=0.0 if a.fssa == "none" else 1.0, fssaflag="adapted" if a.fssa == "adapted" else "full",
+        nsproc=(os.path.join(REPO_DIR, "elmer", "ESSIncompressibleNS") if a.fssa == "adapted" else "IncompressibleNSVec"), out_every=out_every,
         loopsolver=LOOPMAP if implicit else "", nsurf=9 if implicit else 8, nbase=10 if implicit else 9,
         buoy=os.path.join(REPO, "elmer", "Buoyancy"), periodic=os.path.join(REPO, "elmer", "PeriodicGL"))
     with open(os.path.join(d, "case.sif"), "w") as f:
@@ -464,7 +470,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tag", required=True)
     ap.add_argument("--scheme", choices=["explicit", "implicit"], default="explicit")
-    ap.add_argument("--fssa", choices=["full", "none"], default="full")
+    ap.add_argument("--fssa", choices=["full", "none", "adapted"], default="full")
     ap.add_argument("--dt", type=float, default=10.0)
     ap.add_argument("--years", type=float, default=100.0)
     ap.add_argument("--out-years", type=float, default=10.0)

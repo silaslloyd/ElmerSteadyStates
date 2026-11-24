@@ -10,7 +10,7 @@
 #
 #   sbatch fssa3d/run.cmd                       # the default sweep below
 #   YEARS=200 AMP=100 sbatch fssa3d/run.cmd
-#   DTS="2 10 50" SCHEMES="explicit implicit" FSSAS="full none" sbatch fssa3d/run.cmd
+#   DTS="2 10 50" VARIANTS="explicit:full implicit:adapted" sbatch fssa3d/run.cmd
 #
 # MODE=marine (default: a grounding line and a Stokes shelf, fssa3d/make_marine.py) or MODE=slab (make_case.py)
 #
@@ -31,16 +31,16 @@ if [ "$MODE" = marine ]; then SCRIPT=fssa3d/make_marine.py; PFX=mar_; bash perio
 YEARS=${YEARS:-100}
 if [ "$MODE" = marine ]; then AMP=${AMP:-0}; else AMP=${AMP:-50}; fi
 DTS=${DTS:-"1 5 10 20 50"}
-SCHEMES=${SCHEMES:-"explicit implicit"}
-FSSAS=${FSSAS:-"full none"}
+VARIANTS=${VARIANTS:-"explicit:full explicit:none implicit:adapted"}   # scheme:fssa; implicit = the adapted FSSA in the coupled loop
 ITERS=${ITERS:-3}
 EXTRA=${EXTRA:-}
 N=${SLURM_NTASKS:-16}
 export OMP_NUM_THREADS=1
 JOBS=()
-for s in $SCHEMES; do for f in $FSSAS; do for dt in $DTS; do
+for v in $VARIANTS; do for dt in $DTS; do
+    s=${v%%:*}; f=${v##*:}
     JOBS+=("--tag ${PFX}${s:0:3}_${f}_dt${dt} --scheme $s --fssa $f --dt $dt --years $YEARS --amp ${AMP} --iters $ITERS $EXTRA")
-done; done; done
+done; done
 export SCRIPT
 printf '%s\n' "${JOBS[@]}" | xargs -P "$N" -I{} sh -c 'python3 "$SCRIPT" {} --run || true'
 python3 fssa3d/analyse.py || true
