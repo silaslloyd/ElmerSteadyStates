@@ -347,6 +347,11 @@ class ElmerModel(Model):
         # [case] slide_ybump: the sliding coefficient times 1 + slide_ybump sin(2 pi y / width) (periodic), so the
         # grounding line is not straight across the flow (tests of the periodic sides); 0: off
         self.slide_ybump = float(os.environ.get("ESS_SLIDE_YBUMP") or c.get("slide_ybump", 0.0))   # env: runs continuing
+        # [case] slide_ydip (env ESS_SLIDE_YDIP) and slide_ydip_width (km, env ESS_SLIDE_YDIP_WIDTH, the half width e-folding):
+        # the sliding coefficient times 1 - slide_ydip exp(-((y - width/2) / w)^2): a dip in the friction in the middle
+        # of the width (a stream strip; free-slip walls, e.g. fssa3d/make_config.py). Also in the flux friction heating.
+        self.slide_ydip = float(os.environ.get("ESS_SLIDE_YDIP") or c.get("slide_ydip", 0.0))
+        self.slide_ydip_width = float(os.environ.get("ESS_SLIDE_YDIP_WIDTH") or c.get("slide_ydip_width", 2.0)) * 1e3
         # [elmer] friction_noise (env ESS_FRICTION_NOISE): coherent noise in the sliding coefficient, C (1 + a n(x, y))
         # with n in -1..1 (a = 0.1: +-10 %), fixed in time; also in the flux friction heating. n: a sum of cosines
         # (fractal: octaves of wavelength lambda, lambda/2, lambda/4 at amplitudes 1, 1/2, 1/4, random directions and
@@ -874,7 +879,7 @@ End
             if text.count(old) != 1:
                 raise ValueError("stokes_solver: the Stokes procedure line of the template changed")
             text = text.replace(old, f"Procedure = {procs[self.stokes_solver]}   ! [elmer] stokes_solver = {self.stokes_solver}")
-        if self.slide_ybump:
+        if self.slide_ybump or self.slide_ydip:
             text = self._slide_ybump(text)
         if self.thermal == "elmerstreams":
             text = self._thermal_elmerstreams(text)
@@ -1541,13 +1546,14 @@ End
         a = "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2])"
         if a not in text:
             raise ValueError("sliding = temperate: the Weertman Friction Coefficient expression of the template changed")
+        # (with slide_ybump / slide_ydip the expression has the y factor after it: _slide_ybump ran first; the prefix still matches)
         text = text.replace(a, "fcoeff * ess_grounded(tx[2])")
         # flux friction heating: the same coefficient (C = fcoeff, the y bump, grounded) times |u_b|^2
         f = ('  Heat Flux = Variable Temperature, Velocity 1, Velocity 2, Velocity 3, Coordinate 1, GroundedMask\n'
              '    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * ess_grounded(tx[5]) * (tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
         if f in text:
-            bump = (f" * (1 + {self.slide_ybump!r} * math.sin(2 * math.pi * tx[3] / {self.width!r}))"
-                    if self.slide_ybump else "")
+            bump = ((f" * (1 + {self.slide_ybump!r} * math.sin(2 * math.pi * tx[3] / {self.width!r}))"
+                     if self.slide_ybump else "") + self._ydip_factor(3))
             text = text.replace(f, '  Heat Flux = Variable Velocity 1, Velocity 2, Velocity 3, Coordinate 2, GroundedMask\n'
                                    f'    Real Lua "fcoeff * ess_grounded(tx[4]){bump} * (tx[0]*tx[0] + tx[1]*tx[1] + tx[2]*tx[2])"')
         return text
@@ -2062,6 +2068,12 @@ End
             raise ValueError("friction_noise: no Weertman Friction Coefficient Lua expression in the template")
         return text
 
+    def _ydip_factor(self, yi):
+        """Lua factor of the friction dip across the width, y = tx[yi] ('' without a dip)"""
+        if not self.slide_ydip:
+            return ""
+        return (f" * (1 - {self.slide_ydip!r} * math.exp(-((tx[{yi}] - {self.width / 2!r}) / {self.slide_ydip_width!r})^2))")
+
     def _slide_ybump(self, text):
         """the sliding coefficient times 1 + slide_ybump sin(2 pi y / width)"""
         a = ('  Weertman Friction Coefficient = Variable Temperature, Coordinate 1, GroundedMask\n'
@@ -2072,12 +2084,12 @@ End
         if end is None or end == self.slide_ybump:
             b = ('  Weertman Friction Coefficient = Variable Temperature, Coordinate 1, GroundedMask, Coordinate 2\n'
                  f'    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2]) * (1 + {self.slide_ybump!r} '
-                 f'* math.sin(2 * math.pi * tx[3] / {self.width!r}))"')
+                 f'* math.sin(2 * math.pi * tx[3] / {self.width!r})){self._ydip_factor(3)}"')
         else:       # ess run --ybump-ramp: the amplitude linear in this Elmer run's time from slide_ybump to slide_ybump_end
             H = float(self.slide_ybump_horizon)
             b = ('  Weertman Friction Coefficient = Variable Temperature, Coordinate 1, GroundedMask, Coordinate 2, Time\n'
                  f'    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2]) * (1 + ({self.slide_ybump!r} + '
-                 f'({end - self.slide_ybump!r}) * math.min(tx[4] / {H!r}, 1)) * math.sin(2 * math.pi * tx[3] / {self.width!r}))"')
+                 f'({end - self.slide_ybump!r}) * math.min(tx[4] / {H!r}, 1)) * math.sin(2 * math.pi * tx[3] / {self.width!r})){self._ydip_factor(3)}"')
         text = text.replace(a, b)
         # flux friction heating: the same y factor as the sliding coefficient (tau_b . u_b = C |u_b|^2)
         f = ('  Heat Flux = Variable Temperature, Velocity 1, Velocity 2, Velocity 3, Coordinate 1, GroundedMask\n'
