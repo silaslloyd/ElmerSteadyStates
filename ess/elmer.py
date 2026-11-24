@@ -1544,10 +1544,14 @@ End
     def _sliding_temperate(self, text):
         """Weertman friction as at the melting point everywhere: TDepSliding(fcoeff, T, dT, x) -> fcoeff"""
         a = "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2])"
-        if a not in text:
-            raise ValueError("sliding = temperate: the Weertman Friction Coefficient expression of the template changed")
-        # (with slide_ybump / slide_ydip the expression has the y factor after it: _slide_ybump ran first; the prefix still matches)
-        text = text.replace(a, "fcoeff * ess_grounded(tx[2])")
+        if a in text:                                   # marine template
+            # (with slide_ybump / slide_ydip the expression has the y factor after it: _slide_ybump ran first; the prefix still matches)
+            text = text.replace(a, "fcoeff * ess_grounded(tx[2])")
+        else:                                           # land template: no grounded mask in the sliding coefficient
+            a = "TDepSliding(fcoeff, tx[0], dT, tx[1])"
+            if text.count(a) != 1:
+                raise ValueError("sliding = temperate: the Weertman Friction Coefficient expression of the template changed")
+            text = text.replace(a, "fcoeff")
         # flux friction heating: the same coefficient (C = fcoeff, the y bump, grounded) times |u_b|^2
         f = ('  Heat Flux = Variable Temperature, Velocity 1, Velocity 2, Velocity 3, Coordinate 1, GroundedMask\n'
              '    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * ess_grounded(tx[5]) * (tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
@@ -2074,31 +2078,48 @@ End
             return ""
         return (f" * (1 - {self.slide_ydip!r} * math.exp(-((tx[{yi}] - {self.width / 2!r}) / {self.slide_ydip_width!r})^2))")
 
-    def _slide_ybump(self, text):
-        """the sliding coefficient times 1 + slide_ybump sin(2 pi y / width)"""
-        a = ('  Weertman Friction Coefficient = Variable Temperature, Coordinate 1, GroundedMask\n'
-             '    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2])"')
-        if a not in text:
-            raise ValueError("slide_ybump: the Weertman Friction Coefficient lines of the template changed")
+    def _ybump_factor(self, yi, ti=None):
+        """Lua factor of the sliding coefficient across the width: the bump 1 + slide_ybump sin(2 pi y / width) (its
+        amplitude linear in the Elmer run's time, variable index ti, with --ybump-ramp) and the friction dip;
+        y = tx[yi]"""
         end = getattr(self, "slide_ybump_end", None)
         if end is None or end == self.slide_ybump:
-            b = ('  Weertman Friction Coefficient = Variable Temperature, Coordinate 1, GroundedMask, Coordinate 2\n'
-                 f'    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2]) * (1 + {self.slide_ybump!r} '
-                 f'* math.sin(2 * math.pi * tx[3] / {self.width!r})){self._ydip_factor(3)}"')
-        else:       # ess run --ybump-ramp: the amplitude linear in this Elmer run's time from slide_ybump to slide_ybump_end
+            amp = f"{self.slide_ybump!r}"
+        else:
             H = float(self.slide_ybump_horizon)
-            b = ('  Weertman Friction Coefficient = Variable Temperature, Coordinate 1, GroundedMask, Coordinate 2, Time\n'
-                 f'    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2]) * (1 + ({self.slide_ybump!r} + '
-                 f'({end - self.slide_ybump!r}) * math.min(tx[4] / {H!r}, 1)) * math.sin(2 * math.pi * tx[3] / {self.width!r})){self._ydip_factor(3)}"')
+            amp = f"({self.slide_ybump!r} + ({end - self.slide_ybump!r}) * math.min(tx[{ti}] / {H!r}, 1))"
+        return f" * (1 + {amp} * math.sin(2 * math.pi * tx[{yi}] / {self.width!r})){self._ydip_factor(yi)}"
+
+    def _slide_ybump(self, text):
+        """the sliding coefficient times 1 + slide_ybump sin(2 pi y / width) (and the friction dip). Marine template:
+        Variable Temperature, Coordinate 1, GroundedMask (ess_grounded); land template: Variable Temperature,
+        Coordinate 1 (no grounded mask)"""
+        marine_a = ('  Weertman Friction Coefficient = Variable Temperature, Coordinate 1, GroundedMask\n'
+                    '    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2])"')
+        land_a = ('  Weertman Friction Coefficient = Variable Temperature, Coordinate 1\n'
+                  '    Real lua "TDepSliding(fcoeff, tx[0], dT, tx[1])"')
+        if marine_a in text:
+            a, vars_, base, yi = marine_a, "Temperature, Coordinate 1, GroundedMask", \
+                "TDepSliding(fcoeff, tx[0], dT, tx[1]) * ess_grounded(tx[2])", 3
+        elif land_a in text:
+            a, vars_, base, yi = land_a, "Temperature, Coordinate 1", "TDepSliding(fcoeff, tx[0], dT, tx[1])", 2
+        else:
+            raise ValueError("slide_ybump: the Weertman Friction Coefficient lines of the template changed")
+        end = getattr(self, "slide_ybump_end", None)
+        ramp = not (end is None or end == self.slide_ybump)
+        fac = self._ybump_factor(yi, yi + 1)
+        b = (f'  Weertman Friction Coefficient = Variable {vars_}, Coordinate 2{", Time" if ramp else ""}\n'
+             f'    Real lua "{base}{fac}"')
         text = text.replace(a, b)
-        # flux friction heating: the same y factor as the sliding coefficient (tau_b . u_b = C |u_b|^2)
+        # flux friction heating: the same y factor as the sliding coefficient (tau_b . u_b = C |u_b|^2); its variables
+        # Temperature, Velocity 1-3, Coordinate 1, GroundedMask, then Coordinate 2 (index 6) and Time (7)
         f = ('  Heat Flux = Variable Temperature, Velocity 1, Velocity 2, Velocity 3, Coordinate 1, GroundedMask\n'
              '    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * ess_grounded(tx[5]) * (tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
         if f in text and self.sliding != "temperate":    # temperate: _sliding_temperate writes its own (with the bump)
-            fac = b.split("ess_grounded(tx[2]) * ", 1)[1].rstrip('"').replace("tx[3]", "tx[6]").replace("tx[4]", "tx[7]")
+            hfac = self._ybump_factor(6, 7)
             text = text.replace(f, '  Heat Flux = Variable Temperature, Velocity 1, Velocity 2, Velocity 3, Coordinate 1, GroundedMask, '
-                                   'Coordinate 2' + (", Time" if "Time" in b.splitlines()[0] else "") + '\n'
-                                   f'    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * ess_grounded(tx[5]) * {fac} * '
+                                   'Coordinate 2' + (", Time" if ramp else "") + '\n'
+                                   f'    Real Lua "TDepSliding(fcoeff, tx[0], dT, tx[4]) * ess_grounded(tx[5]){hfac} * '
                                    '(tx[1]*tx[1] + tx[2]*tx[2] + tx[3]*tx[3])"')
         return text
 
