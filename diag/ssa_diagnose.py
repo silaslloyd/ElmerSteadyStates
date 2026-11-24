@@ -297,6 +297,27 @@ def main():
             x[i] - xgl, H[i], gm[i], ub[i], um[i], Nc[i] / refc[i], D_i * 1e3, C * ub[i] * 1e3, Nxc[i] * 1e3,
             (Nxc[i] - C * ub[i] + D_i) * 1e3))
 
+    # the flotation point (H = h_f) between the last grounded and the first floating column: the sub-column grounding line;
+    # Schoof's two conditions evaluated THERE, not at the last grounded column (the column spacing is the position's error)
+    fin = np.isfinite(bed)
+    if fin.sum() > 3:
+        hf_c = -np.interp(x, x[fin], bed[fin]) / r
+        dif = H - hf_c
+        jj = [k for k in range(max(il - 3, 0), min(il + 6, len(x) - 1)) if dif[k] > 0 >= dif[k + 1]]
+        if jj:
+            k = jj[0]
+            f_ = dif[k] / (dif[k] - dif[k + 1])
+            lin = lambda arr: float(arr[k] + f_ * (arr[k + 1] - arr[k]))
+            xf, Hf, Nr = lin(x), lin(H), lin(Nc / refc)
+            print("\nF. at the flotation point H = h_f, interpolated between columns %d and %d (x = %.3f km; the last grounded"
+                  " column is at %.3f km, the mask's grounding line)" % (k, k + 1, xf / 1e3, xgl / 1e3))
+            print("   h_f there %.1f m;  N / (1/2 rho g (1 - r) H^2) = %.3f   (1 = Schoof's stress condition; centred differences"
+                  " over the column spacing)" % (Hf, Nr))
+            print("   a x_f / (K h_f^(5/2)) = %.3f   (Schoof's flux condition with the flotation thickness at the interpolated"
+                  " grounding line: 1.045 for the full SSA, 1 asymptotically)" % (a * xf / (K * Hf ** 2.5)))
+            print("   (spacing of the two columns: %.0f m)" % (x[k + 1] - x[k]))
+            F_RESULT = (xf, Hf, Nr)
+
     # ---------------- D. the floating shelf: a free 1D shelf has N = 1/2 rho g (1 - r) H^2 at EVERY x
     X3 = N3 = ref3 = None
     fl = (gm < -0.5) & (x > xgl)
