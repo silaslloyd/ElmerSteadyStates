@@ -5,7 +5,7 @@
 #SBATCH --time=2-00:00:00
 #
 # A branch from the converged S1 state with another grounding-line mesh resolution (jobs/gl_branch.py): does the
-# state stay converged, and does the grounding line stay where it is? Run the 250 m control (the pipeline's own band: only
+# state stay converged, and does the grounding line stay where it is? The pipeline's S1b + S2 are the 250 m reference; a 250 m control (RES=250: only
 # the shelf cut and remesh) and finer ones, then compare the log lines "BRANCH <tag>: ...".
 #   RES=250 sbatch jobs/gl_branch.cmd
 #   RES=125 sbatch jobs/gl_branch.cmd

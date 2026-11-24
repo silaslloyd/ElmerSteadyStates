@@ -5,8 +5,8 @@
 #SBATCH --time=3-00:00:00
 #
 # A one-core waiter that submits the follow-up jobs by itself when the flowline pipeline reaches them:
-#   * S1 done (pipeline/flags/s1_done): the grounding-line mesh branches, RES=250 (control) and RES=125
-#     (jobs/gl_branch.cmd; RESLIST="250 125" to change);
+#   * S1 done (pipeline/flags/s1_done): the grounding-line mesh branches, RES=125 (RESLIST="250 125" adds the 250 m control)
+#     (jobs/gl_branch.cmd);
 #   * S3 started (pipeline/start_temperate.npz exists, so S2's Newton state is final): the 3D free-surface test: fssa3d/prep.cmd
 #     from the remeshed config and the S2 state, then fssa3d/sweep.sh behind it (--dependency=afterok).
 #   sbatch jobs/queue_followups.cmd
@@ -19,7 +19,7 @@ P=$WORK/pipeline
 echo "$(date +%T) waiting for $P/flags/s1_done"
 if [ "${BRANCHES:-1}" != 0 ]; then
     until [ -f $P/flags/s1_done ]; do sleep 120; done
-    for r in ${RESLIST:-250 125}; do
+    for r in ${RESLIST:-125}; do
         echo "$(date +%T) S1 done: submitting the $r m branch: $(RES=$r CONFIG=$CONFIG sbatch --parsable jobs/gl_branch.cmd)"
     done
 fi
