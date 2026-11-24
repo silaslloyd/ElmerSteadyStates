@@ -35,5 +35,9 @@ WORK=$(python3 -c "import os; from ess.config import load_config as L; print(os.
 N=${SLURM_NTASKS:-64}
 export ESS_NPROCS=$N ESS_MPIRUN="mpirun -np {n} --bind-to none"
 python3 -u -m ess setup "$CFG3"
-python3 -u -m ess transfer "$CFG3" --from "$SRC_STATE" --out "$WORK/start_flowline.npz"
+# the target layout (ess init: a cheap, inexact Stokes solve whose velocity is not kept; the 3D settings of
+# jobs/flowline_fssa.cmd: P1/P1 + bubbles, the cheap block solver), then the flowline state carried onto it
+ESS_STOKES_ELEMENT=${STOKES_ELEMENT:-Bubbles} ESS_LINEAR_STOKES=block ESS_STOKES_BLOCK_FILE=elmer/stokes_cheap.sif.in \
+    python3 -u -m ess init "$CFG3" --out "$WORK/state_init.npz"
+python3 -u -m ess transfer "$CFG3" --state "$WORK/state_init.npz" --from "$SRC_STATE" --out "$WORK/start_flowline.npz"
 echo "done: $CFG3, $WORK/start_flowline.npz ($N ranks)"

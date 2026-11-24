@@ -57,7 +57,8 @@ fi
 [ -n "$LINEAR_STOKES" ] && export ESS_LINEAR_STOKES=$LINEAR_STOKES
 START=${START:-$WORK/fssa_start.npz}   # START=STATE: another start (e.g. a spun-up flowline state on this mesh)
 ( flock 9
-  if [ ! -d $WORK/case/footprint/partitioning.$N ] || { [ ! -f $START ] && [ $START = $WORK/fssa_start.npz ]; }; then
+  CASEDIR=$(python3 -c "import os; from ess.config import load_config as L; print(os.path.relpath(L('$CFG')['paths']['case_dir']))")   # the mesh directory (not always <work>/case)
+  if [ ! -d $CASEDIR/footprint/partitioning.$N ] || { [ ! -f $START ] && [ $START = $WORK/fssa_start.npz ]; }; then
       echo "$(date +%T) setting up $CFG for $N ranks"
       # ess init: a cheap, inexact Stokes solve (its velocity is not kept: the state is temperature and Zs)
       python3 -u -m ess setup $CFG && ESS_LINEAR_STOKES=block ESS_STOKES_BLOCK_FILE=elmer/stokes_cheap.sif.in \
