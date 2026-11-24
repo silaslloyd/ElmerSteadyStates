@@ -12,6 +12,7 @@ slider through the states.
     python plots/plot_state_3d.py work/test_periodic_gl/fix --tile 1        # one copy (default 2: side by side, so
                                                                             # anything not periodic shows at the seam)
     python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --no-temp # the velocity panel only
+    python plots/plot_state_3d.py STATE.npz --no-temp --no-temperate        # also without the "temperate on / off" buttons
     python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --temp-only # the temperature panel only
     python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --tmin 255  # temperature colour range from 255 K
     python plots/plot_state_3d.py STATE.npz --fs-ssa 10 [--walls]          # the full-Stokes | SSA boundary (magenta)
@@ -110,6 +111,7 @@ SHEET_VEL = False        # --sheet-velocity: the first --sheet panel the velocit
 MASK_PANEL = False       # --mask-panel: the third --sheet panel the cold/temperate mask instead of the melt rate
 MELT_MAX = None          # --melt-max M: the melt colours -M .. M m/yr (default: 99.5th percentile of |melt|, all frames)
 HW_H0 = 0.01             # the signed log scale: sign(h) log10(1 + |h| / HW_H0), from -1e3 to 1e3 m
+NO_CT = False            # --no-temperate: no cold/temperate boundary toggle ("temperate on/off" buttons)
 TEMP = True              # the temperature panel next to the velocity one (if the states have Temperature); --no-temp
 TEMP_ONLY = False        # --temp-only: one panel, the temperature (surface and base) instead of the velocity
 MESH_TOGGLE = False      # the "mesh off / mesh on" buttons for the base mesh (white): only with --mesh (or
@@ -1121,6 +1123,9 @@ def main():
     if "--no-temp" in args:
         TEMP = False
         args.remove("--no-temp")
+    if "--no-temperate" in args:                  # no cold/temperate boundary toggle (runs that do not solve the heat)
+        NO_CT = True
+        args.remove("--no-temperate")
     if "--sheet" in args:
         SHEET = True
         args.remove("--sheet")
@@ -1886,6 +1891,8 @@ def main():
     ct_idx = [n for n, t_ in enumerate(first) if getattr(t_, "legendgroup", None) == "ctmask"]
     for n in ct_idx:
         first[n].visible = False
+    if NO_CT:
+        ct_idx = []                               # no "temperate on / off" buttons (the traces stay hidden)
     # the colour switch of the velocity panel: speed, vx, vy, vz. The slider's frames draw the panel's own field; the
     # buttons and the slider share one script (switch_js) that keeps the chosen field and puts that field of the state
     # on show into the surfaces and walls, so a button acts on the current state and the choice survives the slider.
