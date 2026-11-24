@@ -5,7 +5,7 @@
       the shelf break of jobs/flowline_coarse_newton.cmd                                         -> pipeline/start1.npz
   S1  Stokes + free-surface transient, temperate bed (ESS_SLIDING=temperate), grounding line by contact every step,
       in batches of --batch chunks (1 chunk = --steps x --dt = 100 x 10 yr) until the rms change per chunk is below
-      --rms-tol (1e-3)                                                                          -> pipeline/transient.npz
+      --rms-tol (1e-3), the grounding line moved <= --gl-tol-km in the last batch and |q / (a x) - 1| < --flux-tol (0.01)                                                                          -> pipeline/transient.npz
   S1b remesh (--cut-shelf-km, default 200; 0: no remesh): the shelf cut to that length past the S1 grounding line, the
       250 m band centred on it (--band-km below / above), the transient's state carried onto the new mesh
       (ess setup / init / transfer, jobs/shelf_break.py as the sweep's segments)                  -> pipeline/start_cut.npz
@@ -38,6 +38,8 @@ import subprocess
 import sys
 import threading
 import time
+
+import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -72,6 +74,33 @@ def run(cmd, env=None, capture_rms=False):
     if p.wait() != 0:
         raise subprocess.CalledProcessError(p.returncode, cmd)
     return last
+
+
+def mass_balance_dev(path):
+    """how far the state is from steady: max(|median q / (a x) - 1| over the grounded ice from 20% of x_gl on, |mean q / (a x) - 1|
+    over the last 5 km before the grounding line), q = integral u dz per column (plots/flux_check.py)"""
+    sys.path.insert(0, os.path.join(ROOT, "plots"))
+    from flux_check import A_DIM, from_state
+    x, y, z, u, (zbx, zby, zbv), gl, _ = from_state(path)
+    key = lambda xx, yy: np.round(xx).astype(np.int64) * 10 ** 8 + np.round(yy).astype(np.int64)
+    zb_of = dict(zip(key(zbx, zby).tolist(), zbv.tolist()))
+    k = key(x, y)
+    zbn = np.array([zb_of.get(v, np.nan) for v in k.tolist()])
+    ice = np.isfinite(zbn) & (z >= zbn - 0.5)
+    k, x, z, u = k[ice], x[ice], z[ice], u[ice]
+    o = np.lexsort((z, k))
+    k, x, z, u = k[o], x[o], z[o], u[o]
+    st = np.r_[0, np.flatnonzero(np.diff(k)) + 1]
+    en = np.r_[st[1:], len(k)]
+    tr = getattr(np, "trapezoid", None) or np.trapz
+    q = np.array([tr(u[s:e], z[s:e]) for s, e in zip(st, en)])
+    xs, xi = np.unique(np.round(x[st] / 1e3, 3), return_inverse=True)
+    qx = np.bincount(xi, weights=q) / np.bincount(xi)
+    r = qx / (A_DIM * xs * 1e3)
+    g = gl / 1e3
+    mid = (xs > 0.2 * g) & (xs < g)
+    near = (xs > g - 5.0) & (xs <= g)
+    return max(abs(float(np.median(r[mid])) - 1), abs(float(np.mean(r[near])) - 1))
 
 
 def sh(cmd, timeout=600):
@@ -170,11 +199,23 @@ class Pipeline:
             log(f"S1: {chunks} chunks ({chunks * a.steps * a.dt:g} yr), rms change {rms}, grounding line "
                 f"{gl_position(s.frozen, s.diag) / 1e3:.2f} km")
             gl_now = gl_position(s.frozen, s.diag) / 1e3
-            if rms is not None and rms < a.rms_tol and abs(gl_now - gl_before) <= a.gl_tol_km:
-                break
+            try:
+                dev = mass_balance_dev(self.f["trans"])
+            except Exception as ex:                            # noqa: BLE001
+                log(f"S1: mass balance not computed ({ex!r}): not used as a stop test this batch")
+                dev = None
+            if dev is not None:
+                log(f"S1: mass balance: |q / (a x) - 1| = {dev:.4f} (stop below {a.flux_tol:g}), grounding line moved "
+                    f"{gl_now - gl_before:+.2f} km in this batch")
             if rms is not None and rms < a.rms_tol:
-                log(f"S1: rms change below {a.rms_tol:g} but the grounding line moved {gl_now - gl_before:+.2f} km in "
-                    f"this batch (> {a.gl_tol_km:g} km): carrying on")
+                why = []
+                if abs(gl_now - gl_before) > a.gl_tol_km:
+                    why.append(f"the grounding line moved {gl_now - gl_before:+.2f} km in this batch (> {a.gl_tol_km:g} km)")
+                if dev is not None and dev > a.flux_tol:
+                    why.append(f"the mass balance is {dev:.3f} off (> {a.flux_tol:g})")
+                if not why:
+                    break
+                log(f"S1: rms change below {a.rms_tol:g} but " + " and ".join(why) + ": carrying on")
         else:
             log(f"S1: not below {a.rms_tol:g} in {a.max_chunks} chunks: carrying on with the state as it is")
         open(self.flag("s1_done"), "w").write(time.strftime("%F %T\n"))
@@ -359,6 +400,8 @@ def main():
     ap.add_argument("--band-below-km", type=float, default=70.0, help="S1b: the 250 m band this far upstream of the grounding line")
     ap.add_argument("--band-above-km", type=float, default=50.0, help="S1b: and this far seaward of it")
     ap.add_argument("--grade-km", type=float, default=60.0, help="S1b: the grading length from 250 m to 2 km each side")
+    ap.add_argument("--flux-tol", type=float, default=0.01,
+                    help="S1 stops only if |q / (a x) - 1| (the mass balance of the grounded ice and at the grounding line) is below this")
     ap.add_argument("--max-chunks", type=int, default=200)
     ap.add_argument("--heat-dt", type=float, default=1e4)
     ap.add_argument("--heat-steps", type=int, default=30)
