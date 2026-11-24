@@ -27,10 +27,11 @@ for v in $VARIANTS $([ "$CONTROL" = 0 ] || echo control_full control_adapted); d
     d=$DIP; f=${v%+c}; c=0
     case $v in control_*) d=0; f=${f#control_};; esac
     [[ $v == *+c || $f == adapted ]] && c=1     # the implicit construction: adapted FSSA in the coupled loop
-    TAG=dip${d}_dt${DT}_${f}$([ $c = 1 ] && echo _coupled3)
-    [[ $v == control_* ]] && TAG=control_dt${DT}_${f}$([ $c = 1 ] && echo _coupled3)
+    CI=${ADAPTED_ITERS:-3}                     # coupled iterations of the adapted (implicit) runs; ADAPTED_ITERS=8 for more
+    TAG=dip${d}_dt${DT}_${f}$([ $c = 1 ] && echo _coupled$CI)
+    [[ $v == control_* ]] && TAG=control_dt${DT}_${f}$([ $c = 1 ] && echo _coupled$CI)
     echo "submit $TAG"
-    CFG=$CFG START=$START DT=$DT YEARS=$YEARS FSSA=$f FS_COUPLED=$c COUPLED_ITERS=$([ $c = 1 ] && echo 3 || echo 1) TAG=$TAG \
+    CFG=$CFG START=$START DT=$DT YEARS=$YEARS FSSA=$f FS_COUPLED=$c COUPLED_ITERS=$([ $c = 1 ] && echo $CI || echo 1) TAG=$TAG \
     ESS_SLIDING=temperate ESS_SLIDE_YDIP=$d ESS_SLIDE_YDIP_WIDTH=${DIP_WIDTH:-2} \
         sbatch $DEPARG --nodes=$NODES --ntasks=$NT --time=$TIME --job-name="f3d-$TAG" jobs/flowline_fssa.cmd
 done
