@@ -6,6 +6,10 @@
   S1  Stokes + free-surface transient, temperate bed (ESS_SLIDING=temperate), grounding line by contact every step,
       in batches of --batch chunks (1 chunk = --steps x --dt = 100 x 10 yr) until the rms change per chunk is below
       --rms-tol (1e-3)                                                                          -> pipeline/transient.npz
+  S1b remesh (--cut-shelf-km, default 200; 0: no remesh): the shelf cut to that length past the S1 grounding line, the
+      250 m band centred on it (--band-km below / above), the transient's state carried onto the new mesh
+      (ess setup / init / transfer, jobs/shelf_break.py as the sweep's segments)                  -> pipeline/start_cut.npz
+      S2 onwards then use the new config (work/<case>/refined/pipe1.toml), and so do the sweep and the bisectors.
   S2  Newton on that (Stokes only, temperate), grounding line moved by contact between solves   -> pipeline/stokes_newton.npz
   S3  the whole bed temperate (ColdTempMask 1), steady heat (--heat-steps x --heat-dt), then the full Newton with the
       ct mask fixed ([masks] ct = false)                                                          -> pipeline/steady_temperate.npz
@@ -22,7 +26,7 @@ Everything is run from the repository root with the corrected contact function (
 Flags in work/<case>/pipeline/flags/: DONE (finished), GAVEUP (three job starts in a row without progress),
 bisect_hydro.json / bisect_thermal.json (the spawned bisector's job id and number of spawns).
 
-    python3 jobs/flowline_pipeline.py [--until s0|s1|s2|s3|s4] [--rms-tol 1e-3] [--max-chunks 200] ...
+    python3 jobs/flowline_pipeline.py [--until s0|s1|s1b|s2|s3|s4] [--rms-tol 1e-3] [--max-chunks 200] ...
 sbatch jobs/flowline_pipeline.cmd runs it and chains its own continuation when the job's time runs out.
 """
 import argparse
@@ -41,7 +45,7 @@ sys.path.insert(0, os.path.join(ROOT, "jobs"))
 from ess.config import load_config  # noqa: E402
 from ess.spectrum import gl_position  # noqa: E402
 from ess.statefile import find_name, load_state, save_state  # noqa: E402
-from sweep_refined import converged, write_config  # noqa: E402
+from sweep_refined import banded_points, converged, write_config  # noqa: E402
 
 PY = sys.executable
 RMS_RE = re.compile(r"rms change\s+([0-9.]+(?:[eE][+-]?[0-9]+)?)")
@@ -94,14 +98,25 @@ class Pipeline:
         j = lambda f: os.path.join(self.pdir, f)             # noqa: E731
         self.f = dict(state0=j("state0.npz"), start1=j("start1.npz"), trans=j("transient.npz"),
                       newton1=j("stokes_newton.npz"), temp=j("start_temperate.npz"), heat=j("heat.npz"),
-                      steady=j("steady_temperate.npz"))
-        self.cfgp = os.path.join(self.work, "refined", "pipe0.toml")
+                      steady=j("steady_temperate.npz"), cut=j("start_cut.npz"), state1=j("state1.npz"),
+                      cutraw=j("start_cut_raw.npz"))
+        self.cfg0 = os.path.join(self.work, "refined", "pipe0.toml")
+        self.cfg1 = os.path.join(self.work, "refined", "pipe1.toml")         # the remeshed (shelf cut) config, S1b
+        self.cfgp = self.cfg0
         self.sweep_root = os.path.join(self.work, a.out_root)
         self.stop = threading.Event()
 
     # ------------------------------------------------------------------ flags
     def flag(self, name):
         return os.path.join(self.flags, name)
+
+    def cfg_now(self):
+        """the config of the stages after S1: the remeshed one once S1b has run"""
+        return self.cfg1 if os.path.exists(self.flag("s1b_done")) else self.cfg0
+
+    def trans_now(self):
+        """the transient's state, on the remeshed mesh once S1b has run"""
+        return self.f["cut"] if os.path.exists(self.flag("s1b_done")) else self.f["trans"]
 
     def signature(self):
         have = sorted(k for k, v in self.f.items() if os.path.exists(v))
@@ -164,16 +179,46 @@ class Pipeline:
             log(f"S1: not below {a.rms_tol:g} in {a.max_chunks} chunks: carrying on with the state as it is")
         open(self.flag("s1_done"), "w").write(time.strftime("%F %T\n"))
 
+    def s1b(self):
+        a = self.a
+        if a.cut_shelf_km <= 0 or os.path.exists(self.flag("s1b_done")):
+            return
+        s = load_state(self.f["trans"])
+        xgl = gl_position(s.frozen, s.diag) / 1e3
+        front = float(int(round(xgl + a.cut_shelf_km)))
+        base = [[0.0, 2000.0], [front, 2000.0]]
+        pts = banded_points(base, xgl - a.band_below_km, xgl + a.band_above_km, 250.0, a.grade_km, front)
+        log(f"S1b: remesh: grounding line {xgl:.2f} km, front {front:g} km (was {self.cfg['case']['front_km']:g}), "
+            f"res_points {pts}")
+        os.makedirs(os.path.dirname(self.cfg1), exist_ok=True)
+        write_config(a.config, self.cfg1, pts, "{work}/pipe1")
+        text = open(self.cfg1).read()
+        text, n = re.subn(r"^front_km\s*=.*$", f"front_km = {front:g}", text, count=1, flags=re.M)
+        if n != 1:
+            raise SystemExit("S1b: no front_km line in the config")
+        open(self.cfg1, "w").write(text)
+        if not os.path.exists(self.f["state1"]):
+            run([PY, "-u", "-m", "ess", "setup", self.cfg1])
+            run([PY, "-u", "-m", "ess", "init", self.cfg1, "--out", self.f["state1"]])
+        if not os.path.exists(self.f["cutraw"]):
+            run([PY, "-u", "-m", "ess", "transfer", self.cfg1, "--state", self.f["state1"], "--from", self.f["trans"],
+                 "--out", self.f["cutraw"]])
+        run([PY, "-u", "jobs/shelf_break.py", self.f["cutraw"], self.f["cut"], "--strip-divide-r-km", "1520.8",
+             "--r-break-km", "450", "--factor", "30", "--width-km", "10", "--force"])
+        s2_ = load_state(self.f["cut"])
+        log(f"S1b done: the state on the remeshed domain, grounding line {gl_position(s2_.frozen, s2_.diag) / 1e3:.2f} km")
+        open(self.flag("s1b_done"), "w").write(time.strftime("%F %T\n"))
+
     def s2(self):
         if os.path.exists(self.f["newton1"]):
             return
         try:
-            run([PY, "-u", "-m", "ess", "newton", self.cfgp, "--state", self.f["trans"], "--stokes-only",
+            run([PY, "-u", "-m", "ess", "newton", self.cfg_now(), "--state", self.trans_now(), "--stokes-only",
                  "--out", self.f["newton1"]], env={"ESS_SLIDING": "temperate"})
         except subprocess.CalledProcessError:
             log("S2: Newton (Stokes only) did not converge: carrying on from the transient's state")
             if not os.path.exists(self.f["newton1"]):
-                s = load_state(self.f["trans"])
+                s = load_state(self.trans_now())
                 save_state(self.f["newton1"], s.layout, s.x, s.p, s.frozen, s.diag, **s.meta)
 
     def s3(self):
@@ -188,10 +233,10 @@ class Pipeline:
             s.frozen[k] = (g, np.ones_like(v))
             save_state(self.f["temp"], s.layout, s.x, s.p, s.frozen, s.diag, **s.meta)
         if not os.path.exists(self.f["heat"]):
-            run([PY, "-u", "-m", "ess", "run", self.cfgp, "--state", self.f["temp"], "--heat-only",
+            run([PY, "-u", "-m", "ess", "run", self.cfg_now(), "--state", self.f["temp"], "--heat-only",
                  "--dt", f"{self.a.heat_dt:g}", "--steps", str(self.a.heat_steps), "--gl", "frozen", "--no-remask",
                  "--out", self.f["heat"]])
-        run([PY, "-u", "-m", "ess", "newton", self.cfgp, "--state", self.f["heat"], "--out", self.f["steady"]])
+        run([PY, "-u", "-m", "ess", "newton", self.cfg_now(), "--state", self.f["heat"], "--out", self.f["steady"]])
         s = load_state(self.f["steady"])
         log(f"S3 done: steady temperate state, grounding line {gl_position(s.frozen, s.diag) / 1e3:.2f} km")
 
@@ -200,7 +245,7 @@ class Pipeline:
         s = load_state(self.f["steady"])
         d0 = gl_position(s.frozen, s.diag) / 1e3                 # the whole grounded bed temperate
         env = {"ESS_NEWTON_TOL": os.environ.get("NEWTON_TOL", "5e-5")}
-        cmd = [PY, "-u", "jobs/sweep_refined.py", a.config, "--from-state", self.f["steady"], "--d-km", f"{d0:g}",
+        cmd = [PY, "-u", "jobs/sweep_refined.py", self.cfg_now(), "--from-state", self.f["steady"], "--d-km", f"{d0:g}",
                "--d-end-km", "0", "--span-km", "50", "--pad-km", "10", "--fine", "250", "--step-frac", "1.0",
                "--step-min-km", f"{a.step_min_km:g}", "--step-max-km", f"{a.step_max_km:g}",
                "--map-steps", str(a.map_steps), "--out-root", a.out_root, "--tag-prefix", "k", "--predictor", "none"]
@@ -254,14 +299,14 @@ class Pipeline:
                 continue                                       # finished
             if info["spawns"] >= a.max_spawns:
                 continue
-            out = sh([PY, "jobs/hydro_bisect.py", a.config, self.sweep_root, "--criterion", crit, "--list",
+            out = sh([PY, "jobs/hydro_bisect.py", self.cfg_now(), self.sweep_root, "--criterion", crit, "--list",
                       "--map-steps", str(a.map_steps)])
             if not re.search(r"bracket: \(", out):
                 log(f"{crit}: no ok / bad switch between neighbouring converged points yet")
                 continue
             # the 3-job cap: this job + at most one bisector of each kind
             r = sh(["sbatch", "--parsable", "-J", name,
-                    f"--export=ALL,ROOTS={self.sweep_root},CRITERION={crit},MAP_STEPS={a.map_steps},CONFIG={a.config}",
+                    f"--export=ALL,ROOTS={self.sweep_root},CRITERION={crit},MAP_STEPS={a.map_steps},CONFIG={self.cfg_now()}",
                     "jobs/flowline_hydro_bisect.cmd"], timeout=120)
             m = re.match(r"\s*(\d+)", r)
             if not m:
@@ -288,7 +333,7 @@ class Pipeline:
             return 0
         if not self.check_progress():
             return 3
-        stages = ["s0", "s1", "s2", "s3", "s4"]
+        stages = ["s0", "s1", "s1b", "s2", "s3", "s4"]
         for st in stages:
             log(f"=== stage {st}")
             getattr(self, st)()
@@ -303,12 +348,17 @@ class Pipeline:
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default="configs/flowline_rect_coarse.toml")
-    ap.add_argument("--until", choices=["s0", "s1", "s2", "s3", "s4"])
+    ap.add_argument("--until", choices=["s0", "s1", "s1b", "s2", "s3", "s4"])
     ap.add_argument("--dt", type=float, default=10.0, help="S1 time step (yr)")
     ap.add_argument("--steps", type=int, default=100, help="S1 steps per chunk")
     ap.add_argument("--batch", type=int, default=5, help="S1 chunks per ess run")
     ap.add_argument("--rms-tol", type=float, default=1e-3)
     ap.add_argument("--gl-tol-km", type=float, default=0.5, help="S1 stops only if the grounding line moved less than this in the last batch")
+    ap.add_argument("--cut-shelf-km", type=float, default=200.0,
+                    help="S1b: remesh with the shelf this long past the S1 grounding line (0: no remesh)")
+    ap.add_argument("--band-below-km", type=float, default=70.0, help="S1b: the 250 m band this far upstream of the grounding line")
+    ap.add_argument("--band-above-km", type=float, default=50.0, help="S1b: and this far seaward of it")
+    ap.add_argument("--grade-km", type=float, default=60.0, help="S1b: the grading length from 250 m to 2 km each side")
     ap.add_argument("--max-chunks", type=int, default=200)
     ap.add_argument("--heat-dt", type=float, default=1e4)
     ap.add_argument("--heat-steps", type=int, default=30)
