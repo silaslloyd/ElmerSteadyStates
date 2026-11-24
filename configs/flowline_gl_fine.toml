@@ -1,0 +1,130 @@
+# "Flowline of the extended strip, fine at the corrected grounding line": configs/flowline_rect_coarse.toml with the 250 m band
+# moved from 1015-1065 km (the old, stock-contact grounding line, 1039 km) to 665-795 km (the corrected temperate state,
+# ~732 km; the pipeline's first run on the 2 km mesh put the grounding line in 2 km columns, too coarse for the stress
+# boundary layer). 2 km to 600 km, 250 m from 665 to 795 km, 1 km from 860 km on (shelf). Own work_dir, so the coarse
+# run's files are untouched. jobs/flowline_pipeline.cmd with CONFIG=configs/flowline_gl_fine.toml.
+#
+# "Flowline of the extended strip, coarse": configs/flowline_rect_ext.toml on a coarser mesh, for Newton and the bed
+# sweeps (~3-5x cheaper per solve with MUMPS): 2 km in the interior (4x the 500 m width: triangles not too flat),
+# graded to 1 km by 950 km, to 250 m by 1015 km,
+# 250 m from 1015 to 1065 km (the grounding line, 1039.25 km in the temperate steady state, +-25 km), 1 km on the shelf.
+# The same physics, bed (the extended Marine_Term bed with the shelf break of jobs/shelf_break.py, applied after the
+# transfer as in jobs/flowline_steady.cmd) and map. Between Newton solves the cold/temperate mask is never moved
+# ([masks] ct = false) and the grounding line only by the contact criterion ([masks] gl = "contact": a short contact run
+# from the converged state, as the transient runs decide grounding), until contact agrees with the frozen mask. Pipeline: jobs/flowline_coarse_newton.cmd.
+#
+[paths]
+work_dir = "work/flowline_gl_fine"
+case_dir = "{work}/case"                # mesh and initial conditions, written by `ess setup`
+
+[case]
+geometry = "marine"                     # ice shelf, sea pressure, frozen grounded mask (steady_template_marine.sif)
+marine_ics = "case/marine_ics"          # ElmerStreams Marine_Term Initialisation/Dimensional_ICs tables
+parameters = "case/parameters_fine2x.lua"      # physical parameters (as the 3D strip's)
+res_points = [[0, 2000], [600, 2000], [665, 250], [795, 250], [860, 1000], [1116, 1000]]   # 250 m over 665-795 km: the grounding line of the corrected (ElmerStreams contact) temperate state is near 732 km
+front_km = 1116.0                       # the calving front, as the 3D strip
+width = 500.0                           # m across: a flowline (free-slip walls); 3 node lines across at 250 m
+y_elements = 1
+periodic_sides = false                  # walls
+slide_ybump = 0.0                       # uniform friction
+gmsh = "gmsh"
+elmergrid = "ElmerGrid"
+
+[model]
+type = "elmer"
+
+[elmer]
+template = "elmer/steady_template_marine.sif"
+buoyancy_lib = "elmer/Buoyancy"
+mesh_db = "footprint"
+ess_lib = "elmer/SteadyStateIO"
+ess_utils = "elmer/ess_utils.lua"
+n_procs = 0                             # 0: $SLURM_NTASKS. `ess setup` partitions the mesh for this many.
+mpirun = "mpirun -np {n}"
+solver = "ElmerSolver"
+timeout = 21600
+keep_runs = false
+cache = true                            # a resubmitted job repeats no Elmer run
+friction_heat = "flux"                  # C(T) |u_b|^2 as a basal heat flux (smooth; the 3D runs use the loads)
+strain_heat = true                      # as the 3D runs
+sliding = "subtemperate"
+mumps_workspace = 200
+diagnostics = ["Temperature Loads", "Temperature Boundary Weights", "Velocity 1", "Velocity 3", "ColdTempMask",
+               "GroundedMask"]
+
+[state]
+variables = ["Temperature", "Zs", "Zb"]
+scales = { Temperature = 5.0, Zs = 50.0, Zb = 50.0 }
+frozen = ["ColdTempMask", "GroundedMask", "bedrock"]
+
+[lua]
+minh = 50.0
+ess_slide_maxfactor = 1.0e6
+
+[masks]
+auto = true
+gl = "contact"                          # the grounding line moved between Newton solves by the contact criterion (a short
+                                        # contact run from the converged state), not the hydrostatic flotation test
+ct = false                              # the cold/temperate mask never moved (the bed fixed as given)
+max_rounds = 6
+
+[extract]
+restart_before_ics = true
+
+[parameter]
+name = "Tsurf"
+value = 268.15
+scale = 1.0
+
+# the map of Newton / continuation: as configs/marine_flowline.toml (dt 50 yr, a 2000 yr horizon, the bedrock's heat
+# capacity x 0.001: the same fixed points, the slow rock modes sped up)
+[map]
+dt = 50.0
+n_steps = 40
+coupled_iters = 1
+rock_heat_capacity = 0.001
+
+[stability_map]
+dt = 50.0
+n_steps = 100
+rock_heat_capacity = 1.0
+
+[fd]
+eps = 1e-6
+scheme = "forward"                     # one map run per GMRES iteration (central: two); the steady states are the same
+
+[newton]
+tol = 1e-5
+maxit = 15
+eta_max = 0.1
+eta_min = 1e-5
+gmres_restart = 60
+gmres_maxiter = 150
+max_step = 2.0
+linesearch = 6
+
+[continuation]
+name = "Tsurf"
+ds = 0.5
+ds_min = 1e-3
+ds_max = 2.0
+dp0 = 0.01
+p_min = 255.0
+p_max = 273.0
+max_points = 150
+max_folds = 4
+tol = 1e-5
+predictor = "parameter"
+maxit = 8
+target_its = 3
+eta = 1e-3
+gmres_restart = 60
+gmres_maxiter = 150
+max_step = 2.0
+stability_every = 0
+stability_m = 10
+
+[stability]
+m = 50
+nev = 10
+tol = 1e-2

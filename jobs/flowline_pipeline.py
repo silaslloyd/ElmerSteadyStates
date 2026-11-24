@@ -143,6 +143,8 @@ class Pipeline:
         chunks = int(open(cnt_f).read()) if os.path.exists(cnt_f) else 0
         while chunks < a.max_chunks:
             cur = self.f["trans"] if os.path.exists(self.f["trans"]) else self.f["start1"]
+            s_b = load_state(cur)
+            gl_before = gl_position(s_b.frozen, s_b.diag) / 1e3
             rms = run([PY, "-u", "-m", "ess", "run", self.cfgp, "--state", cur, "--stokes-only", "--gl", "contact",
                        "--dt", f"{a.dt:g}", "--steps", str(a.steps), "--chunks", str(a.batch), "--save-every", "5",
                        "--chunk-offset", str(chunks), "--linear-stokes", "direct", "--out", self.f["trans"]],
@@ -152,8 +154,12 @@ class Pipeline:
             s = load_state(self.f["trans"])
             log(f"S1: {chunks} chunks ({chunks * a.steps * a.dt:g} yr), rms change {rms}, grounding line "
                 f"{gl_position(s.frozen, s.diag) / 1e3:.2f} km")
-            if rms is not None and rms < a.rms_tol:
+            gl_now = gl_position(s.frozen, s.diag) / 1e3
+            if rms is not None and rms < a.rms_tol and abs(gl_now - gl_before) <= a.gl_tol_km:
                 break
+            if rms is not None and rms < a.rms_tol:
+                log(f"S1: rms change below {a.rms_tol:g} but the grounding line moved {gl_now - gl_before:+.2f} km in "
+                    f"this batch (> {a.gl_tol_km:g} km): carrying on")
         else:
             log(f"S1: not below {a.rms_tol:g} in {a.max_chunks} chunks: carrying on with the state as it is")
         open(self.flag("s1_done"), "w").write(time.strftime("%F %T\n"))
@@ -255,7 +261,7 @@ class Pipeline:
                 continue
             # the 3-job cap: this job + at most one bisector of each kind
             r = sh(["sbatch", "--parsable", "-J", name,
-                    f"--export=ALL,ROOTS={self.sweep_root},CRITERION={crit},MAP_STEPS={a.map_steps}",
+                    f"--export=ALL,ROOTS={self.sweep_root},CRITERION={crit},MAP_STEPS={a.map_steps},CONFIG={a.config}",
                     "jobs/flowline_hydro_bisect.cmd"], timeout=120)
             m = re.match(r"\s*(\d+)", r)
             if not m:
@@ -302,6 +308,7 @@ def main():
     ap.add_argument("--steps", type=int, default=100, help="S1 steps per chunk")
     ap.add_argument("--batch", type=int, default=5, help="S1 chunks per ess run")
     ap.add_argument("--rms-tol", type=float, default=1e-3)
+    ap.add_argument("--gl-tol-km", type=float, default=0.5, help="S1 stops only if the grounding line moved less than this in the last batch")
     ap.add_argument("--max-chunks", type=int, default=200)
     ap.add_argument("--heat-dt", type=float, default=1e4)
     ap.add_argument("--heat-steps", type=int, default=30)

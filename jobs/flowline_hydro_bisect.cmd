@@ -26,5 +26,5 @@ export ESS_NEWTON_TOL=${NEWTON_TOL:-1.25e-5}
 W=work/flowline_rect_coarse
 ROOTS=${ROOTS:-"$W/sweep_h500 $W/sweep_h500_700down $W/sweep_h500_700up $W/sia/t0700/sweep_cbet_map10"}
 echo "$(date +%T) hydrology bisection over $ROOTS, map ${MAP_STEPS:-10} steps, tol $ESS_NEWTON_TOL"
-python3 -u jobs/hydro_bisect.py configs/flowline_rect_coarse.toml $ROOTS --map-steps ${MAP_STEPS:-10} --criterion ${CRITERION:-hydro}
+python3 -u jobs/hydro_bisect.py ${CONFIG:-configs/flowline_rect_coarse.toml} $ROOTS --map-steps ${MAP_STEPS:-10} --criterion ${CRITERION:-hydro}
 echo "$(date +%T) done"
