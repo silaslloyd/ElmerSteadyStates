@@ -2,7 +2,7 @@
 # On tethys: pack the frames of every perturbation run of the land strip (the 100x log-space friction pattern, from the
 # 78,000 yr state) into work/land_flowline_3d/cmp_<label>_frames.npz: FSSA full at dt 50 / 100 / 200 / 500 / 1000,
 # FSSA none at dt 50 and 10, the implicit (adapted, coupled) FSSA at dt 200 / 500 / 1000. A run that has not started (no run
-# folder yet) is skipped; of several jobs with one name the first that was not cancelled is used (resubmitted duplicates are ignored); one that is running or has finished is packed with the frames it has.
+# folder yet) is skipped; of several jobs with one name the last that was not cancelled is used (cancelled duplicates are ignored); one that is running or has finished is packed with the frames it has.
 #   bash plots/fssa_pack.sh              # all
 #   bash plots/fssa_pack.sh none imp     # only the runs whose label starts with one of the words (full / none / imp)
 cd "$(dirname "$0")/.."
@@ -14,7 +14,7 @@ for p in "full_dt50 log100-dt50" "full_dt100 log100-dt100" "full_dt200 log100-10
     set -- $p
     want $1 || continue
     rm -f $W/cmp_$1_frames.npz
-    J=$(sacct -u "$USER" -S 2026-11-25 -n -X -o JobID,JobName%30,State | awk -v n="$2" '$2==n && $3 !~ /CANCELLED/ && j==""{j=$1} END{print j}')
+    J=$(sacct -u "$USER" -S 2026-11-25 -n -X -o JobID,JobName%30,State | awk -v n="$2" '$2==n && $3 !~ /CANCELLED/ {j=$1} END{print j}')
     D=$([ -n "$J" ] && ls -d $W/runs/*fssa${J}_* 2>/dev/null | tail -1)
     if [ -z "$D" ]; then echo "$1: no run folder yet (job ${J:-not submitted})"; continue; fi
     echo -n "$1 (job $J): "
