@@ -5,6 +5,7 @@ point its patch length d, grounding line, and the surface Zs, the base Zb and th
 as zlib + base64 in one line between the markers BEGIN / END.
 
     python3 plots/sweep_compact.py ROOT [--dx 5]       ROOT: the sweep folder (seg_*/sweep.csv + points/)
+                                                       or LABEL=DIR: a branch run's points folder (d = chunk number)
 """
 import base64
 import json
@@ -36,7 +37,13 @@ def main():
         raise SystemExit(__doc__)
     pts = {}
     for r in a:
-        pts.update(points(r))
+        if "=" in r:      # LABEL=DIR: the saved states of a branch run (state_NNNN.npz); d = the file's number (the chunk)
+            import glob, re
+            _, _, folder = r.partition("=")
+            for f in glob.glob(os.path.join(folder, "state_*.npz")):
+                pts[float(int(re.findall(r"(\d+)", os.path.basename(f))[-1]))] = (f, 0)
+        else:
+            pts.update(points(r))
     out = []
     xg = None
     for d in sorted(pts, reverse=True):
