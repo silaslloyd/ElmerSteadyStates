@@ -10,7 +10,7 @@ velocity is solved first thing).
 START.npz: a state on the run's mesh (its Zs / Zb blocks are replaced, everything else is kept). FRAMES.npz: the
 frames file; TIME_YR: the frame's time as printed by plots/margin_profile.py (the frames file's own times, which
 include --t0), the nearest frame within 1 yr is used. The nodes are matched by (x, y): every Zs / Zb node of the
-state must have exactly one frame node within 5 m (the frames are float32), else it stops.
+state (those it has: a land state has no Zb) must have exactly one frame node within 5 m (the frames are float32), else it stops.
 """
 import os
 import sys
@@ -64,6 +64,9 @@ def main():
     x = st.x.copy()
     for name, fx, fy, fz in (("Zs", fr["top_x"], fr["top_y"], fr["top_z"][k]),
                              ("Zb", fr["base_x"], fr["base_y"], fr["base_z"][k])):
+        if name not in st.layout.slices():
+            print(f"{name}: not a block of this state (a fixed bed), left as it is")
+            continue
         sl, xy = block_xy(st, name)
         i = match(xy, fx, fy, name)
         new = np.asarray(fz, float)[i]
