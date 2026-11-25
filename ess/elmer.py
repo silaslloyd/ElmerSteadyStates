@@ -837,6 +837,13 @@ End
             if n != 1:
                 raise ValueError("ESS_STOKES_NL_ITERS: no Nonlinear System Max Iterations in the Stokes section")
             text = text[:i0] + sec + text[i1:]
+        sstol = os.environ.get("ESS_SS_TOL")            # coupled-loop tolerance: every "Steady State Convergence
+        if sstol:                                       # Tolerance" tighter than this is loosened to it (the template's
+            lim = float(sstol)                          # 1e-8 is never met: the loop ran to its cap every step)
+
+            def _loosen(m):
+                return m.group(0) if float(m.group(3)) >= lim else f"{m.group(1)}{m.group(2)}{sstol}"
+            text = re.sub(r"(Steady State Convergence Tolerance *= *)((?:Real +)?)([0-9.]+(?:[eE][+-]?[0-9]+)?)", _loosen, text)
         ramp = os.environ.get("ESS_DT_RAMP")
         if ramp:
             text = self._dt_ramp(text, ramp, int(spec.n_steps))
