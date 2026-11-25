@@ -9,7 +9,7 @@ slider through the states.
     python plots/plot_state_3d.py work/test_periodic_gl/fix/retreat_chunks  # one phase
     python plots/plot_state_3d.py STATE.npz [STATE2.npz ...]                # given states
     python plots/plot_state_3d.py work/test_periodic_gl/fix --x 700 820     # x window (km)
-    python plots/plot_state_3d.py work/test_periodic_gl/fix --tile 1        # one copy (default 2: side by side, so
+    python plots/plot_state_3d.py work/test_periodic_gl/fix --tile 1        # one copy (default 1; 2: side by side, so
                                                                             # anything not periodic shows at the seam)
     python plots/plot_state_3d.py work/test_periodic_gl/fix_loads --no-temp # the velocity panel only
     python plots/plot_state_3d.py STATE.npz --no-temp --no-temperate        # also without the "temperate on / off" buttons
@@ -88,7 +88,7 @@ SIDES = True             # side walls (base to surface) at the window ends and t
 SECTOR_A = 0.0           # its angle (radians)
 SECTOR = False           # a sector footprint (configs/coarse_sector*.toml: symmetric about the x-axis, so y < 0 on one
                          # half): walls on the angled sides and on the arcs, triangles in (r, angle), no tiling
-TILE = 2                 # copies side by side across y (periodicity errors show at the seams); --tile N
+TILE = 1                 # copies side by side across y (periodicity errors show at the seams); --tile N (default 1: one copy)
 VMAX_GL = True           # speed colours up to the surface speed on the grounding line (--vmax-all: the largest)
 VMAX = 100.0             # speed colour maximum (m/yr), --vmax V; --vmax-gl: the surface speed on the grounding line
 # speed colours: Schoof & Mantelli (2021, Proc. R. Soc. A 477, 20200870) figs 4-7: pale cyan (slow) through blue to

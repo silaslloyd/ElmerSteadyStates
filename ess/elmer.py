@@ -352,6 +352,16 @@ class ElmerModel(Model):
         # of the width (a stream strip; free-slip walls, e.g. fssa3d/make_config.py). Also in the flux friction heating.
         self.slide_ydip = float(os.environ.get("ESS_SLIDE_YDIP") or c.get("slide_ydip", 0.0))
         self.slide_ydip_width = float(os.environ.get("ESS_SLIDE_YDIP_WIDTH") or c.get("slide_ydip_width", 2.0)) * 1e3
+        # [case] slide_ymid / slide_yside (env ESS_SLIDE_YMID / ESS_SLIDE_YSIDE): the sliding coefficient times a cosine across
+        # the width, slide_ymid in the middle of the width (y = width/2) and slide_yside at the sides (y = 0, width):
+        # (side + mid) / 2 + (side - mid) / 2 cos(2 pi y / width). E.g. 0.5 and 2: half the friction in the middle, double
+        # at the sides. Also in the flux friction heating. Both must be given (None: off).
+        _ym = os.environ.get("ESS_SLIDE_YMID") or c.get("slide_ymid")
+        _ys = os.environ.get("ESS_SLIDE_YSIDE") or c.get("slide_yside")
+        if (_ym is None) != (_ys is None):
+            raise ValueError("slide_ymid and slide_yside (ESS_SLIDE_YMID / ESS_SLIDE_YSIDE) must be given together")
+        self.slide_ymid = float(_ym) if _ym is not None else None
+        self.slide_yside = float(_ys) if _ys is not None else None
         # [elmer] friction_noise (env ESS_FRICTION_NOISE): coherent noise in the sliding coefficient, C (1 + a n(x, y))
         # with n in -1..1 (a = 0.1: +-10 %), fixed in time; also in the flux friction heating. n: a sum of cosines
         # (fractal: octaves of wavelength lambda, lambda/2, lambda/4 at amplitudes 1, 1/2, 1/4, random directions and
@@ -879,7 +889,7 @@ End
             if text.count(old) != 1:
                 raise ValueError("stokes_solver: the Stokes procedure line of the template changed")
             text = text.replace(old, f"Procedure = {procs[self.stokes_solver]}   ! [elmer] stokes_solver = {self.stokes_solver}")
-        if self.slide_ybump or self.slide_ydip:
+        if self.slide_ybump or self.slide_ydip or self.slide_ymid is not None:
             text = self._slide_ybump(text)
         if self.thermal == "elmerstreams":
             text = self._thermal_elmerstreams(text)
@@ -2074,9 +2084,13 @@ End
 
     def _ydip_factor(self, yi):
         """Lua factor of the friction dip across the width, y = tx[yi] ('' without a dip)"""
-        if not self.slide_ydip:
-            return ""
-        return (f" * (1 - {self.slide_ydip!r} * math.exp(-((tx[{yi}] - {self.width / 2!r}) / {self.slide_ydip_width!r})^2))")
+        out = ""
+        if self.slide_ydip:
+            out += f" * (1 - {self.slide_ydip!r} * math.exp(-((tx[{yi}] - {self.width / 2!r}) / {self.slide_ydip_width!r})^2))"
+        if self.slide_ymid is not None:
+            m, sd = self.slide_ymid, self.slide_yside
+            out += f" * ({(sd + m) / 2!r} + {(sd - m) / 2!r} * math.cos(2 * math.pi * tx[{yi}] / {self.width!r}))"
+        return out
 
     def _ybump_factor(self, yi, ti=None):
         """Lua factor of the sliding coefficient across the width: the bump 1 + slide_ybump sin(2 pi y / width) (its
