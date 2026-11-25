@@ -66,11 +66,14 @@ def grounded_of(gm, marine):
 
 
 def update_masks(layout: StateLayout, x, frozen: Records, diag: Records, *, marine=False, rho_ratio=None,
-                 tol=0.1, apply=True, grounding=True, periodic_width=None):
+                 tol=0.1, apply=True, grounding=True, periodic_width=None, gl_x=None):
     """Check the frozen masks against the state x (and its diagnostics: Temperature Loads, coordinates).
     Returns (x_new, frozen_new, report). With apply=False nothing changes and only the report is made.
     report: counts of nodes per switch, and summary numbers (n_cold, n_temperate, n_grounded, GL position).
     grounding=False: leave the grounded mask alone (contact runs: Elmer moves it), still report on it.
+    gl_x (m, marine): put the grounding line AT this x instead of finding it by the flotation scan: the columns at or
+    upstream of gl_x are grounded, everything seaward floats (Zb / Zs of the switched columns as for the scan). Used by
+    the grounding-line root find (ess/glroot.py), which solves the steady state for an imposed grounding line.
     periodic_width: periodic sides y = 0 / y = W: the cold/temperate decision of each y = 0 node is copied to its
     y = W copy (the refreezing test reads the heat loads, which Elmer folds onto the y = 0 side: there the total,
     on the y = W side only a one-sided part, so the two copies could disagree).
@@ -119,9 +122,12 @@ def update_masks(layout: StateLayout, x, frozen: Records, diag: Records, *, mari
         Hfc = np.bincount(col, Hf, nc) / np.bincount(col, None, nc)
         flc = np.bincount(col, floating.astype(float), nc) > 0      # a column with a floating node
         th = tol / rho_ratio
-        i = 0
-        while i < nc and ((not flc[i] and Hc[i] >= Hfc[i] - th) or (flc[i] and Hc[i] > Hfc[i] + th)):
-            i += 1
+        if gl_x is not None:
+            i = int(np.searchsorted(ux, float(gl_x) + 1e-6, side="right"))      # columns at or upstream of gl_x
+        else:
+            i = 0
+            while i < nc and ((not flc[i] and Hc[i] >= Hfc[i] - th) or (flc[i] and Hc[i] > Hfc[i] + th)):
+                i += 1
         grounded_new = (col < i)
         if not grounding:
             grounded_new = ~floating
