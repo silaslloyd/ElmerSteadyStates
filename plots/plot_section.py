@@ -163,6 +163,8 @@ def build(go, path, a):
     names, ranges = ["temperature"], [(lo, hi)]
     # the velocities (the state's diagnostics Velocity 1 / Velocity 3, on the ice nodes), as two more fields
     for c, lab, cs in ((1, "u (along-flow velocity, m/yr)", "Viridis"), (3, "w (vertical velocity, m/yr)", "RdBu_r")):
+        if NOVEL:
+            break
         try:
             gv, vv = diag[find_name(diag, f"velocity {c}")]
         except KeyError:
@@ -370,6 +372,9 @@ def steady_check(paths, cfgf):
     return out
 
 
+NOVEL = False
+
+
 def main():
     args = sys.argv[1:]
     args, xwin = opt(args, "--x", n=2)
@@ -414,11 +419,15 @@ def main():
         nz = 150 if len(paths) == 1 else 100          # several states: a lighter page
     a = dict(xwin=xwin, nz=nz, nx=nx, contour=contour, noclip=noclip, tsurf=tsurf, rock=rock, tmin=tmin, tmax=tmax,
              umax=umax)
+    global NOVEL
     built = [build(go, p_, a) for p_ in paths]
     names = built[0][2]
-    nf = len(names)
     if any(b[2] != names for b in built):
-        raise SystemExit("the states hold different fields (velocities missing in some): plot them separately")
+        print("the states hold different fields (velocities missing in some): temperature only")
+        NOVEL = True
+        built = [build(go, p_, a) for p_ in paths]
+        names = built[0][2]
+    nf = len(names)
     # one colour range per field over all the states (the slider compares like with like)
     for j in range(nf):
         lo = min(b[3][j][0] for b in built)
