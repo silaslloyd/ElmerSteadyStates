@@ -362,6 +362,11 @@ class ElmerModel(Model):
             raise ValueError("slide_ymid and slide_yside (ESS_SLIDE_YMID / ESS_SLIDE_YSIDE) must be given together")
         self.slide_ymid = float(_ym) if _ym is not None else None
         self.slide_yside = float(_ys) if _ys is not None else None
+        # slide_ylog (env ESS_SLIDE_YLOG=1): the cosine in log space, ln f = (ln side + ln mid)/2 + (ln side - ln mid)/2 cos(2 pi y / width):
+        # 0.1 and 10 give f from 1/10 to 10, the geometric mean 1 (half the width below 1)
+        self.slide_ylog = (os.environ.get("ESS_SLIDE_YLOG") or str(c.get("slide_ylog", ""))) not in ("", "0", "False", "false")
+        if self.slide_ylog and (self.slide_ymid is None or self.slide_ymid <= 0 or self.slide_yside <= 0):
+            raise ValueError("slide_ylog needs slide_ymid and slide_yside (> 0)")
         # [elmer] friction_noise (env ESS_FRICTION_NOISE): coherent noise in the sliding coefficient, C (1 + a n(x, y))
         # with n in -1..1 (a = 0.1: +-10 %), fixed in time; also in the flux friction heating. n: a sum of cosines
         # (fractal: octaves of wavelength lambda, lambda/2, lambda/4 at amplitudes 1, 1/2, 1/4, random directions and
@@ -2089,7 +2094,11 @@ End
             out += f" * (1 - {self.slide_ydip!r} * math.exp(-((tx[{yi}] - {self.width / 2!r}) / {self.slide_ydip_width!r})^2))"
         if self.slide_ymid is not None:
             m, sd = self.slide_ymid, self.slide_yside
-            out += f" * ({(sd + m) / 2!r} + {(sd - m) / 2!r} * math.cos(2 * math.pi * tx[{yi}] / {self.width!r}))"
+            if self.slide_ylog:
+                lm, ls = math.log(m), math.log(sd)
+                out += f" * math.exp({(ls + lm) / 2!r} + {(ls - lm) / 2!r} * math.cos(2 * math.pi * tx[{yi}] / {self.width!r}))"
+            else:
+                out += f" * ({(sd + m) / 2!r} + {(sd - m) / 2!r} * math.cos(2 * math.pi * tx[{yi}] / {self.width!r}))"
         return out
 
     def _ybump_factor(self, yi, ti=None):
