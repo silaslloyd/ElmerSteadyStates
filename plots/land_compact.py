@@ -12,6 +12,7 @@ RUNDIR: the run directory (RUNDIR/elmer.log). FRAMES.npz: from plots/vtu_frames.
 """
 import base64
 import json
+import os
 import re
 import sys
 import zlib
