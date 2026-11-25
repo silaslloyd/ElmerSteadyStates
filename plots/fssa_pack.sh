@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 W=work/land_flowline_3d
 PRE="$*"; [ -n "$PRE" ] || PRE=""
 want() { [ -z "$PRE" ] && return 0; for w in $PRE; do [[ $1 == $w* ]] && return 0; done; return 1; }
-for p in "full_dt10 log100-dt10" "full_dt50 log100-dt50" "full_dt100 log100-dt100" "full_dt200 log100-10k" "full_dt500 log100-dt500" \
+for p in "full_dt10 log100-dt10" "full_dt50 log100-dt50" "full_dt100 log100-dt100" "full_dt200 log100-dt200" "full_dt200old log100-10k" "full_dt500 log100-dt500" \
          "full_dt1000 log100-dt1000" "none_dt50 log100-none-dt50" "none_dt10 log100-none-dt10" "none_dt2 log100-none-dt2" "imp_dt200 log100-imp-dt200" "imp_dt500 log100-imp-dt500" "imp_dt1000 log100-imp-dt1000" "imp8_dt200 log100-imp8-dt200" "imp8_dt500 log100-imp8-dt500" "imp8_dt1000 log100-imp8-dt1000" "impt_dt200 log100-impt-dt200" "impt_dt500 log100-impt-dt500" "impt_dt1000 log100-impt-dt1000" "impt12_dt1000 log100-impt12-dt1000"; do
     set -- $p
     want $1 || continue
