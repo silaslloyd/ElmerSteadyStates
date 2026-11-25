@@ -66,7 +66,7 @@ def frames_of(path, dx):
 
 def main():
     a = sys.argv[1:]
-    opt = {"--t0": 0.0, "--dx": 5.0, "--every": 1}
+    opt = {"--t0": 0.0, "--dx": 5.0, "--every": 1, "--first-frame": 60}
     for k in list(opt):
         if k in a:
             i = a.index(k)
@@ -76,7 +76,9 @@ def main():
         raise SystemExit(__doc__)
     steps = steps_of(a[0].rstrip("/") + "/elmer.log", opt["--t0"], opt["--every"])
     rec = {"steps": [[s["n"], round(s["t"], 1), s["dt"], s["stokes"], s["surf"], s["its"]] for s in steps]}
-    if len(a) > 1:
+    if len(a) > 1 and not os.path.exists(a[1]):
+        print(f"no frames file {a[1]} yet (the first frame is written at step {opt['--first-frame']}): steps only", file=sys.stderr)
+    elif len(a) > 1:
         rec["frames"] = frames_of(a[1], opt["--dx"])
     blob = base64.b64encode(zlib.compress(json.dumps(rec, separators=(",", ":")).encode(), 9)).decode()
     print(f"{len(steps)} steps" + (f", {len(rec['frames']['t'])} frames" if "frames" in rec else "") + f", {len(blob)} characters")
