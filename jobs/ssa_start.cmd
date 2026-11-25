@@ -6,13 +6,13 @@
 #
 # A fine grounding-line run from the STEADY SSA PROFILE (grounding line 585.57 km, diag/ssa_profile.py with the model's
 # own parameters) instead of Schoof's 686 km start of the pipeline. Everything in one job, every step resumable:
-#   1. the SSA profile (diag/ssa_profile.py)            -> work/flowline_gl_fine_ssa/ssa_profile.csv
+#   1. the SSA profile (diag/ssa_profile.py)            -> work/gl_ssa/ssa_profile.csv
 #   2. the initial-state tables for it (jobs/ssa_tables.py) -> case/marine_ics_ssa
 #   3. ess setup + init on configs/flowline_gl_fine_ssa.toml (its own work dir, 250 m band at the SSA grounding line),
-#      the shelf break of the pipeline's S0                  -> work/flowline_gl_fine_ssa/start1.npz
+#      the shelf break of the pipeline's S0                  -> work/gl_ssa/start1.npz
 #   4. jobs/gl_branch.py from that state (the shelf cut 200 km past the grounding line, the --res band, the Stokes +
 #      free-surface transient with the contact grounding line every step, logging "BRANCH <tag>: ...")
-#      -> work/flowline_gl_fine_ssa/branch_<TAG>/
+#      -> work/gl_ssa/branch_<TAG>/
 #
 #   sbatch jobs/ssa_start.cmd
 #   RES=125 TAG=ssa125 ARGS="--max-chunks 100" sbatch jobs/ssa_start.cmd
@@ -31,7 +31,7 @@ export ESS_MPIRUN="mpirun -np {n} --bind-to none"
 unset ESS_SLIDING ESS_HEAT_LIMITER ESS_SEA_SPRING_DT ESS_STRAIN_HEAT_POSITIVE ESS_NO_CONVECTION
 export ESS_CONTACT_FUNCTION=elmerstreams
 CFG=configs/flowline_gl_fine_ssa.toml
-W=work/flowline_gl_fine_ssa
+W=work/gl_ssa
 RES=${RES:-125}
 TAG=${TAG:-ssa$RES}
 mkdir -p $W

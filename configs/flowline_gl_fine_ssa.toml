@@ -19,7 +19,7 @@
 # from the converged state, as the transient runs decide grounding), until contact agrees with the frozen mask. Pipeline: jobs/flowline_coarse_newton.cmd.
 #
 [paths]
-work_dir = "work/flowline_gl_fine_ssa"
+work_dir = "work/gl_ssa"
 case_dir = "{work}/case"                # mesh and initial conditions, written by `ess setup`
 
 [case]
