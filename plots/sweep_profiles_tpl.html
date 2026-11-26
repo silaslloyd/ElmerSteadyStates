@@ -1,0 +1,213 @@
+<title>Bed Sweep Profiles</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: one chart that the slider steps through, a small trend chart and the numbers under it.
+   Colour tokens: ice surface, ice base, bed, temperate patch, grounding line. */
+:root{
+  --bg:#f3f6f8; --card:#ffffff; --fg:#14212b; --muted:#5a6b78; --grid:#dde4ea; --line:#c9d3db;
+  --surf:#1b5fa8; --base:#12857d; --bed:#a89677; --ice:rgba(27,95,168,.10); --patch:rgba(214,110,30,.16);
+  --gl:#c2410c; --focus:#1b5fa8;
+  --head:"Space Grotesk","Inter",system-ui,sans-serif; --body:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0d141a; --card:#151e26; --fg:#e6edf2; --muted:#93a4b1; --grid:#26333d; --line:#33434f;
+  --surf:#6db3ff; --base:#4fd1c5; --bed:#80704f; --ice:rgba(109,179,255,.12); --patch:rgba(255,160,80,.17);
+  --gl:#ff9a62; --focus:#6db3ff; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0d141a; --card:#151e26; --fg:#e6edf2; --muted:#93a4b1; --grid:#26333d; --line:#33434f;
+  --surf:#6db3ff; --base:#4fd1c5; --bed:#80704f; --ice:rgba(109,179,255,.12); --patch:rgba(255,160,80,.17);
+  --gl:#ff9a62; --focus:#6db3ff; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 var(--body);padding-block:20px 32px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+main{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+h1{font:600 24px/1.2 var(--head);margin:0;text-wrap:balance}
+.sub{color:var(--muted);margin:4px 0 0;max-width:62ch}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;min-width:0}
+.ctl{display:flex;gap:10px;align-items:center}
+.ctl input[type=range]{flex:1;min-width:0;accent-color:var(--surf);height:32px}
+button{font:500 14px var(--body);color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;
+  min-width:44px;height:40px;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.read{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px 16px;margin-top:12px}
+.read div{min-width:0}
+.k{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.v{font:600 20px/1.2 var(--head);font-variant-numeric:tabular-nums}
+.v small{font:400 13px var(--body);color:var(--muted)}
+svg{display:block;width:100%;touch-action:pan-y}
+svg text{fill:var(--muted);font:12px var(--body);font-variant-numeric:tabular-nums}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin:10px 0 0;font-size:13px;color:var(--muted)}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+.tip{min-height:22px;margin-top:8px;font-size:13px;font-variant-numeric:tabular-nums}
+h2{font:600 15px var(--head);margin:0 0 8px}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:13px}
+th,td{text-align:right;padding:6px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:500}
+tr.sel td{background:var(--ice);font-weight:600}
+.note{font-size:13px;color:var(--muted);margin:0;max-width:70ch}
+</style>
+
+<main>
+  <header>
+    <h1>Bed sweep profiles</h1>
+    <p class="sub">The marine flowline with a temperate patch of length d upstream of the grounding line, shrinking from the whole grounded bed. Each state is converged. The grounding line stays at 787.57 km in all of them.</p>
+  </header>
+
+  <section class="card" aria-label="Profile viewer">
+    <div class="ctl">
+      <button id="prev" aria-label="Previous state">&larr;</button>
+      <input id="sl" type="range" min="0" max="0" step="1" value="0" aria-label="State">
+      <button id="next" aria-label="Next state">&rarr;</button>
+    </div>
+    <div class="read">
+      <div><div class="k">Patch length d</div><div class="v" id="r-d"></div></div>
+      <div><div class="k">Patch from</div><div class="v" id="r-h"></div></div>
+      <div><div class="k">Highest surface</div><div class="v" id="r-z"></div></div>
+      <div><div class="k">Newton its</div><div class="v" id="r-i"></div></div>
+    </div>
+  </section>
+
+  <section class="card" aria-label="Profile">
+    <h2>Surface, base and bed along the flow (elevation in m)</h2>
+    <svg id="main" viewBox="0 0 700 380" role="img" aria-label="Ice surface, ice base and bed elevation against distance"></svg>
+    <div class="legend">
+      <span><i style="background:var(--surf)"></i>Surface</span>
+      <span><i style="background:var(--base)"></i>Ice base</span>
+      <span><i style="background:var(--bed)"></i>Bed</span>
+      <span><i style="background:var(--patch);height:10px;width:14px"></i>Temperate patch</span>
+      <span><i style="background:var(--surf);opacity:.3"></i>Other states</span>
+    </div>
+    <div class="tip" id="tip">Touch the chart to read a point.</div>
+  </section>
+
+  <section class="card" aria-label="Trend">
+    <h2>Highest surface (m) against patch length</h2>
+    <svg id="trend" viewBox="0 0 700 220" role="img" aria-label="Highest surface elevation against patch length"></svg>
+  </section>
+
+  <section class="card" aria-label="Table">
+    <h2>The states</h2>
+    <div class="tw"><table id="tbl"></table></div>
+  </section>
+  <p class="note">The grid is 5 km. Heights are whole metres. The patch is drawn from GL &minus; d to the grounding line.</p>
+</main>
+
+<script>
+const DATA = /*DATA*/null;
+const dx = DATA.dx, pts = DATA.pts, N = pts.length, NX = pts[0].zs.length;
+const X = Array.from({length: NX}, (_, i) => i * dx);
+let W = 700, H = 380; const M = {l: 46, r: 12, t: 16, b: 38};
+const XMAX = X[NX - 1], YMIN = -300, YMAX = 1500;
+const sx = x => M.l + (x / XMAX) * (W - M.l - M.r);
+const sy = z => M.t + (1 - (z - YMIN) / (YMAX - YMIN)) * (H - M.t - M.b);
+const f0 = v => Math.round(v).toLocaleString("en-US").replace(/,/g, " ");
+const NS = "http://www.w3.org/2000/svg";
+const el = (n, a, p) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; };
+const path = (xs, zs) => zs.map((z, i) => (i ? "L" : "M") + sx(xs[i]).toFixed(1) + " " + sy(z).toFixed(1)).join("");
+const hd = p => p.gl;
+const zmax = p => Math.max(...p.zs);
+let cur = N - 1;
+
+const svg = document.getElementById("main"), tr = document.getElementById("trend");
+function size() {
+  W = Math.max(280, Math.round(svg.parentElement.clientWidth - 28));
+  H = Math.max(260, Math.round(W * 0.66));
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("height", H);
+  tr.setAttribute("viewBox", `0 0 ${W} 220`); tr.setAttribute("height", 220);
+}
+function draw() {
+  svg.innerHTML = "";
+  for (let z = -250; z <= YMAX; z += 250) {
+    el("line", {x1: M.l, x2: W - M.r, y1: sy(z), y2: sy(z), stroke: "var(--grid)", "stroke-width": z === 0 ? 1.5 : 1}, svg);
+    const t = el("text", {x: M.l - 6, y: sy(z) + 4, "text-anchor": "end"}, svg); t.textContent = f0(z);
+  }
+  for (let x = 0; x <= 1000; x += 200) {
+    if (x > XMAX) break;
+    const t = el("text", {x: sx(x), y: H - 14, "text-anchor": "middle"}, svg); t.textContent = x;
+  }
+  const lab = el("text", {x: (M.l + W - M.r) / 2, y: H - 2, "text-anchor": "middle"}, svg); lab.textContent = "distance along the flowline (km)";
+  const p = pts[cur];
+  // temperate patch
+  const h0 = Math.max(0, hd(p));
+  el("rect", {x: sx(h0), y: M.t, width: sx(p.gl) - sx(h0), height: H - M.t - M.b, fill: "var(--patch)"}, svg);
+  // other states
+  pts.forEach((q, i) => { if (i !== cur) el("path", {d: path(X, q.zs), fill: "none", stroke: "var(--surf)", "stroke-width": 1.2, opacity: .28}, svg); });
+  // ice body, bed, lines
+  const top = X.map((x, i) => (i ? "L" : "M") + sx(x).toFixed(1) + " " + sy(p.zs[i]).toFixed(1)).join("");
+  const bot = X.map((x, i) => "L" + sx(X[NX - 1 - i]).toFixed(1) + " " + sy(p.zb[NX - 1 - i]).toFixed(1)).join("");
+  el("path", {d: top + bot + "Z", fill: "var(--ice)"}, svg);
+  el("path", {d: path(X, p.bed) + `L${sx(XMAX)} ${sy(YMIN)}L${sx(0)} ${sy(YMIN)}Z`, fill: "var(--bed)", opacity: .55}, svg);
+  el("path", {d: path(X, p.bed), fill: "none", stroke: "var(--bed)", "stroke-width": 1.6}, svg);
+  el("path", {d: path(X, p.zb), fill: "none", stroke: "var(--base)", "stroke-width": 1.8}, svg);
+  el("path", {d: path(X, p.zs), fill: "none", stroke: "var(--surf)", "stroke-width": 2.4, "stroke-linejoin": "round"}, svg);
+  // grounding line
+  el("line", {x1: sx(p.gl), x2: sx(p.gl), y1: M.t, y2: H - M.b, stroke: "var(--gl)", "stroke-width": 1.6, "stroke-dasharray": "5 4"}, svg);
+  const g = el("text", {x: sx(p.gl) - 6, y: M.t + 12, "text-anchor": "end"}, svg); g.textContent = "grounding line " + p.gl.toFixed(1) + " km";
+  g.setAttribute("style", "fill:var(--gl)");
+  cross = el("line", {x1: 0, x2: 0, y1: M.t, y2: H - M.b, stroke: "var(--fg)", "stroke-width": 1, opacity: 0}, svg);
+  hot = el("rect", {x: M.l, y: M.t, width: W - M.l - M.r, height: H - M.t - M.b, fill: "transparent"}, svg);
+  hot.addEventListener("pointermove", tipAt); hot.addEventListener("pointerdown", tipAt);
+  hot.addEventListener("pointerleave", () => cross.setAttribute("opacity", 0));
+}
+let cross, hot;
+function tipAt(ev) {
+  const r = svg.getBoundingClientRect();
+  const x = ((ev.clientX - r.left) / r.width * W - M.l) / (W - M.l - M.r) * XMAX;
+  const i = Math.max(0, Math.min(NX - 1, Math.round(x / dx)));
+  const p = pts[cur];
+  cross.setAttribute("x1", sx(X[i])); cross.setAttribute("x2", sx(X[i])); cross.setAttribute("opacity", .5);
+  document.getElementById("tip").textContent =
+    `x ${f0(X[i])} km: surface ${f0(p.zs[i])} m, base ${f0(p.zb[i])} m, bed ${f0(p.bed[i])} m, thickness ${f0(p.zs[i] - p.zb[i])} m`;
+}
+
+// trend chart: highest surface against d
+
+function drawTrend() {
+  tr.innerHTML = "";
+  const T = {l: 46, r: 14, t: 16, b: 40}, w = W, h = 220;
+  const ds = pts.map(p => p.d), dmin = Math.min(...ds), dmax = Math.max(...ds);
+  const zs = pts.map(zmax), zlo = Math.floor(Math.min(...zs) / 200) * 200, zhi = Math.ceil(Math.max(...zs) / 200) * 200;
+  const tx = d => T.l + (dmax - d) / (dmax - dmin) * (w - T.l - T.r);
+  const ty = z => T.t + (1 - (z - zlo) / (zhi - zlo)) * (h - T.t - T.b);
+  for (let z = zlo; z <= zhi; z += 200) {
+    el("line", {x1: T.l, x2: w - T.r, y1: ty(z), y2: ty(z), stroke: "var(--grid)"}, tr);
+    const t = el("text", {x: T.l - 6, y: ty(z) + 4, "text-anchor": "end"}, tr); t.textContent = f0(z);
+  }
+  pts.forEach(p => { const t = el("text", {x: tx(p.d), y: h - 20, "text-anchor": "middle"}, tr); t.textContent = Math.round(p.d); });
+  const l = el("text", {x: (T.l + w - T.r) / 2, y: h - 4, "text-anchor": "middle"}, tr); l.textContent = "patch length d (km), shrinking to the right";
+  el("path", {d: pts.map((p, i) => (i ? "L" : "M") + tx(p.d).toFixed(1) + " " + ty(zmax(p)).toFixed(1)).join(""), fill: "none", stroke: "var(--surf)", "stroke-width": 2}, tr);
+  pts.forEach((p, i) => {
+    const c = el("circle", {cx: tx(p.d), cy: ty(zmax(p)), r: i === cur ? 7 : 4.5, fill: i === cur ? "var(--surf)" : "var(--card)", stroke: "var(--surf)", "stroke-width": 2}, tr);
+    const hit = el("circle", {cx: tx(p.d), cy: ty(zmax(p)), r: 18, fill: "transparent"}, tr);
+    hit.addEventListener("click", () => set(i));
+  });
+}
+
+function table() {
+  const t = document.getElementById("tbl");
+  t.innerHTML = "<tr><th>d (km)</th><th>from (km)</th><th>max Zs (m)</th><th>its</th></tr>" +
+    pts.map((p, i) => `<tr class="${i === cur ? "sel" : ""}"><td>${p.d.toFixed(1)}${i === 0 ? " (initial)" : ""}</td><td>${f0(Math.max(0, hd(p)))}</td><td>${f0(zmax(p))}</td><td>${p.its}</td></tr>`).join("");
+}
+function set(i) {
+  cur = Math.max(0, Math.min(N - 1, i));
+  const p = pts[cur];
+  document.getElementById("sl").value = cur;
+  document.getElementById("r-d").innerHTML = p.d.toFixed(1) + " <small>km</small>";
+  document.getElementById("r-h").innerHTML = f0(Math.max(0, hd(p))) + " <small>km</small>";
+  document.getElementById("r-z").innerHTML = f0(zmax(p)) + " <small>m</small>";
+  document.getElementById("r-i").textContent = p.its;
+  document.getElementById("tip").textContent = "Touch the chart to read a point.";
+  draw(); drawTrend(); table();
+}
+size();
+const sl = document.getElementById("sl");
+sl.max = N - 1;
+sl.addEventListener("input", () => set(+sl.value));
+document.getElementById("prev").addEventListener("click", () => set(cur - 1));
+document.getElementById("next").addEventListener("click", () => set(cur + 1));
+set(N - 1);
+let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { size(); draw(); drawTrend(); }, 120); });
+</script>
