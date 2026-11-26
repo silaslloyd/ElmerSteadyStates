@@ -12,6 +12,7 @@
 # COUPLED_ITERS=N: another cap on the coupled iterations than the reference's; SS_TOL=1e-4: the coupled loop's Steady State tolerance
 # loosened to it (ESS_SS_TOL; the template's 1e-8 is never met, so without it every step runs to the cap: the reference run 32398 did
 # 3 iterations on every step) -- the c8 / tol4 runs (log100_adapted_dt500_c8_tol4_10k) are 8 iterations with SS_TOL=1e-4.
+#   SUFFIX=c3 COUPLED_ITERS=3 / SUFFIX=tol6 STOKES_TOL=1e-6: a variant (the cap, the Stokes GCR tolerance) with its own tag and job name
 #   DT_NEW=250 REFNAME=log100-impt-dt500 SS_TOL=1e-4 bash jobs/land3d_log100_bdf2.sh      # the same run with dt 250 (twice the steps)
 #   REFNAME=log100-impt-dt500 SS_TOL=1e-4 bash jobs/land3d_log100_bdf2.sh      # BDF 2 of the 8-iteration, early-stopping run
 # The new run's tag is the reference's with _bdf2 (job name <reference name>-bdf2), so plots/fssa_pack.sh finds it.
@@ -64,6 +65,6 @@ SSARG=""; [ -n "$SS_TOL" ] && SSARG="ESS_SS_TOL=$SS_TOL"
 NNODES=${NODES:-$(( (NT + 127) / 128 ))}      # 128 cores per node: 256 ranks on 2 nodes (NODES=4 for the earlier layout)
 echo "reference $REF ($NAME): $CFG, FSSA $FSSA, dt $DT x $NST steps, coupled $FSC / $ITS iterations, VTU every $VEV, $NT ranks"
 echo "friction: log-space cosine, middle $YMID, sides $YSIDE; sliding: ${SLIDING:-config (subtemperate)}; start $START; BDF order $BDF; Stokes $PREC; coupled iterations $ITS${SS_TOL:+, steady state tolerance $SS_TOL}"
-CMD="env $SLIDING STOKES_PREC=$PREC $SSARG ESS_SLIDE_YLOG=1 ESS_SLIDE_YMID=$YMID ESS_SLIDE_YSIDE=$YSIDE CFG=$CFG START=$START DT=$DT YEARS=$YEARS FSSA=$FSSA FS_COUPLED=$FSC COUPLED_ITERS=$ITS VTU_EVERY=$VEV BDF_ORDER=$BDF TAG=${TAG0}_bdf${BDF}_$PREC sbatch $SBATCH_EXTRA --nodes=$NNODES --ntasks=$NT --time=${TL:-04:00:00} --job-name=$NAME-bdf$BDF-${PREC,,} jobs/flowline_fssa.cmd"
+CMD="env $SLIDING STOKES_PREC=$PREC${STOKES_TOL:+ STOKES_TOL=$STOKES_TOL} $SSARG ESS_SLIDE_YLOG=1 ESS_SLIDE_YMID=$YMID ESS_SLIDE_YSIDE=$YSIDE CFG=$CFG START=$START DT=$DT YEARS=$YEARS FSSA=$FSSA FS_COUPLED=$FSC COUPLED_ITERS=$ITS VTU_EVERY=$VEV BDF_ORDER=$BDF TAG=${TAG0}_bdf${BDF}_$PREC${SUFFIX:+_$SUFFIX} sbatch $SBATCH_EXTRA --nodes=$NNODES --ntasks=$NT --time=${TL:-04:00:00} --job-name=$NAME-bdf$BDF-${PREC,,}${SUFFIX:+-$SUFFIX} jobs/flowline_fssa.cmd"
 echo "$CMD"
 [ "$DRY" = 1 ] || eval "$CMD"

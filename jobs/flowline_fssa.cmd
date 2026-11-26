@@ -39,17 +39,18 @@ GLARG=$(grep -q '^geometry *= *"marine"' $CFG && echo "--gl contact" || true)   
 CASE=$(basename $CFG .toml); [ $CASE = marine_flowline ] && CASE= || CASE=${CASE}_   # tag prefix (not the flowline)
 N=${SLURM_NTASKS:-32}
 export ESS_NPROCS=$N ESS_MPIRUN="mpirun -np {n} --bind-to none"
+# STOKES_TOL (default 1e-8): the GCR tolerance of the 3D (block) Stokes solve.
 # STOKES_PREC / STOKES_ELEMENT / LINEAR_STOKES: override the config's Stokes setup (3D tests: the configs' P2/P1 +
 # ILU4 overflowed the ILU in 3D, and GCR + ILU0 stalled at a residual of 0.1; the defaults below for 3D cases: P1/P1 +
 # bubbles (as the coarse model) with GCR + ILU2, the level the coarse runs settle at)
 if [ -n "$CASE" ] && [ -z "$LINEAR_STOKES" ]; then
     # the coarse runs' Stokes solve (jobs/scaling_tests.cmd mkGCR): GCR(250) + ILU<level>, at most 2000 iterations,
-    # tolerance 1e-8, carrying on when not converged
+    # tolerance STOKES_TOL (1e-8), carrying on when not converged
     STOKES_ELEMENT=${STOKES_ELEMENT:-Bubbles}; LINEAR_STOKES=block
     mkdir -p $WORK; GCRF=$WORK/stokes_gcr_${STOKES_PREC:-ILU2}_${SLURM_JOB_ID:-local}.sif.in   # per job (jobs side by side)
     printf '%s\n' "  Linear System Solver = Iterative" "  Linear System Iterative Method = GCR" \
         "  Linear System GCR Restart = Integer 250" "  Linear System Max Iterations = 2000" \
-        "  Linear System Preconditioning = ${STOKES_PREC:-ILU2}" "  Linear System Convergence Tolerance = 1.0e-8" \
+        "  Linear System Preconditioning = ${STOKES_PREC:-ILU2}" "  Linear System Convergence Tolerance = ${STOKES_TOL:-1.0e-8}" \
         "  Linear System Abort Not Converged = Logical False" "  Linear System Residual Output = 1" > $GCRF
     export ESS_STOKES_BLOCK_FILE=$GCRF
 fi
