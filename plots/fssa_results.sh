@@ -7,6 +7,8 @@
 #   2. fssa_cpu_time.html  CPU time (core-hours) of the finished 10,000 yr runs against the time step: full, implicit BDF 1, implicit BDF 2
 D=/SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates
 rm -f ~/Downloads/cmp_*_frames.npz
-rsync -av -e "ssh -J slloyd@sshproxy-m.geophysik.uni-muenchen.de" "slloyd@tethys-3g:$D/work/land_flowline_3d/cmp_*_frames.npz" "slloyd@tethys-3g:$D/work/land_flowline_3d/fssa_cpu_time.html" ~/Downloads/ || exit 1
+SSH="ssh -J slloyd@sshproxy-m.geophysik.uni-muenchen.de"
+rsync -av -e "$SSH" "slloyd@tethys-3g:$D/work/land_flowline_3d/cmp_*_frames.npz" ~/Downloads/ || exit 1
+rsync -av -e "$SSH" "slloyd@tethys-3g:$D/work/land_flowline_3d/fssa_cpu_time.html" ~/Downloads/ || exit 1
 cd "$(dirname "$0")/.."
 python3 plots/fssa_rel_rms.py ~/Downloads --out ~/Downloads/fssa_rel_rms.html && open ~/Downloads/fssa_rel_rms.html ~/Downloads/fssa_cpu_time.html
