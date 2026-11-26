@@ -1,35 +1,44 @@
 #!/bin/bash
-# Progress of all your running / pending jobs in one go:  bash jobs/status.sh
-# For each job: name, state, elapsed, then the last lines of its slurm output that show progress
-# (chunk / grounding line / newton / BRANCH / step lines); for the 3D fssa runs also the newest Elmer log step and Stokes iteration.
-# N=<lines per job> (default 3)
-cd "$(dirname "$0")/.." || exit 1
-N=${N:-3}
-echo "=== $(date +%H:%M:%S)  jobs of $USER ==="
-squeue -u "$USER" -h -o "%i|%j|%T|%M|%N|%r" | while IFS='|' read -r id name state el nodes why; do
+# Status report of all your jobs: per job its state and what it is doing, from its own log.
+#   sweep (glsweep, glsw-*)        the sweep's last step line (d, Newton iteration, rms(F), model runs so far)
+#   Newton (glnt-*, glnewtherm)    its last rms(F) line
+#   thermal transient (glht-*)     its last chunk line
+#   FSSA land strip (log100-*)     step n/N, seconds per step and the time it finishes (jobs/eta.sh's estimate), coupled iterations of the last step
+#   pending                        why (Dependency, Resources, Priority)
+# Then the jobs that ended today with their state.
+#   cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && bash jobs/status.sh
+cd "$(dirname "$0")/.."
+SETUP=${SETUP:-240}
+now=$(date +%s)
+echo "== $(date +%H:%M)  $(squeue -u "$USER" -h | wc -l) jobs in the queue"
+squeue -u "$USER" -h -o "%i|%j|%T|%M|%D|%r" | sort -t'|' -k1,1n | while IFS='|' read J NAME ST EL ND RS; do
+    printf "%s  %-30s %-8s %-9s %s node(s)" "$J" "$NAME" "$ST" "$EL" "$ND"
+    [ "$ST" = PENDING ] && { echo "  [$RS]"; continue; }
     echo
-    echo "--- $id  $name  $state  $el  ${nodes:+nodes $nodes}${why:+($why)}"
-    [ "$state" = PENDING ] && continue
-    f=$(ls -t slurms/*_"$id".out 2>/dev/null | head -1)
-    [ -z "$f" ] && f=$(ls -t slurms/*"$id"*.out 2>/dev/null | head -1)
-    if [ -z "$f" ]; then echo "  (no slurm output file found)"; continue; fi
-    echo "  file: $f  (last written $(date -r "$f" +%H:%M:%S))"
-    grep -E "HOLD: |BRANCH [^ ]+: .*(batch|drift|rms|grounding)|S[0-9][a-z]?[: ].*(rms|done|stop|converged)|chunk [0-9]+/|contact grounding line|newton: it|rms\(F\)|stage|FSSA|step [0-9]+" "$f" \
-        | cut -c1-230 | tail -n "$N" | sed 's/^/  /'
-    [ "$N" -gt 0 ] && [ -z "$(grep -E 'chunk|newton|BRANCH|step' "$f" | tail -1)" ] && tail -n 2 "$f" | cut -c1-230 | sed 's/^/  /'
-    case "$name" in
-    f3d-*)  # the 3D free-surface runs: the Elmer log of the newest run directory
-        # the run directory carries the job label (fssa<jobid>); else the newest log of the 3D work dirs only
-        lg=$(ls -t work/*/runs/*fssa"$id"*/elmer.log 2>/dev/null | head -1)
-        [ -z "$lg" ] && lg=$(ls -t work/flowline_gl_3d*/runs/*/elmer.log 2>/dev/null | head -1)
-        if [ -n "$lg" ]; then
-            echo "  elmer log: $lg"
-            grep "MAIN: Time" "$lg" | tail -1 | sed 's/^/  /'
-            grep -E "gcr: " "$lg" | tail -1 | sed 's/^/  last Stokes iteration: /'
-            grep "Coupled system iteration" "$lg" | tail -1 | sed 's/^/  /'
-        fi;;
+    case "$NAME" in
+    glsweep|glsw-*)
+        L=slurms/gl_sweep_$J.out
+        grep -E "sweep d=" $L 2>/dev/null | tail -1 | cut -c1-170 | sed 's/^/     /'
+        grep -E "rms\(F\)" $L 2>/dev/null | tail -1 | cut -c1-170 | sed 's/^/     /'
+        grep -ciE "converged" $L 2>/dev/null | sed 's/^/     lines mentioning converged: /' ;;
+    glnt-*|glnewtherm)
+        grep -E "rms\(F\)|converged|NOT" slurms/gl_newton_thermal_$J.out 2>/dev/null | tail -2 | cut -c1-170 | sed 's/^/     /' ;;
+    glht-*|glheat)
+        grep -E "chunk|steady enough" slurms/gl_heat_steady_$J.out 2>/dev/null | tail -2 | cut -c1-170 | sed 's/^/     /' ;;
+    log100-*)
+        LOG=$(ls -d work/land_flowline_3d/runs/*fssa${J}_*/elmer.log 2>/dev/null | tail -1)
+        [ -n "$LOG" ] || { echo "     no run folder yet"; continue; }
+        S=$(grep -E "MAIN: *Time" "$LOG" | tail -1 | sed -E 's/.*Time: *([0-9]+)\/([0-9]+):.*/\1 \2/')
+        [ -n "$S" ] || { echo "     no step yet"; continue; }
+        set -- $S; n=$1; N=$2
+        es=$(echo "$EL" | awk -F'[-:]' '{ if (NF==2) print $1*60+$2; else if (NF==3) print $1*3600+$2*60+$3; else print $1*86400+$2*3600+$3*60+$4 }')
+        dn=$((n - 1)); [ $dn -ge 1 ] || dn=1
+        per=$(( (es - SETUP) / dn )); [ $per -ge 1 ] || per=1
+        left=$(( (N - n + 1) * per ))
+        it=$(awk '/MAIN: *Time/{n=0} /Coupled system iteration/{n=$NF} END{print n}' "$LOG")
+        echo "     step $n/$N, ${per}s/step, finishes about $(date -d "@$((now + left))" +%H:%M), coupled iteration $it in this step" ;;
     esac
 done
 echo
-echo "=== grounding line: the 125 m branch and the 250 m hold runs ==="
-grep -h "BRANCH r125\|HOLD:" slurms/gl_branch_*.out slurms/gl_hold_*.out 2>/dev/null | grep -v "res_points" | tail -8 | cut -c1-230
+echo "== ended today"
+sacct -u "$USER" -S today -X -n -o JobID%9,JobName%30,State%12,ExitCode,Elapsed 2>/dev/null | grep -vE "RUNNING|PENDING" | tail -15
