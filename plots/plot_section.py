@@ -500,8 +500,8 @@ def main():
     titles = [[f"{nm}: {b[4]}{tag(p_)}" for nm in names] for b, p_ in zip(built, paths)]
     buttons = [dict(label=nm, method="skip", args=[None]) for nm in names]
     sliders = []
-    if len(built) > 1:
-        # the state slider at the bottom, for sweep points too (the draggable head pointer also picks the state)
+    if len(built) > 1 and not any(state_meta(p_)[0] is not None and state_meta(p_)[1] is not None for p_ in paths):
+        # (states with a sweep d: the draggable head pointer below chooses instead)
         sliders = [dict(active=0, currentvalue=dict(prefix="state: ", font=dict(size=13)), pad=dict(t=50),
                         steps=[dict(label=(f"{meta[p_] / 1e3:.1f} km{iter_tag(p_).replace(', Newton it ', ' it ')}" if meta[p_] is not None else os.path.basename(p_)),
                                     method="skip", args=[None], value=str(k)) for k, p_ in enumerate(paths)])]
