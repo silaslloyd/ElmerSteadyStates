@@ -567,6 +567,8 @@ if (UJ >= 0) {              // the speed's colour limits and the log toggle
     for p_ in paths:
         d_, xg_ = state_meta(p_)
         heads.append(None if d_ is None or xg_ is None else round((xg_ - d_) / 1e3, 3))
+    if any(h is not None for h in heads):      # a plain state beside sweep points (the fully temperate start): its patch covers the whole bed, head at x = 0
+        heads = [0.0 if h is None else h for h in heads]
     if len(paths) > 1 and sum(h is not None for h in heads) > 1:
         js += """
 var HEADS = %s;
