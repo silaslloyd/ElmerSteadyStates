@@ -40,8 +40,9 @@ print(f"{math.exp(a - b):.6g} {math.exp(a + b):.6g}")
 PY
 )
 if grep -q "TDepSliding(" "$D/run.sif"; then SLIDING=""; else SLIDING="ESS_SLIDING=temperate"; fi
-START=${START:-$(grep -h -m1 -o "$W/[A-Za-z0-9_./-]*\.npz" slurms/fssa_${REF}_*.log 2>/dev/null | head -1)}
-[ -f "$START" ] || { echo "start state of the reference run not found in its log: give START=FILE (the 78,000 yr state)"; exit 1; }
+# the start: the first state file named in the reference run's log that is not its own output ($W/fssa_$TAG0.npz)
+START=${START:-$(grep -h -o "$W/[A-Za-z0-9_./-]*\.npz" slurms/fssa_${REF}_*.log 2>/dev/null | grep -v "^$W/fssa_$TAG0\.npz$" | head -1)}
+[ -f "$START" ] || { echo "start state of the reference run not found in its log (its own output $W/fssa_$TAG0.npz is not it): give START=FILE (the 78,000 yr state)"; exit 1; }
 NNODES=$(( (NT + 63) / 64 ))
 echo "reference $REF ($NAME): $CFG, FSSA $FSSA, dt $DT x $NST steps, coupled $FSC / $ITS iterations, VTU every $VEV, $NT ranks"
 echo "friction: log-space cosine, middle $YMID, sides $YSIDE; sliding: ${SLIDING:-config (subtemperate)}; start $START; BDF order $BDF"
