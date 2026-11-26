@@ -76,7 +76,9 @@ def main():
                 print(f"start state {path}: not read ({ex!r})")
     rows, brows = read(a.folder), read_b(a.folder)
     if not rows:
-        sys.exit(f"no sweep.csv rows in {a.folder}/seg_*/ yet (the first point has not converged)")
+        print(f"no sweep.csv rows in {a.folder}/seg_*/ yet (the first point has not converged)")
+        if start is None:
+            sys.exit(1)
     ok = np.array([str(r.get("converged")) == "1" for r in rows])
     print(f"{ok.sum()} converged of {len(rows)} rows, {len(brows)} bisection rows")
     hdr = f"{'d km':>8} {'GL km':>8} {'head km':>8} {'its':>4} {'step':>6} {'cold>Tm':>8} {'hydro':>8} {'consist':>8}"
