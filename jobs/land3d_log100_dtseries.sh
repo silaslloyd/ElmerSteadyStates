@@ -4,7 +4,7 @@
 #   DRY=1 bash jobs/land3d_log100_dtseries.sh          # print the four sbatch lines only
 #   bash jobs/land3d_log100_dtseries.sh                # submit: BDF 1 dt 100, dt 50, then BDF 2 dt 100, dt 50
 #   DT_LIST="100" bash jobs/land3d_log100_dtseries.sh  # only dt 100
-# 256 ranks (4 nodes) each. Time limits: dt 100 8 h, dt 50 16 h (about 2 min per dt 200 step before; smaller steps need fewer iterations).
+# 256 ranks on 2 nodes each (128 cores per node). Time limits: dt 100 8 h, dt 50 16 h (about 2 min per dt 200 step before; smaller steps need fewer iterations).
 cd "$(dirname "$0")/.."
 export REFNAME=${REFNAME:-log100-impt-dt500} SS_TOL=${SS_TOL:-1e-4} STOKES_PREC=${STOKES_PREC:-ILU3}
 export START=${START:-work/land_flowline_3d/state_078000.npz}

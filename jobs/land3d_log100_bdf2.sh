@@ -61,7 +61,7 @@ START=${START:-$(grep -h -o "$W/[A-Za-z0-9_./-]*\.npz" slurms/fssa_${REF}_*.log 
 ITS=${COUPLED_ITERS:-$ITS}
 PREC=${STOKES_PREC:-ILU3}      # fixed Stokes preconditioner (yesterday's runs: ILU3), never the cmd default ILU2
 SSARG=""; [ -n "$SS_TOL" ] && SSARG="ESS_SS_TOL=$SS_TOL"
-NNODES=$(( (NT + 63) / 64 ))
+NNODES=${NODES:-$(( (NT + 127) / 128 ))}      # 128 cores per node: 256 ranks on 2 nodes (NODES=4 for the earlier layout)
 echo "reference $REF ($NAME): $CFG, FSSA $FSSA, dt $DT x $NST steps, coupled $FSC / $ITS iterations, VTU every $VEV, $NT ranks"
 echo "friction: log-space cosine, middle $YMID, sides $YSIDE; sliding: ${SLIDING:-config (subtemperate)}; start $START; BDF order $BDF; Stokes $PREC; coupled iterations $ITS${SS_TOL:+, steady state tolerance $SS_TOL}"
 CMD="env $SLIDING STOKES_PREC=$PREC $SSARG ESS_SLIDE_YLOG=1 ESS_SLIDE_YMID=$YMID ESS_SLIDE_YSIDE=$YSIDE CFG=$CFG START=$START DT=$DT YEARS=$YEARS FSSA=$FSSA FS_COUPLED=$FSC COUPLED_ITERS=$ITS VTU_EVERY=$VEV BDF_ORDER=$BDF TAG=${TAG0}_bdf${BDF}_$PREC sbatch $SBATCH_EXTRA --nodes=$NNODES --ntasks=$NT --time=${TL:-04:00:00} --job-name=$NAME-bdf$BDF-${PREC,,} jobs/flowline_fssa.cmd"
