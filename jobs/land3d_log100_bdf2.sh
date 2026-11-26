@@ -53,10 +53,11 @@ if grep -q "TDepSliding(" "$D/run.sif"; then SLIDING=""; else SLIDING="ESS_SLIDI
 START=${START:-$(grep -h -o "$W/[A-Za-z0-9_./-]*\.npz" slurms/fssa_${REF}_*.log 2>/dev/null | grep -v "^$W/fssa_$TAG0\.npz$" | head -1)}
 [ -f "$START" ] || { echo "start state of the reference run not found in its log (its own output $W/fssa_$TAG0.npz is not it): give START=FILE (the 78,000 yr state)"; exit 1; }
 ITS=${COUPLED_ITERS:-$ITS}
+PREC=${STOKES_PREC:-ILU3}      # fixed Stokes preconditioner (yesterday's runs: ILU3), never the cmd default ILU2
 SSARG=""; [ -n "$SS_TOL" ] && SSARG="ESS_SS_TOL=$SS_TOL"
 NNODES=$(( (NT + 63) / 64 ))
 echo "reference $REF ($NAME): $CFG, FSSA $FSSA, dt $DT x $NST steps, coupled $FSC / $ITS iterations, VTU every $VEV, $NT ranks"
-echo "friction: log-space cosine, middle $YMID, sides $YSIDE; sliding: ${SLIDING:-config (subtemperate)}; start $START; BDF order $BDF; coupled iterations $ITS${SS_TOL:+, steady state tolerance $SS_TOL}"
-CMD="env $SLIDING $SSARG ESS_SLIDE_YLOG=1 ESS_SLIDE_YMID=$YMID ESS_SLIDE_YSIDE=$YSIDE CFG=$CFG START=$START DT=$DT YEARS=$YEARS FSSA=$FSSA FS_COUPLED=$FSC COUPLED_ITERS=$ITS VTU_EVERY=$VEV BDF_ORDER=$BDF TAG=${TAG0}_bdf$BDF sbatch --nodes=$NNODES --ntasks=$NT --time=${TL:-04:00:00} --job-name=$NAME-bdf$BDF jobs/flowline_fssa.cmd"
+echo "friction: log-space cosine, middle $YMID, sides $YSIDE; sliding: ${SLIDING:-config (subtemperate)}; start $START; BDF order $BDF; Stokes $PREC; coupled iterations $ITS${SS_TOL:+, steady state tolerance $SS_TOL}"
+CMD="env $SLIDING STOKES_PREC=$PREC $SSARG ESS_SLIDE_YLOG=1 ESS_SLIDE_YMID=$YMID ESS_SLIDE_YSIDE=$YSIDE CFG=$CFG START=$START DT=$DT YEARS=$YEARS FSSA=$FSSA FS_COUPLED=$FSC COUPLED_ITERS=$ITS VTU_EVERY=$VEV BDF_ORDER=$BDF TAG=${TAG0}_bdf${BDF}_$PREC sbatch --nodes=$NNODES --ntasks=$NT --time=${TL:-04:00:00} --job-name=$NAME-bdf$BDF-${PREC,,} jobs/flowline_fssa.cmd"
 echo "$CMD"
 [ "$DRY" = 1 ] || eval "$CMD"
