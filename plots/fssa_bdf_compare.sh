@@ -1,22 +1,18 @@
 #!/bin/bash
-# On tethys: accuracy of the BDF 2 implicit dt 500 runs against BDF 1 (the 8-iteration, 1e-4 runs, log100): rms / max difference in Zs at
-# the frame times they share (plots/fssa_compare.py), against the full-FSSA run at dt 10 (the reference, as yesterday), and the others against yesterday's BDF 1.
-# Packs the frames each run has so far first. Runs: impt_dt500 (yesterday's BDF 1, ILU3), impt_dt500_bdf1 / _bdf2 (today's, ILU2),
-# impt_dt500_bdf1_ilu3 / _bdf2_ilu3 (the fixed-preconditioner pair, jobs/land3d_log100_bdf12.sh); runs that do not exist yet are left out.
+# On tethys: accuracy of BDF 1 and BDF 2 (implicit dt 500, 8 iterations, tol 1e-4, log100) against the full-FSSA dt 10 run: rms / max
+# difference in Zs at the frame times they share (plots/fssa_compare.py). Packs the frames each run has so far first.
+# BDF 1 = impt_dt500 (yesterday's), BDF 2 = impt_dt500_bdf2 (today's, ILU2); the fixed-preconditioner pair of
+# jobs/land3d_log100_bdf12.sh (impt_dt500_bdf1_ilu3, impt_dt500_bdf2_ilu3) is added when it exists.
 #   bash plots/fssa_bdf_compare.sh
 #   PACK=0 bash plots/fssa_bdf_compare.sh     # do not repack
 cd "$(dirname "$0")/.."
 W=work/land_flowline_3d
-if [ "${PACK:-1}" = 1 ]; then bash plots/fssa_pack.sh full_dt10 impt_dt500 | grep -E "full_dt10 "; fi
+if [ "${PACK:-1}" = 1 ]; then bash plots/fssa_pack.sh full_dt10 impt_dt500 | grep -E "dt10 |impt_dt500"; fi
+F=$W/cmp_full_dt10_frames.npz
+[ -f $F ] || { echo "missing $F (job log100-dt10)"; exit 1; }
 RUNS=""
-for l in impt_dt500 impt_dt500_bdf1 impt_dt500_bdf2 impt_dt500_bdf1_ilu3 impt_dt500_bdf2_ilu3; do
+for l in impt_dt500 impt_dt500_bdf2 impt_dt500_bdf1_ilu3 impt_dt500_bdf2_ilu3; do
     [ -f $W/cmp_${l}_frames.npz ] && RUNS="$RUNS $W/cmp_${l}_frames.npz"
 done
-[ -n "$RUNS" ] || { echo "no impt_dt500 frames files"; exit 1; }
-for r in full_dt10; do
-    [ -f $W/cmp_${r}_frames.npz ] || { echo "missing $W/cmp_${r}_frames.npz (job log100-dt10)"; exit 1; }
-    echo; echo "=== against $r"
-    python3 plots/fssa_compare.py $W/cmp_${r}_frames.npz $RUNS 2>&1
-done
-echo; echo "=== against yesterday's BDF 1 (impt_dt500)"
-python3 plots/fssa_compare.py $W/cmp_impt_dt500_frames.npz $(echo $RUNS | sed "s# $W/cmp_impt_dt500_frames.npz##; s#^$W/cmp_impt_dt500_frames.npz ##") 2>&1
+echo; echo "=== BDF 1 and BDF 2 against full dt 10"
+python3 plots/fssa_compare.py $F $RUNS 2>&1
