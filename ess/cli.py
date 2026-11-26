@@ -1267,8 +1267,10 @@ def cmd_sweep(args):
     if not _marine(model):
         raise SystemExit("ess sweep: marine configs only (the patch is measured from the grounding line)")
     from dataclasses import replace as _replace
-    from .spectrum import gl_position, run_sweep_marine
+    from .case import eval_lua_parameters
+    from .spectrum import cs_sheet_params, gl_position, run_sweep_marine
     _patch_diagnostics(model)
+    P = eval_lua_parameters(model.params_file)
     prob = _problem(cfg, model)
     p = saved.p if args.p is None else args.p
     nopt = newton_options(cfg)
@@ -1291,7 +1293,8 @@ def cmd_sweep(args):
                             frac=args.step_frac, smin=args.step_min_km * 1e3, smax=args.step_max_km * 1e3,
                             gl_rounds=args.gl_rounds, predictor=args.predictor, seed=seed,
                             its_max=args.newton_its_max, floor=args.step_floor_km * 1e3 if args.step_floor_km else None,
-                            bisect=args.bisect_km * 1e3)
+                            bisect=args.bisect_km * 1e3, hp=cs_sheet_params(cfg), rhoi=P["rhoi"], Lw=P["Lw"],
+                            rhow=P["rhow"], gravity=P["gravity"])
     n = sum(1 for r_ in rows if str(r_.get("converged")) == "1")
     log.info(f"sweep: {n} converged states of {len(rows)} in {out}/sweep.csv")
 
@@ -1759,8 +1762,9 @@ def main(argv=None):
     s.add_argument("--step-floor-km", type=float, default=0.0,
                    help="the smallest step the halvings go down to (km; default 0: --step-min-km)")
     s.add_argument("--bisect-km", type=float, default=0.0,
-                   help="where two converged points differ in consistency (no cold bed above melting, no temperate "
-                        "refreezing), bisect the interval down to this length (km; sweep's bisect.csv); 0: off")
+                   help="where two converged points differ in consistency (no cold bed above melting and the patch's "
+                        "water sheet stays above 0: the spectrum's 'kept'), bisect the interval down to this "
+                        "length (km; sweep's bisect.csv); 0: off")
     s.add_argument("--out", help="output folder (default <work>/sweep_p<P>_down or _up)")
     s.add_argument("--predictor", choices=["none", "secant"], default="none",
                    help="secant: each Newton from the linear extrapolation of the last two converged states")

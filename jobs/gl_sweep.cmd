@@ -23,8 +23,8 @@
 # D_START (km, default the grounding line's position: the whole grounded bed), D_END, STEP, SPAN, PAD, FINE, BELOW, ABOVE, GRADE,
 # MAP_STEPS, PREDICTOR (none|secant), NEWTON_TOL (default 5e-5), ITS_MAX (default 8: a Newton with more iterations halves the next
 # steps, they double back once a solve takes <= ITS_MAX / 2; a failure halves the step too; 0: off), FLOOR (km, default 1: the smallest
-# step), BISECT (km, default 2: where the consistency of the steady state changes between two points -- cold bed above melting or
-# temperate nodes refreezing appear / disappear -- the interval is bisected down to this length; the midpoints in sweep_<TAG>/seg_*/bisect.csv
+# step), BISECT (km, default 2: where the consistency of the steady state changes between two points -- cold bed above melting, or
+# the patch's water sheet (CS hydrology on its melt) running dry inside it -- the interval is bisected down to this length; the midpoints in sweep_<TAG>/seg_*/bisect.csv
 # and points/; 0: off). Output: work/gl_ssa_gl<GL>/sweep_<TAG>/seg_mXXXX/ (sweep.csv, points/),
 # segment configs work/gl_ssa_gl<GL>/refined/mXXXX.toml. Resubmitting resumes (finished segments are skipped).
 set -e

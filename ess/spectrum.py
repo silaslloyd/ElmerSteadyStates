@@ -744,7 +744,8 @@ def run_spectrum_marine(prob, model, saved, y0, p, newton_opt, outdir, *, d_step
 
 # ---------------------------------------------------------------- the marine sweep (ess sweep)
 SCOLS = ["d_km", "x_gl_km", "x_head_km", "gl_rounds", "converged", "newton_its", "rms_F", "n_cold_above_Tm",
-         "Tb_cold_max", "n_temp_refreezing", "step_km", "note"]
+         "Tb_cold_max", "n_temp_refreezing", "step_km", "note", "hydro_ok", "h_head", "h_min", "q_gl", "q_min",
+         "melt_mean", "hydro_status", "consistent"]
 
 
 def sweep_lengths(d_start, d_end, frac, smin, smax):
@@ -763,7 +764,7 @@ def sweep_lengths(d_start, d_end, frac, smin, smax):
 
 def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_start, d_end, frac=0.1, smin=1e3,
                      smax=20e3, gl_rounds=6, tol_T=0.0, predictor="none", seed=None, its_max=0, floor=None,
-                     bisect=0.0):
+                     bisect=0.0, hp=None, rhoi=917.0, Lw=3.34e5, rhow=1028.0, gravity=9.81 * 3.15576e7 ** 2):
     """Steady states with a temperate patch of length d (m) from the grounding line upstream (cold upstream of it,
     every floating node temperate; patch_mask), for d from d_start to d_end in graded steps (sweep_lengths), each
     from the previous one's state. For each d: Newton with both masks frozen; then the grounding line by CONTACT
@@ -779,7 +780,9 @@ def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_st
     Adaptive steps: a Newton that needs more than its_max iterations (0: off) halves the following steps (they double
     back, up to the nominal step, once a solve takes <= its_max / 2); a failure halves the step back from the last
     converged length; never below floor m (default smin). BISECTION (bisect m, 0: off): where two converged points
-    differ in consistency (n_cold_above_Tm = 0 and n_temp_refreezing = 0: a consistent steady state), the interval
+    differ in consistency (a CONSISTENT steady state, as the spectrum's kept: no cold bed above melting AND the steady
+    CS water sheet of the patch's melt (hp, patch_hydrology_cs) does not reach h = 0 inside the patch; without hp the
+    thermal test only), the interval
     between them is bisected (each midpoint solved from the consistent-side state) down to bisect m: the boundary of
     the consistent states. Midpoints go to outdir/bisect.csv (same columns) and outdir/points/, never to sweep.csv
     (whose last converged row is the sweep's own latest point, as the segment hand-off and the resume read it)."""
@@ -876,9 +879,16 @@ def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_st
             row.update(n_cold_above_Tm=int((cold & (Tb > T0 + tol_T)).sum()),
                        Tb_cold_max=float(np.nanmax(Tb[cold])) if cold.any() else np.nan,
                        n_temp_refreezing=int(refr.sum()))
-            cons = row["n_cold_above_Tm"] == 0 and row["n_temp_refreezing"] == 0
+            thermal_ok = row["n_cold_above_Tm"] == 0
+            hyd, hydro_ok = {}, True
+            if hp is not None:
+                hydro_ok, st, hrow, hyd = patch_hydrology_cs(diag_, layout, x, frozen, xg, d, hp, rhoi=rhoi, Lw=Lw,
+                                                              rhow=rhow, gravity=gravity)
+                row.update({k: v for k, v in hrow.items() if k in SCOLS}, hydro_ok=int(hydro_ok), hydro_status=st)
+            cons = bool(thermal_ok and hydro_ok)
+            row["consistent"] = int(cons)
             save_state(os.path.join(outdir, "points", f"state_{int(round(d / 100)):05d}.npz"), layout, x, p,
-                       dict(frozen), diag_, sweep_d=d, x_gl=xg)
+                       dict(frozen), {**diag_, **hyd}, sweep_d=d, x_gl=xg)
         else:
             note = "Newton did not converge"
         row["note"] = note
@@ -891,7 +901,8 @@ def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_st
         log.info(f"sweep: {tag}d = {d / 1e3:g} km: {'converged' if r.converged else 'FAILED'} ({r.iterations} its, "
                  f"{res['rounds']} GL round(s)); GL {res['xg'] / 1e3:.2f} km, head {(res['xg'] - d) / 1e3:.2f} km"
                  + (f"; {row.get('n_cold_above_Tm')} cold nodes above melting, {row.get('n_temp_refreezing')} "
-                    f"temperate refreezing; {'CONSISTENT' if res['cons'] else 'inconsistent'}" if r.converged else "")
+                    f"temperate refreezing; hydrology {row.get('hydro_status', 'n/a')}; "
+                    f"{'CONSISTENT' if res['cons'] else 'inconsistent'}" if r.converged else "")
                  + (f"; {res['note']}" if res["note"] else ""))
 
     def bisect_between(a, b):
@@ -920,8 +931,7 @@ def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_st
     d_cur = d_last if done else float(d_start)
     cons_prev = None
     if done:
-        cons_prev = (str(done[-1].get("n_cold_above_Tm")) == "0" and str(done[-1].get("n_temp_refreezing")) == "0") \
-            if str(done[-1].get("n_cold_above_Tm", "")) != "" else None
+        cons_prev = (str(done[-1]["consistent"]) == "1") if str(done[-1].get("consistent", "")) != "" else None
     sc = 1.0
     while (d_end - d_cur) * sgn > 1e-6:
         nominal = min(max(frac * d_cur, smin), smax)
