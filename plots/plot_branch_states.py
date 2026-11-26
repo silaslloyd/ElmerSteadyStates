@@ -10,7 +10,6 @@ is labelled with Tsurf, and hovering over a line shows its point and Tsurf.
 
 Press Run in an IDE (settings below), or:
     python plots/plot_branch_states.py work/land_flowline/branch_cold work/land_flowline/steady_p268.15_cold.npz
-    python plots/plot_branch_states.py work/gl_ssa_gl549/sweep_gl549s100      # a sweep folder: the fully temperate start, then every converged point
 Needs numpy and plotly. Linear axes, fixed axis and colour ranges across the slider.
 """
 import glob
@@ -192,26 +191,14 @@ def u_cap(S):
 def main():
     bdir = repo_path(sys.argv[1] if len(sys.argv) > 1 else BRANCH)
     start = repo_path(sys.argv[2] if len(sys.argv) > 2 else START)
-    sweep = bool(glob.glob(os.path.join(bdir, "seg_*")))     # a sweep folder (seg_*/sweep.csv + points/): converged points, d from the start down
-    if sweep:
-        from sweep_rates import points
-        pts = points(bdir)
-        if len(sys.argv) <= 2:      # the fully temperate start of this sweep: work/<case>/sweep_<tag> -> branch_<tag>/steady_temperate.npz
-            start = os.path.join(os.path.dirname(os.path.normpath(bdir)), "branch_" + os.path.basename(os.path.normpath(bdir)).replace("sweep_", "", 1),
-                                 "steady_temperate.npz")
-        files = ([start] if os.path.exists(start) else []) + [pts[d][0] for d in sorted(pts, reverse=True)]
-    else:
-        files = ([start] if start and os.path.exists(start) else []) + \
-            sorted(glob.glob(os.path.join(bdir, "points", "state_[0-9][0-9][0-9][0-9].npz")))
+    files = ([start] if start and os.path.exists(start) else []) + \
+        sorted(glob.glob(os.path.join(bdir, "points", "state_[0-9][0-9][0-9][0-9].npz")))
     if not files:
         raise SystemExit(f"no states found (start {start}, branch {bdir}/points/state_*.npz)")
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
     S = [extract(f) for f in files]
-    if sweep:                       # the file names carry d in tenths of km (5 digits): number the states 1, 2, ... in sweep order instead
-        for i, st in enumerate(S):
-            st["k"] = None if files[i] == start else i
     # a time series (`ess run --save-every N`, BRANCH = <run>_chunks): time instead of Tsurf on the x axis
     series = [s for s in S if s["k"] is not None]
     timeser = bool(series) and all("t" in s for s in series) and len({round(s["p"], 9) for s in series}) == 1
