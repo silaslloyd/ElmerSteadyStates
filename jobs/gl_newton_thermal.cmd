@@ -7,10 +7,11 @@
 # The thermomechanical steady state of a grounding-line branch by Newton: from the steady temperature of jobs/gl_heat_steady.cmd
 # (thermo_heat.npz: fixed geometry, friction + strain heating, the whole bed temperate), `ess newton` on the full map
 # (temperature, Zs, Zb; Stokes + free surface + heat, the config's subtemperate sliding, friction and strain heating, no heat
-# limiter, the sea spring at the map's dt), the bed kept temperate ([masks] ct = false) and the grounding line moved between solves
-# by the contact criterion ([masks] gl = "contact": a short contact run from the converged state; if its grounded mask differs,
-# Newton again with it), as the pipeline's jobs/flowline_coarse_newton.cmd step 4. The Newton iterates are checkpointed
-# (newton_checkpoint.npz in the work directory): resubmitting resumes. Do not run two Newtons of one work directory at once.
+# limiter, the sea spring at the map's dt), with the MASKS FIXED: the grounded mask (the grounding line) and the cold/temperate
+# mask (the bed temperate) stay as in STATE ([masks] auto = false in a copy of the branch's config, as jobs/gl_newton_gl.py): the
+# polish of the full state for the grounding line it has, no remask rounds by the contact criterion. The Newton iterates are
+# checkpointed (newton_checkpoint.npz in the work directory): resubmitting resumes. Do not run two Newtons of one work
+# directory at once.
 #
 #   GL=549 sbatch jobs/gl_newton_thermal.cmd
 #   GL=549 TAG=gl549s100 STATE=work/gl_ssa_gl549/branch_gl549s100/thermo_heat.npz ARGS="--maxit 25" sbatch jobs/gl_newton_thermal.cmd
@@ -39,8 +40,16 @@ CFG=$W/refined/branch_$TAG.toml
 STATE=${STATE:-$W/branch_$TAG/thermo_heat.npz}
 [ -f "$STATE" ] || { echo "no $STATE: run jobs/gl_heat_steady.cmd first"; exit 1; }
 OUT=${OUT:-$W/branch_$TAG/steady_temperate.npz}
-echo "$(date +%T) thermomechanical Newton on $TAG: start $STATE (bed temperate, subtemperate sliding, grounding line by contact between solves) -> $OUT"
-python3 -u -m ess newton $CFG --state $STATE --out $OUT $ARGS
+CFGN=$W/branch_$TAG/newton_fixed.toml
+python3 - <<PY
+import sys
+sys.path.insert(0, "jobs")
+from gl_newton_gl import set_key
+open("$CFGN", "w").write(set_key(open("$CFG").read(), "masks", "auto", "false"))
+PY
+grep -n -A6 "^\[masks\]" $CFGN | head -8
+echo "$(date +%T) thermomechanical Newton on $TAG: start $STATE (bed temperate, subtemperate sliding, masks fixed) -> $OUT"
+python3 -u -m ess newton $CFGN --state $STATE --out $OUT $ARGS
 echo "grounding line of the result:"
 python3 - <<PY
 import sys
