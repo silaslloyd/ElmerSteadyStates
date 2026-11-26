@@ -5,6 +5,9 @@ The Bed Sweep Profiles page (the same page, plots/sweep_profiles_tpl.html) built
     python3 plots/build_sweep_page.py OUT.html ROOT [ROOT2 ...]            ROOT: a sweep folder (seg_*/sweep.csv + points/)
     python3 plots/build_sweep_page.py OUT.html LABEL=DIR [LABEL2=DIR2 ...]  DIR: a branch run's points folder (state_NNNN.npz)
 
+The fully temperate start (the sweep's steady_temperate.npz, d = the grounding line) is the first state: found beside the sweep
+folder (work/<case>/sweep_<tag>/ -> work/<case>/branch_<tag>/steady_temperate.npz), or --start STATE.npz; --no-start leaves it out.
+
 For a branch run the states are in the order given (labels in the order given, each by state number); the slider's
 first state is the first one, the "d" column counts down from the number of states. The page is otherwise unchanged.
 """
@@ -31,6 +34,14 @@ def main():
     a = sys.argv[1:]
     if len(a) < 2:
         raise SystemExit(__doc__)
+    start, no_start = None, False
+    if "--no-start" in a:
+        a.remove("--no-start")
+        no_start = True
+    if "--start" in a:
+        k = a.index("--start")
+        start = a[k + 1]
+        a = a[:k] + a[k + 2:]
     out, srcs, dx = a[0], a[1:], 5.0
     items = []                         # (d, its, file)
     if any("=" in s for s in srcs):
@@ -46,6 +57,18 @@ def main():
         pts = {}
         for r in srcs:
             pts.update(points(r))
+        if start is None and not no_start:
+            for r in srcs:
+                m = re.match(r"(.*/)sweep_(.+?)/*$", r.rstrip("/") + "/")
+                cand = os.path.join(m.group(1), f"branch_{m.group(2)}", "steady_temperate.npz") if m else ""
+                if os.path.exists(cand):
+                    start = cand
+                    break
+        if start and not no_start:
+            d0 = round(gl_position(load_state(start).frozen, load_state(start).diag) / 1e3, 1)
+            if d0 not in pts:
+                pts[d0] = (start, 0)
+                print(f"fully temperate start: d = {d0:g} km ({start})")
         items = [(d, pts[d][1], pts[d][0]) for d in sorted(pts, reverse=True)]
     if not items:
         raise SystemExit("no states found")
