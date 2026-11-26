@@ -31,7 +31,7 @@ from plot_branch import read_stability  # noqa: E402
 BRANCH = "work/land_margin/branch_flux"                # branch directory
 START = "work/land_margin/steady_p268.15_flux.npz"     # starting state (None: only the branch points)
 Y_SIDE = "min"        # the flowline mesh is one element wide: nodes at y = min (or "max")
-SHOW = True
+SHOW = bool(os.environ.get("DISPLAY") or sys.platform == "darwin")   # open the page: only where there is a screen (never on tethys)
 
 VIEW = "slider"       # "slider": one state at a time; "overlay": all states, coloured along the branch
 MODE = "absolute"     # overlay only: "absolute", or "difference" (change from the first state)
