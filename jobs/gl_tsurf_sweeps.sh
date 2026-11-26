@@ -5,14 +5,14 @@
 #      from the base's steady_temperate.npz with --p = the new Tsurf (Tsurf is taken from the state, not the config),
 #   2. gl_newton_thermal.cmd: the thermomechanical steady state at the new Tsurf, Newton from 1's thermo_heat.npz,
 #   3. gl_sweep.cmd (STEP km steps, default 25, from the grounding line to 0), started when 2 has finished (afterok).
-# The new branch is TAG = <BASE>p (offset > 0) or <BASE>m (offset < 0): gl549s100p, gl549s100m (one letter: the mesh path is limited to 127 characters; one offset per sign per run): its config
+# The new branch is TAG = <BASE>p / q / r for +1 / +2 / +3 K and m / n / o for -1 / -2 / -3 K (gl549s100p, gl549s100q ...: one letter, the mesh path is limited to 127 characters): its config
 # work/gl_ssa_gl<GL>/refined/branch_<TAG>.toml (the base's with the Tsurf value and its own mesh copy branchcase_<TAG>), its states in
 # branch_<TAG>/ and sweep_<TAG>/. The base branch and its sweeps are not touched.
 #
 #   cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && DRY=1 bash jobs/gl_tsurf_sweeps.sh   # set up, print the commands
 #   cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && bash jobs/gl_tsurf_sweeps.sh         # set up and submit
 #   OFFSETS="1" STEP=50 bash jobs/gl_tsurf_sweeps.sh
-# TAGP_P / TAGP_M (default h / c): the segment prefix of the + / - sweep (its own mesh folders and start.npz: never one another sweep used; the
+# Tags <BASE>p q r (+1 +2 +3 K) and m n o (-1 -2 -3 K), segment prefixes h i j / c d e. TAGP_P / TAGP_M: another prefix for the + / - sweep (its own mesh folders and start.npz: never one another sweep used; the
 # script refuses a prefix in use), KEEP_PREFIX=1 (resume a sweep of that prefix), SWEEP_ONLY=1 (only the sweep, from the branch's existing steady_temperate.npz).
 # GL (default 549), SHELF (100), BASE (gl<GL>s<SHELF>), OFFSETS, STEP (25), SBATCH_EXTRA (more sbatch options), DRY=1 (no sbatch).
 set -e
@@ -36,15 +36,16 @@ print(round(float(load_state('$BSTATE').p), 4))")
 echo "base $BASE: Tsurf $T0 K (state $BSTATE)"
 SEEN=""
 for OFF in $OFFSETS; do
-    # one letter only: Elmer reads at most 127 characters of the mesh path, which has the tag in it
-    if [ "${OFF#-}" != "$OFF" ]; then TAG=${BASE}m; else TAG=${BASE}p; fi
-    # own segment prefix: a sweep's segment folders work/gl_ssa_gl<GL>/<prefix>NNNN (mesh, start.npz) are reused if they exist, so a
-    # prefix another sweep has used would start this one from that sweep's state (and Tsurf)
-    if [ "${OFF#-}" != "$OFF" ]; then TP=${TAGP_M:-c}; else TP=${TAGP_P:-h}; fi
+    # one letter only: Elmer reads at most 127 characters of the mesh path, which has the tag in it. By |offset| (whole K, 1..3):
+    # + p q r, - m n o; the segment prefix (own mesh folders and start.npz per sweep, never one another sweep used): + h i j, - c d e
+    A=${OFF#-}; A=${A#+}
+    case "$A" in 1) K=0;; 2) K=1;; 3) K=2;; *) echo "offset $OFF: whole K from 1 to 3 only (one letter per sweep)"; exit 1;; esac
+    if [ "${OFF#-}" != "$OFF" ]; then L=$(echo mno | cut -c$((K+1))); TP=${TAGP_M:-$(echo cde | cut -c$((K+1)))}; else L=$(echo pqr | cut -c$((K+1))); TP=${TAGP_P:-$(echo hij | cut -c$((K+1)))}; fi
+    TAG=${BASE}$L
     if ls -d $W/${TP}[0-9][0-9][0-9][0-9] > /dev/null 2>&1 && [ -z "$KEEP_PREFIX" ]; then
-        echo "segment prefix $TP is in use in $W (other TAGP_P / TAGP_M, or KEEP_PREFIX=1 to resume this sweep)"; exit 1
+        echo "segment prefix $TP is in use in $W (KEEP_PREFIX=1 to resume that sweep)"; exit 1
     fi
-    case " $SEEN " in *" $TAG "*) echo "two offsets of one sign (tag $TAG): run them one at a time"; exit 1;; esac
+    case " $SEEN " in *" $TAG "*) echo "tag $TAG twice in OFFSETS"; exit 1;; esac
     SEEN="$SEEN $TAG"
     TS=$(python3 -c "print(round($T0 + ($OFF), 4))")
     echo "== $TAG: Tsurf $TS K"
