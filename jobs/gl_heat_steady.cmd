@@ -15,7 +15,7 @@
 #   GL=549 sbatch jobs/gl_heat_steady.cmd
 #   GL=549 FROM=work/gl_ssa_gl549/branch_gl549/transient_chunks/points/state_0010.npz sbatch jobs/gl_heat_steady.cmd
 # GL (km of the start, default 549: the work dir work/gl_ssa_gl<GL>), TAG (default gl<GL>), FROM (the state; default the newest state of
-# the branch's transient_chunks/points), OUT (default work/gl_ssa_gl<GL>/branch_<TAG>/thermo_heat.npz; every chunk in
+# the branch's transient_chunks/points), ARGS (more options of `ess run`, e.g. "--p 267.15": another Tsurf than the state's), OUT (default work/gl_ssa_gl<GL>/branch_<TAG>/thermo_heat.npz; every chunk in
 # thermo_heat_chunks/points/), TOL, CHUNKS. Variants (env, passed through): ESS_STRAIN_HEAT_POSITIVE=1 (strain heating only where
 # positive), ESS_NO_CONVECTION=1, ESS_HEAT_LIMITER=1 (ice capped at melting, T <= T0).
 # Does not touch the running branch (reads one of its states).
@@ -61,5 +61,5 @@ for n in ("GroundedMask", "ColdTempMask"):
     print(f"  {n} (in the state; ColdTempMask then set +1 everywhere): {int((v > 0.5).sum())} of {len(v)} nodes +1, {int((np.abs(v) < 0.5).sum())} 0, {int((v < -0.5).sum())} -1")
 PY
 python3 -u -m ess run $CFG --state $FROM --heat-only --gl frozen --bed temperate --no-remask --chunks ${CHUNKS:-20} --steps 2 \
-    --dt 1e6 --until-tol ${TOL:-1e-4} --save-every 1 --out $OUT
+    --dt 1e6 --until-tol ${TOL:-1e-4} --save-every 1 --out $OUT $ARGS
 echo "$(date +%T) done"
