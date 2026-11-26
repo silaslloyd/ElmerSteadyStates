@@ -5,7 +5,7 @@
 #      from the base's steady_temperate.npz with --p = the new Tsurf (Tsurf is taken from the state, not the config),
 #   2. gl_newton_thermal.cmd: the thermomechanical steady state at the new Tsurf, Newton from 1's thermo_heat.npz,
 #   3. gl_sweep.cmd (STEP km steps, default 25, from the grounding line to 0), started when 2 has finished (afterok).
-# The new branch is TAG = <BASE>_Tp<offset> or <BASE>_Tm<offset> (gl549s100_Tp1, gl549s100_Tm1): its config
+# The new branch is TAG = <BASE>p (offset > 0) or <BASE>m (offset < 0): gl549s100p, gl549s100m (one letter: the mesh path is limited to 127 characters; one offset per sign per run): its config
 # work/gl_ssa_gl<GL>/refined/branch_<TAG>.toml (the base's with the Tsurf value and its own mesh copy branchcase_<TAG>), its states in
 # branch_<TAG>/ and sweep_<TAG>/. The base branch and its sweeps are not touched.
 #
@@ -32,8 +32,12 @@ sys.path.insert(0, '.')
 from ess.statefile import load_state
 print(round(float(load_state('$BSTATE').p), 4))")
 echo "base $BASE: Tsurf $T0 K (state $BSTATE)"
+SEEN=""
 for OFF in $OFFSETS; do
-    if [ "${OFF#-}" != "$OFF" ]; then TAG=${BASE}_Tm${OFF#-}; else TAG=${BASE}_Tp${OFF#+}; fi
+    # one letter only: Elmer reads at most 127 characters of the mesh path, which has the tag in it
+    if [ "${OFF#-}" != "$OFF" ]; then TAG=${BASE}m; else TAG=${BASE}p; fi
+    case " $SEEN " in *" $TAG "*) echo "two offsets of one sign (tag $TAG): run them one at a time"; exit 1;; esac
+    SEEN="$SEEN $TAG"
     TS=$(python3 -c "print(round($T0 + ($OFF), 4))")
     echo "== $TAG: Tsurf $TS K"
     mkdir -p $W/branch_$TAG
