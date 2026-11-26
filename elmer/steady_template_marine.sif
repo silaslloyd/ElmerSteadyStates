@@ -580,9 +580,7 @@ Solver 13
   Linear System Abort Not Converged = True
   Linear System Convergence Tolerance = 1.0e-12   ! required by some solvers even with Direct
 
-  ! the kinematic equation is linear in Zs for the given velocity: one iteration solves it (a second changed nothing)
-  Nonlinear System Min Iterations = 1
-  Nonlinear System Max Iterations = 1
+  Nonlinear System Max Iterations = 100
   Nonlinear System Convergence Tolerance  = 1.0e-10
   Nonlinear System Relaxation Factor = 1.00
 
