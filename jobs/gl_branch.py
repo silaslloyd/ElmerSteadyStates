@@ -93,6 +93,9 @@ def main():
     gl0 = gl_km(f["start"])
     log(f"BRANCH {tag}: start state on the {a.res:g} m mesh: grounding line {gl0:.2f} km (source {xgl:.2f} km)")
     chunks = int(open(f["chunks"]).read()) if os.path.exists(f["chunks"]) else 0
+    if a.max_chunks <= 0:                                       # only the remeshed / cut start state (jobs/gl_cut_shelf.cmd)
+        log(f"BRANCH {tag}: --max-chunks {a.max_chunks}: the start state only, no transient: {f['start']}")
+        return
     stable = 0
     while chunks < a.max_chunks:
         cur = f["trans"] if os.path.exists(f["trans"]) else f["start"]
