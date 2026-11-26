@@ -13,7 +13,9 @@ both sides of the steady position make that fit well conditioned: the rate chang
 options: --skip 5  --window 5  --fit-last 40 (chunks used by the per-branch exponential fit)  --png FILE
 
 A branch is named by its log's "branch_<tag>/" path (several logs of one branch, a resubmitted job, are joined in job order).
-The log lines read: "HH:MM:SS run: contact grounding line A -> B km", one per chunk of 1000 yr.
+CHUNKS ARE COUNTED FROM THE "run: chunk i/N t = ... rms change ..." LINES (one per chunk of 1000 yr). The line
+"run: contact grounding line A -> B km" is printed only by a chunk in which the grounding line moved; a chunk without it
+did not move (counting the contact lines instead undercounts the chunks, and so overstates the rate per chunk).
 """
 import argparse
 import glob
@@ -24,8 +26,8 @@ import sys
 import numpy as np
 
 LINE = re.compile(r"^(\d\d):(\d\d):(\d\d) run: contact grounding line ([\d.]+) -> ([\d.]+) km")
+CHUNK = re.compile(r"^(\d\d):(\d\d):(\d\d) run: chunk \d+/\d+\s+t = \S+\s+rms change ([\d.eE+-]+)")
 BRANCH = re.compile(r"branch_([A-Za-z0-9_.-]+)/")
-RMS = re.compile(r"run: chunk \d+/\d+\s+t = \S+\s+rms change ([\d.eE+-]+)")
 
 
 def jobid(path):
@@ -34,39 +36,48 @@ def jobid(path):
 
 
 def read_logs(paths):
-    """{tag: dict(x0, x (position after each chunk), sec (wall second of each chunk's line, unwrapped), rms, files)}"""
+    """{tag: dict(x0, x (position after each chunk), sec (wall second of each chunk, unwrapped), rms, files)}"""
     runs = {}
     for p in sorted(paths, key=jobid):
-        tag, rows, rms = None, [], []
+        tag, ev = None, []
         for ln in open(p, errors="replace"):
             if tag is None:
                 m = BRANCH.search(ln)
                 if m and "states every" in ln:
                     tag = m.group(1)
+            m = CHUNK.match(ln)
+            if m:
+                ev.append(("chunk", int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3)), float(m.group(4))))
+                continue
             m = LINE.match(ln)
             if m:
-                h, mi, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
-                rows.append((h * 3600 + mi * 60 + s, float(m.group(4)), float(m.group(5))))
-            m = RMS.search(ln)
-            if m:
-                rms.append(float(m.group(1)))
-        if not rows:
+                ev.append(("gl", float(m.group(4)), float(m.group(5))))
+        if not any(e[0] == "gl" for e in ev):
             continue
         tag = tag or os.path.basename(p)
-        r = runs.setdefault(tag, dict(x0=rows[0][1], x=[], sec=[], rms=[], files=[]))
-        day = 0
-        last = r["sec"][-1] % 86400 if r["sec"] else None
+        r = runs.setdefault(tag, dict(x0=None, x=[], sec=[], rms=[], files=[]))
+        cur = r["x"][-1] if r["x"] else None                  # the position now (None until the first line gives it)
+        if r["x0"] is None:
+            r["x0"] = next(e[1] for e in ev if e[0] == "gl")
+            cur = r["x0"]
+        last = (r["sec"][-1] % 86400) if r["sec"] else None
         base = (r["sec"][-1] - last) if r["sec"] else 0
-        for s, a, b in rows:
-            if last is not None and s < last - 3600:             # past midnight
-                base += 86400
-            last = s
-            r["sec"].append(base + s)
-            r["x"].append(b)
-        r["rms"] += rms
+        for e in ev:
+            if e[0] == "chunk":
+                s = e[1]
+                if last is not None and s < last - 3600:         # past midnight
+                    base += 86400
+                last = s
+                r["sec"].append(base + s)
+                r["x"].append(cur)
+                r["rms"].append(e[2])
+            else:                                                # the contact line follows its chunk line
+                cur = e[2]
+                if r["x"]:
+                    r["x"][-1] = cur
         r["files"].append(p)
     for r in runs.values():
-        r["x"], r["sec"] = np.array(r["x"]), np.array(r["sec"], float)
+        r["x"], r["sec"] = np.array(r["x"], float), np.array(r["sec"], float)
     return runs
 
 
@@ -76,7 +87,7 @@ def rate(x, k0, k1):
 
 
 def fit_exp(k, x):
-    """x* + A exp(-k/tau) -> (x*, A, tau) or None"""
+    """x* + A exp(-k/tau) -> ((x*, A, tau), errors) or None"""
     try:
         from scipy.optimize import curve_fit
         f = lambda kk, xs, A, tau: xs + A * np.exp(-kk / tau)
@@ -106,7 +117,9 @@ def main():
     pool_x, pool_r, pool_tag = [], [], []
     for tag, r in runs.items():
         x, n = r["x"], len(r["x"])
-        print(f"\n== {tag}: {n} chunks ({n} kyr), grounding line {r['x0']:.2f} -> {x[-1]:.2f} km   [{', '.join(os.path.basename(f) for f in r['files'])}]")
+        nstill = int(np.sum(np.diff(np.concatenate([[r["x0"]], x])) == 0))
+        print(f"\n== {tag}: {n} chunks ({n} kyr), grounding line {r['x0']:.2f} -> {x[-1]:.2f} km, "
+              f"{nstill} chunks without a move   [{', '.join(os.path.basename(f) for f in r['files'])}]")
         if r["rms"]:
             print(f"   last rms change {r['rms'][-1]:.2e}")
         w = a.window
@@ -145,7 +158,6 @@ def main():
         (s, c), cov = np.polyfit(px, pr, 1, cov=True)
         xstar = -c / s
         tau = 1.0 / s if s > 0 else float("nan")
-        # error of x*: delta method
         es, ec = np.sqrt(np.diag(cov))
         exs = abs(xstar) * np.sqrt((ec / c) ** 2 + (es / s) ** 2 - 2 * cov[0, 1] / (s * c)) if s and c else float("nan")
         print(f"   {len(px)} windows over {px.min():.1f}-{px.max():.1f} km: x* = {xstar:.1f} +- {exs:.1f} km, tau = {tau:.0f} kyr "
