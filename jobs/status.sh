@@ -19,10 +19,9 @@ squeue -u "$USER" -h -o "%i|%j|%T|%M|%D|%r" | sort -t'|' -k1,1n | while IFS='|' 
     glsweep|glsw-*)
         L=slurms/gl_sweep_$J.out
         grep -E "sweep d=" $L 2>/dev/null | tail -1 | cut -c1-170 | sed 's/^/     /'
-        grep -E "rms\(F\)" $L 2>/dev/null | tail -1 | cut -c1-170 | sed 's/^/     /'
-        grep -ciE "converged" $L 2>/dev/null | sed 's/^/     lines mentioning converged: /' ;;
+        ;;
     glnt-*|glnewtherm)
-        grep -E "rms\(F\)|converged|NOT" slurms/gl_newton_thermal_$J.out 2>/dev/null | tail -2 | cut -c1-170 | sed 's/^/     /' ;;
+        grep -E "newton: " slurms/gl_newton_thermal_$J.out 2>/dev/null | tail -2 | cut -c1-170 | sed 's/^/     /' ;;
     glht-*|glheat)
         grep -E "chunk|steady enough" slurms/gl_heat_steady_$J.out 2>/dev/null | tail -2 | cut -c1-170 | sed 's/^/     /' ;;
     log100-*)
