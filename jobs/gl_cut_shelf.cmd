@@ -14,7 +14,11 @@
 #   GL=549 SHELF=100 FROM=work/gl_ssa_gl549/branch_gl549/transient_chunks/points/state_0015.npz sbatch jobs/gl_cut_shelf.cmd
 # Then e.g. the steady temperature on it:
 #   GL=549 TAG=gl549s100 FROM=work/gl_ssa_gl549/branch_gl549s100/start.npz sbatch jobs/gl_heat_steady.cmd
-# GL (km of the start, default 549), SHELF (km, default 100), TAG, FROM (default the newest state of branch gl<GL>), RES (m, default 125).
+# GL (km of the start, default 549), SHELF (km, default 100), TAG, FROM (default the newest state of branch gl<GL>), RES (m, default 125),
+# BELOW / ABOVE (km of the fine band upstream / downstream of the grounding line, default 70 / 50), GRADE (km over which the size grows
+# back to 2 km, default 60). A narrower band is cheaper (the fine columns dominate the cost) but the grounding line must stay inside it
+# (jobs/gl_newton_gl.py allowed it 10 km inside the band): TAG then defaults to gl<GL>s<SHELF>b<BELOW>a<ABOVE>.
+#   GL=549 SHELF=100 BELOW=40 ABOVE=25 sbatch jobs/gl_cut_shelf.cmd
 # 64 tasks: the mesh is partitioned for the job's tasks, as the other branch jobs'.
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
@@ -32,12 +36,15 @@ export ESS_CONTACT_FUNCTION=elmerstreams
 GL=${GL:-549}
 SHELF=${SHELF:-100}
 RES=${RES:-125}
-TAG=${TAG:-gl${GL}s${SHELF}}
+BELOW=${BELOW:-70}
+ABOVE=${ABOVE:-50}
+GRADE=${GRADE:-60}
+if [ "$BELOW $ABOVE $GRADE" = "70 50 60" ]; then TAG=${TAG:-gl${GL}s${SHELF}}; else TAG=${TAG:-gl${GL}s${SHELF}b${BELOW}a${ABOVE}}; fi
 W=work/gl_ssa_gl$GL
 CFG=configs/flowline_gl_fine_ssa_gl$GL.toml
 python3 jobs/ssa_start_gl_cfg.py --gl-km $GL --out $CFG
 FROM=${FROM:-$(ls -v $W/branch_gl$GL/transient_chunks/points/state_*.npz | tail -1)}
 [ -f "$FROM" ] || { echo "no state to start from ($FROM)"; exit 1; }
-echo "$(date +%T) shelf cut to $SHELF km, ${RES} m band, from $FROM -> $W/branch_$TAG"
-python3 -u jobs/gl_branch.py --config $CFG --from $FROM --res $RES --tag $TAG --cut-shelf-km $SHELF --force --max-chunks 0
+echo "$(date +%T) shelf cut to $SHELF km, ${RES} m band $BELOW km below / $ABOVE km above the grounding line (graded over $GRADE km), from $FROM -> $W/branch_$TAG"
+python3 -u jobs/gl_branch.py --config $CFG --from $FROM --res $RES --tag $TAG --cut-shelf-km $SHELF --band-below-km $BELOW --band-above-km $ABOVE --grade-km $GRADE --force --max-chunks 0
 echo "$(date +%T) done: $W/branch_$TAG/start.npz"
