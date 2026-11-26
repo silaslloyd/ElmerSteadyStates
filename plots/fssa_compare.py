@@ -7,7 +7,7 @@ and the maximum of |Zs - Zs_ref| (m) and where the maximum is (x, y).
     python3 plots/fssa_compare.py work/land_flowline_3d/cmp_full_dt50_frames.npz work/land_flowline_3d/cmp_*_frames.npz
 
 A run is compared at the times (to 1 yr) the reference also has; nodes are matched by (x, y). Also printed: the
-reference's own change over the same period (rms |Zs(t) - Zs(first common time)|), the size the differences are measured against.
+reference's own change over the same period (rms |Zs(t) - Zs(first common time)|), the size the differences are measured against; the last column is the rms difference relative to that change (%).
 """
 import sys
 
@@ -49,9 +49,10 @@ def main():
         print(f"\n{p}: {len(t)} frames, {len(rows)} at reference times")
         if not rows:
             continue
-        print("   t (yr)   rms diff (m)   max diff (m)   at x (km)  y (km)   reference change since its first frame, rms (m)")
+        print("   t (yr)   rms diff (m)   max diff (m)   at x (km)  y (km)   reference change since its first frame, rms (m)   relative rms (%)")
         for r in rows:
-            print(f"{r[0]:9g}   {r[1]:11.3f}   {r[2]:11.3f}   {r[3]:8.1f} {r[4]:6.1f}   {r[5]:8.3f}")
+            rel = f"{100 * r[1] / r[5]:9.1f}" if r[5] > 1e-9 else "        -"     # rms diff / the reference's own change since its first frame
+            print(f"{r[0]:9g}   {r[1]:11.3f}   {r[2]:11.3f}   {r[3]:8.1f} {r[4]:6.1f}   {r[5]:8.3f}   {rel}")
 
 
 if __name__ == "__main__":
