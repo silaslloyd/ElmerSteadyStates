@@ -66,7 +66,8 @@ PY
             echo "  $HEAT"
             echo "  GL=$GL TAG=$TAG sbatch $SBATCH_EXTRA --dependency=afterok:HEATJOBID --job-name=glnt-$TAG jobs/gl_newton_thermal.cmd"
         fi
-        echo "  GL=$GL TAG=$TAG TAGP=$TP STEP=$STEP sbatch $SBATCH_EXTRA ${SWEEP_ONLY:---dependency=afterok:NEWTONJOBID} --job-name=glsw-$TAG jobs/gl_sweep.cmd"
+        DEP="--dependency=afterok:NEWTONJOBID"; [ -n "$SWEEP_ONLY" ] && DEP=""
+        echo "  GL=$GL TAG=$TAG TAGP=$TP STEP=$STEP sbatch $SBATCH_EXTRA $DEP --job-name=glsw-$TAG jobs/gl_sweep.cmd"
         continue
     fi
     if [ -n "$SWEEP_ONLY" ]; then
