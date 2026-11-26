@@ -76,7 +76,7 @@ Simulation
   Steady State Min Iterations = 1
 
   Timestepping Method = "bdf"
-  BDF Order = 1
+  BDF Order = __BDF_ORDER__
 
   Timestep Intervals = __NSTEPS__
   Timestep Sizes = __DT__

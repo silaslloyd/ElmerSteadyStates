@@ -780,6 +780,7 @@ End
             "__NSTEPS__": str(int(spec.n_steps)),
             "__DT__": repr(float(spec.dt)),
             "__COUPLED_ITERS__": str(int(os.environ.get("ESS_COUPLED_ITERS") or spec.coupled_iters)),
+            "__BDF_ORDER__": str(int(os.environ.get("ESS_BDF_ORDER") or 1)),   # the time stepping's BDF order (1 or 2)
             "__ROCK_CAP__": repr(float(spec.rock_heat_capacity)),
             "__STATE_IN__": state_in,
             "__STATE_OUT__": state_out,

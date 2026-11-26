@@ -13,6 +13,7 @@
 #   DT=10 YEARS=500 FSSA=adapted FS_COUPLED=1 COUPLED_ITERS=3 sbatch jobs/flowline_fssa.cmd
 #   CFG=configs/land_margin_3d.toml DT=50 YEARS=1000 FSSA=adapted FS_COUPLED=1 sbatch jobs/flowline_fssa.cmd   (3D)
 #
+# BDF_ORDER=2: the time stepping with BDF order 2 (default 1; the first step is BDF1 as Elmer's startup), its tag gets _bdf2.
 # DT (yr, default 10), YEARS (default 500), FSSA = full | normal | transposed | none | adapted ([elmer] fssa),
 # FS_COUPLED=1: mesh mapping + free surfaces in the coupled loop with Stokes, COUPLED_ITERS (default 1; 3 with
 # FS_COUPLED), VTU_EVERY (default: 10 outputs), TAG (default from the settings). Every run: the step check (CFL,
@@ -69,12 +70,13 @@ STEPS=$(python3 -c "print(max(1, round($YEARS / $DT)))")
 export ESS_FSSA=${FSSA:-full}
 if [ "$FS_COUPLED" = 1 ]; then export ESS_FS_COUPLED=1; COUPLED_ITERS=${COUPLED_ITERS:-3}; fi
 export ESS_COUPLED_ITERS=${COUPLED_ITERS:-1}
+[ -n "$BDF_ORDER" ] && export ESS_BDF_ORDER=$BDF_ORDER
 [ "$FSSA_PREV_TIMESTEP" = 1 ] && export ESS_FSSA_PREV_TIMESTEP=1 && TAG=${TAG:-${CASE}dt${DT}_adaptedts_coupled${ESS_COUPLED_ITERS}}
 export ESS_SOLVER_TIMING=1 ESS_STEP_CHECK=1 ESS_KEEP_RUNS=1 ESS_NO_CACHE=1 ESS_ELMER_TIMEOUT=604800
 export ESS_VTU_EVERY=${VTU_EVERY:-$(python3 -c "print(max(1, $STEPS // 10))")}
-TAG=${TAG:-${CASE}dt${DT}_${ESS_FSSA}$([ "$FS_COUPLED" = 1 ] && echo _coupled${ESS_COUPLED_ITERS} || true)}
+TAG=${TAG:-${CASE}dt${DT}_${ESS_FSSA}$([ "$FS_COUPLED" = 1 ] && echo _coupled${ESS_COUPLED_ITERS} || true)$([ "${BDF_ORDER:-1}" != 1 ] && echo _bdf${BDF_ORDER} || true)}
 echo "$(date +%T) FSSA test $TAG ($CFG): dt $DT yr x $STEPS steps, FSSA $ESS_FSSA, coupled free surface ${FS_COUPLED:-0}," \
-     "coupled iterations $ESS_COUPLED_ITERS, VTU every $ESS_VTU_EVERY steps, $N ranks"
+     "coupled iterations $ESS_COUPLED_ITERS, BDF order ${BDF_ORDER:-1}, VTU every $ESS_VTU_EVERY steps, $N ranks"
 export ESS_RUN_LABEL=fssa${SLURM_JOB_ID:-local}
 python3 -u -m ess run $CFG --state $START $GLARG --stokes-only --dt $DT --steps $STEPS \
     --out $WORK/fssa_$TAG.npz --output-level 4 > slurms/fssa_${SLURM_JOB_ID:-local}_$TAG.log 2>&1 \
