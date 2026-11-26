@@ -17,6 +17,7 @@
 # = 2000 yr). The steady states are the same, an unstable mode's growth over the map is not. MAP_STEPS=0: the config's own.
 #
 #   GL=549 sbatch jobs/gl_sweep.cmd
+#   GL=549 sbatch --dependency=afterok:32428 jobs/gl_sweep.cmd   # starts when the Newton job 32428 has finished (exit 0)
 #   GL=549 D_END=300 sbatch jobs/gl_sweep.cmd                 # only part of the way
 #   GL=549 BELOW=70 ABOVE=50 FINE=125 SPAN=50 STEP=25 sbatch jobs/gl_sweep.cmd
 # GL (default 549), SHELF (default 100), TAG (default gl<GL>s<SHELF>), STATE (default work/gl_ssa_gl<GL>/branch_<TAG>/steady_temperate.npz),
