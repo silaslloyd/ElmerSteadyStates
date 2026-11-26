@@ -139,6 +139,10 @@ def main():
     ap.add_argument("--step-max-km", type=float, default=25.0)
     ap.add_argument("--gl-rounds", type=int, default=6)
     ap.add_argument("--maxit", type=int)
+    ap.add_argument("--newton-its-max", type=int, default=0, help="ess sweep: more Newton iterations than this halve the next steps")
+    ap.add_argument("--step-floor-km", type=float, default=0.0, help="ess sweep: the smallest step of the halvings (km)")
+    ap.add_argument("--bisect-km", type=float, default=0.0,
+                    help="ess sweep: bisect where the consistency of the steady state changes, down to this length (km)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--predictor", choices=["none", "secant"], default="none",
                     help="secant: each Newton from the linear extrapolation of the last two converged points (the "
@@ -262,6 +266,8 @@ def main():
                f"{a.step_max_km:g}", "--gl-rounds", str(a.gl_rounds), "--out", seg]
         if a.maxit:
             cmd += ["--maxit", str(a.maxit)]
+        cmd += ["--newton-its-max", str(a.newton_its_max), "--step-floor-km", f"{a.step_floor_km:g}",
+                "--bisect-km", f"{a.bisect_km:g}"]
         if a.predictor == "secant":
             cmd += ["--predictor", "secant"] + (["--prev-state", prev] if prev else [])
         run(cmd)

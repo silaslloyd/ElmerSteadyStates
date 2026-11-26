@@ -1289,7 +1289,9 @@ def cmd_sweep(args):
         log.info(f"sweep: earlier point d = {seed[0] / 1e3:g} km from {args.prev_state}")
     rows = run_sweep_marine(cfg, prob, model, saved, prob.scale(saved.x), p, nopt, out, d_start=d0, d_end=d1,
                             frac=args.step_frac, smin=args.step_min_km * 1e3, smax=args.step_max_km * 1e3,
-                            gl_rounds=args.gl_rounds, predictor=args.predictor, seed=seed)
+                            gl_rounds=args.gl_rounds, predictor=args.predictor, seed=seed,
+                            its_max=args.newton_its_max, floor=args.step_floor_km * 1e3 if args.step_floor_km else None,
+                            bisect=args.bisect_km * 1e3)
     n = sum(1 for r_ in rows if str(r_.get("converged")) == "1")
     log.info(f"sweep: {n} converged states of {len(rows)} in {out}/sweep.csv")
 
@@ -1751,6 +1753,14 @@ def main(argv=None):
     s.add_argument("--gl-rounds", type=int, default=6,
                    help="Newton solves per length with the grounding line moved by contact in between")
     s.add_argument("--maxit", type=int, help="Newton iterations per solve (overrides [newton] maxit)")
+    s.add_argument("--newton-its-max", type=int, default=0,
+                   help="a converged Newton with more iterations than this halves the following steps (they double "
+                        "back once a solve takes <= half of it); 0: off")
+    s.add_argument("--step-floor-km", type=float, default=0.0,
+                   help="the smallest step the halvings go down to (km; default 0: --step-min-km)")
+    s.add_argument("--bisect-km", type=float, default=0.0,
+                   help="where two converged points differ in consistency (no cold bed above melting, no temperate "
+                        "refreezing), bisect the interval down to this length (km; sweep's bisect.csv); 0: off")
     s.add_argument("--out", help="output folder (default <work>/sweep_p<P>_down or _up)")
     s.add_argument("--predictor", choices=["none", "secant"], default="none",
                    help="secant: each Newton from the linear extrapolation of the last two converged states")

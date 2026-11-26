@@ -21,7 +21,11 @@
 #   GL=549 BELOW=70 ABOVE=50 FINE=125 SPAN=50 STEP=25 sbatch jobs/gl_sweep.cmd
 # GL (default 549), SHELF (default 100), TAG (default gl<GL>s<SHELF>), STATE (default work/gl_ssa_gl<GL>/branch_<TAG>/steady_temperate.npz),
 # D_START (km, default the grounding line's position: the whole grounded bed), D_END, STEP, SPAN, PAD, FINE, BELOW, ABOVE, GRADE,
-# MAP_STEPS, PREDICTOR (none|secant), NEWTON_TOL (default 5e-5). Output: work/gl_ssa_gl<GL>/sweep_<TAG>/seg_mXXXX/ (sweep.csv, points/),
+# MAP_STEPS, PREDICTOR (none|secant), NEWTON_TOL (default 5e-5), ITS_MAX (default 8: a Newton with more iterations halves the next
+# steps, they double back once a solve takes <= ITS_MAX / 2; a failure halves the step too; 0: off), FLOOR (km, default 1: the smallest
+# step), BISECT (km, default 2: where the consistency of the steady state changes between two points -- cold bed above melting or
+# temperate nodes refreezing appear / disappear -- the interval is bisected down to this length; the midpoints in sweep_<TAG>/seg_*/bisect.csv
+# and points/; 0: off). Output: work/gl_ssa_gl<GL>/sweep_<TAG>/seg_mXXXX/ (sweep.csv, points/),
 # segment configs work/gl_ssa_gl<GL>/refined/mXXXX.toml. Resubmitting resumes (finished segments are skipped).
 set -e
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
@@ -72,10 +76,10 @@ print(f"{xgl:.4f}")
 PY
 )
 DSTART=${D_START:-$GLKM}
-echo "$(date +%T) sweep on $TAG from $STATE: grounding line $GLKM km, d $DSTART -> ${D_END:-0} km in ${STEP} km steps; 125 m band $BELOW km below / $ABOVE km above the grounding line (graded $GRADE km); head band ${FINE} m, segments of $SPAN km (+ $PAD km); map ${MAP_STEPS} steps; 128 tasks"
+echo "$(date +%T) sweep on $TAG from $STATE: grounding line $GLKM km, d $DSTART -> ${D_END:-0} km in ${STEP} km steps; 125 m band $BELOW km below / $ABOVE km above the grounding line (graded $GRADE km); head band ${FINE} m, segments of $SPAN km (+ $PAD km); map ${MAP_STEPS} steps; steps halved above ${ITS_MAX:-8} Newton its (floor ${FLOOR:-1} km); bisect to ${BISECT:-2} km; 128 tasks"
 echo "  base config $CFG"
 python3 -u jobs/sweep_refined.py $CFG --from-state $STATE --d-km $DSTART --d-end-km ${D_END:-0} \
     --span-km $SPAN --pad-km $PAD --fine $FINE --grade-km 10 --step-frac 1 --step-min-km $STEP --step-max-km $STEP \
-    --predictor ${PREDICTOR:-none} --out-root $OUTROOT --tag-prefix s \
+    --predictor ${PREDICTOR:-none} --newton-its-max ${ITS_MAX:-8} --step-floor-km ${FLOOR:-1} --bisect-km ${BISECT:-2} --out-root $OUTROOT --tag-prefix s \
     $( [ "$MAP_STEPS" -gt 0 ] && echo "--map-steps $MAP_STEPS" )
 echo "$(date +%T) done"
