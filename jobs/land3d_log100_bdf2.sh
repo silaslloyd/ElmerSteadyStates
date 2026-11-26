@@ -9,9 +9,18 @@
 #   bash jobs/land3d_log100_bdf2.sh                     # reference job 32398
 #   REF=32399 BDF=2 bash jobs/land3d_log100_bdf2.sh     # another reference run (its dt, iterations and output are copied)
 #   DRY=1 bash jobs/land3d_log100_bdf2.sh               # only print
+# COUPLED_ITERS=N: another cap on the coupled iterations than the reference's; SS_TOL=1e-4: the coupled loop's Steady State tolerance
+# loosened to it (ESS_SS_TOL; the template's 1e-8 is never met, so without it every step runs to the cap: the reference run 32398 did
+# 3 iterations on every step) -- the c8 / tol4 runs (log100_adapted_dt500_c8_tol4_10k) are 8 iterations with SS_TOL=1e-4.
+#   REFNAME=log100-impt-dt500 SS_TOL=1e-4 bash jobs/land3d_log100_bdf2.sh      # BDF 2 of the 8-iteration, early-stopping run
 # The new run's tag is the reference's with _bdf2 (job name <reference name>-bdf2), so plots/fssa_pack.sh finds it.
 set -e
 cd "$(dirname "$0")/.."
+# REF: the reference job id; REFNAME: its job name instead (the last one that was not cancelled), e.g. REFNAME=log100-impt-dt500
+if [ -n "$REFNAME" ]; then
+    REF=$(sacct -u "$USER" -S 2026-11-25 -n -X -o JobID,JobName%30,State | awk -v n="$REFNAME" '$2==n && $3 !~ /CANCELLED/ {j=$1} END{print j}')
+    [ -n "$REF" ] || { echo "no job named $REFNAME"; exit 1; }
+fi
 REF=${REF:-32398}
 BDF=${BDF:-2}
 W=work/land_flowline_3d
@@ -43,9 +52,11 @@ if grep -q "TDepSliding(" "$D/run.sif"; then SLIDING=""; else SLIDING="ESS_SLIDI
 # the start: the first state file named in the reference run's log that is not its own output ($W/fssa_$TAG0.npz)
 START=${START:-$(grep -h -o "$W/[A-Za-z0-9_./-]*\.npz" slurms/fssa_${REF}_*.log 2>/dev/null | grep -v "^$W/fssa_$TAG0\.npz$" | head -1)}
 [ -f "$START" ] || { echo "start state of the reference run not found in its log (its own output $W/fssa_$TAG0.npz is not it): give START=FILE (the 78,000 yr state)"; exit 1; }
+ITS=${COUPLED_ITERS:-$ITS}
+SSARG=""; [ -n "$SS_TOL" ] && SSARG="ESS_SS_TOL=$SS_TOL"
 NNODES=$(( (NT + 63) / 64 ))
 echo "reference $REF ($NAME): $CFG, FSSA $FSSA, dt $DT x $NST steps, coupled $FSC / $ITS iterations, VTU every $VEV, $NT ranks"
-echo "friction: log-space cosine, middle $YMID, sides $YSIDE; sliding: ${SLIDING:-config (subtemperate)}; start $START; BDF order $BDF"
-CMD="env $SLIDING ESS_SLIDE_YLOG=1 ESS_SLIDE_YMID=$YMID ESS_SLIDE_YSIDE=$YSIDE CFG=$CFG START=$START DT=$DT YEARS=$YEARS FSSA=$FSSA FS_COUPLED=$FSC COUPLED_ITERS=$ITS VTU_EVERY=$VEV BDF_ORDER=$BDF TAG=${TAG0}_bdf$BDF sbatch --nodes=$NNODES --ntasks=$NT --time=${TL:-04:00:00} --job-name=$NAME-bdf$BDF jobs/flowline_fssa.cmd"
+echo "friction: log-space cosine, middle $YMID, sides $YSIDE; sliding: ${SLIDING:-config (subtemperate)}; start $START; BDF order $BDF; coupled iterations $ITS${SS_TOL:+, steady state tolerance $SS_TOL}"
+CMD="env $SLIDING $SSARG ESS_SLIDE_YLOG=1 ESS_SLIDE_YMID=$YMID ESS_SLIDE_YSIDE=$YSIDE CFG=$CFG START=$START DT=$DT YEARS=$YEARS FSSA=$FSSA FS_COUPLED=$FSC COUPLED_ITERS=$ITS VTU_EVERY=$VEV BDF_ORDER=$BDF TAG=${TAG0}_bdf$BDF sbatch --nodes=$NNODES --ntasks=$NT --time=${TL:-04:00:00} --job-name=$NAME-bdf$BDF jobs/flowline_fssa.cmd"
 echo "$CMD"
 [ "$DRY" = 1 ] || eval "$CMD"
