@@ -11,7 +11,7 @@ if [ "${PACK:-1}" = 1 ]; then bash plots/fssa_pack.sh full_dt10 impt_dt | grep -
 F=$W/cmp_full_dt10_frames.npz
 [ -f $F ] || { echo "missing $F (job log100-dt10)"; exit 1; }
 RUNS=""
-for l in impt_dt500 impt_dt500_bdf2 impt_dt500_bdf1_ilu3 impt_dt500_bdf2_ilu3 impt_dt250_bdf2_ilu3; do
+for l in impt_dt500 impt_dt500_bdf2 impt_dt500_bdf1_ilu3 impt_dt500_bdf2_ilu3 impt_dt250_bdf2_ilu3 impt_dt200_bdf2_ilu3; do
     [ -f $W/cmp_${l}_frames.npz ] && RUNS="$RUNS $W/cmp_${l}_frames.npz"
 done
 echo; echo "=== BDF 1 and BDF 2 against full dt 10"
