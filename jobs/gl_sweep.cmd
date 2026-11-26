@@ -20,6 +20,11 @@
 #   GL=549 sbatch --dependency=afterok:32428 jobs/gl_sweep.cmd   # starts when the Newton job 32428 has finished (exit 0)
 #   GL=549 D_END=300 sbatch jobs/gl_sweep.cmd                 # only part of the way
 #   GL=549 BELOW=70 ABOVE=50 FINE=125 SPAN=50 STEP=25 sbatch jobs/gl_sweep.cmd
+#   GL=549 STEP=25 OUT=gl549s100_25 TAGP=u FROM_POINT=work/gl_ssa_gl549/sweep_gl549s100/seg_s0000/points/state_04989.npz sbatch jobs/gl_sweep.cmd
+#                                                     # carry on from a converged sweep point with other steps (its d is read from the state)
+# FROM_POINT: a converged sweep point (points/state_NNNNN.npz) as the start instead of the fully temperate state: STATE = it, D_START = its d.
+# OUT (default TAG): the output's name, work/gl_ssa_gl<GL>/sweep_<OUT>/ and refined/sweep_<OUT>.toml; TAGP (default s): the segments' prefix
+# (seg_<TAGP>NNNN, refined/<TAGP>NNNN.toml), so a second sweep from the same branch does not touch the first's files. SPAN defaults to two steps.
 # GL (default 549), SHELF (default 100), TAG (default gl<GL>s<SHELF>), STATE (default work/gl_ssa_gl<GL>/branch_<TAG>/steady_temperate.npz),
 # D_START (km, default the grounding line's position: the whole grounded bed), D_END, STEP, SPAN, PAD, FINE, BELOW, ABOVE, GRADE,
 # MAP_STEPS, PREDICTOR (none|secant), NEWTON_TOL (default 5e-5), ITS_MAX (default 8: a Newton with more iterations halves the next
@@ -49,17 +54,23 @@ W=work/gl_ssa_gl$GL
 BCFG=$W/refined/branch_$TAG.toml
 [ -f "$BCFG" ] || { echo "no $BCFG: the branch $TAG has not been set up"; exit 1; }
 STATE=${STATE:-$W/branch_$TAG/steady_temperate.npz}
+if [ -n "$FROM_POINT" ]; then
+    [ -f "$FROM_POINT" ] || { echo "no $FROM_POINT"; exit 1; }
+    STATE=$FROM_POINT
+    D_START=$(python3 -c "import numpy as np; print(round(float(np.load('$FROM_POINT')['meta::sweep_d']) / 1e3, 4))") || { echo "no meta::sweep_d in $FROM_POINT: not a sweep point"; exit 1; }
+fi
 [ -f "$STATE" ] || { echo "no $STATE: run jobs/gl_newton_thermal.cmd first"; exit 1; }
 BELOW=${BELOW:-35}
 ABOVE=${ABOVE:-25}
 GRADE=${GRADE:-30}
 STEP=${STEP:-50}
-SPAN=${SPAN:-100}
+SPAN=${SPAN:-$(awk "BEGIN{print 2*${STEP}}")}     # two steps of head range (100 km at the default step of 50)
 PAD=${PAD:-10}
 FINE=${FINE:-100}
 MAP_STEPS=${MAP_STEPS:-10}
-CFG=$W/refined/sweep_$TAG.toml
-OUTROOT=sweep_$TAG
+OUT=${OUT:-$TAG}
+CFG=$W/refined/sweep_$OUT.toml
+OUTROOT=sweep_$OUT
 # the base config: the branch's with the grounding-line band narrowed; prints the grounding line (the whole grounded bed = d)
 GLKM=$(python3 - <<PY
 import re, sys
@@ -81,6 +92,6 @@ echo "$(date +%T) sweep on $TAG from $STATE: grounding line $GLKM km, d $DSTART 
 echo "  base config $CFG"
 python3 -u jobs/sweep_refined.py $CFG --from-state $STATE --d-km $DSTART --d-end-km ${D_END:-0} \
     --span-km $SPAN --pad-km $PAD --fine $FINE --grade-km 10 --step-frac 1 --step-min-km $STEP --step-max-km $STEP \
-    --predictor ${PREDICTOR:-none} --newton-its-max ${ITS_MAX:-8} --step-floor-km ${FLOOR:-1} --bisect-km ${BISECT:-2} --out-root $OUTROOT --tag-prefix s \
+    --predictor ${PREDICTOR:-none} --newton-its-max ${ITS_MAX:-8} --step-floor-km ${FLOOR:-1} --bisect-km ${BISECT:-2} --out-root $OUTROOT --tag-prefix ${TAGP:-s} \
     $( [ "$MAP_STEPS" -gt 0 ] && echo "--map-steps $MAP_STEPS" )
 echo "$(date +%T) done"
