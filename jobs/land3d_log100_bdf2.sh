@@ -12,6 +12,7 @@
 # COUPLED_ITERS=N: another cap on the coupled iterations than the reference's; SS_TOL=1e-4: the coupled loop's Steady State tolerance
 # loosened to it (ESS_SS_TOL; the template's 1e-8 is never met, so without it every step runs to the cap: the reference run 32398 did
 # 3 iterations on every step) -- the c8 / tol4 runs (log100_adapted_dt500_c8_tol4_10k) are 8 iterations with SS_TOL=1e-4.
+#   DT_NEW=250 REFNAME=log100-impt-dt500 SS_TOL=1e-4 bash jobs/land3d_log100_bdf2.sh      # the same run with dt 250 (twice the steps)
 #   REFNAME=log100-impt-dt500 SS_TOL=1e-4 bash jobs/land3d_log100_bdf2.sh      # BDF 2 of the 8-iteration, early-stopping run
 # The new run's tag is the reference's with _bdf2 (job name <reference name>-bdf2), so plots/fssa_pack.sh finds it.
 set -e
@@ -37,6 +38,11 @@ VEV=$(echo "$LINE" | sed -E 's/.*VTU every ([0-9]+) steps.*/\1/')
 NT=$(echo "$LINE" | sed -E 's/.* ([0-9]+) ranks.*/\1/')
 YEARS=$(python3 -c "print(round($DT * $NST))")
 NAME=$(sacct -j $REF -n -X -o JobName%40 | tr -d ' ')
+# DT_NEW=250: the same run over the same years with another step (steps and the output frames' times as the reference's; tag and name say dt)
+if [ -n "$DT_NEW" ]; then
+    VEV=$(python3 -c "print(round($VEV * $DT / $DT_NEW))"); NST=$(python3 -c "print(round($YEARS / $DT_NEW))")
+    TAG0=${TAG0/dt$DT/dt$DT_NEW}; NAME=${NAME/dt$DT/dt$DT_NEW}; DT=$DT_NEW
+fi
 D=$(ls -d $W/runs/*fssa${REF}_* | tail -1)
 read YMID YSIDE < <(python3 - "$D/run.sif" <<'PY'
 import math, re, sys
