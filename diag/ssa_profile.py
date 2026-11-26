@@ -116,6 +116,10 @@ def main():
     ap.add_argument("--bed-smooth-km", type=float, default=0.5, help="moving average of the bed (its slope enters the balance); other widths are tried if the solver fails")
     ap.add_argument("--friction", type=float, default=1.0, help="multiplier on fcoeff (default 1: the model's C)")
     ap.add_argument("--x0", type=float, default=1e-3, help="first point as a fraction of x_g")
+    ap.add_argument("--gl-km", type=float, default=None,
+                    help="IMPOSE the grounding line position (km) instead of solving for it: the flotation condition at the "
+                         "grounding line is dropped (H_g is then slightly off flotation, as in the frozen-mask Newton), the "
+                         "stress condition 4 eta H u_x = 1/2 rho g (1 - rho_i/rho_w) H^2 is kept with the actual H_g")
     ap.add_argument("--out", default="ssa_profile")
     args = ap.parse_args()
 
@@ -159,7 +163,9 @@ def main():
         x_schoof = float(xs[i[0]]) if len(i) else float("nan")
 
         # --- first guess
-        if model is not None and model["gl"]:
+        if args.gl_km:
+            xg0 = args.gl_km * 1e3
+        elif model is not None and model["gl"]:
             xg0 = model["gl"]
         else:
             xg0 = x_schoof if np.isfinite(x_schoof) else 686e3
@@ -202,7 +208,15 @@ def main():
         N0 = 4 * eta * (a - u0 * np.gradient(H0, xx))
         N0[-1] = 0.5 * rg * (1 - r) * H0[-1] ** 2
         y0 = np.vstack([H0 / HS, N0 / NS])
-        sol = solve_bvp(rhs, bc, xi, y0, p=[xg0], tol=1e-6, max_nodes=200000)
+        if args.gl_km:                                                  # the position is imposed: no unknown parameter,
+            def bc_fixed(ya, yb):                                       # the flotation condition is dropped
+                b3 = bc(ya, yb, [xg0])
+                Hb, Nb = yb[0] * HS, yb[1] * NS
+                return np.array([b3[0], (Nb - 0.5 * rg * (1 - r) * Hb**2) / NS])
+            sol = solve_bvp(lambda xi_, y: rhs(xi_, y, [xg0]), bc_fixed, xi, y0, tol=1e-6, max_nodes=200000)
+            sol.p = np.array([xg0])
+        else:
+            sol = solve_bvp(rhs, bc, xi, y0, p=[xg0], tol=1e-6, max_nodes=200000)
         return sol, bed, xbs, bbs, x_schoof, HS
 
     sol = None
