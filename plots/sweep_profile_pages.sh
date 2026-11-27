@@ -13,7 +13,7 @@ if [ "${REMOTE:-1}" = 1 ]; then
     for k in $ONLY; do
         if [ $k = base ]; then S="$W/branch_gl549s100/steady_temperate.npz $W/sweep_gl549s100/seg_s*/points/state_*.npz $W/sweep_gl549s100_25/seg_u*/points/state_*.npz"
         else S="$W/branch_gl549s100$k/steady_temperate.npz $W/sweep_gl549s100$k/seg_*/points/state_*.npz"; fi
-        CMD="$CMD; python3 plots/sweep_profiles.py $S --title sweep_$k --out $W/sweep_profiles_$k.html"
+        CMD="$CMD; python3 plots/sweep_profiles.py $S --out $W/sweep_profiles_$k.html"
     done
     $SSH slloyd@tethys-3g "bash -lc '$CMD'" || exit 1
 fi

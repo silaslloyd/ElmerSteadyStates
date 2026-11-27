@@ -51,7 +51,7 @@ def one(path):
 
 def main():
     a = sys.argv[1:]
-    out, title = "sweep_profiles.html", "sweep"
+    out, title = "sweep_profiles.html", None
     if "--out" in a:
         i = a.index("--out"); out = a[i + 1]; del a[i:i + 2]
     if "--title" in a:
@@ -74,6 +74,9 @@ def main():
     pts.sort(key=lambda q: -(q[1] if q[1] is not None else 0))
     ds = [q[1] for q in pts]
     lo, hi = min(ds), max(ds)
+    if title is None:                            # the sweep's parameter value: the surface temperature Tsurf of its states
+        with np.load(a[0]) as zz:
+            title = f"Tsurf = {float(zz['p']):.2f} K"
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
                         subplot_titles=("surface elevation Zs (m)", "bed temperature (K)"))
     seen = set()
