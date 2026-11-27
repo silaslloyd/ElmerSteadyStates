@@ -127,6 +127,12 @@ def main():
     steps = [dict(method="update", label=f"{ts:.2f}", args=[{"visible": [o == k for o in owner]}, {"title": titles[k]}])
              for k, (ts, _) in enumerate(sweeps)]
     fig.update_xaxes(title_text="x (km)", row=2, col=1)
+    # y axes fixed to the extremes over all sweeps (a little padding), so the slider does not rescale them
+    for row, k in ((1, 2), (2, 3)):
+        v = np.concatenate([np.asarray(q[k][1], float) for _, pts in sweeps for q in pts])
+        v = v[np.isfinite(v)]
+        pad = 0.03 * (v.max() - v.min() or 1.0)
+        fig.update_yaxes(range=[float(v.min() - pad), float(v.max() + pad)], row=row, col=1)
     fig.update_layout(title=titles[0], height=900, legend=dict(title="patch length d"), hovermode="x unified",
                       sliders=[dict(active=0, steps=steps, currentvalue=dict(prefix="Tsurf (K) = "), pad=dict(t=40))])
     fig.write_html(out, include_plotlyjs="cdn")
