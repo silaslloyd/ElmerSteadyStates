@@ -61,14 +61,19 @@ def one(path):
         m = x == u
         bx.append(u)
         bt.append(T[m][np.argmin(z[m])])
-    hyd = None                                   # the water sheet (SheetSolverhw): a frozen field on the bed nodes
-    hk = next((k for k in frozen if k.lower() == "water sheet thickness"), None)
-    if hk is not None:
-        gh, vh = frozen[hk]
-        sh = on_side(gh, coords)
-        xh = xs(gh[sh])
-        o = np.argsort(xh)
-        hyd = (xh[o], np.asarray(vh, float)[sh][o])
+    hyd = None                                   # the water sheet (SheetSolverhw) is among the state's diagnostics (the map's end
+    for recs in (diag, frozen):                  # value) or its frozen fields (carried between chunks)
+        hk = next((k for k in recs if k.lower() == "water sheet thickness"), None)
+        if hk is not None:
+            gh, vh = recs[hk]
+            sh = on_side(gh, coords)
+            xh = xs(gh[sh])
+            o = np.argsort(xh)
+            hyd = (xh[o], np.asarray(vh, float)[sh][o])
+            break
+    if hyd is None and not getattr(one, "_told", False):
+        one._told = True
+        print(f"{path}: no 'Water Sheet Thickness' record; diagnostics: {', '.join(diag)}; frozen: {', '.join(frozen)}")
     with np.load(path) as zz:
         d = float(zz["meta::sweep_d"]) / 1e3 if "meta::sweep_d" in zz.files else None
         xgl = float(zz["meta::x_gl"]) / 1e3 if "meta::x_gl" in zz.files else None
