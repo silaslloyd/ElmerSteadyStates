@@ -149,6 +149,7 @@ def main():
     ap.add_argument("--step-max-km", type=float, default=25.0)
     ap.add_argument("--gl-rounds", type=int, default=6)
     ap.add_argument("--maxit", type=int)
+    ap.add_argument("--bisect-spawn", action="store_true", help="ess sweep: each bisection as a job of its own")
     ap.add_argument("--newton-its-max", type=int, default=0, help="ess sweep: more Newton iterations than this halve the next steps")
     ap.add_argument("--step-floor-km", type=float, default=0.0, help="ess sweep: the smallest step of the halvings (km)")
     ap.add_argument("--bisect-km", type=float, default=0.0,
@@ -278,6 +279,8 @@ def main():
                f"{a.step_max_km:g}", "--gl-rounds", str(a.gl_rounds), "--out", seg]
         if a.maxit:
             cmd += ["--maxit", str(a.maxit)]
+        if a.bisect_spawn:
+            cmd += ["--bisect-spawn"]
         if prev_cons is not None:                # the previous segment's last point: a change to this one's first is bisected
             cmd += ["--start-consistent", prev_cons]
         cmd += ["--newton-its-max", str(a.newton_its_max), "--step-floor-km", f"{a.step_floor_km:g}",

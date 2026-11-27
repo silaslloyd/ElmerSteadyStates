@@ -25,6 +25,8 @@
 # FROM_POINT: a converged sweep point (points/state_NNNNN.npz) as the start instead of the fully temperate state: STATE = it, D_START = its d.
 # OUT (default TAG): the output's name, work/gl_ssa_gl<GL>/sweep_<OUT>/ and refined/sweep_<OUT>.toml; TAGP (default s): the segments' prefix
 # (seg_<TAGP>NNNN, refined/<TAGP>NNNN.toml), so a second sweep from the same branch does not touch the first's files. SPAN defaults to two steps.
+# BISECT_SPAWN (default 1): a change of consistency between two points is bisected by a job of its own (jobs/gl_bisect.cmd, 128 tasks,
+# the midpoints in seg_*/bisect_<d>_<d>/) while this sweep goes on; 0: bisected inside this job, which waits.
 # ESS_GMRES_RECYCLE=k (env, default off, e.g. GMRES_RECYCLE=6 in the sbatch environment: `ESS_GMRES_RECYCLE=6 GL=549 ... sbatch jobs/gl_sweep.cmd`): GMRES deflated with k recycled harmonic Ritz
 # vectors of the slow modes, carried over Newton iterations and sweep points (ess/linalg.py Recycler); no extra model runs.
 # GL (default 549), SHELF (default 100), TAG (default gl<GL>s<SHELF>), STATE (default work/gl_ssa_gl<GL>/branch_<TAG>/steady_temperate.npz),
@@ -95,5 +97,6 @@ echo "  base config $CFG"
 python3 -u jobs/sweep_refined.py $CFG --from-state $STATE --d-km $DSTART --d-end-km ${D_END:-0} \
     --span-km $SPAN --pad-km $PAD --fine $FINE --grade-km 10 --step-frac 1 --step-min-km $STEP --step-max-km $STEP \
     --predictor ${PREDICTOR:-none} --newton-its-max ${ITS_MAX:-8} --step-floor-km ${FLOOR:-1} --bisect-km ${BISECT:-2} --out-root $OUTROOT --tag-prefix ${TAGP:-s} \
+    $( [ "${BISECT_SPAWN:-1}" = 1 ] && echo "--bisect-spawn" ) \
     $( [ "$MAP_STEPS" -gt 0 ] && echo "--map-steps $MAP_STEPS" )
 echo "$(date +%T) done"

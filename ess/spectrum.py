@@ -764,7 +764,8 @@ def sweep_lengths(d_start, d_end, frac, smin, smax):
 
 def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_start, d_end, frac=0.1, smin=1e3,
                      smax=20e3, gl_rounds=6, tol_T=0.0, predictor="none", seed=None, its_max=0, floor=None,
-                     bisect=0.0, hp=None, rhoi=917.0, Lw=3.34e5, rhow=1028.0, gravity=9.81 * 3.15576e7 ** 2, start_cons=None):
+                     bisect=0.0, hp=None, rhoi=917.0, Lw=3.34e5, rhow=1028.0, gravity=9.81 * 3.15576e7 ** 2, start_cons=None,
+                     bisect_spawn=None, bisect_only=None, state_path=None):
     """Steady states with a temperate patch of length d (m) from the grounding line upstream (cold upstream of it,
     every floating node temperate; patch_mask), for d from d_start to d_end in graded steps (sweep_lengths), each
     from the previous one's state. For each d: Newton with both masks frozen; then the grounding line by CONTACT
@@ -788,7 +789,11 @@ def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_st
     (whose last converged row is the sweep's own latest point, as the segment hand-off and the resume read it).
     start_cons (True / False / None): the consistency of the start state (d_start), e.g. the previous segment's last point:
     the first interval d_start -> first point is then checked for a change too (otherwise a change across a segment
-    join is not seen: cons_prev starts as None)."""
+    join is not seen: cons_prev starts as None).
+    bisect_spawn: a callable (a_state, a_d, a_cons, b_state, b_d, b_cons) -> bool that starts the bisection of that
+    interval as a job of its own (the sweep goes on at once); False (e.g. the submission was refused) -> bisected here.
+    state_path: the start state's file (the interval's end a when it is the start state).
+    bisect_only = (b_state, b_d, a_cons, b_cons): only the bisection between the start state (d_start) and that point."""
     from .cli import _contact_mask
     from .newton import newton_krylov
     from .statefile import load_state
@@ -930,6 +935,15 @@ def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_st
         lo, hi = sorted((a["d"], b["d"]))
         log.info(f"sweep: the boundary of the consistent states lies between d = {lo / 1e3:g} and {hi / 1e3:g} km")
 
+    if bisect_only is not None:
+        b_state, b_d, a_cons, b_cons = bisect_only
+        sb = load_state(b_state)
+        a = dict(d=float(d_start), y=y, diag=diag, gm=frozen[kgm], cons=bool(a_cons))
+        b = dict(d=float(b_d), y=prob.scale(sb.x), diag=sb.diag, gm=sb.frozen[find_name(sb.frozen, "GroundedMask")], cons=bool(b_cons))
+        log.info(f"sweep: bisection only: d = {a['d'] / 1e3:g} ({'consistent' if a['cons'] else 'inconsistent'}) .. "
+                 f"{b['d'] / 1e3:g} km ({'consistent' if b['cons'] else 'inconsistent'})")
+        bisect_between(a, b)
+        return rows
     sgn = -1.0 if d_end < d_start else 1.0
     d_cur = d_last if done else float(d_start)
     cons_prev = None
@@ -961,7 +975,15 @@ def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_st
             d_ref = d_prev if d_prev is not None else (float(d_start) if start_cons is not None else None)
             if bisect and cons_prev is not None and res["cons"] is not None and res["cons"] != cons_prev \
                     and d_ref is not None and abs(d - d_ref) > bisect * 1.01:
-                bisect_between(dict(d=d_ref, y=y_prev, diag=diag_prev, gm=gm_prev, cons=cons_prev), cur)
+                spawned = False
+                if bisect_spawn is not None:
+                    pa = os.path.join(outdir, "points", f"state_{int(round(d_ref / 100)):05d}.npz")
+                    if d_prev is None:
+                        pa = state_path
+                    pb = os.path.join(outdir, "points", f"state_{int(round(d / 100)):05d}.npz")
+                    spawned = bool(pa) and bool(bisect_spawn(pa, d_ref, cons_prev, pb, d, res["cons"]))
+                if not spawned:
+                    bisect_between(dict(d=d_ref, y=y_prev, diag=diag_prev, gm=gm_prev, cons=cons_prev), cur)
             frozen[kgm] = res["gm"]
             cons_prev = res["cons"] if res["cons"] is not None else cons_prev
             d_prev, y_prev, diag_prev, gm_prev = d, y, diag, res["gm"]

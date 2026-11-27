@@ -1289,13 +1289,41 @@ def cmd_sweep(args):
             raise SystemExit(f"--prev-state {args.prev_state}: not a sweep point (no meta sweep_d)")
         seed = (float(ps.meta["sweep_d"]), on_layout(ps, saved))
         log.info(f"sweep: earlier point d = {seed[0] / 1e3:g} km from {args.prev_state}")
+    spawn = None
+    if args.bisect_spawn and args.bisect_km:
+        import subprocess
+
+        def spawn(a_state, a_d, a_cons, b_state, b_d, b_cons):
+            """the bisection of an interval as a job of its own (jobs/gl_bisect.cmd); False: refused (job limit ...)"""
+            sub = os.path.join(out, f"bisect_{a_d / 1e3:g}_{b_d / 1e3:g}")
+            env = {k: v for k, v in os.environ.items() if not k.startswith("SLURM_")}
+            env.update(BIS_CFG=os.path.abspath(args.config), BIS_A=os.path.abspath(a_state), BIS_AD=f"{a_d / 1e3:g}",
+                       BIS_B=os.path.abspath(b_state), BIS_BD=f"{b_d / 1e3:g}", BIS_ACONS=str(int(bool(a_cons))),
+                       BIS_BCONS=str(int(bool(b_cons))), BIS_OUT=os.path.abspath(sub), BIS_KM=f"{args.bisect_km:g}")
+            try:
+                r_ = subprocess.run(["sbatch", "--parsable", f"--job-name=glbis-{b_d / 1e3:.0f}", "jobs/gl_bisect.cmd"],
+                                    env=env, capture_output=True, text=True, timeout=120)
+            except Exception as e:                       # no sbatch here: bisected in this process
+                log.warning(f"sweep: bisection not spawned ({e}): bisecting here")
+                return False
+            if r_.returncode != 0:
+                log.warning(f"sweep: bisection not spawned ({r_.stderr.strip()[:200]}): bisecting here")
+                return False
+            log.info(f"sweep: the bisection between d = {a_d / 1e3:g} and {b_d / 1e3:g} km runs as job "
+                     f"{r_.stdout.strip()} ({sub}); this sweep goes on")
+            return True
+    bonly = None
+    if args.bisect_only:
+        b_state, b_d, a_c, b_c = args.bisect_only.split(",")
+        bonly = (b_state, float(b_d) * 1e3, int(a_c), int(b_c))
     rows = run_sweep_marine(cfg, prob, model, saved, prob.scale(saved.x), p, nopt, out, d_start=d0, d_end=d1,
                             frac=args.step_frac, smin=args.step_min_km * 1e3, smax=args.step_max_km * 1e3,
                             gl_rounds=args.gl_rounds, predictor=args.predictor, seed=seed,
                             its_max=args.newton_its_max, floor=args.step_floor_km * 1e3 if args.step_floor_km else None,
                             bisect=args.bisect_km * 1e3, hp=cs_sheet_params(cfg), rhoi=P["rhoi"], Lw=P["Lw"],
                             rhow=P["rhow"], gravity=P["gravity"],
-                            start_cons=None if args.start_consistent is None else bool(int(args.start_consistent)))
+                            start_cons=None if args.start_consistent is None else bool(int(args.start_consistent)),
+                            bisect_spawn=spawn, bisect_only=bonly, state_path=args.state)
     n = sum(1 for r_ in rows if str(r_.get("converged")) == "1")
     log.info(f"sweep: {n} converged states of {len(rows)} in {out}/sweep.csv")
 
@@ -1766,6 +1794,11 @@ def main(argv=None):
                    help="where two converged points differ in consistency (no cold bed above melting and the patch's "
                         "water sheet stays above 0: the spectrum's 'kept'), bisect the interval down to this "
                         "length (km; sweep's bisect.csv); 0: off")
+    s.add_argument("--bisect-spawn", action="store_true",
+                   help="start each bisection (--bisect-km) as a job of its own (jobs/gl_bisect.cmd) and go on with the "
+                        "sweep; bisected in this process if the submission is refused")
+    s.add_argument("--bisect-only", help="B_STATE,B_D_KM,A_CONSISTENT,B_CONSISTENT: only the bisection between --state "
+                                         "(at --d-start-km) and that point (jobs/gl_bisect.cmd)")
     s.add_argument("--start-consistent", choices=["0", "1"],
                    help="the consistency of the start state (1 consistent, 0 not; the previous segment's last point): the "
                         "interval to the first point is bisected too if it changes (jobs/sweep_refined.py passes it)")
