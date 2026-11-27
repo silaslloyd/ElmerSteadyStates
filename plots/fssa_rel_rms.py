@@ -49,6 +49,9 @@ def main():
     refname = "cmp_full_dt10_frames.npz"
     if "--out" in a:
         i = a.index("--out"); out = a[i + 1]; del a[i:i + 2]
+    t0 = 78000.0                               # the start state (work/land_flowline_3d/state_078000.npz): the runs' time 0
+    if "--t0" in a:
+        i = a.index("--t0"); t0 = float(a[i + 1]); del a[i:i + 2]
     if "--ref" in a:
         i = a.index("--ref"); refname = a[i + 1]; del a[i:i + 2]
     D = os.path.expanduser(a[0] if a else "~/Downloads")
@@ -71,14 +74,14 @@ def main():
         m = re.search(r"dt(\d+)", lab)
         c = col.get(int(m.group(1)), "#444") if m else "#444"
         full = lab.startswith("full")
-        fig.add_trace(go.Scatter(x=[q[0] for q in r], y=[q[1] for q in r], name=lab, mode="lines+markers",
+        fig.add_trace(go.Scatter(x=[q[0] - t0 for q in r], y=[q[1] for q in r], name=lab, mode="lines+markers",
                                  line=dict(color=c, dash="dash" if full else "solid", width=2),
                                  marker=dict(size=7, symbol="square" if "bdf2" in lab else "circle"),
-                                 hovertemplate=lab + "<br>t %{x:.0f} yr<br>%{y:.2f} %<extra></extra>"))
+                                 hovertemplate=lab + "<br>%{x:.0f} yr into the run<br>%{y:.2f} %<extra></extra>"))
         n += 1
-        print(f"{lab}: {len(r)} points, last {r[-1][1]:.2f} % at t {r[-1][0]:g}")
+        print(f"{lab}: {len(r)} points, last {r[-1][1]:.2f} % at {r[-1][0] - t0:g} yr into the run")
     fig.update_layout(template="plotly_white", height=700, title="relative rms error of Zs against full FSSA dt 10 (dashed: full FSSA, solid: implicit, squares: BDF 2)",
-                      xaxis_title="t (yr)", yaxis_title="rms(Zs - Zs_ref) / rms(Zs_ref(t) - Zs_ref(t0))  (%)", yaxis_type="log", hovermode="closest")
+                      xaxis=dict(title="time since the start (yr)", range=[0, 10000]), yaxis_title="rms(Zs - Zs_ref) / rms(Zs_ref(t) - Zs_ref(t0))  (%)", yaxis_type="log", hovermode="closest")
     fig.write_html(out, include_plotlyjs="cdn")
     print(f"{n} runs -> {out}")
 
