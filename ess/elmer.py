@@ -2188,25 +2188,32 @@ End
     def _launch(self, run_dir, tag):
         cmd = shlex.split(self.mpirun.format(n=self.n_procs)) + [self.solver, "run.sif"]
         logf = os.path.join(run_dir, "elmer.log")
-        t0 = time.time()
-        with open(logf, "w") as f:
-            try:
-                ret = subprocess.run(cmd, cwd=run_dir, stdout=f, stderr=subprocess.STDOUT,
-                                     timeout=self.timeout).returncode
-            except subprocess.TimeoutExpired:
-                raise ModelFailure(f"{tag}: Elmer timed out after {self.timeout:.0f} s (log {logf})")
-            except FileNotFoundError as e:
-                raise ModelFailure(f"{tag}: cannot launch {cmd[0]}: {e}")
-        dt = time.time() - t0
-        with open(logf, errors="replace") as f:
-            log = f.read()
-        tail = log[-20000:]
-        # the whole log: per-rank warnings at the end (e.g. StateIO at 768 ranks) can push ALL DONE out of the tail
-        if ret != 0 or not ("ALL DONE" in log or "ELMER SOLVER FINISHED" in tail):
-            err = [l for l in tail.splitlines() if "ERROR" in l or "Fatal" in l or "FATAL" in l][-3:]
-            raise ModelFailure(f"{tag}: Elmer failed (exit {ret}) after {dt:.0f} s; see {logf}"
-                               + ("\n  " + "\n  ".join(err) if err else ""))
-        return dt
+        retries = int(os.environ.get("ESS_LAUNCH_RETRIES", "2"))      # a rank that crashes at start-up (signal, in the first
+        for attempt in range(retries + 1):                            # 2 min, no Elmer error message) is a node's problem: run again
+            t0 = time.time()
+            with open(logf, "w") as f:
+                try:
+                    ret = subprocess.run(cmd, cwd=run_dir, stdout=f, stderr=subprocess.STDOUT,
+                                         timeout=self.timeout).returncode
+                except subprocess.TimeoutExpired:
+                    raise ModelFailure(f"{tag}: Elmer timed out after {self.timeout:.0f} s (log {logf})")
+                except FileNotFoundError as e:
+                    raise ModelFailure(f"{tag}: cannot launch {cmd[0]}: {e}")
+            dt = time.time() - t0
+            with open(logf, errors="replace") as f:
+                logtxt = f.read()
+            tail = logtxt[-20000:]
+            # the whole log: per-rank warnings at the end (e.g. StateIO at 768 ranks) can push ALL DONE out of the tail
+            if ret != 0 or not ("ALL DONE" in logtxt or "ELMER SOLVER FINISHED" in tail):
+                err = [l for l in tail.splitlines() if "ERROR" in l or "Fatal" in l or "FATAL" in l][-3:]
+                if (ret < 0 or ret > 128) and dt < 120 and not err and attempt < retries:
+                    log.warning(f"{tag}: Elmer crashed at start-up (exit {ret}) after {dt:.0f} s; running it again "
+                                f"({attempt + 1} of {retries}); log kept as {logf}.crash{attempt + 1}")
+                    os.replace(logf, f"{logf}.crash{attempt + 1}")
+                    continue
+                raise ModelFailure(f"{tag}: Elmer failed (exit {ret}) after {dt:.0f} s; see {logf}"
+                                   + ("\n  " + "\n  ".join(err) if err else ""))
+            return dt
 
     def _read_out(self, run_dir, base, tag) -> Records:
         files = partition_files(os.path.join(run_dir, base))
