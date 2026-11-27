@@ -7,6 +7,7 @@
 #   cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && DRY=1 bash jobs/gl_sweep_horizon.sh
 #   cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && bash jobs/gl_sweep_horizon.sh
 #   HORIZONS="100" bash jobs/gl_sweep_horizon.sh
+#   HORIZONS="500" STEP=12.5 bash jobs/gl_sweep_horizon.sh     # the main sweep's horizon with half its step (output sweep_gl549s100_h500_s12.5)
 # NEWTON_TOL: scaled with the horizon (5e-5 x horizon / 500 yr: 2.5e-5 at 250 yr, 1e-5 at 100 yr), because F = map(x) - x grows with the
 # horizon: the same rms(F) is a 5x faster remaining drift at 100 yr than at 500 yr, so a fixed tolerance would be a looser steady state. TOL_SCALE=0: the
 # fixed NEWTON_TOL (default 5e-5) for every horizon.
@@ -23,6 +24,7 @@ FROM=${FROM_POINT:-$(ls $W/$MAIN/seg_*/points/state_*.npz | awk -F/ '{print $NF,
 [ -f "$FROM" ] || { echo "no converged point of $W/$MAIN"; exit 1; }
 echo "start point $FROM (d $(python3 -c "import numpy as np; print(round(float(np.load('$FROM')['meta::sweep_d']) / 1e3, 3))") km)"
 PFX=(v w x y)
+SFX=""; [ "$STEP" != 25 ] && SFX="_s$STEP"      # another step than the main sweep's: in the output's name
 i=0
 for H in $HORIZONS; do
     P=${PFX[$i]}; i=$((i + 1))
@@ -33,9 +35,9 @@ for H in $HORIZONS; do
         echo "segment prefix $P is in use in $W (KEEP_PREFIX=1 to resume that sweep)"; exit 1
     fi
     if [ "${TOL_SCALE:-1}" = 0 ]; then TOL=${NEWTON_TOL:-5e-5}; else TOL=$(awk "BEGIN{print ${NEWTON_TOL:-5e-5} * $H / 500}"); fi
-    CMDL="GL=$GL STEP=$STEP NEWTON_TOL=$TOL OUT=gl549s100_h$H TAGP=$P MAP_STEPS=$MS FROM_POINT=$FROM sbatch $SBATCH_EXTRA --job-name=glsw-h$H jobs/gl_sweep.cmd"
-    echo "== horizon $H yr = $MS steps: Newton tolerance $TOL, prefix $P, output $W/sweep_gl549s100_h$H/"
+    CMDL="GL=$GL STEP=$STEP NEWTON_TOL=$TOL OUT=gl549s100_h$H$SFX TAGP=$P MAP_STEPS=$MS FROM_POINT=$FROM sbatch $SBATCH_EXTRA --job-name=glsw-h$H$SFX jobs/gl_sweep.cmd"
+    echo "== horizon $H yr = $MS steps: Newton tolerance $TOL, prefix $P, output $W/sweep_gl549s100_h$H$SFX/"
     if [ -n "$DRY" ]; then echo "  $CMDL"; continue; fi
-    J=$(GL=$GL STEP=$STEP NEWTON_TOL=$TOL OUT=gl549s100_h$H TAGP=$P MAP_STEPS=$MS FROM_POINT=$FROM sbatch --parsable $SBATCH_EXTRA --job-name=glsw-h$H jobs/gl_sweep.cmd)
+    J=$(GL=$GL STEP=$STEP NEWTON_TOL=$TOL OUT=gl549s100_h$H$SFX TAGP=$P MAP_STEPS=$MS FROM_POINT=$FROM sbatch --parsable $SBATCH_EXTRA --job-name=glsw-h$H$SFX jobs/gl_sweep.cmd)
     echo "  sweep job $J"
 done
