@@ -12,7 +12,7 @@
 #   cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && DRY=1 bash jobs/gl_tsurf_sweeps.sh   # set up, print the commands
 #   cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && bash jobs/gl_tsurf_sweeps.sh         # set up and submit
 #   OFFSETS="1" STEP=50 bash jobs/gl_tsurf_sweeps.sh
-# Tags <BASE>p q r (+1 +2 +3 K) and m n o (-1 -2 -3 K), segment prefixes h i j / c d e. TAGP_P / TAGP_M: another prefix for the + / - sweep (its own mesh folders and start.npz: never one another sweep used; the
+# Tags <BASE>p q r t (+1 +2 +3 +4 K) and m n o (-1 -2 -3 K), segment prefixes h i j k / c d e. TAGP_P / TAGP_M: another prefix for the + / - sweep (its own mesh folders and start.npz: never one another sweep used; the
 # script refuses a prefix in use), KEEP_PREFIX=1 (resume a sweep of that prefix), SWEEP_ONLY=1 (only the sweep, from the branch's existing steady_temperate.npz).
 # GL (default 549), SHELF (100), BASE (gl<GL>s<SHELF>), OFFSETS, STEP (25), SBATCH_EXTRA (more sbatch options), DRY=1 (no sbatch).
 set -e
@@ -37,10 +37,11 @@ echo "base $BASE: Tsurf $T0 K (state $BSTATE)"
 SEEN=""
 for OFF in $OFFSETS; do
     # one letter only: Elmer reads at most 127 characters of the mesh path, which has the tag in it. By |offset| (whole K, 1..3):
-    # + p q r, - m n o; the segment prefix (own mesh folders and start.npz per sweep, never one another sweep used): + h i j, - c d e
+    # + p q r t, - m n o; the segment prefix (own mesh folders and start.npz per sweep, never one another sweep used): + h i j k, - c d e
     A=${OFF#-}; A=${A#+}
-    case "$A" in 1) K=0;; 2) K=1;; 3) K=2;; *) echo "offset $OFF: whole K from 1 to 3 only (one letter per sweep)"; exit 1;; esac
-    if [ "${OFF#-}" != "$OFF" ]; then L=$(echo mno | cut -c$((K+1))); TP=${TAGP_M:-$(echo cde | cut -c$((K+1)))}; else L=$(echo pqr | cut -c$((K+1))); TP=${TAGP_P:-$(echo hij | cut -c$((K+1)))}; fi
+    case "$A" in 1) K=0;; 2) K=1;; 3) K=2;; 4) K=3;; *) echo "offset $OFF: whole K from 1 to 4 only (one letter per sweep)"; exit 1;; esac
+    if [ "${OFF#-}" != "$OFF" ] && [ $K = 3 ]; then echo "offset $OFF: -4 K has no letter"; exit 1; fi
+    if [ "${OFF#-}" != "$OFF" ]; then L=$(echo mno | cut -c$((K+1))); TP=${TAGP_M:-$(echo cde | cut -c$((K+1)))}; else L=$(echo pqrt | cut -c$((K+1))); TP=${TAGP_P:-$(echo hijk | cut -c$((K+1)))}; fi
     TAG=${BASE}$L
     if ls -d $W/${TP}[0-9][0-9][0-9][0-9] > /dev/null 2>&1 && [ -z "$KEEP_PREFIX" ]; then
         echo "segment prefix $TP is in use in $W (KEEP_PREFIX=1 to resume that sweep)"; exit 1
