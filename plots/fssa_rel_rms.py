@@ -109,7 +109,7 @@ def main():
         n += 1
         print(f"{lab}: {len(r)} points, last {r[-1][1]:.2f} % at {r[-1][0] - t0:g} yr into the run")
     fig.update_layout(template="plotly_white", height=700, title="relative rms error of Zs against full FSSA dt 10 (dashed: full FSSA, solid: implicit, squares: BDF 2)",
-                      xaxis=dict(title="time since the start (yr)", range=[0, 10000]), yaxis_title="rms(Zs - Zs_ref) / rms(Zs_ref(t) - Zs_ref(" + ("start" if z0 is not None else "first frame") + "))  (%)", yaxis_type="log", hovermode="closest")
+                      xaxis=dict(title="time since the start (yr)", range=[0, 10000]), yaxis_title="error estimate (%)", yaxis_type="log", hovermode="closest")
     fig.write_html(out, include_plotlyjs="cdn")
     print(f"{n} runs -> {out}")
 
