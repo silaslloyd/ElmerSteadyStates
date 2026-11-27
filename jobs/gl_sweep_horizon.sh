@@ -7,6 +7,9 @@
 #   cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && DRY=1 bash jobs/gl_sweep_horizon.sh
 #   cd /SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates && bash jobs/gl_sweep_horizon.sh
 #   HORIZONS="100" bash jobs/gl_sweep_horizon.sh
+# NEWTON_TOL: scaled with the horizon (5e-5 x horizon / 500 yr: 2.5e-5 at 250 yr, 1e-5 at 100 yr), because F = map(x) - x grows with the
+# horizon: the same rms(F) is a 5x faster remaining drift at 100 yr than at 500 yr, so a fixed tolerance would be a looser steady state. TOL_SCALE=0: the
+# fixed NEWTON_TOL (default 5e-5) for every horizon.
 # GL (549), MAIN (sweep_gl549s100_25: the main sweep's folder), FROM_POINT (another start point), HORIZONS, STEP (25), DT (50), SBATCH_EXTRA, DRY=1.
 set -e
 cd "$(dirname "$0")/.."
@@ -29,9 +32,10 @@ for H in $HORIZONS; do
     if ls -d $W/${P}[0-9][0-9][0-9][0-9] > /dev/null 2>&1 && [ -z "$KEEP_PREFIX" ]; then
         echo "segment prefix $P is in use in $W (KEEP_PREFIX=1 to resume that sweep)"; exit 1
     fi
-    CMDL="GL=$GL STEP=$STEP OUT=gl549s100_h$H TAGP=$P MAP_STEPS=$MS FROM_POINT=$FROM sbatch $SBATCH_EXTRA --job-name=glsw-h$H jobs/gl_sweep.cmd"
-    echo "== horizon $H yr = $MS steps: prefix $P, output $W/sweep_gl549s100_h$H/"
+    if [ "${TOL_SCALE:-1}" = 0 ]; then TOL=${NEWTON_TOL:-5e-5}; else TOL=$(awk "BEGIN{print ${NEWTON_TOL:-5e-5} * $H / 500}"); fi
+    CMDL="GL=$GL STEP=$STEP NEWTON_TOL=$TOL OUT=gl549s100_h$H TAGP=$P MAP_STEPS=$MS FROM_POINT=$FROM sbatch $SBATCH_EXTRA --job-name=glsw-h$H jobs/gl_sweep.cmd"
+    echo "== horizon $H yr = $MS steps: Newton tolerance $TOL, prefix $P, output $W/sweep_gl549s100_h$H/"
     if [ -n "$DRY" ]; then echo "  $CMDL"; continue; fi
-    J=$(GL=$GL STEP=$STEP OUT=gl549s100_h$H TAGP=$P MAP_STEPS=$MS FROM_POINT=$FROM sbatch --parsable $SBATCH_EXTRA --job-name=glsw-h$H jobs/gl_sweep.cmd)
+    J=$(GL=$GL STEP=$STEP NEWTON_TOL=$TOL OUT=gl549s100_h$H TAGP=$P MAP_STEPS=$MS FROM_POINT=$FROM sbatch --parsable $SBATCH_EXTRA --job-name=glsw-h$H jobs/gl_sweep.cmd)
     echo "  sweep job $J"
 done
