@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-One plotly page per sweep with two plots: all the sweep points' surface profiles (Zs over x) and all their bed temperatures
-(temperature of the lowest node of each column over x, K), one line per point, coloured by the patch length d.
+One plotly page with two plots: all a sweep's points' surface profiles (Zs over x) and all their bed temperatures (the ice base,
+K), one line per point, coloured by the patch length d. A slider picks the sweep by its parameter value (surface temperature Tsurf).
 
-  python3 plots/sweep_profiles.py STATE [STATE ...] --out page.html [--title TEXT]
-STATE: npz states (the first, e.g. steady_temperate.npz, is drawn as d = whole grounded bed when it has no meta::sweep_d).
+  python3 plots/sweep_profiles.py STATE [STATE ...] [-- STATE [STATE ...]] ... --out page.html
+One sweep per group of states, groups separated by --; the first state of a group (e.g. steady_temperate.npz) is drawn as d = whole
+grounded bed when it has no meta::sweep_d. Tsurf is the state's p. Groups without a readable state are left out.
 Needs numpy and plotly.
 """
 import os
@@ -66,50 +67,70 @@ def one(path):
     return d, xgl, surf, (np.array(bx), np.array(bt))
 
 
-def main():
-    a = sys.argv[1:]
-    out, title = "sweep_profiles.html", None
-    if "--out" in a:
-        i = a.index("--out"); out = a[i + 1]; del a[i:i + 2]
-    if "--title" in a:
-        i = a.index("--title"); title = a[i + 1]; del a[i:i + 2]
-    import plotly.graph_objects as go
-    from plotly.colors import sample_colorscale
-    from plotly.subplots import make_subplots
+def load_group(paths):
     pts = []
-    for p in a:
+    for p in paths:
         try:
             pts.append((p,) + one(p))
         except Exception as e:
             print(f"skip {p}: {e}")
     if not pts:
-        sys.exit("no states")
+        return None
+    with np.load(next(q[0] for q in pts)) as zz:
+        tsurf = float(zz["p"])
     xgl = next((q[2] for q in pts if q[2] is not None), None)
     known = [q[1] for q in pts if q[1] is not None]
     top = xgl if xgl is not None else (max(known) + 25 if known else 0.0)   # the whole grounded bed
-    pts = [(p, d if d is not None else top, xg, s, b) for p, d, xg, s, b in pts]
-    pts.sort(key=lambda q: -(q[1] if q[1] is not None else 0))
-    ds = [q[1] for q in pts]
-    lo, hi = min(ds), max(ds)
-    if title is None:                            # the sweep's parameter value: the surface temperature Tsurf of its states
-        with np.load(a[0]) as zz:
-            title = f"Tsurf = {float(zz['p']):.2f} K"
+    pts = [(p, d if d is not None else top, s, b) for p, d, xg, s, b in pts]
+    pts.sort(key=lambda q: -q[1])
+    return tsurf, pts
+
+
+def main():
+    a = sys.argv[1:]
+    out = "sweep_profiles.html"
+    if "--out" in a:
+        i = a.index("--out"); out = a[i + 1]; del a[i:i + 2]
+    groups, cur = [], []
+    for t in a + ["--"]:
+        if t == "--":
+            if cur:
+                groups.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    import plotly.graph_objects as go
+    from plotly.colors import sample_colorscale
+    from plotly.subplots import make_subplots
+    sweeps = [g for g in (load_group(g) for g in groups) if g]
+    if not sweeps:
+        sys.exit("no states")
+    sweeps.sort(key=lambda t: t[0])
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
-                        subplot_titles=("surface elevation Zs (m)", "bed temperature (K)"))
-    seen = set()
-    for p, d, xg, s, b in pts:
-        c = sample_colorscale("Viridis", [0.0 if hi == lo else (d - lo) / (hi - lo)])[0]
-        lab = f"d = {d:.1f} km"
-        if lab in seen:
-            lab += " (" + os.path.basename(p) + ")"
-        seen.add(lab)
-        fig.add_trace(go.Scatter(x=s[0], y=s[1], mode="lines", name=lab, legendgroup=lab, line=dict(color=c, width=1.5)), 1, 1)
-        fig.add_trace(go.Scatter(x=b[0], y=b[1], mode="lines", name=lab, legendgroup=lab, showlegend=False, line=dict(color=c, width=1.5)), 2, 1)
+                        subplot_titles=("surface elevation Zs (m)", "bed temperature at the ice base (K)"))
+    owner = []                                   # per trace: the sweep it belongs to
+    for k, (ts, pts) in enumerate(sweeps):
+        ds = [q[1] for q in pts]
+        lo, hi = min(ds), max(ds)
+        seen = set()
+        for p, d, s, b in pts:
+            c = sample_colorscale("Viridis", [0.0 if hi == lo else (d - lo) / (hi - lo)])[0]
+            lab = f"d = {d:.1f} km"
+            if lab in seen:
+                lab += " (" + os.path.basename(p) + ")"
+            seen.add(lab)
+            vis = k == 0
+            fig.add_trace(go.Scatter(x=s[0], y=s[1], mode="lines", name=lab, legendgroup=lab, visible=vis, line=dict(color=c, width=1.5)), 1, 1)
+            fig.add_trace(go.Scatter(x=b[0], y=b[1], mode="lines", name=lab, legendgroup=lab, showlegend=False, visible=vis, line=dict(color=c, width=1.5)), 2, 1)
+            owner += [k, k]
+    titles = [f"Tsurf = {ts:.2f} K: {len(pts)} sweep points, d {max(q[1] for q in pts):.1f} to {min(q[1] for q in pts):.1f} km" for ts, pts in sweeps]
+    steps = [dict(method="update", label=f"{ts:.2f}", args=[{"visible": [o == k for o in owner]}, {"title": titles[k]}])
+             for k, (ts, _) in enumerate(sweeps)]
     fig.update_xaxes(title_text="x (km)", row=2, col=1)
-    fig.update_layout(title=f"{title}: {len(pts)} sweep points, d {hi:.1f} to {lo:.1f} km", height=900,
-                      legend=dict(title="patch length d"), hovermode="x unified")
+    fig.update_layout(title=titles[0], height=900, legend=dict(title="patch length d"), hovermode="x unified",
+                      sliders=[dict(active=0, steps=steps, currentvalue=dict(prefix="Tsurf (K) = "), pad=dict(t=40))])
     fig.write_html(out, include_plotlyjs="cdn")
-    print(f"{out}: {len(pts)} points")
+    print(f"{out}: {len(sweeps)} sweeps, Tsurf " + ", ".join(f"{ts:.2f}" for ts, _ in sweeps))
 
 
 if __name__ == "__main__":
