@@ -180,9 +180,9 @@ class Recycler:
     The slow modes of the map (D Phi ~ 1, J ~ 0: thermal, with a time scale far over the horizon) are what costs GMRES its
     iterations. Every product A v the solves make is kept; the harmonic Ritz vectors of the smallest |theta| over everything
     kept (the k that were deflated before and the new products) span the next deflation space U, with C = A U known without a
-    product. A solve starts from x0 = U (C^T b) and runs GMRES on (I - C C^T) A (r0 = (I - C C^T) b), x = x0 + z - U (C^T A z):
-    exact in the residual, every iteration one product as before. A stale U (the operator moved on) only makes the start
-    worse than it could be: the residual is always the true one.  k = 0: plain GMRES.
+    product. GMRES then solves A M^-1 y = b, x = M^-1 y, with M^-1 = I - C C^T + U C^T (A^-1 on span C, the identity elsewhere): one
+    product per iteration as before, and the residual is the true one even when the operator has moved on (a stale U only
+    makes M^-1 a worse preconditioner).  k = 0: plain GMRES.
     """
 
     def __init__(self, k: int, max_store: int | None = None):
@@ -209,29 +209,17 @@ class Recycler:
             pairs_w.append(np.array(w, float))
             return w
 
-        bnorm = np.linalg.norm(b)
         if self.U is not None and self.U.shape[1]:
             U, C = self.U, self.C
-            x0 = U @ (C.T @ b)
-            r0 = b - C @ (C.T @ b)
-            log.info(f"  gmres: deflating {U.shape[1]} recycled vectors, start residual {np.linalg.norm(r0) / bnorm:.2e} of ||b||")
+            log.info(f"  gmres: deflating {U.shape[1]} recycled vectors")
 
-            def PA(v):
-                w = A(v)
-                return w - C @ (C.T @ w)
+            def Minv(v):                           # A^-1 on span(C) (A U = C), the identity on its complement
+                c = C.T @ v
+                return v - C @ c + U @ c
 
-            if np.linalg.norm(r0) <= tol * bnorm:
-                from_info = GmresInfo(True, 0, float(np.linalg.norm(r0) / bnorm))
-                return x0, from_info
-            z, info = gmres(PA, r0, tol=tol * bnorm / np.linalg.norm(r0), restart=restart, maxiter=maxiter, callback=callback, **kw)
-            # x = x0 + z - U (C^T A z): A z from the kept products is not available for an arbitrary combination, but
-            # P A z = A z - C C^T A z and C^T A z is needed: one more product unless z came out of the Krylov basis
-            # whose products are kept; rebuild A z from them (A linear: A z = sum c_i A v_i is not directly known), so
-            # take the product (counted in info.iterations)
-            Az = A(z)
-            x = x0 + z - U @ (C.T @ Az)
-            info.iterations += 1
-            info.residual = float(np.linalg.norm(b - C @ (C.T @ b) - (Az - C @ (C.T @ Az))) / bnorm)
+            # right-preconditioned: A M^-1 y = b, x = M^-1 y; the residual is the true one even where A has moved on
+            y, info = gmres(lambda v: A(Minv(v)), b, tol=tol, restart=restart, maxiter=maxiter, callback=callback, **kw)
+            x = Minv(y)
         else:
             x, info = gmres(A, b, tol=tol, restart=restart, maxiter=maxiter, callback=callback, **kw)
         self._update(pairs_v, pairs_w)
