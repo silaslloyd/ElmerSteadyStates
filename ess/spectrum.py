@@ -764,7 +764,7 @@ def sweep_lengths(d_start, d_end, frac, smin, smax):
 
 def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_start, d_end, frac=0.1, smin=1e3,
                      smax=20e3, gl_rounds=6, tol_T=0.0, predictor="none", seed=None, its_max=0, floor=None,
-                     bisect=0.0, hp=None, rhoi=917.0, Lw=3.34e5, rhow=1028.0, gravity=9.81 * 3.15576e7 ** 2):
+                     bisect=0.0, hp=None, rhoi=917.0, Lw=3.34e5, rhow=1028.0, gravity=9.81 * 3.15576e7 ** 2, start_cons=None):
     """Steady states with a temperate patch of length d (m) from the grounding line upstream (cold upstream of it,
     every floating node temperate; patch_mask), for d from d_start to d_end in graded steps (sweep_lengths), each
     from the previous one's state. For each d: Newton with both masks frozen; then the grounding line by CONTACT
@@ -785,7 +785,10 @@ def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_st
     thermal test only), the interval
     between them is bisected (each midpoint solved from the consistent-side state) down to bisect m: the boundary of
     the consistent states. Midpoints go to outdir/bisect.csv (same columns) and outdir/points/, never to sweep.csv
-    (whose last converged row is the sweep's own latest point, as the segment hand-off and the resume read it)."""
+    (whose last converged row is the sweep's own latest point, as the segment hand-off and the resume read it).
+    start_cons (True / False / None): the consistency of the start state (d_start), e.g. the previous segment's last point:
+    the first interval d_start -> first point is then checked for a change too (otherwise a change across a segment
+    join is not seen: cons_prev starts as None)."""
     from .cli import _contact_mask
     from .newton import newton_krylov
     from .statefile import load_state
@@ -932,6 +935,10 @@ def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_st
     cons_prev = None
     if done:
         cons_prev = (str(done[-1]["consistent"]) == "1") if str(done[-1].get("consistent", "")) != "" else None
+    elif start_cons is not None:
+        cons_prev = bool(start_cons)             # the start state is the reference of the first interval (y_prev etc. below)
+        log.info(f"sweep: the start state (d = {d_start / 1e3:g} km) is {'consistent' if cons_prev else 'inconsistent'}: "
+                 f"a change to the first point is bisected too")
     sc = 1.0
     while (d_end - d_cur) * sgn > 1e-6:
         nominal = min(max(frac * d_cur, smin), smax)
@@ -951,9 +958,10 @@ def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_st
         if r.converged:
             y, diag = res["y"], res["diag"]
             cur = dict(d=d, y=y, diag=diag, gm=res["gm"], cons=res["cons"])
+            d_ref = d_prev if d_prev is not None else (float(d_start) if start_cons is not None else None)
             if bisect and cons_prev is not None and res["cons"] is not None and res["cons"] != cons_prev \
-                    and d_prev is not None and abs(d - d_prev) > bisect * 1.01:
-                bisect_between(dict(d=d_prev, y=y_prev, diag=diag_prev, gm=gm_prev, cons=cons_prev), cur)
+                    and d_ref is not None and abs(d - d_ref) > bisect * 1.01:
+                bisect_between(dict(d=d_ref, y=y_prev, diag=diag_prev, gm=gm_prev, cons=cons_prev), cur)
             frozen[kgm] = res["gm"]
             cons_prev = res["cons"] if res["cons"] is not None else cons_prev
             d_prev, y_prev, diag_prev, gm_prev = d, y, diag, res["gm"]

@@ -118,6 +118,16 @@ def converged(folder):
             for r in rows if str(r.get("converged")) == "1"]
 
 
+def last_consistent(folder):
+    """the 'consistent' flag (\"1\" / \"0\") of the last converged row of a sweep folder, or None"""
+    f = os.path.join(folder, "sweep.csv")
+    if not os.path.exists(f):
+        return None
+    rows = [r for r in csv.DictReader(open(f)) if str(r.get("converged")) == "1"]
+    v = str(rows[-1].get("consistent", "")).strip() if rows else ""
+    return v if v in ("0", "1") else None
+
+
 def last_converged(folder):
     c = converged(folder)
     return (c[-1] if c else None), c
@@ -227,6 +237,7 @@ def main():
             cur = got[1]
         src, prev, ramp_start = cur, None, (tag, cur)
         log(f"ramp done: {rk} = {lua.get(rk)} at d = {d0:g} km ({os.path.relpath(src, ROOT)})")
+    prev_cons = None                             # the consistency of the last converged point (the next segment's start)
     sgn = -1.0 if a.d_end_km < d0 else 1.0       # either direction: d down (the head inland) or up (towards the GL)
     while (a.d_end_km - d0) * sgn > 1e-6:
         s = load_state(src)
@@ -241,6 +252,7 @@ def main():
             log(f"segment {tag} (d {d0:g} -> {d1:g} km) done already")
             prev = allc[-2][1] if len(allc) > 1 else src
             d0, src = got
+            prev_cons = last_consistent(seg)
             continue
         pts = banded_points(base, hlo - a.pad_km, hhi + a.pad_km, a.fine, a.grade_km, front_km)
         log(f"segment {tag}: from {os.path.relpath(src, ROOT)} (d {d0:g} km, grounding line {xgl:.2f} km, head "
@@ -266,6 +278,8 @@ def main():
                f"{a.step_max_km:g}", "--gl-rounds", str(a.gl_rounds), "--out", seg]
         if a.maxit:
             cmd += ["--maxit", str(a.maxit)]
+        if prev_cons is not None:                # the previous segment's last point: a change to this one's first is bisected
+            cmd += ["--start-consistent", prev_cons]
         cmd += ["--newton-its-max", str(a.newton_its_max), "--step-floor-km", f"{a.step_floor_km:g}",
                 "--bisect-km", f"{a.bisect_km:g}"]
         if a.predictor == "secant":
@@ -277,6 +291,7 @@ def main():
             sys.exit(1)
         prev = allc[-2][1] if len(allc) > 1 else src
         d0, src = got
+        prev_cons = last_consistent(seg)
     log(f"done: d {a.d_end_km:g} km reached")
 
 

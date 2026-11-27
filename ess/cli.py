@@ -1294,7 +1294,8 @@ def cmd_sweep(args):
                             gl_rounds=args.gl_rounds, predictor=args.predictor, seed=seed,
                             its_max=args.newton_its_max, floor=args.step_floor_km * 1e3 if args.step_floor_km else None,
                             bisect=args.bisect_km * 1e3, hp=cs_sheet_params(cfg), rhoi=P["rhoi"], Lw=P["Lw"],
-                            rhow=P["rhow"], gravity=P["gravity"])
+                            rhow=P["rhow"], gravity=P["gravity"],
+                            start_cons=None if args.start_consistent is None else bool(int(args.start_consistent)))
     n = sum(1 for r_ in rows if str(r_.get("converged")) == "1")
     log.info(f"sweep: {n} converged states of {len(rows)} in {out}/sweep.csv")
 
@@ -1765,6 +1766,9 @@ def main(argv=None):
                    help="where two converged points differ in consistency (no cold bed above melting and the patch's "
                         "water sheet stays above 0: the spectrum's 'kept'), bisect the interval down to this "
                         "length (km; sweep's bisect.csv); 0: off")
+    s.add_argument("--start-consistent", choices=["0", "1"],
+                   help="the consistency of the start state (1 consistent, 0 not; the previous segment's last point): the "
+                        "interval to the first point is bisected too if it changes (jobs/sweep_refined.py passes it)")
     s.add_argument("--out", help="output folder (default <work>/sweep_p<P>_down or _up)")
     s.add_argument("--predictor", choices=["none", "secant"], default="none",
                    help="secant: each Newton from the linear extrapolation of the last two converged states")
