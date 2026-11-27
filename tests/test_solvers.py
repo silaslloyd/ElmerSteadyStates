@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ess.continuation import BranchStore, ContinuationOptions, continuation  # noqa: E402
 from ess.elmer import override_lua_assignment  # noqa: E402
-from ess.linalg import arnoldi, gmres, ritz  # noqa: E402
+from ess.linalg import Recycler, arnoldi, gmres, ritz  # noqa: E402
 from ess.model import FixedPointProblem, MapSpec, rms  # noqa: E402
 from ess.newton import NewtonOptions, newton_krylov  # noqa: E402
 from ess.stability import StabilityOptions, stability  # noqa: E402
@@ -194,3 +194,27 @@ def test_case_setup_initial_conditions(tmp_path):
     assert 1000 < g["H"].max() < 4000 and np.all(g["Tb"] <= P["T0"])
     write_ics(g, str(tmp_path))
     assert (tmp_path / "ics.lua").read_text().count("function") == 3
+
+
+def test_recycled_gmres_needs_fewer_products():
+    rng = np.random.default_rng(1)
+    n = 300
+    Qm, _ = np.linalg.qr(rng.normal(size=(n, n)))
+    lam = np.concatenate([[-1e-3, -3e-3, -8e-3, -2e-2, -5e-2], -rng.uniform(0.4, 1.2, n - 5)])   # five slow modes
+    A = Qm @ np.diag(lam) @ Qm.T
+    cnt = [0]
+
+    def mv(v):
+        cnt[0] += 1
+        return A @ v
+    rec = Recycler(6)
+    used = []
+    for _ in range(4):
+        b = rng.normal(size=n)
+        cnt[0] = 0
+        x, _ = rec.solve(mv, b, tol=1e-3, restart=80, maxiter=200)
+        used.append(cnt[0])
+        assert np.linalg.norm(b - A @ x) <= 1.5e-3 * np.linalg.norm(b)
+    cnt[0] = 0
+    gmres(mv, b, tol=1e-3, restart=80, maxiter=200)
+    assert used[-1] < 0.5 * cnt[0]

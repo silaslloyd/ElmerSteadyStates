@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .linalg import gmres
+from .linalg import Recycler, gmres
 from .model import FixedPointProblem, ModelFailure, rms
 
 log = logging.getLogger("ess")
@@ -78,6 +78,15 @@ def newton_krylov(prob: FixedPointProblem, y0, p, opt: NewtonOptions = NewtonOpt
     log.info(f"{label}: it 0  rms(F) = {nf:.3e}  (rate {nf / prob.spec.horizon:.3e} per unit time)  p = {p:.6g}")
     log.info(f"{label}: residual {describe_step(prob, F)}")
     nf_prev, eta = None, opt.eta_max
+    # ESS_GMRES_RECYCLE=k (default off): GMRES deflated with the k harmonic Ritz vectors of the smallest |theta| of everything
+    # the earlier solves computed (ess.linalg.Recycler): the slow modes (J ~ 0) cost the iterations, they are carried over from
+    # Newton iteration to iteration and from point to point (while the state vector has the same size). No extra model runs.
+    rec_k = int(os.environ.get("ESS_GMRES_RECYCLE", "0") or 0)
+    rec = None
+    if rec_k > 0:
+        rec = getattr(prob, "_recycler", None)
+        if rec is None or rec.k != rec_k:
+            rec = prob._recycler = Recycler(rec_k)
     # ESS_NEWTON_RELAX=k (default off): after a failed line search, or an accepted step with lambda < ESS_NEWTON_RELAX_LAM
     # (default 0.25), up to k plain map steps, each kept only while rms(F) falls; the line search then stops after
     # ESS_NEWTON_RELAX_LS halvings (default 3) instead of [newton] linesearch
@@ -104,7 +113,8 @@ def newton_krylov(prob: FixedPointProblem, y0, p, opt: NewtonOptions = NewtonOpt
         def Jv(v):
             return prob.dF(y, p, F, v, tag=f"{label}_jv")
 
-        d, info = gmres(Jv, -F, tol=eta, restart=opt.gmres_restart, maxiter=opt.gmres_maxiter,
+        solve = rec.solve if rec is not None else gmres
+        d, info = solve(Jv, -F, tol=eta, restart=opt.gmres_restart, maxiter=opt.gmres_maxiter,
                         callback=lambda k, r: log.debug(f"  gmres {k}: {r:.3e}"))
         giters.append(info.iterations)
         log.info(f"{label}: it {it}  gmres {info.iterations} its, rel. res {info.residual:.2e} "

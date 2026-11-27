@@ -25,6 +25,8 @@
 # FROM_POINT: a converged sweep point (points/state_NNNNN.npz) as the start instead of the fully temperate state: STATE = it, D_START = its d.
 # OUT (default TAG): the output's name, work/gl_ssa_gl<GL>/sweep_<OUT>/ and refined/sweep_<OUT>.toml; TAGP (default s): the segments' prefix
 # (seg_<TAGP>NNNN, refined/<TAGP>NNNN.toml), so a second sweep from the same branch does not touch the first's files. SPAN defaults to two steps.
+# ESS_GMRES_RECYCLE=k (env, default off, e.g. GMRES_RECYCLE=6 in the sbatch environment: `ESS_GMRES_RECYCLE=6 GL=549 ... sbatch jobs/gl_sweep.cmd`): GMRES deflated with k recycled harmonic Ritz
+# vectors of the slow modes, carried over Newton iterations and sweep points (ess/linalg.py Recycler); no extra model runs.
 # GL (default 549), SHELF (default 100), TAG (default gl<GL>s<SHELF>), STATE (default work/gl_ssa_gl<GL>/branch_<TAG>/steady_temperate.npz),
 # D_START (km, default the grounding line's position: the whole grounded bed), D_END, STEP, SPAN, PAD, FINE, BELOW, ABOVE, GRADE,
 # MAP_STEPS, PREDICTOR (none|secant), NEWTON_TOL (default 5e-5), ITS_MAX (default 8: a Newton with more iterations halves the next
