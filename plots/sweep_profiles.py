@@ -37,6 +37,23 @@ def one(path):
     g = next(b.gids for b in layout.blocks if b.name == tn)
     s = on_side(g, coords)
     x, z, T = np.round(xs(g[s]), 3), zs_(g[s]), fields[tn][s]
+    # the ice base Zb (layout block, else a frozen / diagnostic record): the bed temperature is the ice's lowest node, not the rock's
+    zb = None
+    nb = next((n for n in layout.names if n.lower() == "zb"), None)
+    if nb is not None:
+        gb, vb = next(b.gids for b in layout.blocks if b.name == nb), fields[nb]
+    else:
+        src = {**diag, **frozen}
+        kb = next((k for k in src if k.lower() == "zb"), None)
+        gb, vb = src[kb] if kb is not None else (None, None)
+    if gb is not None:
+        sb = on_side(gb, coords)
+        o = np.argsort(xs(gb[sb]))
+        zb = (xs(gb[sb])[o], vb[sb][o])
+        ice = z >= np.interp(x, *zb) - 0.5
+        x, z, T = x[ice], z[ice], T[ice]
+    else:
+        print(f"{path}: no Zb, the lowest temperature node of each column is used")
     ux = np.unique(x)
     bx, bt = [], []
     for u in ux:
