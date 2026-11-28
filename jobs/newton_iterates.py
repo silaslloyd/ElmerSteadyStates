@@ -16,6 +16,7 @@ LOG: the job's slurm output; the label as in its lines (the GL round is matched 
 numbered in order). OUTDIR/iter_KK.npz.
 """
 import argparse
+import datetime
 import glob
 import os
 import re
@@ -37,7 +38,8 @@ def main():
     ap.add_argument("ref")
     ap.add_argument("outdir")
     ap.add_argument("--work", default=os.path.join(ROOT, "work", "flowline_rect_coarse"))
-    ap.add_argument("--date", default=time.strftime("%Y-%m-%d"))
+    ap.add_argument("--date", help="the date of the log's FIRST line (YYYY-MM-DD; default: from the log's last modification, counting the "
+                                   "midnights in it: the lines carry only the time of day)")
     a = ap.parse_args()
     m = re.search(r"d=([0-9.]+) km", a.label)
     if not m:
@@ -45,11 +47,27 @@ def main():
     d = float(m.group(1)) * 1e3
     pat = re.compile(r"^(\d\d:\d\d:\d\d) " + re.escape(a.label) + r".*: it (\d+)  rms\(F\) = ([0-9.e+-]+)")
     its = []
-    for line in open(a.log):
-        mm = pat.match(line)
-        if mm:
-            t = time.mktime(time.strptime(f"{a.date} {mm.group(1)}", "%Y-%m-%d %H:%M:%S"))
+    lines = open(a.log, errors="replace").read().splitlines()
+    tre = re.compile(r"^(\d\d):(\d\d):(\d\d) ")
+    tod = [int(m_.group(1)) * 3600 + int(m_.group(2)) * 60 + int(m_.group(3)) if (m_ := tre.match(l_)) else None for l_ in lines]
+    days, last, offs = 0, None, []
+    for t_ in tod:                                   # a day passes where the time of day falls back by over 12 h
+        if t_ is not None:
+            if last is not None and t_ < last - 43200:
+                days += 1
+            last = t_
+        offs.append(days)
+    if a.date:
+        d0 = datetime.date.fromisoformat(a.date)
+    else:
+        d0 = datetime.date.fromtimestamp(os.path.getmtime(a.log)) - datetime.timedelta(days=days)
+    for l_, t_, o_ in zip(lines, tod, offs):
+        mm = pat.match(l_)
+        if mm and t_ is not None:
+            day = d0 + datetime.timedelta(days=o_)
+            t = time.mktime(time.strptime(f"{day.isoformat()} {mm.group(1)}", "%Y-%m-%d %H:%M:%S"))
             its.append((t, int(mm.group(2)), float(mm.group(3))))
+    print(f"log {a.log}: {days} midnight(s), first line on {d0}; {len(its)} iterate line(s) for '{a.label}'")
     if not its:
         raise SystemExit(f"no 'it k rms(F)' lines for '{a.label}' in {a.log}")
     files = [(os.path.getmtime(f), f) for f in glob.glob(os.path.join(a.work, "cache", "*.npz"))
