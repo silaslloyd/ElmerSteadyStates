@@ -954,12 +954,15 @@ def run_sweep_marine(cfg, prob, model, saved, y0, p, newton_opt, outdir, *, d_st
         log.info(f"sweep: the start state (d = {d_start / 1e3:g} km) is {'consistent' if cons_prev else 'inconsistent'}: "
                  f"a change to the first point is bisected too")
     sc = 1.0
-    while (d_end - d_cur) * sgn > 1e-6:
+    solve_first = abs(d_end - d_start) < 1e-6 and not done      # d_start == d_end: the state is solved again at that d
+    while (d_end - d_cur) * sgn > 1e-6 or solve_first:         # (e.g. after a remesh), nothing else
         nominal = min(max(frac * d_cur, smin), smax)
         st = max(nominal * sc, floor)
         d = round((d_cur + sgn * st) / 100.0) * 100.0          # whole 100 m (the state files are named by it)
         if (d_end - d) * sgn < 0.5 * st:
             d = float(d_end)
+        if solve_first:
+            d, solve_first = float(d_start), False
         r, x, rounds, note = None, None, 0, ""
         if predictor == "secant" and len(hist) == 2 and d_prev is not None and abs(hist[-1][0] - d_prev) < 1.0:
             from .predictor import secant
