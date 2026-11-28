@@ -99,11 +99,11 @@ def page(cs, orders, out):
         for name, rv, re_ in (("Zs", 1, 2), ("Tb", 3, 4)):
             d = c[name]
             fig.add_trace(go.Scatter(x=d["x"], y=d["actual"], mode="lines", name="actual", legendgroup="actual",
-                                     showlegend=(name == "Zs" and i == 0), visible=i == 0, line=dict(color=col["actual"], width=2)), rv, 1)
+                                     showlegend=(name == "Zs"), visible=i == 0, line=dict(color=col["actual"], width=2)), rv, 1)
             for key in keys:
                 dash = "dot" if key == "previous" else "dash"
                 fig.add_trace(go.Scatter(x=d["x"], y=d[key], mode="lines", name=lab[key], legendgroup=key,
-                                         showlegend=(name == "Zs" and i == 0), visible=i == 0,
+                                         showlegend=(name == "Zs"), visible=i == 0,
                                          line=dict(color=col.get(key, "purple"), width=1.5, dash=dash)), rv, 1)
                 fig.add_trace(go.Scatter(x=d["x"], y=d[key] - d["actual"], mode="lines", name=lab[key], legendgroup=key,
                                          showlegend=False, visible=i == 0,
@@ -122,7 +122,7 @@ def page(cs, orders, out):
         pad = 0.03 * (hi - lo if hi > lo else 1.0)
         fig.update_yaxes(range=[lo - pad, hi + pad], row=r_, col=1)
     fig.update_xaxes(title_text="x (km)", row=4, col=1)
-    fig.update_layout(template="plotly_white", height=1250,
+    fig.update_layout(template="plotly_white", height=1250, legend=dict(orientation="h", x=0.0, y=1.06, xanchor="left", yanchor="bottom"),
                       title="extrapolation check: each point predicted from the longer patches before it (slider: the predicted point's d)",
                       sliders=[dict(active=0, currentvalue=dict(prefix="predicted point d = "), pad=dict(t=40), steps=steps)])
     fig.write_html(out, include_plotlyjs="cdn")
