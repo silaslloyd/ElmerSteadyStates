@@ -5,7 +5,7 @@ of the NEXT patch lengths beyond the last solved point, --step km apart (default
 --next N of them), each from all the solved points. --retro instead: every solved point predicted from the points before it (to compare with what
 the sweep found).
 
-  python3 plots/extrapolation_check.py STATE [STATE ...] [--orders 2] [--next N] [--step 12.5] [--margin 2] [--retro] [--out page.html]
+  python3 plots/extrapolation_check.py STATE [STATE ...] [--orders 2] [--head KM ...] [--next N] [--step 12.5] [--margin 2] [--retro] [--out page.html]
 
 Rule (surface Zs and bed temperature at the ice base, each at FIXED x): downstream of the new head (the new patch) the
 latest point's value, unchanged; upstream of it every x with at least two earlier values where it was still cold
@@ -74,38 +74,33 @@ def _common(prev):
 
 def predict(prev, x_z, x_t, d, head, orders, margin):
     """prev: the solved points, the latest (nearest in d) first. Returns {'Zs': {...}, 'Tb': {...}} with x and the
-    prediction per order (o<order>) and 'previous' (the latest point)."""
+    prediction per order (o<order>), 'previous' (the latest point) and 'x_a' (the last x extrapolated from data).
+    At fixed x: every x upstream of the new head with at least two earlier cold values is extrapolated in d (linear
+    through the two nearest, the saturating exponential where a third point shows the rise levelling off); between the
+    last such x and the new head a STRAIGHT LINE to the latest point's value at the head; the new patch unchanged."""
     ds, hs = [q[0] for q in prev], [q[1] for q in prev]
     res = {"Zs": dict(x=x_z), "Tb": dict(x=x_t)}
-    # surface: the ANOMALY above the temperate surface at fixed x (saturating in d), falling to 0 at the head
-    c = _common(prev)(x_z)
-    A = np.array([np.where(x_z < q[1], np.maximum(_on(x_z, q[2]) - c, 0.0), 0.0) for q in prev])
-    res["Zs"]["previous"] = _on(x_z, prev[0][2])
-    for od in orders:
-        a, _ = extrapolate_values(x_z, A, ds, hs, d, head, order=od, join=True, margin=margin, saturate=True)
-        a = np.where(x_z < head, np.maximum(a, 0.0), 0.0)
-        m = x_z < head
-        a[m] = np.minimum.accumulate(a[m])               # the anomaly only falls towards the head (as in every solved point)
-        res["Zs"][f"o{od}"] = np.maximum(c + a, res["Zs"]["previous"])   # cold ice is higher: never below the latest surface
-    # bed temperature: the cold bed follows one envelope curve (all the points lie on it upstream of their heads), the
-    # temperate mask applies at the new head; beyond the last extrapolated x the envelope continues, saturating to the melting value
-    V = np.array([_on(x_t, q[3]) for q in prev])
-    Tm = V.max()
-    res["Tb"]["previous"] = V[0]
-    for od in orders:
-        out, deg = extrapolate_values(x_t, V, ds, hs, d, head, order=od, join=False, margin=margin, saturate=True)
-        full = (deg >= 1) & (x_t < head)
-        if full.any():
-            ia = int(np.argmax(np.where(full, x_t, -np.inf)))
-            xa, Ta = x_t[ia], min(out[ia], Tm)
-            near = full & (x_t >= xa - 50.0)
-            slope = np.polyfit(x_t[near], out[near], 1)[0] if near.sum() > 2 else 0.0
-            k = max(slope, 0.0) / max(Tm - Ta, 1e-9)
-            rest = (x_t > xa) & (x_t < head)
-            out[rest] = Tm - (Tm - Ta) * np.exp(-k * (x_t[rest] - xa))
-        out = np.minimum(out, Tm)
-        out[x_t >= head] = V[0][x_t >= head]               # the new patch: unchanged (melting)
-        res["Tb"][f"o{od}"] = out
+    for name, x, j in (("Zs", x_z, 2), ("Tb", x_t, 3)):
+        V = np.array([_on(x, q[j]) for q in prev])
+        res[name]["previous"] = V[0]
+        Tm = V.max()
+        for od in orders:
+            out, deg = extrapolate_values(x, V, ds, hs, d, head, order=od, join=False, margin=margin, saturate=True)
+            full = (deg >= 1) & (x < head)
+            if name == "Zs":
+                out = np.maximum(out, V[0])                    # cold ice is higher: never below the latest surface
+            else:
+                out = np.minimum(out, Tm)                      # never above the melting value of the data
+            if full.any():
+                ia = int(np.argmax(np.where(full, x, -np.inf)))
+                xa = x[ia]
+                rest = (x > xa) & (x < head)
+                vb = float(np.interp(head, x, V[0]))           # the latest point's value at the new head (temperate side)
+                if rest.any() and head > xa:
+                    out[rest] = out[ia] + (vb - out[ia]) * (x[rest] - xa) / (head - xa)
+                res[name]["x_a"] = float(xa)
+            out[x >= head] = V[0][x >= head]                   # the new patch: unchanged
+            res[name][f"o{od}"] = out
     return res
 
 
@@ -136,6 +131,14 @@ def forward(pts, ds_new, orders=(2,), margin=2.0):
         c = dict(d=d, head=head, n=len(prev), **predict(prev, x_z, x_t, d, head, orders, margin))
         res.append(c)
         o = f"o{orders[-1]}"
+        if len(ds_new) <= 3:                           # a few extrapolations: the numbers at some x
+            xs = c["Zs"]["x"]
+            print(f"  last solved point: d = {prev[0][0]:.1f} km, head {prev[0][1]:.1f} km; extrapolated from data upstream of x = "
+                  f"{c['Zs'].get('x_a', float('nan')):.1f} km (Zs), {c['Tb'].get('x_a', float('nan')):.1f} km (Tb); straight line to the head after")
+            print(f"  {'x km':>8} {'Zs last':>10} {'Zs extrap':>10} {'Tb last':>10} {'Tb extrap':>10}")
+            for xv in (0, 50, 100, 150, 200, 250, 275, 300, 325, c['head']):
+                iz, it = int(np.argmin(np.abs(xs - xv))), int(np.argmin(np.abs(c['Tb']['x'] - xv)))
+                print(f"  {xs[iz]:8.1f} {c['Zs']['previous'][iz]:10.2f} {c['Zs'][o][iz]:10.2f} {c['Tb']['previous'][it]:10.4f} {c['Tb'][o][it]:10.4f}")
         print(f"d = {d:.1f} km (head {head:.1f} km): max change from the last point: Zs "
               f"{np.max(np.abs(c['Zs'][o] - c['Zs']['previous'])):.3g} m, bed T {np.max(np.abs(c['Tb'][o] - c['Tb']['previous'])):.3g} K")
     return res
@@ -206,6 +209,9 @@ def main():
             j += 1
         del a[i:j]
     margin = opt("--margin", 2.0, float)
+    heads = []                                         # --head KM (repeatable): extrapolate only to these heads
+    while "--head" in a:
+        heads.append(opt("--head", None, float))
     nxt = opt("--next", None, int)
     step = opt("--step", 12.5, float)
     retro = "--retro" in a
@@ -217,8 +223,13 @@ def main():
         cs = cases(pts, orders, margin)
         table(cs, orders)
     else:                                              # the next patch lengths beyond the last solved point
-        n = nxt if nxt else int(np.ceil(pts[-1][0] / step - 1e-9)) - 1          # down to the grounding line (d > 0)
-        cs = forward(pts, [pts[-1][0] - step * (k + 1) for k in range(n)], orders, margin)
+        if heads:
+            xgl = pts[-1][0] + pts[-1][1]
+            dl = [xgl - h for h in heads]
+        else:
+            n = nxt if nxt else int(np.ceil(pts[-1][0] / step - 1e-9)) - 1      # down to the grounding line (d > 0)
+            dl = [pts[-1][0] - step * (k + 1) for k in range(n)]
+        cs = forward(pts, dl, orders, margin)
     page(pts, cs, orders, out)
     np.savez(os.path.splitext(out)[0] + ".npz", **{f"d{c['d']:.1f}_{n}_{k}": c[n][k] for c in cs for n in ("Zs", "Tb")
                                                    for k in c[n]})

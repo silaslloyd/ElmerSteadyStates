@@ -4,6 +4,7 @@
 #   cd ~/Desktop/ElmerSteadyStates && git pull && bash plots/extrapolation_check.sh
 #   SWEEP=r ORDERS="1 2" bash plots/extrapolation_check.sh
 #   NEXT=6 STEP=25 bash plots/extrapolation_check.sh   # only 6 profiles, 25 km apart (default: every 12.5 km down to the grounding line)
+#   HEAD=350 bash plots/extrapolation_check.sh   # a single extrapolation: the head at 350 km
 #   RETRO=1 bash plots/extrapolation_check.sh   # instead: each solved point predicted from the ones before it
 #   REMOTE=0 bash plots/extrapolation_check.sh     # only fetch and open
 D=/SCRATCH/slloyd/github/ElmerStreams/MasterCopy/ElmerStreams/ElmerSteadyStates
@@ -18,7 +19,7 @@ else
     S="$W/sweep_gl549s100$SWEEP/seg_*/points/state_*.npz"
 fi
 if [ "${REMOTE:-1}" = 1 ]; then
-    $SSH slloyd@tethys-3g "bash -lc 'cd $D && git pull -q; python3 plots/extrapolation_check.py $S --orders $ORDERS --margin ${MARGIN:-2} ${NEXT:+--next $NEXT} --step ${STEP:-12.5} ${RETRO:+--retro} --out $OUT'" || exit 1
+    $SSH slloyd@tethys-3g "bash -lc 'cd $D && git pull -q; python3 plots/extrapolation_check.py $S --orders $ORDERS --margin ${MARGIN:-2} ${HEAD:+--head $HEAD} ${NEXT:+--next $NEXT} --step ${STEP:-12.5} ${RETRO:+--retro} --out $OUT'" || exit 1
 fi
 rsync -av -e "$SSH" "slloyd@tethys-3g:$D/$OUT" ~/Downloads/ || exit 1
 open ~/Downloads/extrapolation_check_$SWEEP.html
