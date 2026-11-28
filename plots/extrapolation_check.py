@@ -75,7 +75,7 @@ def _common(prev):
 def predict(prev, x_z, x_t, d, head, orders, margin):
     """prev: the solved points, the latest (nearest in d) first. Returns {'Zs': {...}, 'Tb': {...}} with x and the
     prediction per order (o<order>), 'previous' (the latest point) and 'x_a' (the last x extrapolated from data).
-    At fixed x: every x upstream of the new head with at least two earlier cold values is extrapolated in d (linear
+    At fixed x: every x upstream of the new head with enough earlier cold values (surface: three, bed temperature: two) is extrapolated in d (linear
     through the two nearest, the saturating exponential where a third point shows the rise levelling off); between the
     last such x and the new head: the surface a STRAIGHT LINE to the latest point's value at the head, the bed temperature
     its envelope continued to the head (then the temperate value: the mask); the new patch unchanged."""
@@ -87,7 +87,8 @@ def predict(prev, x_z, x_t, d, head, orders, margin):
         Tm = V.max()
         for od in orders:
             out, deg = extrapolate_values(x, V, ds, hs, d, head, order=od, join=False, margin=margin, saturate=True)
-            full = (deg >= 1) & (x < head)
+            kmin = min(2, od) if name == "Zs" else 1          # the surface needs three earlier cold values, the bed temperature two
+            full = (deg >= kmin) & (x < head)
             if name == "Zs":
                 out = np.maximum(out, V[0])                    # cold ice is higher: never below the latest surface
             else:
