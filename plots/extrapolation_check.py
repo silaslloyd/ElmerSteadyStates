@@ -11,7 +11,7 @@ through that x's values in the last npts points where x was still cold (upstream
 has just passed (no cold history) keep the latest value.
 
 One plotly page, a slider over the predicted point: Zs and bed temperature (actual, the previous point as it is, the
-extrapolations), and below each the error (prediction - actual). Axes fixed over all the points. A table of rms errors
+extrapolations), Axes fixed over all the points. A table of rms errors
 (upstream of the new head) is printed. Also written beside the page: <page>.npz, the predicted profiles.
 Needs numpy and plotly.
 """
@@ -86,17 +86,16 @@ def table(cs, orders):
 def page(cs, orders, out):
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
-    fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.3, 0.2, 0.3, 0.2],
-                        subplot_titles=("surface elevation Zs (m)", "Zs: prediction - actual (m)",
-                                        "bed temperature at the ice base (K)", "bed temperature: prediction - actual (K)"))
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
+                        subplot_titles=("surface elevation Zs (m)", "bed temperature at the ice base (K)"))
     keys = ["previous"] + [f"o{o}" for o in orders]
     lab = {"previous": "previous point", **{f"o{o}": f"extrapolation, order {o}" for o in orders}}
     col = {"actual": "black", "previous": "#999999", "o1": "#1f77b4", "o2": "#d62728", "o3": "#2ca02c"}
     per = []                                            # traces per case
-    lim = {r: [np.inf, -np.inf] for r in (1, 2, 3, 4)}
+    lim = {r: [np.inf, -np.inf] for r in (1, 2)}
     for i, c in enumerate(cs):
         n0 = len(fig.data)
-        for name, rv, re_ in (("Zs", 1, 2), ("Tb", 3, 4)):
+        for name, rv in (("Zs", 1), ("Tb", 2)):
             d = c[name]
             fig.add_trace(go.Scatter(x=d["x"], y=d["actual"], mode="lines", name="actual", legendgroup="actual",
                                      showlegend=(name == "Zs"), visible=i == 0, line=dict(color=col["actual"], width=2)), rv, 1)
@@ -105,12 +104,9 @@ def page(cs, orders, out):
                 fig.add_trace(go.Scatter(x=d["x"], y=d[key], mode="lines", name=lab[key], legendgroup=key,
                                          showlegend=(name == "Zs"), visible=i == 0,
                                          line=dict(color=col.get(key, "purple"), width=1.5, dash=dash)), rv, 1)
-                fig.add_trace(go.Scatter(x=d["x"], y=d[key] - d["actual"], mode="lines", name=lab[key], legendgroup=key,
-                                         showlegend=False, visible=i == 0,
-                                         line=dict(color=col.get(key, "purple"), width=1.5, dash=dash)), re_, 1)
-            for r_, v in ((rv, np.r_[d["actual"], *(d[k] for k in keys)]), (re_, np.r_[*(d[k] - d["actual"] for k in keys)])):
-                v = v[np.isfinite(v)]
-                lim[r_] = [min(lim[r_][0], v.min()), max(lim[r_][1], v.max())]
+            v = np.r_[d["actual"], *(d[k] for k in keys)]
+            v = v[np.isfinite(v)]
+            lim[rv] = [min(lim[rv][0], v.min()), max(lim[rv][1], v.max())]
         per.append((n0, len(fig.data)))
     steps = []
     for i, c in enumerate(cs):
@@ -121,8 +117,8 @@ def page(cs, orders, out):
     for r_, (lo, hi) in lim.items():
         pad = 0.03 * (hi - lo if hi > lo else 1.0)
         fig.update_yaxes(range=[lo - pad, hi + pad], row=r_, col=1)
-    fig.update_xaxes(title_text="x (km)", row=4, col=1)
-    fig.update_layout(template="plotly_white", height=1250, legend=dict(orientation="h", x=0.0, y=1.06, xanchor="left", yanchor="bottom"),
+    fig.update_xaxes(title_text="x (km)", row=2, col=1)
+    fig.update_layout(template="plotly_white", height=850, legend=dict(orientation="h", x=0.0, y=1.06, xanchor="left", yanchor="bottom"),
                       title="extrapolation check: each point predicted from the longer patches before it (slider: the predicted point's d)",
                       sliders=[dict(active=0, currentvalue=dict(prefix="predicted point d = "), pad=dict(t=40), steps=steps)])
     fig.write_html(out, include_plotlyjs="cdn")
