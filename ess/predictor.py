@@ -158,8 +158,36 @@ def on_layout(src: SavedState, dst: SavedState):
 
 
 # ---------------------------------------------------------------- extrapolation at fixed x
+def _saturating(d3, v3, d_next, fallback):
+    """d3: the three states' d, nearest to d_next first; v3 (3, n) their values. v(tau) = v_o + A (1 - exp(-lam tau)) with
+    tau = |d_o - d| (o: the farthest state): lam from the ratio of the two increments (bisection), the value at d_next.
+    Where the increments do not decelerate (ratio >= the linear one), `fallback` (the linear fit); where they reverse
+    (ratio <= 0) the nearest value."""
+    vn, vm, vo = v3
+    do, dm, dn_ = d3[2], d3[1], d3[0]
+    a, b, ts = abs(dm - do) / 1e3, abs(dn_ - dm) / 1e3, abs(d_next - do) / 1e3
+    inc = vm - vo
+    ok = np.abs(inc) > 1e-12
+    R = np.where(ok, (vn - vm) / np.where(ok, inc, 1.0), np.nan)
+    lin = b / a
+    dec = ok & (R > 0) & (R < lin * (1 - 1e-3))
+    lo = np.full(R.shape, 1e-6 / (a + b))
+    hi = np.full(R.shape, 60.0 / min(a, b))
+    for _ in range(60):                                     # g(lam) = e^{-lam a} (1 - e^{-lam b}) / (1 - e^{-lam a}) falls with lam
+        mid = np.sqrt(lo * hi)
+        g = np.exp(-mid * a) * (-np.expm1(-mid * b)) / (-np.expm1(-mid * a))
+        big = g > R
+        lo = np.where(big, mid, lo)
+        hi = np.where(big, hi, mid)
+    lam = np.sqrt(lo * hi)
+    A = inc / (-np.expm1(-lam * a))
+    sat = vo + A * (-np.expm1(-lam * ts))
+    out = np.where(dec, sat, fallback)
+    return np.where(ok & (R <= 0), vn, out)
+
+
 def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=None, join=False, margin=0.0, relative=False,
-                       blend=None):
+                       blend=None, saturate=False):
     """The core: values at the nodes X (n,) of n_s states, V (n_s, n) their values, ds / heads (n_s,) their patch
     lengths and heads (same unit as X), extrapolated in d to d_next at FIXED x (the states ordered by nearness in d:
     the latest first). New patch (X >= head_next): the latest state's value, unchanged.
@@ -172,6 +200,9 @@ def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=None, j
     (a profile, X ascending), the straight line from the last extrapolated node to the latest state's value at the new
     head (no steps). relative=True: instead the difference to the latest profile falls linearly to 0 at the new head (a
     surface stays above the temperate one; a straight line in x would cut below it).
+    saturate=True: the third state's fit is not the quadratic but a SATURATING exponential v = v_o + A (1 - exp(-lam tau))
+    through the three values (tau the progress in d): the surface at a fixed x tends to a limit as the head moves on and
+    is not carried past it; where the three values do not decelerate the linear fit stays.
     Returns (values (n,), degree used (n,), -1 where the latest value is kept or joined)."""
     X, V = np.asarray(X, float), np.asarray(V, float)
     ds, heads = np.asarray(ds, float), np.asarray(heads, float)
@@ -190,7 +221,10 @@ def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=None, j
         valid = use & (X < hn[k])                              # the k+1 nearest states all cold here
         if not valid.any():
             break
-        fit = np.polyfit(t[:k + 1], Vn[:k + 1][:, valid], k)[-1]
+        if saturate and k == 2:
+            fit = _saturating(dn[:3], Vn[:3][:, valid], d_next, np.polyfit(t[:2], Vn[:2][:, valid], 1)[-1])
+        else:
+            fit = np.polyfit(t[:k + 1], Vn[:k + 1][:, valid], k)[-1]
         if prev is None:
             out[valid] = fit
         else:

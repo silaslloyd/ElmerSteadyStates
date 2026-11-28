@@ -54,54 +54,90 @@ def _on(x, prof):
     return np.interp(x, ux, mv)
 
 
+def _common(prev):
+    """the temperate (common) surface: the solved points' values at their own heads, and the latest point's surface
+    downstream of its head; a function of x"""
+    px, pv = [], []
+    for d, head, (xz, zs), _ in prev:
+        ux, inv = np.unique(np.round(xz, 4), return_inverse=True)
+        mz = np.bincount(inv, zs) / np.bincount(inv)
+        px.append(head)
+        pv.append(float(np.interp(head, ux, mz)))
+    d0, h0, (xz, zs), _ = prev[0]
+    t = xz >= h0
+    px += list(xz[t])
+    pv += list(zs[t])
+    o = np.argsort(px)
+    px, pv = np.array(px)[o], np.array(pv)[o]
+    return lambda x: np.interp(x, px, pv)
+
+
+def predict(prev, x_z, x_t, d, head, orders, margin):
+    """prev: the solved points, the latest (nearest in d) first. Returns {'Zs': {...}, 'Tb': {...}} with x and the
+    prediction per order (o<order>) and 'previous' (the latest point)."""
+    ds, hs = [q[0] for q in prev], [q[1] for q in prev]
+    res = {"Zs": dict(x=x_z), "Tb": dict(x=x_t)}
+    # surface: the ANOMALY above the temperate surface at fixed x (saturating in d), falling to 0 at the head
+    c = _common(prev)(x_z)
+    A = np.array([np.where(x_z < q[1], np.maximum(_on(x_z, q[2]) - c, 0.0), 0.0) for q in prev])
+    res["Zs"]["previous"] = _on(x_z, prev[0][2])
+    for od in orders:
+        a, _ = extrapolate_values(x_z, A, ds, hs, d, head, order=od, join=True, margin=margin, saturate=True)
+        a = np.where(x_z < head, np.maximum(a, 0.0), 0.0)
+        m = x_z < head
+        a[m] = np.minimum.accumulate(a[m])               # the anomaly only falls towards the head (as in every solved point)
+        res["Zs"][f"o{od}"] = np.maximum(c + a, res["Zs"]["previous"])   # cold ice is higher: never below the latest surface
+    # bed temperature: the cold bed follows one envelope curve (all the points lie on it upstream of their heads), the
+    # temperate mask applies at the new head; beyond the last extrapolated x the envelope continues, saturating to the melting value
+    V = np.array([_on(x_t, q[3]) for q in prev])
+    Tm = V.max()
+    res["Tb"]["previous"] = V[0]
+    for od in orders:
+        out, deg = extrapolate_values(x_t, V, ds, hs, d, head, order=od, join=False, margin=margin, saturate=True)
+        full = (deg >= 1) & (x_t < head)
+        if full.any():
+            ia = int(np.argmax(np.where(full, x_t, -np.inf)))
+            xa, Ta = x_t[ia], min(out[ia], Tm)
+            near = full & (x_t >= xa - 50.0)
+            slope = np.polyfit(x_t[near], out[near], 1)[0] if near.sum() > 2 else 0.0
+            k = max(slope, 0.0) / max(Tm - Ta, 1e-9)
+            rest = (x_t > xa) & (x_t < head)
+            out[rest] = Tm - (Tm - Ta) * np.exp(-k * (x_t[rest] - xa))
+        out = np.minimum(out, Tm)
+        out[x_t >= head] = V[0][x_t >= head]               # the new patch: unchanged (melting)
+        res["Tb"][f"o{od}"] = out
+    return res
+
+
 def cases(pts, orders=(1, 2), margin=2.0):
-    """for each point k >= 1: dict(d, head, x and values of Zs / Tb: actual, previous, prediction per order)"""
+    """for each point k >= 1: predicted from the longer patches before it; dict(d, head, n, Zs, Tb) with 'actual' added"""
     res = []
     for k in range(1, len(pts)):
         d, head = pts[k][0], pts[k][1]
-        prev = pts[:k][::-1]                           # the latest (the longest d below the target... the closest) first
-        c = dict(d=d, head=head, n=len(prev))
-        for name, j in (("Zs", 2), ("Tb", 3)):
-            x, act = pts[k][j]
-            o = np.argsort(x)
-            x, act = x[o], act[o]
-            V = np.array([_on(x, q[j]) for q in prev])
-            c[name] = dict(x=x, actual=act, previous=V[0])
-            for od in orders:
-                c[name][f"o{od}"], _ = extrapolate_values(x, V, [q[0] for q in prev], [q[1] for q in prev], d, head,
-                                                          order=od, join=True, margin=margin, relative=(name == "Zs"))
-                if name == "Zs":
-                    c[name][f"o{od}"] = np.maximum(c[name][f"o{od}"], V[0])
-                if name == "Tb":
-                    c[name][f"o{od}"] = np.minimum(c[name][f"o{od}"], V.max())
+        prev = pts[:k][::-1]
+        x_z = np.sort(pts[k][2][0])
+        x_t = np.sort(pts[k][3][0])
+        c = dict(d=d, head=head, n=len(prev), **predict(prev, x_z, x_t, d, head, orders, margin))
+        c["Zs"]["actual"] = _on(x_z, pts[k][2])
+        c["Tb"]["actual"] = _on(x_t, pts[k][3])
         res.append(c)
     return res
 
 
 def forward(pts, ds_new, orders=(2,), margin=2.0):
-    """the extrapolation to patch lengths beyond the solved points: from ALL the points (each target on its own,
-    not chained), on the last point's x grid. dicts like cases() but without 'actual'"""
+    """the extrapolation to patch lengths beyond the solved points: each from ALL the points (not chained), on the last
+    point's x grid. dicts like cases() without 'actual'"""
     prev = pts[::-1]                                   # the shortest patch (the latest) first
     xgl = pts[-1][0] + pts[-1][1]
+    x_z, x_t = np.sort(pts[-1][2][0]), np.sort(pts[-1][3][0])
     res = []
     for d in ds_new:
         head = xgl - d
-        c = dict(d=d, head=head, n=len(prev))
-        for name, j in (("Zs", 2), ("Tb", 3)):
-            x = np.sort(pts[-1][j][0])
-            V = np.array([_on(x, q[j]) for q in prev])
-            c[name] = dict(x=x, previous=V[0])
-            for od in orders:
-                c[name][f"o{od}"], deg = extrapolate_values(x, V, [q[0] for q in prev], [q[1] for q in prev], d, head,
-                                                            order=od, join=True, margin=margin, relative=(name == "Zs"))
-                if name == "Zs":                           # cold ice is higher: never below the latest surface
-                    c[name][f"o{od}"] = np.maximum(c[name][f"o{od}"], V[0])
-                if name == "Tb":                           # never above the melting value the solved points reach
-                    c[name][f"o{od}"] = np.minimum(c[name][f"o{od}"], V.max())
+        c = dict(d=d, head=head, n=len(prev), **predict(prev, x_z, x_t, d, head, orders, margin))
         res.append(c)
+        o = f"o{orders[-1]}"
         print(f"d = {d:.1f} km (head {head:.1f} km): max change from the last point: Zs "
-              f"{np.max(np.abs(c['Zs'][f'o{orders[-1]}'] - c['Zs']['previous'])):.3g} m, bed T "
-              f"{np.max(np.abs(c['Tb'][f'o{orders[-1]}'] - c['Tb']['previous'])):.3g} K")
+              f"{np.max(np.abs(c['Zs'][o] - c['Zs']['previous'])):.3g} m, bed T {np.max(np.abs(c['Tb'][o] - c['Tb']['previous'])):.3g} K")
     return res
 
 
