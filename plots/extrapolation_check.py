@@ -5,7 +5,7 @@ of the NEXT patch lengths beyond the last solved point, --step km apart (default
 --next N of them), each from all the solved points. --retro instead: every solved point predicted from the points before it (to compare with what
 the sweep found).
 
-  python3 plots/extrapolation_check.py STATE [STATE ...] [--orders 2] [--npts 4] [--next N] [--step 12.5] [--margin 2] [--retro] [--out page.html]
+  python3 plots/extrapolation_check.py STATE [STATE ...] [--orders 2] [--npts order+1] [--next N] [--step 12.5] [--margin 2] [--retro] [--out page.html]
 
 Rule (surface Zs and bed temperature at the ice base, each at FIXED x): downstream of the new head (the new patch) the
 latest point's value, unchanged; upstream of it the polynomial in d (degree = order, lower when there are fewer points)
@@ -155,7 +155,7 @@ def main():
             return conv(v)
         return default
     out = opt("--out", "extrapolation_check.html", str)
-    npts = opt("--npts", 4, int)
+    npts = opt("--npts", None, int)
     orders = [2]
     if "--orders" in a:
         i = a.index("--orders")
@@ -170,6 +170,7 @@ def main():
     step = opt("--step", 12.5, float)
     retro = "--retro" in a
     a = [t for t in a if t != "--retro"]
+    npts = npts or max(orders) + 1                     # exactly order + 1 states: one fit for the whole extrapolated zone
     pts = profiles(a)
     if len(pts) < 2:
         sys.exit("fewer than two sweep points")
