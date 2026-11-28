@@ -68,7 +68,9 @@ def cases(pts, orders=(1, 2), npts=4, margin=2.0):
             c[name] = dict(x=x, actual=act, previous=V[0])
             for od in orders:
                 c[name][f"o{od}"], _ = extrapolate_values(x, V, [q[0] for q in prev], [q[1] for q in prev], d, head,
-                                                          order=od, npts=npts, join=True, margin=margin)
+                                                          order=od, npts=npts, join=True, margin=margin, relative=(name == "Zs"))
+                if name == "Zs":
+                    c[name][f"o{od}"] = np.maximum(c[name][f"o{od}"], V[0])
                 if name == "Tb":
                     c[name][f"o{od}"] = np.minimum(c[name][f"o{od}"], V.max())
         res.append(c)
@@ -90,7 +92,9 @@ def forward(pts, ds_new, orders=(2,), npts=4, margin=2.0):
             c[name] = dict(x=x, previous=V[0])
             for od in orders:
                 c[name][f"o{od}"], deg = extrapolate_values(x, V, [q[0] for q in prev], [q[1] for q in prev], d, head,
-                                                            order=od, npts=npts, join=True, margin=margin)
+                                                            order=od, npts=npts, join=True, margin=margin, relative=(name == "Zs"))
+                if name == "Zs":                           # cold ice is higher: never below the latest surface
+                    c[name][f"o{od}"] = np.maximum(c[name][f"o{od}"], V[0])
                 if name == "Tb":                           # never above the melting value the solved points reach
                     c[name][f"o{od}"] = np.minimum(c[name][f"o{od}"], V.max())
         res.append(c)

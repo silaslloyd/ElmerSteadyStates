@@ -158,13 +158,16 @@ def on_layout(src: SavedState, dst: SavedState):
 
 
 # ---------------------------------------------------------------- extrapolation at fixed x
-def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=4, join=False, margin=0.0):
+def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=4, join=False, margin=0.0, relative=False):
     """The core: values at the nodes X (n,) of n_s states, V (n_s, n) their values, ds / heads (n_s,) their patch
     lengths and heads (same unit as X), extrapolated in d to d_next at FIXED x. Row 0 of V is the latest state.
     New patch (X >= head_next): the latest state's value, unchanged. Upstream: the polynomial in d (degree <= order)
     through the node's values in the (at most npts, nearest in d) states in which that x was still COLD (X < the
     state's head); with fewer than two such values (nodes the head has just passed) the latest value.
     margin: a state's values within margin (unit of X) of its own head are not used (the cold/temperate jump).
+    relative=True (with join): the joined part keeps the latest state's SHAPE: its difference to the latest profile falls
+    linearly from the extrapolated value's at the last extrapolated node to 0 at the new head (a surface stays above the
+    temperate one; a straight line in x would cut below it).
     join=True (a profile, X ascending): only nodes with the FULL degree's data (order + 1 cold values) are extrapolated;
     between the last of them and the new head (nodes without enough cold history) the profile is the straight line
     from the extrapolated value to the latest state's value at the new head: no steps.
@@ -195,7 +198,10 @@ def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=4, join
             rest = use & (X > xa)
             if rest.any() and xb > xa:
                 vb = np.interp(xb, X, V[0])                   # the latest state's value at the new head (temperate side)
-                out[rest] = out[ia] + (vb - out[ia]) * (X[rest] - xa) / (xb - xa)
+                if relative:
+                    out[rest] = V[0][rest] + (out[ia] - V[0][ia]) * (xb - X[rest]) / (xb - xa)
+                else:
+                    out[rest] = out[ia] + (vb - out[ia]) * (X[rest] - xa) / (xb - xa)
     return out, deg
 
 
