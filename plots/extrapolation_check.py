@@ -175,11 +175,19 @@ def page(pts, cs, orders, out):
     for c in cs:
         for name, r_ in (("Zs", 1), ("Tb", 2)):
             d = c[name]
+            x = d["x"]
+            xa = d.get("x_a", np.nan)
             for od in orders:
-                fig.add_trace(go.Scatter(x=d["x"], y=d[f"o{od}"], mode="lines", name=f"extrapolated, order {od}",
+                y = d[f"o{od}"]
+                ext = (x <= xa) | (x >= c["head"]) if np.isfinite(xa) else np.ones(len(x), bool)
+                join = (x >= xa) & (x <= c["head"]) if np.isfinite(xa) else np.zeros(len(x), bool)
+                hv = f"extrapolated d = {c['d']:.1f} km<br>x = %{{x:.1f}} km<br>%{{y:.4g}}<extra></extra>"
+                fig.add_trace(go.Scatter(x=np.where(ext, x, np.nan), y=y, mode="lines", name=f"extrapolated, order {od}",
                                          legendgroup=f"o{od}", showlegend=first and r_ == 1,
-                                         line=dict(color=col.get(od, "purple"), width=1.5, dash="dash"),
-                                         hovertemplate=f"extrapolated d = {c['d']:.1f} km<br>x = %{{x:.1f}} km<br>%{{y:.4g}}<extra></extra>"), r_, 1)
+                                         line=dict(color=col.get(od, "purple"), width=1.5, dash="dash"), hovertemplate=hv), r_, 1)
+                fig.add_trace(go.Scatter(x=np.where(join, x, np.nan), y=y, mode="lines", name="straight-line join to the head",
+                                         legendgroup="join", showlegend=first and r_ == 1,
+                                         line=dict(color=col.get(od, "purple"), width=2.5), hovertemplate=hv), r_, 1)
         first = False
     fig.update_xaxes(title_text="x (km)", row=2, col=1)
     fig.update_layout(template="plotly_white", height=900, margin=dict(t=60, r=200),
