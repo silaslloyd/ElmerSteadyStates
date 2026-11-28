@@ -3,7 +3,7 @@
 Check of the extrapolation predictor (ess/predictor.py extrapolate_values) on a finished sweep, no model runs: every point
 is predicted from the points before it (the longer patches) and compared with what the sweep found.
 
-  python3 plots/extrapolation_check.py STATE [STATE ...] [--orders 1 2] [--npts 4] [--out page.html]
+  python3 plots/extrapolation_check.py STATE [STATE ...] [--orders 2] [--npts 4] [--out page.html]
 
 Rule (surface Zs and bed temperature at the ice base, each at FIXED x): downstream of the new head (the new patch) the
 latest point's value, unchanged; upstream of it the polynomial in d (degree = order, lower when there are fewer points)
@@ -84,43 +84,28 @@ def table(cs, orders):
 
 
 def page(cs, orders, out):
+    """one frame: every point's actual profile solid black, every extrapolated one dashed (one colour per order)"""
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
                         subplot_titles=("surface elevation Zs (m)", "bed temperature at the ice base (K)"))
-    keys = ["previous"] + [f"o{o}" for o in orders]
-    lab = {"previous": "previous point", **{f"o{o}": f"extrapolation, order {o}" for o in orders}}
-    col = {"actual": "black", "previous": "#999999", "o1": "#1f77b4", "o2": "#d62728", "o3": "#2ca02c"}
-    per = []                                            # traces per case
-    lim = {r: [np.inf, -np.inf] for r in (1, 2)}
-    for i, c in enumerate(cs):
-        n0 = len(fig.data)
-        for name, rv in (("Zs", 1), ("Tb", 2)):
+    col = {1: "#1f77b4", 2: "#d62728", 3: "#2ca02c"}
+    first = True
+    for c in cs:
+        for name, r_ in (("Zs", 1), ("Tb", 2)):
             d = c[name]
             fig.add_trace(go.Scatter(x=d["x"], y=d["actual"], mode="lines", name="actual", legendgroup="actual",
-                                     showlegend=(name == "Zs"), visible=i == 0, line=dict(color=col["actual"], width=2)), rv, 1)
-            for key in keys:
-                dash = "dot" if key == "previous" else "dash"
-                fig.add_trace(go.Scatter(x=d["x"], y=d[key], mode="lines", name=lab[key], legendgroup=key,
-                                         showlegend=(name == "Zs"), visible=i == 0,
-                                         line=dict(color=col.get(key, "purple"), width=1.5, dash=dash)), rv, 1)
-            v = np.r_[d["actual"], *(d[k] for k in keys)]
-            v = v[np.isfinite(v)]
-            lim[rv] = [min(lim[rv][0], v.min()), max(lim[rv][1], v.max())]
-        per.append((n0, len(fig.data)))
-    steps = []
-    for i, c in enumerate(cs):
-        vis = [False] * len(fig.data)
-        for j in range(*per[i]):
-            vis[j] = True
-        steps.append(dict(label=f"{c['d']:.1f} km", method="update", args=[{"visible": vis}]))
-    for r_, (lo, hi) in lim.items():
-        pad = 0.03 * (hi - lo if hi > lo else 1.0)
-        fig.update_yaxes(range=[lo - pad, hi + pad], row=r_, col=1)
+                                     showlegend=first and r_ == 1, line=dict(color="black", width=1.5),
+                                     hovertemplate=f"actual d = {c['d']:.1f} km<br>x = %{{x:.1f}} km<br>%{{y:.4g}}<extra></extra>"), r_, 1)
+            for od in orders:
+                fig.add_trace(go.Scatter(x=d["x"], y=d[f"o{od}"], mode="lines", name=f"extrapolated, order {od}",
+                                         legendgroup=f"o{od}", showlegend=first and r_ == 1,
+                                         line=dict(color=col.get(od, "purple"), width=1.5, dash="dash"),
+                                         hovertemplate=f"extrapolated d = {c['d']:.1f} km<br>x = %{{x:.1f}} km<br>%{{y:.4g}}<extra></extra>"), r_, 1)
+        first = False
     fig.update_xaxes(title_text="x (km)", row=2, col=1)
-    fig.update_layout(template="plotly_white", height=850, legend=dict(orientation="h", x=0.0, y=1.06, xanchor="left", yanchor="bottom"),
-                      title="extrapolation check: each point predicted from the longer patches before it (slider: the predicted point's d)",
-                      sliders=[dict(active=0, currentvalue=dict(prefix="predicted point d = "), pad=dict(t=40), steps=steps)])
+    fig.update_layout(template="plotly_white", height=900, margin=dict(t=60, r=200),
+                      legend=dict(x=1.01, y=1.0, xanchor="left", yanchor="top"))
     fig.write_html(out, include_plotlyjs="cdn")
 
 
@@ -137,7 +122,7 @@ def main():
         return default
     out = opt("--out", "extrapolation_check.html", str)
     npts = opt("--npts", 4, int)
-    orders = [1, 2]
+    orders = [2]
     if "--orders" in a:
         i = a.index("--orders")
         j = i + 1
