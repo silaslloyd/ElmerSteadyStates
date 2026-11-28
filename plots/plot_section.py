@@ -413,7 +413,8 @@ def main():
     paths = prefer_fine(args)               # one state per sweep length d: the finest mesh's
     meta = {p_: state_meta(p_)[0] for p_ in paths}
     plain = [p_ for p_ in paths if meta[p_] is None]
-    swept = sorted((p_ for p_ in paths if meta[p_] is not None), key=lambda p_: -meta[p_])
+    itn = lambda p_: int(iter_tag(p_).rsplit(" ", 1)[-1] or -1)
+    swept = sorted((p_ for p_ in paths if meta[p_] is not None), key=lambda p_: (-meta[p_], itn(p_)))
     paths = plain + swept
     if nz is None:
         nz = 150 if len(paths) == 1 else 100          # several states: a lighter page
@@ -500,8 +501,9 @@ def main():
     titles = [[f"{nm}: {b[4]}{tag(p_)}" for nm in names] for b, p_ in zip(built, paths)]
     buttons = [dict(label=nm, method="skip", args=[None]) for nm in names]
     sliders = []
-    if len(built) > 1 and not any(state_meta(p_)[0] is not None and state_meta(p_)[1] is not None for p_ in paths):
-        # (states with a sweep d: the draggable head pointer below chooses instead)
+    iters = any(iter_tag(p_) for p_ in paths)       # Newton iterates share one d and head: always the slider
+    if len(built) > 1 and (iters or not any(state_meta(p_)[0] is not None and state_meta(p_)[1] is not None for p_ in paths)):
+        # (sweep points with different d: the draggable head pointer below chooses instead)
         sliders = [dict(active=0, currentvalue=dict(prefix="state: ", font=dict(size=13)), pad=dict(t=50),
                         steps=[dict(label=(f"{meta[p_] / 1e3:.1f} km{iter_tag(p_).replace(', Newton it ', ' it ')}" if meta[p_] is not None else os.path.basename(p_)),
                                     method="skip", args=[None], value=str(k)) for k, p_ in enumerate(paths)])]
@@ -569,7 +571,7 @@ if (UJ >= 0) {              // the speed's colour limits and the log toggle
         heads.append(None if d_ is None or xg_ is None else round((xg_ - d_) / 1e3, 3))
     if any(h is not None for h in heads):      # a plain state beside sweep points (the fully temperate start): its patch covers the whole bed, head at x = 0
         heads = [0.0 if h is None else h for h in heads]
-    if len(paths) > 1 and sum(h is not None for h in heads) > 1:
+    if len(paths) > 1 and sum(h is not None for h in heads) > 1 and not iters:
         js += """
 var HEADS = %s;
 (function () {
