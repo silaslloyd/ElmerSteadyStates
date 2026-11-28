@@ -158,13 +158,16 @@ def on_layout(src: SavedState, dst: SavedState):
 
 
 # ---------------------------------------------------------------- extrapolation at fixed x
-def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=4):
+def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=4, join=False):
     """The core: values at the nodes X (n,) of n_s states, V (n_s, n) their values, ds / heads (n_s,) their patch
     lengths and heads (same unit as X), extrapolated in d to d_next at FIXED x. Row 0 of V is the latest state.
     New patch (X >= head_next): the latest state's value, unchanged. Upstream: the polynomial in d (degree <= order)
     through the node's values in the (at most npts, nearest in d) states in which that x was still COLD (X < the
     state's head); with fewer than two such values (nodes the head has just passed) the latest value.
-    Returns (values (n,), degree used (n,), -1 where the latest value is kept)."""
+    join=True (a profile, X ascending): only nodes with the FULL degree's data (order + 1 cold values) are extrapolated;
+    between the last of them and the new head (nodes without enough cold history) the profile is the straight line
+    from the extrapolated value to the latest state's value at the new head: no steps.
+    Returns (values (n,), degree used (n,), -1 where the latest value is kept or joined)."""
     X, V = np.asarray(X, float), np.asarray(V, float)
     ds, heads = np.asarray(ds, float), np.asarray(heads, float)
     near = np.argsort(np.abs(ds - d_next), kind="stable")      # nearest in d first
@@ -175,13 +178,23 @@ def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=4):
     out = V[0].copy()
     deg = np.full(len(X), -1, int)
     code = (pick * (1 << np.arange(len(ds)))[:, None]).sum(axis=0)
-    for c in np.unique(code[use & (nuse >= 2)]):
+    need = max(2, min(order + 1, len(ds))) if join else 2
+    for c in np.unique(code[use & (nuse >= need)]):
         idx = [i for i in range(len(ds)) if c >> i & 1]       # positions in the nearest-first order
         nodes = use & (code == c)
         k = min(order, len(idx) - 1)
         t = (ds[near][idx] - d_next) / 1e3                     # the value at d_next: the constant coefficient
         out[nodes] = np.polyfit(t, V[near][idx][:, nodes], k)[-1]
         deg[nodes] = k
+    if join:
+        full = use & (nuse >= need)
+        if full.any():
+            ia = int(np.argmax(np.where(full, X, -np.inf)))
+            xa, xb = X[ia], head_next
+            rest = use & (X > xa)
+            if rest.any() and xb > xa:
+                vb = np.interp(xb, X, V[0])                   # the latest state's value at the new head (temperate side)
+                out[rest] = out[ia] + (vb - out[ia]) * (X[rest] - xa) / (xb - xa)
     return out, deg
 
 

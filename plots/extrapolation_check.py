@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
 The extrapolation predictor (ess/predictor.py extrapolate_values) on a sweep's solved points, no model runs: the profiles
-of the NEXT patch lengths beyond the last solved point (--next 4 of them, --step KM apart, default the last step), each
-from all the solved points. --retro instead: every solved point predicted from the points before it (to compare with what
+of the NEXT patch lengths beyond the last solved point, --step km apart (default 12.5) down to the grounding line (or
+--next N of them), each from all the solved points. --retro instead: every solved point predicted from the points before it (to compare with what
 the sweep found).
 
-  python3 plots/extrapolation_check.py STATE [STATE ...] [--orders 2] [--npts 4] [--next 4] [--step KM] [--retro] [--out page.html]
+  python3 plots/extrapolation_check.py STATE [STATE ...] [--orders 2] [--npts 4] [--next N] [--step 12.5] [--retro] [--out page.html]
 
 Rule (surface Zs and bed temperature at the ice base, each at FIXED x): downstream of the new head (the new patch) the
 latest point's value, unchanged; upstream of it the polynomial in d (degree = order, lower when there are fewer points)
 through that x's values in the last npts points where x was still cold (upstream of that point's head); nodes the head
-has just passed (no cold history) keep the latest value.
+has just passed (not enough cold history) are not extrapolated: the profile there is the straight line from the
+extrapolated part to the latest value at the new head.
 
 One plotly page, a slider over the predicted point: Zs and bed temperature (actual, the previous point as it is, the
 extrapolations), Axes fixed over all the points. A table of rms errors
@@ -67,7 +68,7 @@ def cases(pts, orders=(1, 2), npts=4):
             c[name] = dict(x=x, actual=act, previous=V[0])
             for od in orders:
                 c[name][f"o{od}"], _ = extrapolate_values(x, V, [q[0] for q in prev], [q[1] for q in prev], d, head,
-                                                          order=od, npts=npts)
+                                                          order=od, npts=npts, join=True)
         res.append(c)
     return res
 
@@ -87,7 +88,7 @@ def forward(pts, ds_new, orders=(2,), npts=4):
             c[name] = dict(x=x, previous=V[0])
             for od in orders:
                 c[name][f"o{od}"], deg = extrapolate_values(x, V, [q[0] for q in prev], [q[1] for q in prev], d, head,
-                                                            order=od, npts=npts)
+                                                            order=od, npts=npts, join=True)
         res.append(c)
         print(f"d = {d:.1f} km (head {head:.1f} km): max change from the last point: Zs "
               f"{np.max(np.abs(c['Zs'][f'o{orders[-1]}'] - c['Zs']['previous'])):.3g} m, bed T "
@@ -160,8 +161,8 @@ def main():
             orders.append(int(a[j]))
             j += 1
         del a[i:j]
-    nxt = opt("--next", 4, int)
-    step = opt("--step", None, float)
+    nxt = opt("--next", None, int)
+    step = opt("--step", 12.5, float)
     retro = "--retro" in a
     a = [t for t in a if t != "--retro"]
     pts = profiles(a)
@@ -171,8 +172,8 @@ def main():
         cs = cases(pts, orders, npts)
         table(cs, orders)
     else:                                              # the next patch lengths beyond the last solved point
-        st = step if step else pts[-2][0] - pts[-1][0]
-        cs = forward(pts, [pts[-1][0] - st * (k + 1) for k in range(nxt)], orders, npts)
+        n = nxt if nxt else int(np.ceil(pts[-1][0] / step - 1e-9)) - 1          # down to the grounding line (d > 0)
+        cs = forward(pts, [pts[-1][0] - step * (k + 1) for k in range(n)], orders, npts)
     page(pts, cs, orders, out)
     np.savez(os.path.splitext(out)[0] + ".npz", **{f"d{c['d']:.1f}_{n}_{k}": c[n][k] for c in cs for n in ("Zs", "Tb")
                                                    for k in c[n]})
