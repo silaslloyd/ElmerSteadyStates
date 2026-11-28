@@ -5,7 +5,7 @@ of the NEXT patch lengths beyond the last solved point, --step km apart (default
 --next N of them), each from all the solved points. --retro instead: every solved point predicted from the points before it (to compare with what
 the sweep found).
 
-  python3 plots/extrapolation_check.py STATE [STATE ...] [--orders 2] [--npts 4] [--next N] [--step 12.5] [--retro] [--out page.html]
+  python3 plots/extrapolation_check.py STATE [STATE ...] [--orders 2] [--npts 4] [--next N] [--step 12.5] [--margin 2] [--retro] [--out page.html]
 
 Rule (surface Zs and bed temperature at the ice base, each at FIXED x): downstream of the new head (the new patch) the
 latest point's value, unchanged; upstream of it the polynomial in d (degree = order, lower when there are fewer points)
@@ -53,7 +53,7 @@ def _on(x, prof):
     return np.interp(x, ux, mv)
 
 
-def cases(pts, orders=(1, 2), npts=4):
+def cases(pts, orders=(1, 2), npts=4, margin=2.0):
     """for each point k >= 1: dict(d, head, x and values of Zs / Tb: actual, previous, prediction per order)"""
     res = []
     for k in range(1, len(pts)):
@@ -68,12 +68,14 @@ def cases(pts, orders=(1, 2), npts=4):
             c[name] = dict(x=x, actual=act, previous=V[0])
             for od in orders:
                 c[name][f"o{od}"], _ = extrapolate_values(x, V, [q[0] for q in prev], [q[1] for q in prev], d, head,
-                                                          order=od, npts=npts, join=True)
+                                                          order=od, npts=npts, join=True, margin=margin)
+                if name == "Tb":
+                    c[name][f"o{od}"] = np.minimum(c[name][f"o{od}"], V.max())
         res.append(c)
     return res
 
 
-def forward(pts, ds_new, orders=(2,), npts=4):
+def forward(pts, ds_new, orders=(2,), npts=4, margin=2.0):
     """the extrapolation to patch lengths beyond the solved points: from ALL the points (each target on its own,
     not chained), on the last point's x grid. dicts like cases() but without 'actual'"""
     prev = pts[::-1]                                   # the shortest patch (the latest) first
@@ -88,7 +90,9 @@ def forward(pts, ds_new, orders=(2,), npts=4):
             c[name] = dict(x=x, previous=V[0])
             for od in orders:
                 c[name][f"o{od}"], deg = extrapolate_values(x, V, [q[0] for q in prev], [q[1] for q in prev], d, head,
-                                                            order=od, npts=npts, join=True)
+                                                            order=od, npts=npts, join=True, margin=margin)
+                if name == "Tb":                           # never above the melting value the solved points reach
+                    c[name][f"o{od}"] = np.minimum(c[name][f"o{od}"], V.max())
         res.append(c)
         print(f"d = {d:.1f} km (head {head:.1f} km): max change from the last point: Zs "
               f"{np.max(np.abs(c['Zs'][f'o{orders[-1]}'] - c['Zs']['previous'])):.3g} m, bed T "
@@ -161,6 +165,7 @@ def main():
             orders.append(int(a[j]))
             j += 1
         del a[i:j]
+    margin = opt("--margin", 2.0, float)
     nxt = opt("--next", None, int)
     step = opt("--step", 12.5, float)
     retro = "--retro" in a
@@ -169,11 +174,11 @@ def main():
     if len(pts) < 2:
         sys.exit("fewer than two sweep points")
     if retro:                                          # every point predicted from the longer patches before it
-        cs = cases(pts, orders, npts)
+        cs = cases(pts, orders, npts, margin)
         table(cs, orders)
     else:                                              # the next patch lengths beyond the last solved point
         n = nxt if nxt else int(np.ceil(pts[-1][0] / step - 1e-9)) - 1          # down to the grounding line (d > 0)
-        cs = forward(pts, [pts[-1][0] - step * (k + 1) for k in range(n)], orders, npts)
+        cs = forward(pts, [pts[-1][0] - step * (k + 1) for k in range(n)], orders, npts, margin)
     page(pts, cs, orders, out)
     np.savez(os.path.splitext(out)[0] + ".npz", **{f"d{c['d']:.1f}_{n}_{k}": c[n][k] for c in cs for n in ("Zs", "Tb")
                                                    for k in c[n]})

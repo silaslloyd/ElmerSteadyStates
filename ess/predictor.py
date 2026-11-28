@@ -158,12 +158,13 @@ def on_layout(src: SavedState, dst: SavedState):
 
 
 # ---------------------------------------------------------------- extrapolation at fixed x
-def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=4, join=False):
+def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=4, join=False, margin=0.0):
     """The core: values at the nodes X (n,) of n_s states, V (n_s, n) their values, ds / heads (n_s,) their patch
     lengths and heads (same unit as X), extrapolated in d to d_next at FIXED x. Row 0 of V is the latest state.
     New patch (X >= head_next): the latest state's value, unchanged. Upstream: the polynomial in d (degree <= order)
     through the node's values in the (at most npts, nearest in d) states in which that x was still COLD (X < the
     state's head); with fewer than two such values (nodes the head has just passed) the latest value.
+    margin: a state's values within margin (unit of X) of its own head are not used (the cold/temperate jump).
     join=True (a profile, X ascending): only nodes with the FULL degree's data (order + 1 cold values) are extrapolated;
     between the last of them and the new head (nodes without enough cold history) the profile is the straight line
     from the extrapolated value to the latest state's value at the new head: no steps.
@@ -171,7 +172,7 @@ def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=4, join
     X, V = np.asarray(X, float), np.asarray(V, float)
     ds, heads = np.asarray(ds, float), np.asarray(heads, float)
     near = np.argsort(np.abs(ds - d_next), kind="stable")      # nearest in d first
-    cold = X[None, :] < heads[near][:, None]
+    cold = X[None, :] < heads[near][:, None] - margin       # (not within margin of a head: its jump / smeared values)
     pick = cold & (np.cumsum(cold, axis=0) <= npts)
     use = X < head_next
     nuse = pick.sum(axis=0)
