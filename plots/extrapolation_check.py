@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Check of the extrapolation predictor (ess/predictor.py extrapolate_values) on a finished sweep, no model runs: every point
-is predicted from the points before it (the longer patches) and compared with what the sweep found.
+The extrapolation predictor (ess/predictor.py extrapolate_values) on a sweep's solved points, no model runs: the profiles
+of the NEXT patch lengths beyond the last solved point (--next 4 of them, --step KM apart, default the last step), each
+from all the solved points. --retro instead: every solved point predicted from the points before it (to compare with what
+the sweep found).
 
-  python3 plots/extrapolation_check.py STATE [STATE ...] [--orders 2] [--npts 4] [--out page.html]
+  python3 plots/extrapolation_check.py STATE [STATE ...] [--orders 2] [--npts 4] [--next 4] [--step KM] [--retro] [--out page.html]
 
 Rule (surface Zs and bed temperature at the ice base, each at FIXED x): downstream of the new head (the new patch) the
 latest point's value, unchanged; upstream of it the polynomial in d (degree = order, lower when there are fewer points)
@@ -70,6 +72,29 @@ def cases(pts, orders=(1, 2), npts=4):
     return res
 
 
+def forward(pts, ds_new, orders=(2,), npts=4):
+    """the extrapolation to patch lengths beyond the solved points: from ALL the points (each target on its own,
+    not chained), on the last point's x grid. dicts like cases() but without 'actual'"""
+    prev = pts[::-1]                                   # the shortest patch (the latest) first
+    xgl = pts[-1][0] + pts[-1][1]
+    res = []
+    for d in ds_new:
+        head = xgl - d
+        c = dict(d=d, head=head, n=len(prev))
+        for name, j in (("Zs", 2), ("Tb", 3)):
+            x = np.sort(pts[-1][j][0])
+            V = np.array([_on(x, q[j]) for q in prev])
+            c[name] = dict(x=x, previous=V[0])
+            for od in orders:
+                c[name][f"o{od}"], deg = extrapolate_values(x, V, [q[0] for q in prev], [q[1] for q in prev], d, head,
+                                                            order=od, npts=npts)
+        res.append(c)
+        print(f"d = {d:.1f} km (head {head:.1f} km): max change from the last point: Zs "
+              f"{np.max(np.abs(c['Zs'][f'o{orders[-1]}'] - c['Zs']['previous'])):.3g} m, bed T "
+              f"{np.max(np.abs(c['Tb'][f'o{orders[-1]}'] - c['Tb']['previous'])):.3g} K")
+    return res
+
+
 def table(cs, orders):
     names = ["previous"] + [f"order {o}" for o in orders]
     print(f"{'d km':>8} {'pts':>3}  " + "  ".join(f"Zs {n:>9}" for n in names) + "  |  " + "  ".join(f"Tb {n:>9}" for n in names))
@@ -83,20 +108,24 @@ def table(cs, orders):
         print(f"{c['d']:8.1f} {c['n']:3d}  " + "  ".join(row[:len(names)]) + "  |  " + "  ".join(row[len(names):]))
 
 
-def page(cs, orders, out):
-    """one frame: every point's actual profile solid black, every extrapolated one dashed (one colour per order)"""
+def page(pts, cs, orders, out):
+    """one frame: every solved point's profile solid black, every extrapolated one dashed (one colour per order)"""
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
                         subplot_titles=("surface elevation Zs (m)", "bed temperature at the ice base (K)"))
     col = {1: "#1f77b4", 2: "#d62728", 3: "#2ca02c"}
+    for k, q in enumerate(pts):
+        for j, r_ in ((2, 1), (3, 2)):
+            x, v = q[j]
+            o = np.argsort(x)
+            fig.add_trace(go.Scatter(x=x[o], y=v[o], mode="lines", name="solved", legendgroup="solved",
+                                     showlegend=k == 0 and r_ == 1, line=dict(color="black", width=1.5),
+                                     hovertemplate=f"solved d = {q[0]:.1f} km<br>x = %{{x:.1f}} km<br>%{{y:.4g}}<extra></extra>"), r_, 1)
     first = True
     for c in cs:
         for name, r_ in (("Zs", 1), ("Tb", 2)):
             d = c[name]
-            fig.add_trace(go.Scatter(x=d["x"], y=d["actual"], mode="lines", name="actual", legendgroup="actual",
-                                     showlegend=first and r_ == 1, line=dict(color="black", width=1.5),
-                                     hovertemplate=f"actual d = {c['d']:.1f} km<br>x = %{{x:.1f}} km<br>%{{y:.4g}}<extra></extra>"), r_, 1)
             for od in orders:
                 fig.add_trace(go.Scatter(x=d["x"], y=d[f"o{od}"], mode="lines", name=f"extrapolated, order {od}",
                                          legendgroup=f"o{od}", showlegend=first and r_ == 1,
@@ -131,14 +160,22 @@ def main():
             orders.append(int(a[j]))
             j += 1
         del a[i:j]
+    nxt = opt("--next", 4, int)
+    step = opt("--step", None, float)
+    retro = "--retro" in a
+    a = [t for t in a if t != "--retro"]
     pts = profiles(a)
     if len(pts) < 2:
         sys.exit("fewer than two sweep points")
-    cs = cases(pts, orders, npts)
-    table(cs, orders)
-    page(cs, orders, out)
+    if retro:                                          # every point predicted from the longer patches before it
+        cs = cases(pts, orders, npts)
+        table(cs, orders)
+    else:                                              # the next patch lengths beyond the last solved point
+        st = step if step else pts[-2][0] - pts[-1][0]
+        cs = forward(pts, [pts[-1][0] - st * (k + 1) for k in range(nxt)], orders, npts)
+    page(pts, cs, orders, out)
     np.savez(os.path.splitext(out)[0] + ".npz", **{f"d{c['d']:.1f}_{n}_{k}": c[n][k] for c in cs for n in ("Zs", "Tb")
-                                                   for k in ["x", "actual", "previous"] + [f"o{o}" for o in orders]})
+                                                   for k in c[n]})
     print(f"wrote {out}")
 
 
