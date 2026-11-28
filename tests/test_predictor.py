@@ -40,7 +40,7 @@ def test_extrapolation_exact_for_quadratic_in_d_and_patch_unchanged():
         b = [b_ for b_ in s.layout.blocks if b_.name == name][0]
         X = cx[1][b.gids - 1]
         up = X < head_s                                  # cold in every history state with a head >= x: exact
-        deep = X < XGL - ds[0]                           # cold in all four states
+        deep = X < XGL - ds[0] - 25e3                    # cold in all of them, the quadratic blended in fully
         assert np.allclose(x[sl[name]][deep], ex.x[sl[name]][deep], atol=1e-6)
         pat = X >= head_n
         assert np.array_equal(x[sl[name]][pat], s.x[sl[name]][pat])      # the new patch: unchanged

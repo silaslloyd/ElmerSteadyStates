@@ -158,48 +158,56 @@ def on_layout(src: SavedState, dst: SavedState):
 
 
 # ---------------------------------------------------------------- extrapolation at fixed x
-def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=4, join=False, margin=0.0, relative=False):
+def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=None, join=False, margin=0.0, relative=False,
+                       blend=None):
     """The core: values at the nodes X (n,) of n_s states, V (n_s, n) their values, ds / heads (n_s,) their patch
-    lengths and heads (same unit as X), extrapolated in d to d_next at FIXED x. Row 0 of V is the latest state.
-    New patch (X >= head_next): the latest state's value, unchanged. Upstream: the polynomial in d (degree <= order)
-    through the node's values in the (at most npts, nearest in d) states in which that x was still COLD (X < the
-    state's head); with fewer than two such values (nodes the head has just passed) the latest value.
+    lengths and heads (same unit as X), extrapolated in d to d_next at FIXED x (the states ordered by nearness in d:
+    the latest first). New patch (X >= head_next): the latest state's value, unchanged.
+    Upstream of the new head, every node with at least TWO cold values (the two nearest states, x < their heads) is
+    extrapolated: linearly through those two; where a third state was cold there too, the quadratic through the three
+    (and so on up to degree `order`), blended in over `blend` (default the spacing of the two latest heads) from the
+    edge of the third's cold zone inwards: no steps where the number of cold values changes.
     margin: a state's values within margin (unit of X) of its own head are not used (the cold/temperate jump).
-    relative=True (with join): the joined part keeps the latest state's SHAPE: its difference to the latest profile falls
-    linearly from the extrapolated value's at the last extrapolated node to 0 at the new head (a surface stays above the
-    temperate one; a straight line in x would cut below it).
-    join=True (a profile, X ascending): only nodes with the FULL degree's data (order + 1 cold values) are extrapolated;
-    between the last of them and the new head (nodes without enough cold history) the profile is the straight line
-    from the extrapolated value to the latest state's value at the new head: no steps.
+    Nodes with fewer than two cold values (the head has just passed them): the latest value, or, with join=True
+    (a profile, X ascending), the straight line from the last extrapolated node to the latest state's value at the new
+    head (no steps). relative=True: instead the difference to the latest profile falls linearly to 0 at the new head (a
+    surface stays above the temperate one; a straight line in x would cut below it).
     Returns (values (n,), degree used (n,), -1 where the latest value is kept or joined)."""
     X, V = np.asarray(X, float), np.asarray(V, float)
     ds, heads = np.asarray(ds, float), np.asarray(heads, float)
-    near = np.argsort(np.abs(ds - d_next), kind="stable")      # nearest in d first
-    cold = X[None, :] < heads[near][:, None] - margin       # (not within margin of a head: its jump / smeared values)
-    pick = cold & (np.cumsum(cold, axis=0) <= npts)
+    near = np.argsort(np.abs(ds - d_next), kind="stable")
+    Vn, dn, hn = V[near], ds[near], heads[near] - margin
     use = X < head_next
-    nuse = pick.sum(axis=0)
-    out = V[0].copy()
+    out = Vn[0].copy()
     deg = np.full(len(X), -1, int)
-    code = (pick * (1 << np.arange(len(ds)))[:, None]).sum(axis=0)
-    need = max(2, min(order + 1, len(ds))) if join else 2
-    for c in np.unique(code[use & (nuse >= need)]):
-        idx = [i for i in range(len(ds)) if c >> i & 1]       # positions in the nearest-first order
-        nodes = use & (code == c)
-        k = min(order, len(idx) - 1)
-        t = (ds[near][idx] - d_next) / 1e3                     # the value at d_next: the constant coefficient
-        out[nodes] = np.polyfit(t, V[near][idx][:, nodes], k)[-1]
-        deg[nodes] = k
+    if len(ds) < 2:
+        return out, deg
+    if blend is None:
+        blend = max(abs(hn[0] - hn[1]), 1e-9)
+    t = (dn - d_next) / 1e3                                    # the value at d_next: the constant coefficient
+    prev = None
+    for k in range(1, min(order, len(ds) - 1) + 1):
+        valid = use & (X < hn[k])                              # the k+1 nearest states all cold here
+        if not valid.any():
+            break
+        fit = np.polyfit(t[:k + 1], Vn[:k + 1][:, valid], k)[-1]
+        if prev is None:
+            out[valid] = fit
+        else:
+            w = _smoothstep((hn[k] - X[valid]) / blend)
+            out[valid] = prev[valid] + w * (fit - prev[valid])
+        deg[valid] = k
+        prev = out.copy()
     if join:
-        full = use & (nuse >= need)
+        full = deg >= 1
         if full.any():
             ia = int(np.argmax(np.where(full, X, -np.inf)))
             xa, xb = X[ia], head_next
             rest = use & (X > xa)
             if rest.any() and xb > xa:
-                vb = np.interp(xb, X, V[0])                   # the latest state's value at the new head (temperate side)
+                vb = np.interp(xb, X, Vn[0])                  # the latest state's value at the new head (temperate side)
                 if relative:
-                    out[rest] = V[0][rest] + (out[ia] - V[0][ia]) * (xb - X[rest]) / (xb - xa)
+                    out[rest] = Vn[0][rest] + (out[ia] - Vn[0][ia]) * (xb - X[rest]) / (xb - xa)
                 else:
                     out[rest] = out[ia] + (vb - out[ia]) * (X[rest] - xa) / (xb - xa)
     return out, deg
