@@ -77,7 +77,8 @@ def predict(prev, x_z, x_t, d, head, orders, margin):
     prediction per order (o<order>), 'previous' (the latest point) and 'x_a' (the last x extrapolated from data).
     At fixed x: every x upstream of the new head with at least two earlier cold values is extrapolated in d (linear
     through the two nearest, the saturating exponential where a third point shows the rise levelling off); between the
-    last such x and the new head a STRAIGHT LINE to the latest point's value at the head; the new patch unchanged."""
+    last such x and the new head: the surface a STRAIGHT LINE to the latest point's value at the head, the bed temperature
+    its envelope continued to the head (then the temperate value: the mask); the new patch unchanged."""
     ds, hs = [q[0] for q in prev], [q[1] for q in prev]
     res = {"Zs": dict(x=x_z), "Tb": dict(x=x_t)}
     for name, x, j in (("Zs", x_z, 2), ("Tb", x_t, 3)):
@@ -97,7 +98,14 @@ def predict(prev, x_z, x_t, d, head, orders, margin):
                 rest = (x > xa) & (x < head)
                 vb = float(np.interp(head, x, V[0]))           # the latest point's value at the new head (temperate side)
                 if rest.any() and head > xa:
-                    out[rest] = out[ia] + (vb - out[ia]) * (x[rest] - xa) / (head - xa)
+                    if name == "Zs":                           # the surface: a straight line to the temperate surface at the head
+                        out[rest] = out[ia] + (vb - out[ia]) * (x[rest] - xa) / (head - xa)
+                    else:                                      # the bed temperature: along its envelope (all points lie on one curve
+                        near = full & (x >= xa - 50.0)         # upstream of their heads), the slope at x_a continued, saturating
+                        slope = np.polyfit(x[near], out[near], 1)[0] if near.sum() > 2 else 0.0   # to the melting value
+                        Ta = min(out[ia], Tm)
+                        k = max(slope, 0.0) / max(Tm - Ta, 1e-9)
+                        out[rest] = Tm - (Tm - Ta) * np.exp(-k * (x[rest] - xa))
                 res[name]["x_a"] = float(xa)
             out[x >= head] = V[0][x >= head]                   # the new patch: unchanged
             res[name][f"o{od}"] = out
@@ -134,7 +142,7 @@ def forward(pts, ds_new, orders=(2,), margin=2.0):
         if len(ds_new) <= 3:                           # a few extrapolations: the numbers at some x
             xs = c["Zs"]["x"]
             print(f"  last solved point: d = {prev[0][0]:.1f} km, head {prev[0][1]:.1f} km; extrapolated from data upstream of x = "
-                  f"{c['Zs'].get('x_a', float('nan')):.1f} km (Zs), {c['Tb'].get('x_a', float('nan')):.1f} km (Tb); straight line to the head after")
+                  f"{c['Zs'].get('x_a', float('nan')):.1f} km (Zs), {c['Tb'].get('x_a', float('nan')):.1f} km (Tb); then the surface a straight line, the bed temperature its envelope, to the head")
             print(f"  {'x km':>8} {'Zs last':>10} {'Zs extrap':>10} {'Tb last':>10} {'Tb extrap':>10}")
             for xv in (0, 50, 100, 150, 200, 250, 275, 300, 325, c['head']):
                 iz, it = int(np.argmin(np.abs(xs - xv))), int(np.argmin(np.abs(c['Tb']['x'] - xv)))
@@ -180,12 +188,13 @@ def page(pts, cs, orders, out):
             for od in orders:
                 y = d[f"o{od}"]
                 ext = (x <= xa) | (x >= c["head"]) if np.isfinite(xa) else np.ones(len(x), bool)
-                join = (x >= xa) & (x <= c["head"]) if np.isfinite(xa) else np.zeros(len(x), bool)
+                join = (x >= xa) & (x <= c["head"]) if (np.isfinite(xa) and name == "Zs") else np.zeros(len(x), bool)
+                ext = ext | ((x >= xa) & (x <= c["head"]) & (name != "Zs")) if np.isfinite(xa) else ext
                 hv = f"extrapolated d = {c['d']:.1f} km<br>x = %{{x:.1f}} km<br>%{{y:.4g}}<extra></extra>"
                 fig.add_trace(go.Scatter(x=np.where(ext, x, np.nan), y=y, mode="lines", name=f"extrapolated, order {od}",
                                          legendgroup=f"o{od}", showlegend=first and r_ == 1,
                                          line=dict(color=col.get(od, "purple"), width=1.5, dash="dash"), hovertemplate=hv), r_, 1)
-                fig.add_trace(go.Scatter(x=np.where(join, x, np.nan), y=y, mode="lines", name="straight-line join to the head",
+                fig.add_trace(go.Scatter(x=np.where(join, x, np.nan), y=y, mode="lines", name="straight-line join to the head (surface)",
                                          legendgroup="join", showlegend=first and r_ == 1,
                                          line=dict(color=col.get(od, "purple"), width=2.5), hovertemplate=hv), r_, 1)
         first = False
