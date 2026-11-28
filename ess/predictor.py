@@ -155,3 +155,60 @@ def on_layout(src: SavedState, dst: SavedState):
     x, _ = transfer(src, dst)
     log.info("predictor: the earlier state carried over onto this mesh (ess transfer)")
     return x
+
+
+# ---------------------------------------------------------------- extrapolation at fixed x
+def extrapolate_values(X, V, ds, heads, d_next, head_next, order=2, npts=4):
+    """The core: values at the nodes X (n,) of n_s states, V (n_s, n) their values, ds / heads (n_s,) their patch
+    lengths and heads (same unit as X), extrapolated in d to d_next at FIXED x. Row 0 of V is the latest state.
+    New patch (X >= head_next): the latest state's value, unchanged. Upstream: the polynomial in d (degree <= order)
+    through the node's values in the (at most npts, nearest in d) states in which that x was still COLD (X < the
+    state's head); with fewer than two such values (nodes the head has just passed) the latest value.
+    Returns (values (n,), degree used (n,), -1 where the latest value is kept)."""
+    X, V = np.asarray(X, float), np.asarray(V, float)
+    ds, heads = np.asarray(ds, float), np.asarray(heads, float)
+    near = np.argsort(np.abs(ds - d_next), kind="stable")      # nearest in d first
+    cold = X[None, :] < heads[near][:, None]
+    pick = cold & (np.cumsum(cold, axis=0) <= npts)
+    use = X < head_next
+    nuse = pick.sum(axis=0)
+    out = V[0].copy()
+    deg = np.full(len(X), -1, int)
+    code = (pick * (1 << np.arange(len(ds)))[:, None]).sum(axis=0)
+    for c in np.unique(code[use & (nuse >= 2)]):
+        idx = [i for i in range(len(ds)) if c >> i & 1]       # positions in the nearest-first order
+        nodes = use & (code == c)
+        k = min(order, len(idx) - 1)
+        t = (ds[near][idx] - d_next) / 1e3                     # the value at d_next: the constant coefficient
+        out[nodes] = np.polyfit(t, V[near][idx][:, nodes], k)[-1]
+        deg[nodes] = k
+    return out, deg
+
+
+def extrapolate(s: SavedState, d_s, head_s, hist, d_next, head_next, order=2, npts=4):
+    """The state s (patch length d_s, head at head_s) with Zs and the temperature extrapolated in d to d_next at FIXED
+    x (extrapolate_values), from earlier converged points hist = [(d, state vector, head), ...] on the same layout
+    (physical units). Other blocks (Zb, ...) unchanged. Returns (x_new, info)."""
+    allc = {**s.diag, **s.frozen}
+    cx = allc[find_name(allc, "coordinate 1")]
+    lay = s.layout
+    sl = lay.slices()
+    blk = {b.name.lower(): b for b in lay.blocks}
+    x_new = np.asarray(s.x, float).copy()
+    ds = [float(d_s)] + [float(d) for d, _, _ in hist]
+    heads = [float(head_s)] + [float(h) for _, _, h in hist]
+    info = {}
+    for key in ("temperature", "zs"):
+        b = blk[key]
+        X = _on(*cx, b.gids)
+        V = np.array([np.asarray(s.x, float)[sl[b.name]]] + [np.asarray(x, float)[sl[b.name]] for _, x, _ in hist])
+        out, deg = extrapolate_values(X, V, ds, heads, d_next, head_next, order, npts)
+        info[key] = dict(max_change=float(np.max(np.abs(out - V[0]))),
+                         by_degree={int(k): int((deg == k).sum()) for k in np.unique(deg)},
+                         upstream_nodes=int((X < head_next).sum()), no_history=int(((X < head_next) & (deg < 0)).sum()))
+        x_new[sl[b.name]] = out
+    log.info(f"predictor: extrapolated in d at fixed x from {len(ds)} point(s) (d = "
+             f"{', '.join(f'{d / 1e3:g}' for d in sorted(ds))} km) to d = {d_next / 1e3:g} km (head {head_next / 1e3:.2f} km); "
+             + "; ".join(f"{k}: max change {v['max_change']:.3g}, nodes by degree {v['by_degree']}, {v['no_history']} of "
+                         f"{v['upstream_nodes']} upstream nodes without cold history" for k, v in info.items()))
+    return x_new, info
